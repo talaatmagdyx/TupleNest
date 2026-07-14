@@ -342,3 +342,53 @@ td.loading-cell {
   opacity: 0.4;
   text-align: center;
 }
+
+
+/* --- Query history (E1.5) --- */
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12.5px;
+  max-height: 220px;
+  overflow: auto;
+}
+.history-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.history-list li:hover {
+  background: #8881;
+}
+.hstatus.success {
+  color: #2e9e44;
+}
+.hstatus.error {
+  color: #c62828;
+}
+.hstatus.cancelled {
+  color: #d90;
+}
+.hsql {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.hsql.clickable {
+  cursor: pointer;
+}
+.hsql.clickable:hover {
+  text-decoration: underline;
+}
+.hmeta {
+  flex-shrink: 0;
+}
+button.star.on {
+  opacity: 1;
+  color: #d90;
+}

@@ -94,6 +94,50 @@ fn layout_load(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn history_list(
+    state: tauri::State<'_, AppState>,
+    search: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<tuplenest_workspace_store::HistoryEntry>, String> {
+    state
+        .store
+        .lock()
+        .map_err(|_| "store lock poisoned".to_string())?
+        .history_list(
+            search.as_deref().filter(|s| !s.is_empty()),
+            limit.unwrap_or(50),
+        )
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn history_favorite(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    favorite: bool,
+) -> Result<(), String> {
+    state
+        .store
+        .lock()
+        .map_err(|_| "store lock poisoned".to_string())?
+        .history_set_favorite(&id, favorite)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn history_clear(
+    state: tauri::State<'_, AppState>,
+    include_favorites: Option<bool>,
+) -> Result<(), String> {
+    state
+        .store
+        .lock()
+        .map_err(|_| "store lock poisoned".to_string())?
+        .history_clear(include_favorites.unwrap_or(false))
+        .map_err(|e| e.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -129,6 +173,9 @@ fn main() {
             settings_set,
             layout_save,
             layout_load,
+            history_list,
+            history_favorite,
+            history_clear,
             connections::connection_save,
             connections::connection_list,
             connections::connection_delete,

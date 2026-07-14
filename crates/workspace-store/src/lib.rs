@@ -17,7 +17,7 @@ pub enum StoreError {
     Json(#[from] serde_json::Error),
 }
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const MIGRATION_V1: &str = r#"
 CREATE TABLE meta        (key TEXT PRIMARY KEY, value TEXT);
@@ -44,6 +44,24 @@ CREATE TABLE connections (
   ssh_json TEXT,
   options_json TEXT, created_at INTEGER, updated_at INTEGER
 );
+"#;
+
+/// Phase 1 (E1.5): query history. `sql_text` is NULL for prod-tagged
+/// connections when text exclusion applies.
+const MIGRATION_V3: &str = r#"
+CREATE TABLE query_history (
+  id TEXT PRIMARY KEY,
+  connection_key TEXT NOT NULL,
+  sql_text TEXT,
+  status TEXT NOT NULL CHECK (status IN ('success','error','cancelled')),
+  error_text TEXT,
+  rows_returned INTEGER NOT NULL DEFAULT 0,
+  rows_affected INTEGER,
+  started_at INTEGER NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  favorite INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_history_search ON query_history(connection_key, started_at DESC);
 "#;
 
 pub struct Store {
@@ -104,6 +122,9 @@ impl Store {
         }
         if current < 2 {
             self.conn.execute_batch(MIGRATION_V2)?;
+        }
+        if current < 3 {
+            self.conn.execute_batch(MIGRATION_V3)?;
         }
         if current < SCHEMA_VERSION {
             self.conn.execute(
@@ -307,6 +328,94 @@ impl Store {
         Ok(secret_ref.flatten())
     }
 
+    // --- Query history (schema v3, E1.5) ------------------------------------
+
+    /// Records one execution. Retention: keeps the newest `retention`
+    /// non-favorite entries; favorites are never pruned.
+    pub fn history_add(&self, entry: &HistoryEntry, retention: usize) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO query_history
+               (id, connection_key, sql_text, status, error_text,
+                rows_returned, rows_affected, started_at, duration_ms, favorite)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![
+                entry.id,
+                entry.connection_key,
+                entry.sql_text,
+                entry.status,
+                entry.error_text,
+                entry.rows_returned as i64,
+                entry.rows_affected.map(|v| v as i64),
+                entry.started_at,
+                entry.duration_ms as i64,
+                entry.favorite as i64,
+            ],
+        )?;
+        self.conn.execute(
+            "DELETE FROM query_history
+             WHERE favorite = 0 AND id NOT IN (
+               SELECT id FROM query_history WHERE favorite = 0
+               ORDER BY started_at DESC LIMIT ?1
+             )",
+            params![retention as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Newest-first history, optionally filtered by a case-insensitive
+    /// substring of the SQL text.
+    pub fn history_list(
+        &self,
+        search: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<HistoryEntry>, StoreError> {
+        let like = search.map(|s| format!("%{s}%"));
+        let sql = "SELECT id, connection_key, sql_text, status, error_text,
+                          rows_returned, rows_affected, started_at, duration_ms, favorite
+                   FROM query_history
+                   WHERE (?1 IS NULL OR sql_text LIKE ?1)
+                   ORDER BY started_at DESC, rowid DESC LIMIT ?2";
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = stmt
+            .query_map(params![like, limit as i64], Self::row_to_history)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn history_set_favorite(&self, id: &str, favorite: bool) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE query_history SET favorite = ?2 WHERE id = ?1",
+            params![id, favorite as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Clears history; favorites survive unless `include_favorites`.
+    pub fn history_clear(&self, include_favorites: bool) -> Result<(), StoreError> {
+        if include_favorites {
+            self.conn.execute("DELETE FROM query_history", [])?;
+        } else {
+            self.conn
+                .execute("DELETE FROM query_history WHERE favorite = 0", [])?;
+        }
+        Ok(())
+    }
+
+    fn row_to_history(r: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
+        Ok(HistoryEntry {
+            id: r.get(0)?,
+            connection_key: r.get(1)?,
+            sql_text: r.get(2)?,
+            status: r.get(3)?,
+            error_text: r.get(4)?,
+            rows_returned: r.get::<_, i64>(5)? as u64,
+            rows_affected: r.get::<_, Option<i64>>(6)?.map(|v| v as u64),
+            started_at: r.get(7)?,
+            duration_ms: r.get::<_, i64>(8)? as u64,
+            favorite: r.get::<_, i64>(9)? != 0,
+        })
+    }
+
     fn row_to_connection(r: &rusqlite::Row<'_>) -> rusqlite::Result<ConnectionRecord> {
         Ok(ConnectionRecord {
             id: r.get(0)?,
@@ -354,6 +463,24 @@ pub struct ConnectionRecord {
     pub options_json: Option<String>,
 }
 
+/// One recorded execution. `sql_text` may be None (prod text exclusion).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEntry {
+    pub id: String,
+    pub connection_key: String,
+    pub sql_text: Option<String>,
+    /// 'success' | 'error' | 'cancelled'
+    pub status: String,
+    pub error_text: Option<String>,
+    pub rows_returned: u64,
+    pub rows_affected: Option<u64>,
+    /// Unix seconds.
+    pub started_at: i64,
+    pub duration_ms: u64,
+    pub favorite: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TabRecord {
     pub id: String,
@@ -393,9 +520,9 @@ mod tests {
             )
             .unwrap();
         }
-        // Reopen: must migrate to v2 and keep old data.
+        // Reopen: must migrate to the current version and keep old data.
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 2);
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
         assert_eq!(
             store.setting_get::<String>("theme").unwrap().unwrap(),
             "dark"
@@ -456,6 +583,111 @@ mod tests {
         assert!(store.connection_get("c1").unwrap().is_none());
         // Idempotent delete.
         assert!(store.connection_delete("c1").unwrap().is_none());
+    }
+
+    fn history(id: &str, started_at: i64, sql: Option<&str>, favorite: bool) -> HistoryEntry {
+        HistoryEntry {
+            id: id.into(),
+            connection_key: "talaat@localhost:5432/postgres".into(),
+            sql_text: sql.map(String::from),
+            status: "success".into(),
+            error_text: None,
+            rows_returned: 42,
+            rows_affected: None,
+            started_at,
+            duration_ms: 7,
+            favorite,
+        }
+    }
+
+    #[test]
+    fn history_roundtrip_search_and_favorite() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .history_add(&history("h1", 100, Some("select * from users"), false), 100)
+            .unwrap();
+        store
+            .history_add(
+                &history("h2", 200, Some("update orders set x=1"), false),
+                100,
+            )
+            .unwrap();
+        store
+            .history_add(&history("h3", 300, None, false), 100) // prod: no text
+            .unwrap();
+
+        // Newest first.
+        let all = store.history_list(None, 10).unwrap();
+        assert_eq!(
+            all.iter().map(|h| h.id.as_str()).collect::<Vec<_>>(),
+            vec!["h3", "h2", "h1"]
+        );
+        assert_eq!(all[0].sql_text, None);
+        assert_eq!(all[2].rows_returned, 42);
+
+        // Search hits SQL text only.
+        let hits = store.history_list(Some("users"), 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, "h1");
+
+        // Favorite toggle round-trips.
+        store.history_set_favorite("h1", true).unwrap();
+        assert!(store.history_list(Some("users"), 10).unwrap()[0].favorite);
+    }
+
+    #[test]
+    fn history_retention_prunes_oldest_but_spares_favorites() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .history_add(&history("old-fav", 1, Some("select 1"), true), 3)
+            .unwrap();
+        for i in 0..5 {
+            store
+                .history_add(
+                    &history(&format!("h{i}"), 10 + i, Some("select 2"), false),
+                    3,
+                )
+                .unwrap();
+        }
+        let ids: Vec<_> = store
+            .history_list(None, 100)
+            .unwrap()
+            .into_iter()
+            .map(|h| h.id)
+            .collect();
+        // 3 newest non-favorites kept + the favorite, regardless of age.
+        assert_eq!(ids, vec!["h4", "h3", "h2", "old-fav"]);
+
+        // Clear keeps favorites by default, removes them when asked.
+        store.history_clear(false).unwrap();
+        let ids: Vec<_> = store
+            .history_list(None, 100)
+            .unwrap()
+            .into_iter()
+            .map(|h| h.id)
+            .collect();
+        assert_eq!(ids, vec!["old-fav"]);
+        store.history_clear(true).unwrap();
+        assert!(store.history_list(None, 100).unwrap().is_empty());
+    }
+
+    #[test]
+    fn upgrades_v2_store_to_v3() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v2.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(MIGRATION_V1).unwrap();
+            conn.execute_batch(MIGRATION_V2).unwrap();
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES ('schema_version', '2')",
+                [],
+            )
+            .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 3);
+        assert!(store.history_list(None, 10).unwrap().is_empty());
     }
 
     #[test]

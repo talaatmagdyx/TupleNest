@@ -31,6 +31,8 @@ pub struct PgParams {
     /// "disabled" | "prefer" | "verify-ca" | "verify-full" (default).
     pub tls_mode: Option<String>,
     pub tls_ca_path: Option<String>,
+    /// dev/test/staging/prod — prod suppresses query text in history.
+    pub environment: Option<String>,
 }
 
 fn parse_tls_mode(s: Option<&str>) -> Result<TlsMode, String> {
@@ -72,6 +74,8 @@ pub struct PgState {
     cache_key: StdMutex<Option<String>>,
     /// Last query's rows, held backend-side for windowed paging.
     result: StdMutex<Option<StoredResult>>,
+    /// Environment tag of the connected profile (prod → history text off).
+    connected_env: StdMutex<Option<String>>,
 }
 
 impl PgState {
@@ -82,6 +86,7 @@ impl PgState {
             cache: StdMutex::new(cache),
             cache_key: StdMutex::new(None),
             result: StdMutex::new(None),
+            connected_env: StdMutex::new(None),
         }
     }
 }
@@ -189,6 +194,10 @@ pub async fn pg_connect(state: tauri::State<'_, PgState>, params: PgParams) -> R
     *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = Some(session.cancel_handle());
     *state.session.lock().await = Some(session);
     *state.cache_key.lock().map_err(|_| "key lock poisoned")? = Some(cache_key_of(&params));
+    *state
+        .connected_env
+        .lock()
+        .map_err(|_| "env lock poisoned")? = params.environment.clone();
     tracing::info!(component = "pg", host = %params.host, db = %params.database, "session opened");
     Ok(())
 }
@@ -277,16 +286,66 @@ pub struct ColumnOut {
     db_type: String,
 }
 
+/// Records an execution in query history (E1.5). Prod-tagged connections
+/// store no SQL text. History failures never fail the query itself.
+#[allow(clippy::too_many_arguments)]
+fn record_history(
+    app: &crate::AppState,
+    state: &PgState,
+    sql: &str,
+    status: &str,
+    error_text: Option<String>,
+    rows_returned: u64,
+    rows_affected: Option<u64>,
+    duration_ms: u64,
+) {
+    let connection_key = state
+        .cache_key
+        .lock()
+        .ok()
+        .and_then(|k| k.clone())
+        .unwrap_or_else(|| "<unknown>".into());
+    let is_prod = state
+        .connected_env
+        .lock()
+        .ok()
+        .and_then(|e| e.clone())
+        .as_deref()
+        == Some("prod");
+    let entry = tuplenest_workspace_store::HistoryEntry {
+        id: uuid::Uuid::new_v4().to_string(),
+        connection_key,
+        sql_text: if is_prod { None } else { Some(sql.to_string()) },
+        status: status.to_string(),
+        error_text,
+        rows_returned,
+        rows_affected,
+        started_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+        duration_ms,
+        favorite: false,
+    };
+    if let Ok(store) = app.store.lock() {
+        if let Err(e) = store.history_add(&entry, 1_000) {
+            tracing::warn!(component = "history", error = %e, "failed to record history");
+        }
+    }
+}
+
 /// Runs SQL on the active session. Rows stream into the backend store;
 /// the WebView pages them with `pg_rows`.
 #[tauri::command]
 pub async fn pg_query(
+    app: tauri::State<'_, crate::AppState>,
     state: tauri::State<'_, PgState>,
     sql: String,
 ) -> Result<QueryResultOut, String> {
     // Drop the previous result before running (frees memory immediately).
     *state.result.lock().map_err(|_| "result lock poisoned")? = None;
 
+    let started_wall = std::time::Instant::now();
     let mut guard = state.session.lock().await;
     let session = guard.as_mut().ok_or("not connected")?;
 
@@ -298,16 +357,44 @@ pub async fn pg_query(
     };
     let request = QueryRequest {
         execution_id: ExecutionId::new(),
-        sql,
+        sql: sql.clone(),
         params: vec![],
         row_limit: 0,
         timeout_ms: 0,
     };
-    let summary = session
-        .execute(request, &sink)
-        .await
-        .map_err(err_to_string)?;
+    let summary = match session.execute(request, &sink).await {
+        Ok(summary) => summary,
+        Err(e) => {
+            let msg = err_to_string(e);
+            let status = if msg.to_lowercase().contains("cancel") {
+                "cancelled"
+            } else {
+                "error"
+            };
+            record_history(
+                &app,
+                &state,
+                &sql,
+                status,
+                Some(msg.clone()),
+                0,
+                None,
+                started_wall.elapsed().as_millis() as u64,
+            );
+            return Err(msg);
+        }
+    };
     let stored = sink.inner.into_inner().map_err(|_| "sink lock poisoned")?;
+    record_history(
+        &app,
+        &state,
+        &sql,
+        "success",
+        None,
+        stored.store.total_seen(),
+        summary.rows_affected,
+        summary.duration_ms,
+    );
     tracing::info!(
         component = "pg",
         rows = stored.store.total_seen(),

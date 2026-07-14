@@ -12,6 +12,7 @@ type PgParams = {
   secretRef: string | null;
   tlsMode: string;
   tlsCaPath: string | null;
+  environment?: string | null;
 };
 
 type TestStage = { name: string; passed: boolean; durationMs: number; detail: string | null };
@@ -47,6 +48,19 @@ type DbColumn = {
   nullable: boolean;
   primaryKey: boolean;
   comment: string | null;
+};
+
+type HistoryEntry = {
+  id: string;
+  connectionKey: string;
+  sqlText: string | null;
+  status: "success" | "error" | "cancelled";
+  errorText: string | null;
+  rowsReturned: number;
+  rowsAffected: number | null;
+  startedAt: number;
+  durationMs: number;
+  favorite: boolean;
 };
 
 type QueryResult = {
@@ -92,6 +106,24 @@ export default function App() {
   const [openTables, setOpenTables] = useState<Record<string, boolean>>({});
   const [columns, setColumns] = useState<Record<string, DbColumn[]>>({});
   const [metaCached, setMetaCached] = useState(false);
+
+  // Query history (E1.5)
+  const [historyItems, setHistoryItems] = useState<HistoryEntry[]>([]);
+  const [historySearch, setHistorySearch] = useState("");
+
+  const refreshHistory = useCallback(async (search: string) => {
+    try {
+      setHistoryItems(
+        await invoke<HistoryEntry[]>("history_list", { search: search || null, limit: 50 })
+      );
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshHistory(historySearch);
+  }, [historySearch, refreshHistory]);
 
   const refreshSaved = useCallback(async () => {
     try {
@@ -140,8 +172,9 @@ export default function App() {
       secretRef: ref,
       tlsMode,
       tlsCaPath: tlsCaPath || null,
+      environment,
     };
-  }, [password, savePassword, secretRef, host, port, database, username, tlsMode, tlsCaPath]);
+  }, [password, savePassword, secretRef, host, port, database, username, tlsMode, tlsCaPath, environment]);
 
   const doTest = useCallback(async () => {
     setStatus("Testing…");
@@ -287,8 +320,30 @@ export default function App() {
       setResult(null);
     } finally {
       setRunning(false);
+      refreshHistory(historySearch);
     }
-  }, [sql]);
+  }, [sql, refreshHistory, historySearch]);
+
+  const toggleFavorite = useCallback(
+    async (h: HistoryEntry) => {
+      try {
+        await invoke("history_favorite", { id: h.id, favorite: !h.favorite });
+        await refreshHistory(historySearch);
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    [refreshHistory, historySearch]
+  );
+
+  const clearHistory = useCallback(async () => {
+    try {
+      await invoke("history_clear", { includeFavorites: false });
+      await refreshHistory(historySearch);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [refreshHistory, historySearch]);
 
   const doCancel = useCallback(async () => {
     try {
@@ -617,6 +672,53 @@ export default function App() {
               epoch={queryEpoch}
             />
           )}
+        </section>
+
+        <section className="panel">
+          <h2>History</h2>
+          <div className="form-row">
+            <input
+              placeholder="search history…"
+              value={historySearch}
+              onChange={(e) => setHistorySearch(e.target.value)}
+              style={{ flex: 1 }}
+            />
+            <button onClick={clearHistory} title="Clear non-favorites">
+              Clear
+            </button>
+          </div>
+          {historyItems.length === 0 && <p className="muted">No history yet.</p>}
+          <ul className="history-list">
+            {historyItems.map((h) => (
+              <li key={h.id} title={h.errorText ?? h.sqlText ?? ""}>
+                <span className={`hstatus ${h.status}`}>
+                  {h.status === "success" ? "✓" : h.status === "cancelled" ? "⊘" : "✗"}
+                </span>
+                <span
+                  className={`hsql ${h.sqlText ? "clickable" : ""}`}
+                  onClick={() => h.sqlText && setSql(h.sqlText)}
+                >
+                  {h.sqlText ?? <em className="muted">(query text hidden — prod)</em>}
+                </span>
+                <span className="muted hmeta">
+                  {h.status === "success"
+                    ? `${h.rowsReturned || h.rowsAffected || 0} rows`
+                    : h.status}
+                  {" · "}
+                  {h.durationMs}ms
+                  {" · "}
+                  {new Date(h.startedAt * 1000).toLocaleTimeString()}
+                </span>
+                <button
+                  className={`ghost star ${h.favorite ? "on" : ""}`}
+                  title={h.favorite ? "Unfavorite" : "Favorite"}
+                  onClick={() => toggleFavorite(h)}
+                >
+                  {h.favorite ? "★" : "☆"}
+                </button>
+              </li>
+            ))}
+          </ul>
         </section>
         <p className="hint">
           Credentials never enter this WebView beyond one-time entry: they go
