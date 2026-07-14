@@ -105,8 +105,7 @@ a { color: var(--tn-accent); text-decoration: none; }
 }
 .icon-btn:hover { background: var(--tn-s2); color: var(--tn-ts); }
 
-.conn-switch {
-  position: relative; display: flex; align-items: center, }
+.conn-switch { position: relative; display: flex; align-items: center; }
 .conn-switch > button {
   display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 11px;
   border-radius: 8px; border: 1px solid var(--tn-bs); background: var(--tn-bg);
