@@ -18,6 +18,7 @@ import {
   type PaletteItem,
 } from "./overlays/Overlays";
 import SchemaModal, { type SchemaExtra } from "./overlays/SchemaModal";
+import MonitorModal from "./overlays/MonitorModal";
 import ExplainModal, { type PlanNode, type PlanStats } from "./overlays/ExplainModal";
 import { UpdateToast } from "./overlays/Overlays";
 import {
@@ -54,7 +55,8 @@ type OverlayKind =
   | "explain"
   | "schema"
   | "cheatsheet"
-  | "inspect";
+  | "inspect"
+  | "monitor";
 
 export default function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -975,6 +977,7 @@ export default function App() {
       { icon: "⚙", label: "Open settings", type: "Action", exec: () => setOverlay("settings") },
     ];
     if (connected) {
+      items.push({ icon: "📊", label: "Server monitor (sessions & locks)", type: "Action", exec: () => setOverlay("monitor") });
       items.push({ icon: "⏻", label: "Disconnect current session", type: "Action", exec: doDisconnect });
       if (!inTx) items.push({ icon: "▣", label: "Begin transaction", type: "Action", exec: doBegin });
       else {
@@ -1272,6 +1275,7 @@ export default function App() {
           onClose={() => setOverlay(null)}
         />
       )}
+      {overlay === "monitor" && <MonitorModal onToast={showToast} onClose={() => setOverlay(null)} />}
       {overlay === "cheatsheet" && <Cheatsheet onClose={() => setOverlay(null)} />}
       {overlay === "inspect" && (
         <Inspector text={inspectText} colName={inspectCol} onClose={() => setOverlay(null)} />

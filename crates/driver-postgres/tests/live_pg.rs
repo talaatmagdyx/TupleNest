@@ -481,3 +481,74 @@ async fn killed_backend_yields_network_error_and_broken_session() {
     // And the session stays broken on subsequent use.
     assert!(victim.execute(req("select 2"), &NullSink).await.is_err());
 }
+
+// --- Monitoring (Phase 6) ---------------------------------------------------
+
+#[tokio::test]
+#[ignore]
+async fn live_server_activity_reports_sessions_and_db_stats() {
+    let session = PostgresDriver.connect_concrete(test_config()).await.unwrap();
+    // Open a second connection so there is at least one other session.
+    let _other = PostgresDriver.connect_concrete(test_config()).await.unwrap();
+
+    let resp = session
+        .metadata(MetadataRequest::ServerActivity)
+        .await
+        .unwrap();
+    let p = resp.payload;
+    assert!(p["sessions"].is_array(), "sessions array present");
+    assert!(p["locks"].is_array(), "locks array present");
+    // db stats populated
+    assert!(p["db"]["backends"].as_i64().unwrap() >= 1);
+    assert!(p["db"]["size"].as_str().unwrap().len() > 0);
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_terminate_backend_kills_target_session() {
+    let admin = PostgresDriver.connect_concrete(test_config()).await.unwrap();
+    let mut victim = PostgresDriver.connect_concrete(test_config()).await.unwrap();
+
+    let sink = FirstCellSink(Mutex::new(None));
+    victim
+        .execute(req("select pg_backend_pid()::text"), &sink)
+        .await
+        .unwrap();
+    let pid: i32 = sink.0.lock().unwrap().clone().unwrap().parse().unwrap();
+
+    let ok = admin.admin_backend(pid, true).await.unwrap();
+    assert!(ok, "pg_terminate_backend returned true");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Victim's next statement fails — its backend is gone.
+    assert!(victim.execute(req("select 1"), &NullSink).await.is_err());
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_relationships_lists_foreign_keys() {
+    let mut session = PostgresDriver.connect_concrete(test_config()).await.unwrap();
+    session
+        .execute(req("CREATE TABLE tn_parent (id int primary key)"), &NullSink)
+        .await
+        .unwrap();
+    session
+        .execute(
+            req("CREATE TABLE tn_child (id int primary key, parent_id int references tn_parent(id))"),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+
+    let resp = session
+        .metadata(MetadataRequest::Relationships { schema: "public".into() })
+        .await
+        .unwrap();
+    let fks = resp.payload.as_array().unwrap().clone();
+    let hit = fks
+        .iter()
+        .find(|f| f["from"] == "tn_child" && f["to"] == "tn_parent");
+    assert!(hit.is_some(), "child→parent FK present: {fks:?}");
+
+    session.execute(req("DROP TABLE tn_child"), &NullSink).await.unwrap();
+    session.execute(req("DROP TABLE tn_parent"), &NullSink).await.unwrap();
+}

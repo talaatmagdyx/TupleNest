@@ -636,3 +636,26 @@ a { color: var(--tn-accent); text-decoration: none; }
   display: grid; place-items: center;
   background: var(--tn-as); border: 1px solid var(--tn-bh);
 }
+
+
+/* --- Monitoring dashboard (Phase 6) --- */
+.mon-table {
+  border: 1px solid var(--tn-bs); border-radius: 9px; overflow: hidden;
+  font-size: 12px;
+}
+.mon-head {
+  display: flex; gap: 10px; padding: 7px 12px; background: var(--tn-s2);
+  border-bottom: 1px solid var(--tn-bh);
+  font: 700 9.5px Inter; letter-spacing: .08em; text-transform: uppercase; color: var(--tn-tm);
+}
+.mon-row {
+  display: flex; gap: 10px; align-items: center; padding: 6px 12px;
+  border-bottom: 1px solid var(--tn-bs);
+}
+.mon-row:last-child { border-bottom: none; }
+.mon-row:hover { background: var(--tn-s1); }
+.state-badge {
+  font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 4px;
+  color: var(--tn-tm); background: var(--tn-s2);
+}
+.state-badge.act { color: var(--tn-success); background: rgba(70,240,176,.12); }

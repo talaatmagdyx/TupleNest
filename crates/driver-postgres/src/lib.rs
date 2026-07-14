@@ -231,6 +231,22 @@ impl PgCancelHandle {
 }
 
 impl PostgresSession {
+    /// Cancel (soft) or terminate (hard) another backend by pid — powers the
+    /// monitoring panel's actions. Returns whether the admin call succeeded.
+    pub async fn admin_backend(&self, pid: i32, terminate: bool) -> Result<bool, DriverError> {
+        let sql = if terminate {
+            "SELECT pg_terminate_backend($1)"
+        } else {
+            "SELECT pg_cancel_backend($1)"
+        };
+        let row = self
+            .client
+            .query_one(sql, &[&pid])
+            .await
+            .map_err(normalize_error)?;
+        Ok(row.get::<_, bool>(0))
+    }
+
     pub fn cancel_handle(&self) -> PgCancelHandle {
         PgCancelHandle {
             token: self.cancel_token.clone(),
@@ -495,6 +511,106 @@ impl DatabaseSession for PostgresSession {
                     "totalSize": stats_row.as_ref().map(|r| r.get::<_, String>(1)),
                     "comment": stats_row.as_ref().and_then(|r| r.get::<_, Option<String>>(2)),
                 })
+            }
+            MetadataRequest::ServerActivity => {
+                // Sessions from pg_stat_activity (excluding this session).
+                let sessions = self
+                    .client
+                    .query(
+                        "SELECT pid, usename, datname, application_name, client_addr::text,
+                                state, wait_event_type, wait_event,
+                                EXTRACT(EPOCH FROM (now() - query_start))::bigint AS secs,
+                                left(query, 240) AS query
+                         FROM pg_stat_activity
+                         WHERE pid <> pg_backend_pid() AND backend_type = 'client backend'
+                         ORDER BY query_start NULLS LAST
+                         LIMIT 200",
+                        &[],
+                    )
+                    .await
+                    .map_err(normalize_error)?;
+                // Locks that are currently NOT granted (blocking situations).
+                let locks = self
+                    .client
+                    .query(
+                        "SELECT bl.pid AS blocked_pid, ka.usename AS blocked_user,
+                                bl.locktype, bl.mode,
+                                COALESCE(cl.relname, bl.locktype) AS object
+                         FROM pg_locks bl
+                         JOIN pg_stat_activity ka ON ka.pid = bl.pid
+                         LEFT JOIN pg_class cl ON cl.oid = bl.relation
+                         WHERE NOT bl.granted
+                         LIMIT 100",
+                        &[],
+                    )
+                    .await
+                    .map_err(normalize_error)?;
+                // Database-wide stats.
+                let db = self
+                    .client
+                    .query_one(
+                        "SELECT numbackends, xact_commit, xact_rollback,
+                                blks_hit, blks_read, tup_returned, tup_fetched,
+                                pg_size_pretty(pg_database_size(current_database()))
+                         FROM pg_stat_database WHERE datname = current_database()",
+                        &[],
+                    )
+                    .await
+                    .map_err(normalize_error)?;
+                serde_json::json!({
+                    "sessions": sessions.iter().map(|r| serde_json::json!({
+                        "pid": r.get::<_, i32>(0),
+                        "user": r.get::<_, Option<String>>(1),
+                        "database": r.get::<_, Option<String>>(2),
+                        "application": r.get::<_, Option<String>>(3),
+                        "clientAddr": r.get::<_, Option<String>>(4),
+                        "state": r.get::<_, Option<String>>(5),
+                        "waitType": r.get::<_, Option<String>>(6),
+                        "waitEvent": r.get::<_, Option<String>>(7),
+                        "seconds": r.get::<_, Option<i64>>(8),
+                        "query": r.get::<_, Option<String>>(9),
+                    })).collect::<Vec<_>>(),
+                    "locks": locks.iter().map(|r| serde_json::json!({
+                        "blockedPid": r.get::<_, i32>(0),
+                        "blockedUser": r.get::<_, Option<String>>(1),
+                        "lockType": r.get::<_, String>(2),
+                        "mode": r.get::<_, Option<String>>(3),
+                        "object": r.get::<_, String>(4),
+                    })).collect::<Vec<_>>(),
+                    "db": {
+                        "backends": db.get::<_, i32>(0),
+                        "commits": db.get::<_, i64>(1),
+                        "rollbacks": db.get::<_, i64>(2),
+                        "blocksHit": db.get::<_, i64>(3),
+                        "blocksRead": db.get::<_, i64>(4),
+                        "tuplesReturned": db.get::<_, i64>(5),
+                        "tuplesFetched": db.get::<_, i64>(6),
+                        "size": db.get::<_, String>(7),
+                    },
+                })
+            }
+            MetadataRequest::Relationships { schema } => {
+                let rows = self
+                    .client
+                    .query(
+                        "SELECT c.conname,
+                                sr.relname AS src_table,
+                                tr.relname AS tgt_table
+                         FROM pg_constraint c
+                         JOIN pg_class sr ON sr.oid = c.conrelid
+                         JOIN pg_class tr ON tr.oid = c.confrelid
+                         JOIN pg_namespace n ON n.oid = sr.relnamespace
+                         WHERE c.contype = 'f' AND n.nspname = $1
+                         ORDER BY sr.relname, c.conname",
+                        &[&schema],
+                    )
+                    .await
+                    .map_err(normalize_error)?;
+                serde_json::json!(rows.iter().map(|r| serde_json::json!({
+                    "name": r.get::<_, String>(0),
+                    "from": r.get::<_, String>(1),
+                    "to": r.get::<_, String>(2),
+                })).collect::<Vec<_>>())
             }
         };
         Ok(MetadataResponse {

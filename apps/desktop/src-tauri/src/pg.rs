@@ -714,6 +714,45 @@ pub async fn pg_metadata(
     }
 }
 
+/// Live server activity for the monitoring panel (Phase 6). Not cached.
+#[tauri::command]
+pub async fn pg_activity(state: tauri::State<'_, PgState>) -> Result<serde_json::Value, String> {
+    let guard = state.session.lock().await;
+    let session = guard.as_ref().ok_or("not connected")?;
+    session
+        .metadata(MetadataRequest::ServerActivity)
+        .await
+        .map(|r| r.payload)
+        .map_err(err_to_string)
+}
+
+/// Foreign-key relationships for the ER view (Phase 2).
+#[tauri::command]
+pub async fn pg_relationships(
+    state: tauri::State<'_, PgState>,
+    schema: String,
+) -> Result<serde_json::Value, String> {
+    let guard = state.session.lock().await;
+    let session = guard.as_ref().ok_or("not connected")?;
+    session
+        .metadata(MetadataRequest::Relationships { schema })
+        .await
+        .map(|r| r.payload)
+        .map_err(err_to_string)
+}
+
+/// Cancel (soft) or terminate (hard) a backend by pid from the monitor.
+#[tauri::command]
+pub async fn pg_admin_backend(
+    state: tauri::State<'_, PgState>,
+    pid: i32,
+    terminate: bool,
+) -> Result<bool, String> {
+    let guard = state.session.lock().await;
+    let session = guard.as_ref().ok_or("not connected")?;
+    session.admin_backend(pid, terminate).await.map_err(err_to_string)
+}
+
 /// Cache-only metadata: renders the explorer for a saved profile before —
 /// or without — connecting. Never touches the network.
 #[tauri::command]
