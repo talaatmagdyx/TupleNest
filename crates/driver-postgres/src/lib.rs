@@ -382,11 +382,82 @@ impl DatabaseSession for PostgresSession {
                     .map(|r| r.get::<_, String>(0))
                     .collect::<Vec<_>>())
             }
-            _ => {
-                return Err(DriverError::new(
-                    ErrorCategory::Unsupported,
-                    "Metadata request not supported in the Phase 0 proof of concept",
-                ))
+            MetadataRequest::ListObjects { schema } => {
+                let rows = self
+                    .client
+                    .query(
+                        "SELECT c.relname,
+                                CASE c.relkind
+                                  WHEN 'r' THEN 'table'
+                                  WHEN 'p' THEN 'table'
+                                  WHEN 'v' THEN 'view'
+                                  WHEN 'm' THEN 'matview'
+                                  WHEN 'f' THEN 'foreign'
+                                END AS kind,
+                                obj_description(c.oid, 'pg_class') AS comment
+                         FROM pg_class c
+                         JOIN pg_namespace n ON n.oid = c.relnamespace
+                         WHERE n.nspname = $1
+                           AND c.relkind IN ('r','p','v','m','f')
+                         ORDER BY c.relname",
+                        &[&schema],
+                    )
+                    .await
+                    .map_err(normalize_error)?;
+                serde_json::json!(rows
+                    .iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "name": r.get::<_, String>(0),
+                            "kind": r.get::<_, String>(1),
+                            "comment": r.get::<_, Option<String>>(2),
+                        })
+                    })
+                    .collect::<Vec<_>>())
+            }
+            MetadataRequest::DescribeObject { schema, name } => {
+                let rows = self
+                    .client
+                    .query(
+                        "SELECT a.attname,
+                                format_type(a.atttypid, a.atttypmod) AS db_type,
+                                NOT a.attnotnull AS nullable,
+                                COALESCE((
+                                  SELECT TRUE FROM pg_index i
+                                  WHERE i.indrelid = a.attrelid AND i.indisprimary
+                                    AND a.attnum = ANY (i.indkey)
+                                ), FALSE) AS primary_key,
+                                col_description(a.attrelid, a.attnum) AS comment
+                         FROM pg_attribute a
+                         JOIN pg_class c ON c.oid = a.attrelid
+                         JOIN pg_namespace n ON n.oid = c.relnamespace
+                         WHERE n.nspname = $1 AND c.relname = $2
+                           AND a.attnum > 0 AND NOT a.attisdropped
+                         ORDER BY a.attnum",
+                        &[&schema, &name],
+                    )
+                    .await
+                    .map_err(normalize_error)?;
+                if rows.is_empty() {
+                    return Err(DriverError::new(
+                        ErrorCategory::Configuration,
+                        format!("Relation {schema}.{name} not found"),
+                    ));
+                }
+                serde_json::json!({
+                    "columns": rows
+                        .iter()
+                        .map(|r| {
+                            serde_json::json!({
+                                "name": r.get::<_, String>(0),
+                                "dbType": r.get::<_, String>(1),
+                                "nullable": r.get::<_, bool>(2),
+                                "primaryKey": r.get::<_, bool>(3),
+                                "comment": r.get::<_, Option<String>>(4),
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                })
             }
         };
         Ok(MetadataResponse {

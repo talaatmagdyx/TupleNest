@@ -333,3 +333,100 @@ async fn live_tls_cancel_works_over_tls() {
         "cancel must interrupt promptly over TLS"
     );
 }
+
+// --- Metadata live tests (E1.3) ----------------------------------------------
+
+#[tokio::test]
+#[ignore]
+async fn live_metadata_schema_objects_columns_roundtrip() {
+    let mut session = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+
+    // Fixture: table with PK, nullable column, comment; and a view.
+    session
+        .execute(
+            req("CREATE TABLE tuplenest_meta (id bigint PRIMARY KEY, note text, qty int NOT NULL)"),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+    session
+        .execute(
+            req("COMMENT ON COLUMN tuplenest_meta.note IS 'free text'"),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+    session
+        .execute(
+            req("CREATE VIEW tuplenest_meta_v AS SELECT id FROM tuplenest_meta"),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+
+    // Schemas include public.
+    let schemas = session
+        .metadata(MetadataRequest::ListSchemas)
+        .await
+        .unwrap();
+    let list: Vec<String> = serde_json::from_value(schemas.payload).unwrap();
+    assert!(list.contains(&"public".to_string()));
+
+    // Objects include our table and view with correct kinds.
+    let objects = session
+        .metadata(MetadataRequest::ListObjects {
+            schema: "public".into(),
+        })
+        .await
+        .unwrap();
+    let objs = objects.payload.as_array().unwrap().clone();
+    let find = |n: &str| {
+        objs.iter()
+            .find(|o| o["name"] == n)
+            .unwrap_or_else(|| panic!("{n} missing"))
+            .clone()
+    };
+    assert_eq!(find("tuplenest_meta")["kind"], "table");
+    assert_eq!(find("tuplenest_meta_v")["kind"], "view");
+
+    // Columns: types, nullability, PK, comment.
+    let desc = session
+        .metadata(MetadataRequest::DescribeObject {
+            schema: "public".into(),
+            name: "tuplenest_meta".into(),
+        })
+        .await
+        .unwrap();
+    let cols = desc.payload["columns"].as_array().unwrap().clone();
+    assert_eq!(cols.len(), 3);
+    assert_eq!(cols[0]["name"], "id");
+    assert_eq!(cols[0]["dbType"], "bigint");
+    assert_eq!(cols[0]["primaryKey"], true);
+    assert_eq!(cols[0]["nullable"], false);
+    assert_eq!(cols[1]["name"], "note");
+    assert_eq!(cols[1]["nullable"], true);
+    assert_eq!(cols[1]["comment"], "free text");
+    assert_eq!(cols[2]["name"], "qty");
+    assert_eq!(cols[2]["nullable"], false);
+
+    // Unknown relation is a clean error, not a panic.
+    assert!(session
+        .metadata(MetadataRequest::DescribeObject {
+            schema: "public".into(),
+            name: "no_such_relation".into(),
+        })
+        .await
+        .is_err());
+
+    session
+        .execute(req("DROP VIEW tuplenest_meta_v"), &NullSink)
+        .await
+        .unwrap();
+    session
+        .execute(req("DROP TABLE tuplenest_meta"), &NullSink)
+        .await
+        .unwrap();
+}

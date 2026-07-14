@@ -14,7 +14,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use tuplenest_credential_store::{CredentialStore, KeychainStore, Secret};
 use tuplenest_driver_api::{
     BatchSink, CellValue, ConnectionConfig, DatabaseSession, DriverError, Environment, ExecutionId,
-    QueryRequest, RowBatch, SecretRef, TlsMode,
+    MetadataRequest, QueryRequest, RowBatch, SecretRef, TlsMode,
 };
 use tuplenest_driver_postgres::{PgCancelHandle, PostgresDriver, PostgresSession};
 
@@ -302,6 +302,20 @@ pub async fn pg_query(
         rows_affected: summary.rows_affected,
         elapsed_ms: summary.duration_ms,
     })
+}
+
+/// Metadata for the explorer tree (E1.3). `request` mirrors driver-api's
+/// MetadataRequest: {"kind":"list_schemas"} | {"kind":"list_objects","schema":..}
+/// | {"kind":"describe_object","schema":..,"name":..}.
+#[tauri::command]
+pub async fn pg_metadata(
+    state: tauri::State<'_, PgState>,
+    request: MetadataRequest,
+) -> Result<serde_json::Value, String> {
+    let guard = state.session.lock().await;
+    let session = guard.as_ref().ok_or("not connected")?;
+    let response = session.metadata(request).await.map_err(err_to_string)?;
+    Ok(response.payload)
 }
 
 /// Cancels the in-flight query via the wire-protocol cancel key. Does not

@@ -36,6 +36,16 @@ type ConnectionRecord = {
   tlsCaPath: string | null;
 };
 
+type DbObject = { name: string; kind: string; comment: string | null };
+
+type DbColumn = {
+  name: string;
+  dbType: string;
+  nullable: boolean;
+  primaryKey: boolean;
+  comment: string | null;
+};
+
 type QueryResult = {
   columns: { name: string; dbType: string }[];
   rows: unknown[][];
@@ -70,6 +80,13 @@ export default function App() {
   const [sql, setSql] = useState("select now(), version()");
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<QueryResult | null>(null);
+
+  // Explorer tree (E1.3): lazily loaded schemas → objects → columns.
+  const [schemas, setSchemas] = useState<string[] | null>(null);
+  const [openSchemas, setOpenSchemas] = useState<Record<string, boolean>>({});
+  const [objects, setObjects] = useState<Record<string, DbObject[]>>({});
+  const [openTables, setOpenTables] = useState<Record<string, boolean>>({});
+  const [columns, setColumns] = useState<Record<string, DbColumn[]>>({});
 
   const refreshSaved = useCallback(async () => {
     try {
@@ -138,6 +155,14 @@ export default function App() {
     }
   }, [withSecret]);
 
+  const resetExplorer = useCallback(() => {
+    setSchemas(null);
+    setOpenSchemas({});
+    setObjects({});
+    setOpenTables({});
+    setColumns({});
+  }, []);
+
   const doConnect = useCallback(async () => {
     setStatus("Connecting…");
     try {
@@ -145,17 +170,63 @@ export default function App() {
       setConnected(true);
       setConnectedEnv(environment);
       setStatus("Connected");
+      resetExplorer();
+      invoke<string[]>("pg_metadata", { request: { kind: "list_schemas" } })
+        .then(setSchemas)
+        .catch((e) => setStatus(`Explorer error: ${e}`));
     } catch (e) {
       setStatus(`Error: ${e}`);
     }
-  }, [withSecret, environment]);
+  }, [withSecret, environment, resetExplorer]);
 
   const doDisconnect = useCallback(async () => {
     await invoke("pg_disconnect").catch(() => {});
     setConnected(false);
     setConnectedEnv(null);
     setResult(null);
+    resetExplorer();
     setStatus("Disconnected");
+  }, [resetExplorer]);
+
+  const toggleSchema = useCallback(
+    async (schema: string) => {
+      const opening = !openSchemas[schema];
+      setOpenSchemas((m) => ({ ...m, [schema]: opening }));
+      if (opening && !(schema in objects)) {
+        try {
+          const objs = await invoke<DbObject[]>("pg_metadata", {
+            request: { kind: "list_objects", schema },
+          });
+          setObjects((m) => ({ ...m, [schema]: objs }));
+        } catch (e) {
+          setStatus(`Explorer error: ${e}`);
+        }
+      }
+    },
+    [openSchemas, objects]
+  );
+
+  const toggleTable = useCallback(
+    async (schema: string, name: string) => {
+      const key = `${schema}.${name}`;
+      const opening = !openTables[key];
+      setOpenTables((m) => ({ ...m, [key]: opening }));
+      if (opening && !(key in columns)) {
+        try {
+          const desc = await invoke<{ columns: DbColumn[] }>("pg_metadata", {
+            request: { kind: "describe_object", schema, name },
+          });
+          setColumns((m) => ({ ...m, [key]: desc.columns }));
+        } catch (e) {
+          setStatus(`Explorer error: ${e}`);
+        }
+      }
+    },
+    [openTables, columns]
+  );
+
+  const insertSelect = useCallback((schema: string, name: string) => {
+    setSql(`select * from "${schema}"."${name}" limit 100`);
   }, []);
 
   const doRun = useCallback(async () => {
@@ -304,6 +375,74 @@ export default function App() {
               </li>
             ))}
           </ul>
+          {connected && (
+            <div className="explorer">
+              <h2>Explorer</h2>
+              {schemas === null && <p className="muted">Loading schemas…</p>}
+              <ul className="tree">
+                {(schemas ?? []).map((s) => (
+                  <li key={s}>
+                    <div className="tree-row" onClick={() => toggleSchema(s)}>
+                      <span className="twisty">{openSchemas[s] ? "▾" : "▸"}</span>
+                      <span className="tree-label">{s}</span>
+                    </div>
+                    {openSchemas[s] && (
+                      <ul className="tree nested">
+                        {!(s in objects) && <li className="muted">loading…</li>}
+                        {(objects[s] ?? []).length === 0 && s in objects && (
+                          <li className="muted">empty</li>
+                        )}
+                        {(objects[s] ?? []).map((o) => {
+                          const key = `${s}.${o.name}`;
+                          return (
+                            <li key={o.name}>
+                              <div className="tree-row" title={o.comment ?? o.kind}>
+                                <span
+                                  className="twisty"
+                                  onClick={() => toggleTable(s, o.name)}
+                                >
+                                  {openTables[key] ? "▾" : "▸"}
+                                </span>
+                                <span className={`obj-kind kind-${o.kind}`}>
+                                  {o.kind === "table" ? "T" : o.kind === "view" ? "V" : "M"}
+                                </span>
+                                <span
+                                  className="tree-label clickable"
+                                  onClick={() => insertSelect(s, o.name)}
+                                  title={`Insert SELECT for ${key}`}
+                                >
+                                  {o.name}
+                                </span>
+                              </div>
+                              {openTables[key] && (
+                                <ul className="tree nested cols">
+                                  {!(key in columns) && (
+                                    <li className="muted">loading…</li>
+                                  )}
+                                  {(columns[key] ?? []).map((c) => (
+                                    <li key={c.name} title={c.comment ?? ""}>
+                                      <span className="col-name">
+                                        {c.primaryKey ? "🔑 " : ""}
+                                        {c.name}
+                                      </span>
+                                      <span className="muted">
+                                        {c.dbType}
+                                        {c.nullable ? "" : " · not null"}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </aside>
         <div className="main-col">
         <section className="panel">

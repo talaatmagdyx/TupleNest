@@ -214,3 +214,82 @@ select {
   white-space: nowrap;
   max-width: 420px;
 }
+
+
+/* --- Explorer tree (E1.3) --- */
+.explorer {
+  margin-top: 14px;
+  border-top: 1px solid var(--border, #3333);
+  padding-top: 10px;
+}
+.explorer h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  opacity: 0.8;
+}
+ul.tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12.5px;
+}
+ul.tree.nested {
+  padding-left: 14px;
+}
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 2px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tree-row:hover {
+  background: #8881;
+}
+.twisty {
+  width: 12px;
+  opacity: 0.6;
+  flex-shrink: 0;
+  user-select: none;
+}
+.tree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-label.clickable:hover {
+  text-decoration: underline;
+}
+.obj-kind {
+  font-size: 9.5px;
+  font-weight: 700;
+  width: 14px;
+  height: 14px;
+  line-height: 14px;
+  text-align: center;
+  border-radius: 3px;
+  border: 1px solid var(--border, #5555);
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+.kind-view {
+  color: #3f8cff;
+  border-color: #3f8cff;
+}
+.kind-matview {
+  color: #b06fd8;
+  border-color: #b06fd8;
+}
+ul.tree.cols li {
+  display: flex;
+  gap: 6px;
+  padding: 1px 0 1px 18px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.col-name {
+  flex-shrink: 0;
+}

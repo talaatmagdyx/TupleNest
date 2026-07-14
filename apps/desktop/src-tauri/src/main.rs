@@ -134,6 +134,7 @@ fn main() {
             pg::pg_connect,
             pg::pg_disconnect,
             pg::pg_query,
+            pg::pg_metadata,
             pg::pg_cancel
         ])
         .run(tauri::generate_context!())
