@@ -1,8 +1,10 @@
 [package]
 name = "tuplenest-connection-core"
-version = "0.0.1"
-edition = "2021"
-license = "MIT"
-description = "TupleNest connection-core crate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Connection lifecycle: staged reachability probe (DNS, TCP), later SSH/TLS"
 
 [dependencies]
+tuplenest-driver-api = { path = "../driver-api" }
+tokio = { workspace = true, features = ["net"] }

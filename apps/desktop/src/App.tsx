@@ -11,9 +11,11 @@ type PgParams = {
   secretRef: string | null;
 };
 
+type TestStage = { name: string; passed: boolean; durationMs: number; detail: string | null };
+
 type TestReport = {
   serverVersion: string | null;
-  stages: { name: string; passed: boolean; durationMs: number; detail: string | null }[];
+  stages: TestStage[];
 };
 
 type ConnectionRecord = {
@@ -57,7 +59,9 @@ export default function App() {
   const [saved, setSaved] = useState<ConnectionRecord[]>([]);
 
   const [status, setStatus] = useState<string>("");
+  const [stages, setStages] = useState<TestStage[] | null>(null);
   const [connected, setConnected] = useState(false);
+  const [connectedEnv, setConnectedEnv] = useState<string | null>(null);
   const [sql, setSql] = useState("select now(), version()");
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<QueryResult | null>(null);
@@ -106,14 +110,14 @@ export default function App() {
 
   const doTest = useCallback(async () => {
     setStatus("Testing…");
+    setStages(null);
     try {
       const report = await invoke<TestReport>("pg_test", { params: await withSecret() });
+      setStages(report.stages);
       const failed = report.stages.filter((s) => !s.passed);
       setStatus(
         failed.length === 0
-          ? `OK — server ${report.serverVersion ?? "?"} (${report.stages
-              .map((s) => `${s.name} ${s.durationMs}ms`)
-              .join(", ")})`
+          ? `OK — server ${report.serverVersion ?? "?"}`
           : `FAILED at ${failed[0].name}: ${failed[0].detail ?? "unknown"}`
       );
     } catch (e) {
@@ -126,15 +130,17 @@ export default function App() {
     try {
       await invoke("pg_connect", { params: await withSecret() });
       setConnected(true);
+      setConnectedEnv(environment);
       setStatus("Connected");
     } catch (e) {
       setStatus(`Error: ${e}`);
     }
-  }, [withSecret]);
+  }, [withSecret, environment]);
 
   const doDisconnect = useCallback(async () => {
     await invoke("pg_disconnect").catch(() => {});
     setConnected(false);
+    setConnectedEnv(null);
     setResult(null);
     setStatus("Disconnected");
   }, []);
@@ -241,6 +247,11 @@ export default function App() {
           {theme === "dark" ? "Light theme" : "Dark theme"}
         </button>
       </header>
+      {connected && connectedEnv === "prod" && (
+        <div className="prod-banner" role="alert">
+          PRODUCTION — connected to a prod-tagged database. Changes are live.
+        </div>
+      )}
       <main className="content with-sidebar">
         <aside className="sidebar">
           <div className="sidebar-head">
@@ -321,6 +332,18 @@ export default function App() {
             )}
             <span className="status">{status}</span>
           </div>
+          {stages && (
+            <ul className="stage-list">
+              {stages.map((s) => (
+                <li key={s.name} className={s.passed ? "ok" : "fail"}>
+                  <span className="stage-icon">{s.passed ? "✓" : "✗"}</span>
+                  <span className="stage-name">{s.name}</span>
+                  <span className="muted">{s.durationMs}ms</span>
+                  {s.detail && <span className="stage-detail">{s.detail}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         <section className="panel">

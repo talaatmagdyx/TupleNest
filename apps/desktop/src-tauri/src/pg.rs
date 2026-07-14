@@ -105,25 +105,50 @@ pub struct TestReportOut {
     stages: Vec<TestStageOut>,
 }
 
+fn stage_out(s: tuplenest_driver_api::TestStage) -> TestStageOut {
+    TestStageOut {
+        name: s.name,
+        passed: matches!(s.status, tuplenest_driver_api::TestStageStatus::Passed),
+        duration_ms: s.duration_ms,
+        detail: s.detail,
+    }
+}
+
+/// Staged connection test (E1.2): DNS → TCP via connection-core, then
+/// auth + server version via the driver. Stops at the first failure.
 #[tauri::command]
 pub async fn pg_test(params: PgParams) -> Result<TestReportOut, String> {
+    let probe = tuplenest_connection_core::probe(
+        &params.host,
+        params.port,
+        std::time::Duration::from_secs(5),
+    )
+    .await;
+    let mut stages: Vec<TestStageOut> = probe.stages.into_iter().map(stage_out).collect();
+
+    if !probe.reachable {
+        return Ok(TestReportOut {
+            server_version: None,
+            stages,
+        });
+    }
+
     let password = resolve_password(&params.secret_ref)?;
     let report = PostgresDriver
         .test_with_password(&params.to_config(), password.as_ref().map(|s| s.expose()))
         .await
         .map_err(err_to_string)?;
+    stages.extend(report.stages.into_iter().map(|mut s| {
+        // In the combined report the driver's "connect" stage is the
+        // authenticated session open, i.e. the auth stage.
+        if s.name == "connect" {
+            s.name = "auth".into();
+        }
+        stage_out(s)
+    }));
     Ok(TestReportOut {
         server_version: report.server_version,
-        stages: report
-            .stages
-            .into_iter()
-            .map(|s| TestStageOut {
-                name: s.name,
-                passed: matches!(s.status, tuplenest_driver_api::TestStageStatus::Passed),
-                duration_ms: s.duration_ms,
-                detail: s.detail,
-            })
-            .collect(),
+        stages,
     })
 }
 

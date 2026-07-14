@@ -17,6 +17,7 @@ tuplenest-telemetry = { path = "../../../crates/telemetry" }
 tuplenest-credential-store = { path = "../../../crates/credential-store" }
 tuplenest-driver-api = { path = "../../../crates/driver-api" }
 tuplenest-driver-postgres = { path = "../../../crates/driver-postgres" }
+tuplenest-connection-core = { path = "../../../crates/connection-core" }
 tracing = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }

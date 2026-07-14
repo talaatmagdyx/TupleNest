@@ -4022,6 +4022,10 @@ version = "0.0.1"
 [[package]]
 name = "tuplenest-connection-core"
 version = "0.0.1"
+dependencies = [
+ "tokio",
+ "tuplenest-driver-api",
+]
 
 [[package]]
 name = "tuplenest-credential-store"
@@ -4044,6 +4048,7 @@ dependencies = [
  "tauri-build",
  "tokio",
  "tracing",
+ "tuplenest-connection-core",
  "tuplenest-credential-store",
  "tuplenest-driver-api",
  "tuplenest-driver-postgres",
