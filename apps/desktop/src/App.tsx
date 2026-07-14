@@ -14,6 +14,7 @@ import type {
   MetadataOut,
   PgParams,
   QueryResult,
+  SshParams,
   TestReport,
   TestStage,
 } from "./ipc/types";
@@ -31,6 +32,14 @@ export default function App() {
   const [secretRef, setSecretRef] = useState<string | null>(null);
   const [tlsMode, setTlsMode] = useState("verify-full");
   const [tlsCaPath, setTlsCaPath] = useState("");
+
+  // SSH tunnel (E1.2)
+  const [sshEnabled, setSshEnabled] = useState(false);
+  const [sshHost, setSshHost] = useState("");
+  const [sshPort, setSshPort] = useState(22);
+  const [sshUser, setSshUser] = useState("");
+  const [sshKeyPath, setSshKeyPath] = useState("");
+  const [sshFingerprint, setSshFingerprint] = useState("");
 
   // Profiles
   const [profileId, setProfileId] = useState<string | null>(null);
@@ -116,6 +125,17 @@ export default function App() {
     return ref;
   }, [password]);
 
+  const sshValue = useCallback((): SshParams | null => {
+    if (!sshEnabled || !sshHost) return null;
+    return {
+      host: sshHost,
+      port: sshPort,
+      username: sshUser,
+      keyPath: sshKeyPath,
+      fingerprint: sshFingerprint,
+    };
+  }, [sshEnabled, sshHost, sshPort, sshUser, sshKeyPath, sshFingerprint]);
+
   const withSecret = useCallback(async (): Promise<PgParams> => {
     const ref = password ? await savePassword() : secretRef;
     return {
@@ -127,8 +147,9 @@ export default function App() {
       tlsMode,
       tlsCaPath: tlsCaPath || null,
       environment,
+      ssh: sshValue(),
     };
-  }, [password, savePassword, secretRef, host, port, database, username, tlsMode, tlsCaPath, environment]);
+  }, [password, savePassword, secretRef, host, port, database, username, tlsMode, tlsCaPath, environment, sshValue]);
 
   const doTest = useCallback(async () => {
     setStatus("Testing…");
@@ -390,6 +411,7 @@ export default function App() {
           password: password || null,
           tlsMode,
           tlsCaPath: tlsCaPath || null,
+          sshJson: sshValue() ? JSON.stringify(sshValue()) : null,
         },
       });
       setPassword("");
@@ -401,7 +423,7 @@ export default function App() {
     } catch (e) {
       setStatus(`Save error: ${e}`);
     }
-  }, [profileId, profileName, environment, host, port, database, username, password, tlsMode, tlsCaPath, refreshSaved]);
+  }, [profileId, profileName, environment, host, port, database, username, password, tlsMode, tlsCaPath, sshValue, refreshSaved]);
 
   const loadProfile = useCallback(
     (c: ConnectionRecord) => {
@@ -415,6 +437,25 @@ export default function App() {
       setSecretRef(c.secretRef);
       setTlsMode(c.tlsMode || "verify-full");
       setTlsCaPath(c.tlsCaPath ?? "");
+      if (c.sshJson) {
+        try {
+          const ssh = JSON.parse(c.sshJson) as SshParams;
+          setSshEnabled(true);
+          setSshHost(ssh.host);
+          setSshPort(ssh.port || 22);
+          setSshUser(ssh.username);
+          setSshKeyPath(ssh.keyPath);
+          setSshFingerprint(ssh.fingerprint ?? "");
+        } catch {
+          setSshEnabled(false);
+        }
+      } else {
+        setSshEnabled(false);
+        setSshHost("");
+        setSshUser("");
+        setSshKeyPath("");
+        setSshFingerprint("");
+      }
       setPassword("");
       setStatus(`Loaded "${c.name}"`);
       if (connected) return; // live explorer stays as-is
@@ -448,6 +489,11 @@ export default function App() {
     setProfileName("");
     setSecretRef(null);
     setPassword("");
+    setSshEnabled(false);
+    setSshHost("");
+    setSshUser("");
+    setSshKeyPath("");
+    setSshFingerprint("");
     setStatus("");
   }, []);
 
@@ -520,6 +566,18 @@ export default function App() {
             connected={connected}
             status={status}
             stages={stages}
+            sshEnabled={sshEnabled}
+            sshHost={sshHost}
+            sshPort={sshPort}
+            sshUser={sshUser}
+            sshKeyPath={sshKeyPath}
+            sshFingerprint={sshFingerprint}
+            onSshEnabled={setSshEnabled}
+            onSshHost={setSshHost}
+            onSshPort={setSshPort}
+            onSshUser={setSshUser}
+            onSshKeyPath={setSshKeyPath}
+            onSshFingerprint={setSshFingerprint}
             onProfileName={setProfileName}
             onEnvironment={setEnvironment}
             onHost={setHost}

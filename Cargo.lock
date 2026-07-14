@@ -5248,6 +5248,7 @@ dependencies = [
  "tuplenest-driver-postgres",
  "tuplenest-metadata-cache",
  "tuplenest-result-stream",
+ "tuplenest-ssh-core",
  "tuplenest-telemetry",
  "tuplenest-workspace-store",
  "uuid",

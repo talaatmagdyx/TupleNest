@@ -32,6 +32,8 @@ pub struct ConnectionInput {
     /// "disabled" | "prefer" | "verify-ca" | "verify-full" (default).
     pub tls_mode: Option<String>,
     pub tls_ca_path: Option<String>,
+    /// SSH tunnel config as JSON (secret-free: key path + fingerprint only).
+    pub ssh_json: Option<String>,
 }
 
 #[tauri::command]
@@ -82,7 +84,7 @@ pub fn connection_save(
         secret_ref,
         tls_mode: input.tls_mode.unwrap_or_else(|| "verify-full".into()),
         tls_ca_path: input.tls_ca_path,
-        ssh_json: None,
+        ssh_json: input.ssh_json.filter(|s| !s.trim().is_empty()),
         options_json: None,
     };
     store

@@ -33,6 +33,49 @@ pub struct PgParams {
     pub tls_ca_path: Option<String>,
     /// dev/test/staging/prod — prod suppresses query text in history.
     pub environment: Option<String>,
+    /// Optional SSH tunnel; DB traffic then flows through the tunnel.
+    pub ssh: Option<SshParams>,
+}
+
+/// SSH tunnel parameters (E1.2). Key-file auth; passphrase-less keys or
+/// agent-managed keys for now. No secrets are stored here.
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SshParams {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub key_path: String,
+    /// Pinned SHA-256 host key fingerprint. Empty → known_hosts policy.
+    #[serde(default)]
+    pub fingerprint: String,
+}
+
+impl SshParams {
+    fn tunnel_config(
+        &self,
+        target_host: &str,
+        target_port: u16,
+    ) -> tuplenest_ssh_core::SshTunnelConfig {
+        tuplenest_ssh_core::SshTunnelConfig {
+            ssh_host: self.host.clone(),
+            ssh_port: self.port,
+            username: self.username.clone(),
+            auth: tuplenest_ssh_core::SshAuth::KeyFile {
+                path: self.key_path.clone(),
+                passphrase: None,
+            },
+            host_key: if self.fingerprint.trim().is_empty() {
+                tuplenest_ssh_core::HostKeyPolicy::KnownHosts
+            } else {
+                tuplenest_ssh_core::HostKeyPolicy::PinnedFingerprint(
+                    self.fingerprint.trim().to_string(),
+                )
+            },
+            target_host: target_host.to_string(),
+            target_port,
+        }
+    }
 }
 
 fn parse_tls_mode(s: Option<&str>) -> Result<TlsMode, String> {
@@ -47,13 +90,19 @@ fn parse_tls_mode(s: Option<&str>) -> Result<TlsMode, String> {
 
 impl PgParams {
     fn to_config(&self) -> Result<ConnectionConfig, String> {
+        self.to_config_endpoint(&self.host, self.port)
+    }
+
+    /// Build a config pointed at an override endpoint (the tunnel's local
+    /// port) while keeping all other settings.
+    fn to_config_endpoint(&self, host: &str, port: u16) -> Result<ConnectionConfig, String> {
         Ok(ConnectionConfig {
             driver_id: "postgres".into(),
             name: format!("{}@{}/{}", self.username, self.host, self.database),
             environment: Environment::Dev,
             read_only: false,
-            host: self.host.clone(),
-            port: self.port,
+            host: host.to_string(),
+            port,
             database: self.database.clone(),
             username: self.username.clone(),
             secret_ref: self.secret_ref.as_deref().map(SecretRef::new),
@@ -76,6 +125,8 @@ pub struct PgState {
     result: StdMutex<Option<StoredResult>>,
     /// Environment tag of the connected profile (prod → history text off).
     connected_env: StdMutex<Option<String>>,
+    /// Open SSH tunnel backing the current session, if any.
+    tunnel: StdMutex<Option<tuplenest_ssh_core::SshTunnel>>,
 }
 
 impl PgState {
@@ -87,6 +138,7 @@ impl PgState {
             cache_key: StdMutex::new(None),
             result: StdMutex::new(None),
             connected_env: StdMutex::new(None),
+            tunnel: StdMutex::new(None),
         }
     }
 }
@@ -146,13 +198,19 @@ fn stage_out(s: tuplenest_driver_api::TestStage) -> TestStageOut {
     }
 }
 
-/// Staged connection test (E1.2): DNS → TCP via connection-core, then
-/// auth + server version via the driver. Stops at the first failure.
+/// Staged connection test (E1.2): DNS → TCP → [ssh] via connection-core /
+/// ssh-core, then auth + server version via the driver. Stops at the first
+/// failure. With SSH configured the network probe targets the SSH host and
+/// the driver connects through a temporary tunnel.
 #[tauri::command]
 pub async fn pg_test(params: PgParams) -> Result<TestReportOut, String> {
+    let (probe_host, probe_port) = match &params.ssh {
+        Some(ssh) => (ssh.host.clone(), ssh.port),
+        None => (params.host.clone(), params.port),
+    };
     let probe = tuplenest_connection_core::probe(
-        &params.host,
-        params.port,
+        &probe_host,
+        probe_port,
         std::time::Duration::from_secs(5),
     )
     .await;
@@ -165,9 +223,42 @@ pub async fn pg_test(params: PgParams) -> Result<TestReportOut, String> {
         });
     }
 
+    // Optional SSH stage: open a throwaway tunnel, timed.
+    let mut tunnel = None;
+    if let Some(ssh) = &params.ssh {
+        let started = std::time::Instant::now();
+        match tuplenest_ssh_core::open_tunnel(ssh.tunnel_config(&params.host, params.port)).await {
+            Ok(t) => {
+                stages.push(TestStageOut {
+                    name: "ssh".into(),
+                    passed: true,
+                    duration_ms: started.elapsed().as_millis() as u64,
+                    detail: Some(format!("{}@{}:{}", ssh.username, ssh.host, ssh.port)),
+                });
+                tunnel = Some(t);
+            }
+            Err(e) => {
+                stages.push(TestStageOut {
+                    name: "ssh".into(),
+                    passed: false,
+                    duration_ms: started.elapsed().as_millis() as u64,
+                    detail: Some(e.to_string()),
+                });
+                return Ok(TestReportOut {
+                    server_version: None,
+                    stages,
+                });
+            }
+        }
+    }
+
+    let config = match &tunnel {
+        Some(t) => params.to_config_endpoint("127.0.0.1", t.local_port())?,
+        None => params.to_config()?,
+    };
     let password = resolve_password(&params.secret_ref)?;
     let report = PostgresDriver
-        .test_with_password(&params.to_config()?, password.as_ref().map(|s| s.expose()))
+        .test_with_password(&config, password.as_ref().map(|s| s.expose()))
         .await
         .map_err(err_to_string)?;
     stages.extend(report.stages.into_iter().map(|mut s| {
@@ -187,18 +278,40 @@ pub async fn pg_test(params: PgParams) -> Result<TestReportOut, String> {
 #[tauri::command]
 pub async fn pg_connect(state: tauri::State<'_, PgState>, params: PgParams) -> Result<(), String> {
     let password = resolve_password(&params.secret_ref)?;
+
+    // E1.2: with SSH configured, open the tunnel first and point the
+    // driver at its local end. The tunnel lives as long as the session.
+    let (tunnel, config) = match &params.ssh {
+        Some(ssh) => {
+            let tunnel =
+                tuplenest_ssh_core::open_tunnel(ssh.tunnel_config(&params.host, params.port))
+                    .await
+                    .map_err(|e| format!("SSH tunnel: {e}"))?;
+            let config = params.to_config_endpoint("127.0.0.1", tunnel.local_port())?;
+            (Some(tunnel), config)
+        }
+        None => (None, params.to_config()?),
+    };
+
     let session = PostgresDriver
-        .connect_concrete_with_password(params.to_config()?, password.as_ref().map(|s| s.expose()))
+        .connect_concrete_with_password(config, password.as_ref().map(|s| s.expose()))
         .await
         .map_err(err_to_string)?;
     *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = Some(session.cancel_handle());
     *state.session.lock().await = Some(session);
+    *state.tunnel.lock().map_err(|_| "tunnel lock poisoned")? = tunnel;
     *state.cache_key.lock().map_err(|_| "key lock poisoned")? = Some(cache_key_of(&params));
     *state
         .connected_env
         .lock()
         .map_err(|_| "env lock poisoned")? = params.environment.clone();
-    tracing::info!(component = "pg", host = %params.host, db = %params.database, "session opened");
+    tracing::info!(
+        component = "pg",
+        host = %params.host,
+        db = %params.database,
+        tunneled = params.ssh.is_some(),
+        "session opened"
+    );
     Ok(())
 }
 
@@ -207,6 +320,8 @@ pub async fn pg_disconnect(state: tauri::State<'_, PgState>) -> Result<(), Strin
     *state.session.lock().await = None;
     *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = None;
     *state.result.lock().map_err(|_| "result lock poisoned")? = None;
+    // Dropping the tunnel closes the SSH session.
+    *state.tunnel.lock().map_err(|_| "tunnel lock poisoned")? = None;
     tracing::info!(component = "pg", "session closed");
     Ok(())
 }

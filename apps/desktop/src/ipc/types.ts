@@ -3,6 +3,15 @@
 
 export type AppInfo = { name: string; version: string; os: string };
 
+export type SshParams = {
+  host: string;
+  port: number;
+  username: string;
+  keyPath: string;
+  /** Pinned SHA-256 host key fingerprint; empty → known_hosts policy. */
+  fingerprint: string;
+};
+
 export type PgParams = {
   host: string;
   port: number;
@@ -12,6 +21,7 @@ export type PgParams = {
   tlsMode: string;
   tlsCaPath: string | null;
   environment?: string | null;
+  ssh?: SshParams | null;
 };
 
 export type TestStage = {
@@ -40,6 +50,7 @@ export type ConnectionRecord = {
   secretRef: string | null;
   tlsMode: string;
   tlsCaPath: string | null;
+  sshJson: string | null;
 };
 
 export type MetadataOut<T> = {

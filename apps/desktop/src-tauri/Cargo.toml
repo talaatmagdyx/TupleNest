@@ -20,6 +20,7 @@ tuplenest-driver-postgres = { path = "../../../crates/driver-postgres" }
 tuplenest-connection-core = { path = "../../../crates/connection-core" }
 tuplenest-metadata-cache = { path = "../../../crates/metadata-cache" }
 tuplenest-result-stream = { path = "../../../crates/result-stream" }
+tuplenest-ssh-core = { path = "../../../crates/ssh-core" }
 tracing = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
