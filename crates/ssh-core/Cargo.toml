@@ -1,8 +1,15 @@
 [package]
 name = "tuplenest-ssh-core"
-version = "0.0.1"
-edition = "2021"
-license = "MIT"
-description = "TupleNest ssh-core crate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SSH tunnels for database connections: local listener over direct-tcpip channels"
 
 [dependencies]
+russh = "0.62"
+tokio = { workspace = true, features = ["net", "io-util"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["net", "io-util", "macros"] }
