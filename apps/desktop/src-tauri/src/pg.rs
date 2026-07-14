@@ -28,11 +28,24 @@ pub struct PgParams {
     pub username: String,
     /// Opaque keychain reference from `pg_secret_save`, if auth is needed.
     pub secret_ref: Option<String>,
+    /// "disabled" | "prefer" | "verify-ca" | "verify-full" (default).
+    pub tls_mode: Option<String>,
+    pub tls_ca_path: Option<String>,
+}
+
+fn parse_tls_mode(s: Option<&str>) -> Result<TlsMode, String> {
+    match s.unwrap_or("verify-full") {
+        "disabled" => Ok(TlsMode::Disabled),
+        "prefer" => Ok(TlsMode::Prefer),
+        "verify-ca" => Ok(TlsMode::VerifyCa),
+        "verify-full" => Ok(TlsMode::VerifyFull),
+        other => Err(format!("unknown tls mode `{other}`")),
+    }
 }
 
 impl PgParams {
-    fn to_config(&self) -> ConnectionConfig {
-        ConnectionConfig {
+    fn to_config(&self) -> Result<ConnectionConfig, String> {
+        Ok(ConnectionConfig {
             driver_id: "postgres".into(),
             name: format!("{}@{}/{}", self.username, self.host, self.database),
             environment: Environment::Dev,
@@ -42,11 +55,11 @@ impl PgParams {
             database: self.database.clone(),
             username: self.username.clone(),
             secret_ref: self.secret_ref.as_deref().map(SecretRef::new),
-            tls_mode: TlsMode::Disabled,
-            tls_ca_path: None,
+            tls_mode: parse_tls_mode(self.tls_mode.as_deref())?,
+            tls_ca_path: self.tls_ca_path.clone(),
             options: BTreeMap::new(),
             default_statement_timeout_ms: 0,
-        }
+        })
     }
 }
 
@@ -135,7 +148,7 @@ pub async fn pg_test(params: PgParams) -> Result<TestReportOut, String> {
 
     let password = resolve_password(&params.secret_ref)?;
     let report = PostgresDriver
-        .test_with_password(&params.to_config(), password.as_ref().map(|s| s.expose()))
+        .test_with_password(&params.to_config()?, password.as_ref().map(|s| s.expose()))
         .await
         .map_err(err_to_string)?;
     stages.extend(report.stages.into_iter().map(|mut s| {
@@ -156,7 +169,7 @@ pub async fn pg_test(params: PgParams) -> Result<TestReportOut, String> {
 pub async fn pg_connect(state: tauri::State<'_, PgState>, params: PgParams) -> Result<(), String> {
     let password = resolve_password(&params.secret_ref)?;
     let session = PostgresDriver
-        .connect_concrete_with_password(params.to_config(), password.as_ref().map(|s| s.expose()))
+        .connect_concrete_with_password(params.to_config()?, password.as_ref().map(|s| s.expose()))
         .await
         .map_err(err_to_string)?;
     *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = Some(session.cancel_handle());

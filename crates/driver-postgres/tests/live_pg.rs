@@ -212,3 +212,124 @@ async fn transactions_visible_only_after_commit() {
         .await
         .unwrap();
 }
+
+// --- TLS live tests (E1.2) --------------------------------------------------
+// Require a local server with ssl=on and a self-signed cert whose SAN covers
+// `localhost` (see docs). CA path from TUPLENEST_TEST_PG_SSL_CA, defaulting
+// to the brew PG 18 data dir.
+
+fn ca_path() -> String {
+    std::env::var("TUPLENEST_TEST_PG_SSL_CA")
+        .unwrap_or_else(|_| "/opt/homebrew/var/postgresql@18/tuplenest_ca.crt".into())
+}
+
+fn tls_config(mode: TlsMode, ca: Option<String>) -> ConnectionConfig {
+    let mut c = test_config();
+    c.tls_mode = mode;
+    c.tls_ca_path = ca;
+    c
+}
+
+/// Grabs the first cell of the first row as rendered text.
+struct FirstCellSink(Mutex<Option<String>>);
+
+#[async_trait]
+impl BatchSink for FirstCellSink {
+    async fn deliver(&self, batch: RowBatch) -> Result<(), DriverError> {
+        let mut slot = self.0.lock().unwrap();
+        if slot.is_none() {
+            if let Some(row) = batch.rows.first() {
+                let rendered = match &row[0] {
+                    CellValue::Bool(b) => b.to_string(),
+                    CellValue::Text(t) => t.clone(),
+                    other => format!("{other:?}"),
+                };
+                *slot = Some(rendered);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_tls_verify_full_with_ca_passes_and_encrypts() {
+    let config = tls_config(TlsMode::VerifyFull, Some(ca_path()));
+    let report = PostgresDriver
+        .test_with_password(&config, None)
+        .await
+        .unwrap();
+    assert!(
+        report.passed(),
+        "verify-full with CA should pass: {:?}",
+        report.stages
+    );
+
+    // Prove the session channel is actually encrypted.
+    let mut session = PostgresDriver.connect_concrete(config).await.unwrap();
+    let sink = FirstCellSink(Mutex::new(None));
+    session
+        .execute(
+            req("select ssl::text from pg_stat_ssl where pid = pg_backend_pid()"),
+            &sink,
+        )
+        .await
+        .unwrap();
+    assert_eq!(sink.0.lock().unwrap().as_deref(), Some("true"));
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_tls_verify_full_without_ca_fails_closed() {
+    // Self-signed server cert is not in the system trust store: the
+    // handshake must fail — never silently downgrade to plaintext.
+    let config = tls_config(TlsMode::VerifyFull, None);
+    let report = PostgresDriver
+        .test_with_password(&config, None)
+        .await
+        .unwrap();
+    assert!(!report.passed(), "must fail closed on untrusted cert");
+
+    let err = PostgresDriver.connect_concrete(config).await.err();
+    assert!(err.is_some(), "connect must also fail closed");
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_tls_prefer_encrypts_without_verification() {
+    let mut session = PostgresDriver
+        .connect_concrete(tls_config(TlsMode::Prefer, None))
+        .await
+        .expect("prefer mode should connect to self-signed server");
+    let sink = FirstCellSink(Mutex::new(None));
+    session
+        .execute(
+            req("select ssl::text from pg_stat_ssl where pid = pg_backend_pid()"),
+            &sink,
+        )
+        .await
+        .unwrap();
+    assert_eq!(sink.0.lock().unwrap().as_deref(), Some("true"));
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_tls_cancel_works_over_tls() {
+    let mut session = PostgresDriver
+        .connect_concrete(tls_config(TlsMode::VerifyFull, Some(ca_path())))
+        .await
+        .unwrap();
+    let handle = session.cancel_handle();
+    let canceller = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        handle.cancel().await.unwrap();
+    });
+    let started = Instant::now();
+    let result = session.execute(req("select pg_sleep(30)"), &NullSink).await;
+    canceller.await.unwrap();
+    assert!(result.is_err(), "sleep must be cancelled");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "cancel must interrupt promptly over TLS"
+    );
+}

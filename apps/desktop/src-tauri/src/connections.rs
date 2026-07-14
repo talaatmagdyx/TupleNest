@@ -29,6 +29,9 @@ pub struct ConnectionInput {
     pub username: String,
     /// One-time password; replaced by a keychain ref before persisting.
     pub password: Option<String>,
+    /// "disabled" | "prefer" | "verify-ca" | "verify-full" (default).
+    pub tls_mode: Option<String>,
+    pub tls_ca_path: Option<String>,
 }
 
 #[tauri::command]
@@ -77,8 +80,8 @@ pub fn connection_save(
         database: input.database,
         username: input.username,
         secret_ref,
-        tls_mode: "disabled".into(), // Phase 0 PoC driver is NoTls; E1.2 adds TLS
-        tls_ca_path: None,
+        tls_mode: input.tls_mode.unwrap_or_else(|| "verify-full".into()),
+        tls_ca_path: input.tls_ca_path,
         ssh_json: None,
         options_json: None,
     };

@@ -17,6 +17,41 @@ use tokio::sync::Mutex as AsyncMutex;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::types::Type;
 use tokio_postgres::{CancelToken, Client, NoTls, Row};
+
+mod tls;
+pub use tls::TlsSetup;
+
+/// Connects with the right TLS posture; returns the client plus the spawned
+/// connection task handle.
+async fn connect_client(
+    pgcfg: &tokio_postgres::Config,
+    setup: &TlsSetup,
+) -> Result<(Client, tokio::task::JoinHandle<()>), tokio_postgres::Error> {
+    match setup.make() {
+        None => {
+            let (client, connection) = pgcfg.connect(NoTls).await?;
+            let handle = tokio::spawn(async move {
+                let _ = connection.await;
+            });
+            Ok((client, handle))
+        }
+        Some(mk) => {
+            let (client, connection) = pgcfg.connect(mk).await?;
+            let handle = tokio::spawn(async move {
+                let _ = connection.await;
+            });
+            Ok((client, handle))
+        }
+    }
+}
+
+/// Cancels via the wire-protocol cancel key, matching the session's TLS posture.
+async fn cancel_with(token: CancelToken, setup: &TlsSetup) -> Result<(), tokio_postgres::Error> {
+    match setup.make() {
+        None => token.cancel_query(NoTls).await,
+        Some(mk) => token.cancel_query(mk).await,
+    }
+}
 use tuplenest_driver_api::*;
 
 /// Rows per streamed batch. Bounds memory: only one batch is materialized
@@ -48,17 +83,38 @@ impl PostgresDriver {
         password: Option<&str>,
     ) -> Result<ConnectionTestReport, DriverError> {
         let mut stages = Vec::new();
+
+        // TLS configuration errors fail closed before any network activity.
+        let setup = match tls::build(config) {
+            Ok(s) => s,
+            Err(e) => {
+                stages.push(TestStage {
+                    name: "tls".into(),
+                    status: TestStageStatus::Failed,
+                    duration_ms: 0,
+                    detail: Some(e.to_string()),
+                });
+                return Ok(ConnectionTestReport {
+                    stages,
+                    server_version: None,
+                });
+            }
+        };
+        let tls_detail = match config.tls_mode {
+            TlsMode::Disabled => "plaintext".to_string(),
+            mode => format!("tls: {mode:?}"),
+        };
+
         let started = Instant::now();
-        let result = Self::pg_config(config, password).connect(NoTls).await;
+        let result = connect_client(&Self::pg_config(config, password), &setup).await;
         let elapsed = started.elapsed().as_millis() as u64;
         match result {
-            Ok((client, connection)) => {
-                let handle = tokio::spawn(connection);
+            Ok((client, handle)) => {
                 stages.push(TestStage {
                     name: "connect".into(),
                     status: TestStageStatus::Passed,
                     duration_ms: elapsed,
-                    detail: None,
+                    detail: Some(tls_detail),
                 });
                 let vstart = Instant::now();
                 let version: Option<String> = client
@@ -154,6 +210,7 @@ impl DatabaseDriver for PostgresDriver {
 pub struct PostgresSession {
     client: Client,
     cancel_token: Arc<AsyncMutex<CancelToken>>,
+    tls: TlsSetup,
     _conn_task: tokio::task::JoinHandle<()>,
     in_transaction: Option<TransactionId>,
 }
@@ -161,18 +218,24 @@ pub struct PostgresSession {
 /// A cloneable handle that can cancel the session's running query without
 /// borrowing the session. Backed by the PostgreSQL wire-protocol cancel key.
 #[derive(Clone)]
-pub struct PgCancelHandle(Arc<AsyncMutex<CancelToken>>);
+pub struct PgCancelHandle {
+    token: Arc<AsyncMutex<CancelToken>>,
+    tls: TlsSetup,
+}
 
 impl PgCancelHandle {
     pub async fn cancel(&self) -> Result<(), DriverError> {
-        let token = self.0.lock().await.clone();
-        token.cancel_query(NoTls).await.map_err(normalize_error)
+        let token = self.token.lock().await.clone();
+        cancel_with(token, &self.tls).await.map_err(normalize_error)
     }
 }
 
 impl PostgresSession {
     pub fn cancel_handle(&self) -> PgCancelHandle {
-        PgCancelHandle(self.cancel_token.clone())
+        PgCancelHandle {
+            token: self.cancel_token.clone(),
+            tls: self.tls.clone(),
+        }
     }
 }
 
@@ -192,17 +255,15 @@ impl PostgresDriver {
         config: ConnectionConfig,
         password: Option<&str>,
     ) -> Result<PostgresSession, DriverError> {
-        let (client, connection) = Self::pg_config(&config, password)
-            .connect(NoTls)
+        let setup = tls::build(&config)?;
+        let (client, conn_task) = connect_client(&Self::pg_config(&config, password), &setup)
             .await
             .map_err(normalize_error)?;
-        let conn_task = tokio::spawn(async move {
-            let _ = connection.await;
-        });
         let cancel_token = client.cancel_token();
         Ok(PostgresSession {
             client,
             cancel_token: Arc::new(AsyncMutex::new(cancel_token)),
+            tls: setup,
             _conn_task: conn_task,
             in_transaction: None,
         })
@@ -289,7 +350,7 @@ impl DatabaseSession for PostgresSession {
 
     async fn cancel(&self, _execution_id: ExecutionId) -> Result<(), DriverError> {
         let token = self.cancel_token.lock().await.clone();
-        token.cancel_query(NoTls).await.map_err(normalize_error)
+        cancel_with(token, &self.tls).await.map_err(normalize_error)
     }
 
     async fn metadata(&self, request: MetadataRequest) -> Result<MetadataResponse, DriverError> {

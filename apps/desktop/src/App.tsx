@@ -9,6 +9,8 @@ type PgParams = {
   database: string;
   username: string;
   secretRef: string | null;
+  tlsMode: string;
+  tlsCaPath: string | null;
 };
 
 type TestStage = { name: string; passed: boolean; durationMs: number; detail: string | null };
@@ -31,6 +33,7 @@ type ConnectionRecord = {
   username: string;
   secretRef: string | null;
   tlsMode: string;
+  tlsCaPath: string | null;
 };
 
 type QueryResult = {
@@ -52,6 +55,8 @@ export default function App() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [secretRef, setSecretRef] = useState<string | null>(null);
+  const [tlsMode, setTlsMode] = useState("verify-full");
+  const [tlsCaPath, setTlsCaPath] = useState("");
 
   const [profileId, setProfileId] = useState<string | null>(null);
   const [profileName, setProfileName] = useState("");
@@ -105,8 +110,16 @@ export default function App() {
 
   const withSecret = useCallback(async (): Promise<PgParams> => {
     const ref = password ? await savePassword() : secretRef;
-    return { host, port, database, username, secretRef: ref };
-  }, [password, savePassword, secretRef, host, port, database, username]);
+    return {
+      host,
+      port,
+      database,
+      username,
+      secretRef: ref,
+      tlsMode,
+      tlsCaPath: tlsCaPath || null,
+    };
+  }, [password, savePassword, secretRef, host, port, database, username, tlsMode, tlsCaPath]);
 
   const doTest = useCallback(async () => {
     setStatus("Testing…");
@@ -188,6 +201,8 @@ export default function App() {
           username,
           // Password (if typed) crosses IPC once and lands in the keychain.
           password: password || null,
+          tlsMode,
+          tlsCaPath: tlsCaPath || null,
         },
       });
       setPassword("");
@@ -199,7 +214,7 @@ export default function App() {
     } catch (e) {
       setStatus(`Save error: ${e}`);
     }
-  }, [profileId, profileName, environment, host, port, database, username, password, refreshSaved]);
+  }, [profileId, profileName, environment, host, port, database, username, password, tlsMode, tlsCaPath, refreshSaved]);
 
   const loadProfile = useCallback((c: ConnectionRecord) => {
     setProfileId(c.id);
@@ -210,6 +225,8 @@ export default function App() {
     setDatabase(c.database);
     setUsername(c.username);
     setSecretRef(c.secretRef);
+    setTlsMode(c.tlsMode || "verify-full");
+    setTlsCaPath(c.tlsCaPath ?? "");
     setPassword("");
     setStatus(`Loaded "${c.name}"`);
   }, []);
@@ -321,6 +338,23 @@ export default function App() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
+          </div>
+          <div className="form-row">
+            <label className="muted">TLS</label>
+            <select value={tlsMode} onChange={(e) => setTlsMode(e.target.value)}>
+              <option value="verify-full">verify-full (default)</option>
+              <option value="verify-ca">verify-ca</option>
+              <option value="prefer">prefer (no verification)</option>
+              <option value="disabled">disabled (local only)</option>
+            </select>
+            {(tlsMode === "verify-full" || tlsMode === "verify-ca") && (
+              <input
+                placeholder="CA file path (optional, PEM)"
+                value={tlsCaPath}
+                onChange={(e) => setTlsCaPath(e.target.value)}
+                style={{ flex: 1 }}
+              />
+            )}
           </div>
           <div className="form-row">
             <button onClick={doSaveProfile}>Save</button>
