@@ -15,6 +15,7 @@ type Props = {
   onSelectProfile: (c: ConnectionRecord) => void;
   onNewConnection: () => void;
   onToggleSidebar: () => void;
+  sidebarCollapsed?: boolean;
   onOpenPalette: () => void;
   onToggleTheme: () => void;
   onOpenSettings: () => void;

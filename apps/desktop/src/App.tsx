@@ -124,6 +124,8 @@ export default function App() {
   const [paletteQ, setPaletteQ] = useState("");
   const [paletteIdx, setPaletteIdx] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(272);
+  const sidebarDragRef = useRef<{ x: number; w: number } | null>(null);
   const [railView, setRailView] = useState<RailView>("explorer");
   const [connMenu, setConnMenu] = useState(false);
   const [exportMenu, setExportMenu] = useState(false);
@@ -971,6 +973,37 @@ export default function App() {
     };
   }, []);
 
+  // Sidebar width drag
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      if (!sidebarDragRef.current) return;
+      const w = sidebarDragRef.current.w + (e.clientX - sidebarDragRef.current.x);
+      setSidebarWidth(Math.max(200, Math.min(480, w)));
+    };
+    const up = () => {
+      sidebarDragRef.current = null;
+      document.body.style.cursor = "";
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+    return () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+    };
+  }, []);
+
+  // Clicking the active rail view collapses the sidebar; another view expands.
+  const handleRailView = useCallback(
+    (v: RailView) => {
+      if (v === railView && !sidebarCollapsed) setSidebarCollapsed(true);
+      else {
+        setRailView(v);
+        setSidebarCollapsed(false);
+      }
+    },
+    [railView, sidebarCollapsed]
+  );
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
@@ -988,6 +1021,9 @@ export default function App() {
       } else if (mod && (e.key === "o" || e.key === "O")) {
         e.preventDefault();
         setOverlay("connEditor");
+      } else if (mod && (e.key === "b" || e.key === "B")) {
+        e.preventDefault();
+        setSidebarCollapsed((v) => !v);
       } else if (mod && (e.key === "k" || e.key === "K")) {
         e.preventDefault();
         setPaletteQ("");
@@ -1113,6 +1149,7 @@ export default function App() {
         onSelectProfile={selectProfile}
         onNewConnection={newProfile}
         onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
+        sidebarCollapsed={sidebarCollapsed}
         onOpenPalette={() => {
           setPaletteQ("");
           setPaletteIdx(0);
@@ -1129,13 +1166,17 @@ export default function App() {
       <div className="body">
         <ActivityRail
           view={railView}
+          collapsed={sidebarCollapsed}
           connected={connected}
-          onView={setRailView}
+          onView={handleRailView}
           onMonitor={() => setOverlay("monitor")}
           onDiagram={() => setOverlay("diagram")}
           onSettings={() => setOverlay("settings")}
         />
-        <aside className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
+        <aside
+          className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}
+          style={{ width: sidebarCollapsed ? 0 : sidebarWidth }}
+        >
           {railView === "explorer" ? (
             <>
               <SavedList
@@ -1188,6 +1229,16 @@ export default function App() {
             </>
           )}
         </aside>
+        {!sidebarCollapsed && (
+          <div
+            className="sidebar-resize"
+            title="Drag to resize"
+            onMouseDown={(e) => {
+              sidebarDragRef.current = { x: e.clientX, w: sidebarWidth };
+              document.body.style.cursor = "col-resize";
+            }}
+          />
+        )}
         <main className="main-col">
           <TabsBar tabs={tabs} active={activeTab} onSelect={setActiveTab} onClose={closeTab} onNew={newTab} />
           {tabs.length === 0 ? (

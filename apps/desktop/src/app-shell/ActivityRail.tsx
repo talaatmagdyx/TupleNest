@@ -10,6 +10,7 @@ export type RailView = "explorer" | "history";
 
 type Props = {
   view: RailView;
+  collapsed: boolean;
   connected: boolean;
   onView: (v: RailView) => void;
   onMonitor: () => void;
@@ -41,10 +42,18 @@ export default function ActivityRail(p: Props) {
   return (
     <nav className="activity-rail">
       <div className="rail-group">
-        <Item title="Explorer" active={p.view === "explorer"} onClick={() => p.onView("explorer")}>
+        <Item
+          title="Explorer (⌘B)"
+          active={p.view === "explorer" && !p.collapsed}
+          onClick={() => p.onView("explorer")}
+        >
           <ExplorerRailIcon />
         </Item>
-        <Item title="Query history" active={p.view === "history"} onClick={() => p.onView("history")}>
+        <Item
+          title="Query history"
+          active={p.view === "history" && !p.collapsed}
+          onClick={() => p.onView("history")}
+        >
           <HistoryRailIcon />
         </Item>
         <Item title="Server monitor" disabled={!p.connected} onClick={p.onMonitor}>

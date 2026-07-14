@@ -979,3 +979,27 @@ body { background: var(--tn-desk); background-image: none; }
 
 /* — Toolbar primary Run keeps prominence in dense bar — */
 .toolbar .btn.primary { height: 26px; }
+
+
+/* ============================================================
+   RESIZABLE / COLLAPSIBLE PANELS + macOS TITLEBAR
+   ============================================================ */
+
+/* Sidebar drives its width from inline style; keep it snappy */
+.sidebar { transition: width .14s ease; }
+.sidebar.collapsed { width: 0 !important; border-right: none; }
+
+/* Sidebar resize handle (invisible 5px hit area with hover hint) */
+.sidebar-resize {
+  flex: none; width: 5px; margin-left: -2px; cursor: col-resize;
+  background: transparent; position: relative; z-index: 5;
+}
+.sidebar-resize:hover { background: var(--tn-accent); opacity: .5; }
+
+/* macOS traffic-light room: shift titlebar content right of the controls.
+   The rail sits below the titlebar, so only the titlebar needs the inset. */
+.titlebar { padding-left: 78px; }
+/* The far-left activity rail aligns under the traffic lights cleanly */
+.activity-rail { padding-top: 8px; }
+
+/* Collapsed: the toggle icon in the titlebar reads as "show panel" */
