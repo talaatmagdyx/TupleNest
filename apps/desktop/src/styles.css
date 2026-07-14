@@ -787,3 +787,132 @@ body {
 [data-tn-theme="light"] .toolbar,
 [data-tn-theme="light"] .qtabs,
 [data-tn-theme="light"] .rtabs { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5); }
+
+
+/* ============================================================
+   NATIVE DESKTOP IDE SKIN  (final layer — overrides the HUD)
+   Opaque surfaces, solid dividers, tight density, flat chrome.
+   Reference feel: DataGrip / TablePlus / VS Code.
+   ============================================================ */
+
+/* — Opaque professional dark palette — */
+:root, [data-tn-theme="dark"] {
+  --tn-desk:   #16191f;   /* window backdrop */
+  --tn-desk2:  #16191f;
+  --tn-bg:     #1b1f27;   /* editor / deepest content */
+  --tn-s1:     #20242c;   /* sidebar, panels */
+  --tn-s2:     #272c35;   /* headers, hover, raised */
+  --tn-bh:     #383f4a;   /* hard border / divider */
+  --tn-bs:     #2b313a;   /* soft divider */
+  --tn-tp:     #dbe1ea;   /* primary text */
+  --tn-ts:     #9aa5b4;   /* soft text */
+  --tn-tm:     #6a7482;   /* muted text */
+  --tn-accent: #4a9eff;   /* calm IDE blue */
+  --tn-as:     rgba(74, 158, 255, .16);
+  --tn-success:#4bbf7b;
+  --tn-danger: #ef5f6b;
+  --tn-warning:#e0a13a;
+  --tn-purple: #9d7bff;
+  --tn-focus:  rgba(74, 158, 255, .5);
+  --tn-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+  --tn-glow1: transparent; --tn-glow2: transparent; --tn-glow3: transparent;
+}
+[data-tn-theme="light"] {
+  --tn-desk:   #eceef2;
+  --tn-desk2:  #eceef2;
+  --tn-bg:     #ffffff;
+  --tn-s1:     #f5f6f9;
+  --tn-s2:     #e9ecf1;
+  --tn-bh:     #cfd5de;
+  --tn-bs:     #e2e6ec;
+  --tn-tp:     #1c2230;
+  --tn-ts:     #4a5568;
+  --tn-tm:     #8a93a2;
+  --tn-accent: #2f7fe0;
+  --tn-as:     rgba(47, 127, 224, .12);
+  --tn-success:#1f9d57;
+  --tn-danger: #d93a46;
+  --tn-warning:#b8801f;
+  --tn-purple: #7b5cf6;
+  --tn-focus:  rgba(47, 127, 224, .4);
+  --tn-shadow: 0 8px 24px rgba(30, 45, 75, .16);
+  --tn-glow1: transparent; --tn-glow2: transparent; --tn-glow3: transparent;
+}
+
+/* — Flat, solid window: no gradient, no glass — */
+body { background: var(--tn-desk); background-image: none; }
+.shell { background: var(--tn-bg); backdrop-filter: none; -webkit-backdrop-filter: none; }
+.sidebar, .titlebar, .conn-menu, .drop-menu, .modal, .toast, .update-toast, .g-hcell {
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+.conn-menu, .drop-menu, .modal, .toast, .update-toast { background: var(--tn-s1); }
+
+/* — Solid panel separators (crisp 1px, no soft glow) — */
+.titlebar { border-bottom: 1px solid var(--tn-bh); box-shadow: none; }
+.sidebar { border-right: 1px solid var(--tn-bh); box-shadow: none; }
+.qtabs { border-bottom: 1px solid var(--tn-bh); box-shadow: none; }
+.toolbar { border-bottom: 1px solid var(--tn-bs); box-shadow: none; }
+.rtabs { border-bottom: 1px solid var(--tn-bh); box-shadow: none; }
+.statusbar { border-top: 1px solid var(--tn-bh); box-shadow: none; }
+.editor-frame { border-bottom: 1px solid var(--tn-bs); }
+.splitter { background: var(--tn-s1); border-top: 1px solid var(--tn-bh); border-bottom: 1px solid var(--tn-bh); }
+
+/* — Tighter radii (IDE = crisp, minimal rounding) — */
+.btn, .field input, .field select, .filter-box, .search-box, .pal-input input,
+.conn-card, .pg-avatar, .env-pill, .kbd, .tree-row, .conn-menu .row,
+.drop-menu button, .pal-item, .seg, .seg button { border-radius: 4px; }
+.modal, .conn-menu, .drop-menu, .toast, .update-toast, .test-panel, .meta-cell,
+.mon-table, .plan-node, .tip-card, .error-box { border-radius: 6px; }
+.brand-glyph { border-radius: 4px; }
+
+/* — Denser toolbar & rows — */
+.toolbar { padding: 6px 10px; gap: 6px; }
+.btn { height: 26px; padding: 0 10px; font-size: 12px; }
+.tree-row { padding: 3px 7px; }
+.col-line { padding-top: 2px; padding-bottom: 2px; }
+.side-head { padding: 10px 12px 5px; }
+.conn-card { padding: 6px 8px; }
+
+/* — Flat toolbar buttons: subtle, only hover fills (VS Code style) — */
+.btn { background: transparent; border-color: transparent; }
+.btn:hover { background: var(--tn-s2); }
+.btn.primary { background: var(--tn-accent); border-color: var(--tn-accent);
+  box-shadow: none; color: #fff; }
+.btn.primary:hover { background: color-mix(in srgb, var(--tn-accent) 88%, white); box-shadow: none; }
+.btn.commit { border-color: transparent; }
+.btn.rollback { border-color: transparent; }
+/* keep a hairline on the export/secondary buttons that need affordance */
+.menu-wrap > .btn, .modal-foot .btn:not(.primary) { border: 1px solid var(--tn-bh); }
+.modal-foot .btn:not(.primary):hover { background: var(--tn-s2); }
+
+/* — Editor tabs like VS Code: full-bleed, solid active — */
+.qtab { border-radius: 0; border-right: 1px solid var(--tn-bs); }
+.qtab.on { background: var(--tn-bg); box-shadow: inset 0 -2px 0 var(--tn-accent); }
+
+/* — Grid: solid header, crisp 1px lines, no gradient — */
+.g-hcell { background: var(--tn-s2); border-bottom: 1px solid var(--tn-bh); }
+.g-row:nth-child(even of .g-row) { background: rgba(255, 255, 255, .018); }
+[data-tn-theme="light"] .g-row:nth-child(even of .g-row) { background: rgba(0, 20, 60, .022); }
+.g-row.sel { background: var(--tn-as); box-shadow: inset 2px 0 0 var(--tn-accent); }
+
+/* — Inputs: solid, inset feel — */
+.field input, .field select, .filter-box, .search-box, .pal-input input {
+  background: var(--tn-bg); border: 1px solid var(--tn-bh);
+}
+
+/* — Prod banner: solid, not gradient — */
+.prod-banner {
+  background: rgba(239, 95, 107, .12); border-bottom: 1px solid var(--tn-danger);
+  color: var(--tn-danger);
+}
+
+/* — Overlay backdrop: plain dim, no heavy blur (native modal) — */
+.overlay { background: rgba(0, 0, 0, .48); backdrop-filter: blur(1.5px); -webkit-backdrop-filter: blur(1.5px); }
+
+/* — Brand monogram tweak for flat look — */
+.brand-glyph { box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); }
+.brand-glyph::after { color: #fff; }
+
+/* — Titlebar: compact toolbar height like a native app — */
+.titlebar { height: 40px; }
+.statusbar { height: 24px; }
