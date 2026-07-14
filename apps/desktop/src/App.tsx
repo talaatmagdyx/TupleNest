@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import Grid from "./results/Grid";
 
 type AppInfo = { name: string; version: string; os: string };
 
@@ -50,8 +51,8 @@ type DbColumn = {
 
 type QueryResult = {
   columns: { name: string; dbType: string }[];
-  rows: unknown[][];
   totalRows: number;
+  storedRows: number;
   truncated: boolean;
   rowsAffected: number | null;
   elapsedMs: number;
@@ -82,6 +83,7 @@ export default function App() {
   const [sql, setSql] = useState("select now(), version()");
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [queryEpoch, setQueryEpoch] = useState(0);
 
   // Explorer tree (E1.3): lazily loaded schemas → objects → columns.
   const [schemas, setSchemas] = useState<string[] | null>(null);
@@ -270,11 +272,14 @@ export default function App() {
     setRunning(true);
     setStatus("Running…");
     try {
-      const r = await invoke<QueryResult>("pg_query", { sql, maxRows: 200 });
+      const r = await invoke<QueryResult>("pg_query", { sql });
       setResult(r);
+      setQueryEpoch((n) => n + 1);
       setStatus(
         r.columns.length > 0
-          ? `${r.totalRows} row(s) in ${r.elapsedMs}ms${r.truncated ? " (showing first 200)" : ""}`
+          ? `${r.totalRows} row(s) in ${r.elapsedMs}ms${
+              r.truncated ? ` (first ${r.storedRows.toLocaleString()} kept for scrolling)` : ""
+            }`
           : `${r.rowsAffected ?? 0} row(s) affected in ${r.elapsedMs}ms`
       );
     } catch (e) {
@@ -606,30 +611,11 @@ export default function App() {
             </button>
           </div>
           {result && result.columns.length > 0 && (
-            <div className="grid-wrap">
-              <table className="grid">
-                <thead>
-                  <tr>
-                    {result.columns.map((c) => (
-                      <th key={c.name} title={c.dbType}>
-                        {c.name}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.rows.map((row, i) => (
-                    <tr key={i}>
-                      {row.map((cell, j) => (
-                        <td key={j}>
-                          {cell === null ? <em className="muted">null</em> : String(cell)}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <Grid
+              columns={result.columns}
+              storedRows={result.storedRows}
+              epoch={queryEpoch}
+            />
           )}
         </section>
         <p className="hint">

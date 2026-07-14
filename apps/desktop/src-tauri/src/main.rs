@@ -137,6 +137,7 @@ fn main() {
             pg::pg_connect,
             pg::pg_disconnect,
             pg::pg_query,
+            pg::pg_rows,
             pg::pg_metadata,
             pg::pg_metadata_cached,
             pg::pg_cancel

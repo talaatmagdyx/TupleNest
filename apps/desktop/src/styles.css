@@ -306,3 +306,39 @@ ul.tree.cols li {
   color: #d90;
   vertical-align: middle;
 }
+
+
+/* --- Virtualized grid (Phase 1) --- */
+.vgrid {
+  height: 340px;
+  overflow: auto;
+  border: 1px solid var(--border, #3333);
+  border-radius: 6px;
+}
+table.vtable {
+  table-layout: auto;
+  width: max-content;
+  min-width: 100%;
+}
+table.vtable td,
+table.vtable th {
+  height: 24px;
+  box-sizing: border-box;
+  padding-top: 0;
+  padding-bottom: 0;
+  vertical-align: middle;
+}
+td.rownum,
+th.rownum {
+  color: inherit;
+  opacity: 0.45;
+  text-align: right;
+  min-width: 44px;
+  position: sticky;
+  left: 0;
+  background: var(--bg, #1e1e1e);
+}
+td.loading-cell {
+  opacity: 0.4;
+  text-align: center;
+}

@@ -70,6 +70,8 @@ pub struct PgState {
     cache: StdMutex<tuplenest_metadata_cache::MetadataCache>,
     /// Cache key of the currently connected session.
     cache_key: StdMutex<Option<String>>,
+    /// Last query's rows, held backend-side for windowed paging.
+    result: StdMutex<Option<StoredResult>>,
 }
 
 impl PgState {
@@ -79,6 +81,7 @@ impl PgState {
             cancel: StdMutex::new(None),
             cache: StdMutex::new(cache),
             cache_key: StdMutex::new(None),
+            result: StdMutex::new(None),
         }
     }
 }
@@ -194,6 +197,7 @@ pub async fn pg_connect(state: tauri::State<'_, PgState>, params: PgParams) -> R
 pub async fn pg_disconnect(state: tauri::State<'_, PgState>) -> Result<(), String> {
     *state.session.lock().await = None;
     *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = None;
+    *state.result.lock().map_err(|_| "result lock poisoned")? = None;
     tracing::info!(component = "pg", "session closed");
     Ok(())
 }
@@ -217,21 +221,24 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Collects up to `max_rows` rows in memory for display; counts the rest.
-struct CollectSink {
-    max_rows: usize,
-    inner: StdMutex<CollectInner>,
+/// Backend-held result of the last query: the WebView pages windows out of
+/// this store (`pg_rows`) instead of receiving the full row set over IPC.
+pub struct StoredResult {
+    columns: Vec<(String, String)>,
+    store: tuplenest_result_stream::RowStore<Vec<serde_json::Value>>,
 }
 
-#[derive(Default)]
-struct CollectInner {
-    columns: Vec<(String, String)>,
-    rows: Vec<Vec<serde_json::Value>>,
-    total: u64,
+/// Hard cap on rows kept for scrolling. Beyond this the stream is still
+/// drained and counted, but rows are dropped and the result marked truncated.
+const RESULT_STORE_CAP: usize = 100_000;
+
+/// Streams batches into a bounded RowStore.
+struct StoreSink {
+    inner: StdMutex<StoredResult>,
 }
 
 #[async_trait]
-impl BatchSink for CollectSink {
+impl BatchSink for StoreSink {
     async fn deliver(&self, batch: RowBatch) -> Result<(), DriverError> {
         let mut inner = self.inner.lock().expect("sink lock");
         if inner.columns.is_empty() {
@@ -241,11 +248,10 @@ impl BatchSink for CollectSink {
                 .map(|c| (c.name.clone(), c.db_type.clone()))
                 .collect();
         }
-        inner.total += batch.rows.len() as u64;
-        let room = self.max_rows.saturating_sub(inner.rows.len());
-        for row in batch.rows.into_iter().take(room) {
-            let json_row = row.into_iter().map(cell_to_json).collect();
-            inner.rows.push(json_row);
+        for row in batch.rows {
+            inner
+                .store
+                .push(row.into_iter().map(cell_to_json).collect());
         }
         Ok(())
     }
@@ -255,8 +261,10 @@ impl BatchSink for CollectSink {
 #[serde(rename_all = "camelCase")]
 pub struct QueryResultOut {
     columns: Vec<ColumnOut>,
-    rows: Vec<Vec<serde_json::Value>>,
+    /// Rows seen from the server (including any dropped past the cap).
     total_rows: u64,
+    /// Rows available for paging via `pg_rows`.
+    stored_rows: usize,
     truncated: bool,
     rows_affected: Option<u64>,
     elapsed_ms: u64,
@@ -269,20 +277,24 @@ pub struct ColumnOut {
     db_type: String,
 }
 
-/// Runs SQL on the active session, returning up to `maxRows` rows for
-/// display (the full stream is still drained and counted).
+/// Runs SQL on the active session. Rows stream into the backend store;
+/// the WebView pages them with `pg_rows`.
 #[tauri::command]
 pub async fn pg_query(
     state: tauri::State<'_, PgState>,
     sql: String,
-    max_rows: Option<usize>,
 ) -> Result<QueryResultOut, String> {
+    // Drop the previous result before running (frees memory immediately).
+    *state.result.lock().map_err(|_| "result lock poisoned")? = None;
+
     let mut guard = state.session.lock().await;
     let session = guard.as_mut().ok_or("not connected")?;
 
-    let sink = CollectSink {
-        max_rows: max_rows.unwrap_or(500).min(10_000),
-        inner: StdMutex::new(CollectInner::default()),
+    let sink = StoreSink {
+        inner: StdMutex::new(StoredResult {
+            columns: Vec::new(),
+            store: tuplenest_result_stream::RowStore::new(RESULT_STORE_CAP),
+        }),
     };
     let request = QueryRequest {
         execution_id: ExecutionId::new(),
@@ -295,25 +307,42 @@ pub async fn pg_query(
         .execute(request, &sink)
         .await
         .map_err(err_to_string)?;
-    let inner = sink.inner.into_inner().map_err(|_| "sink lock poisoned")?;
+    let stored = sink.inner.into_inner().map_err(|_| "sink lock poisoned")?;
     tracing::info!(
         component = "pg",
-        rows = inner.total,
+        rows = stored.store.total_seen(),
         duration_ms = summary.duration_ms,
         "query finished" // NOTE: query text is deliberately not logged
     );
-    Ok(QueryResultOut {
-        truncated: (inner.rows.len() as u64) < inner.total,
-        columns: inner
+    let out = QueryResultOut {
+        columns: stored
             .columns
-            .into_iter()
-            .map(|(name, db_type)| ColumnOut { name, db_type })
+            .iter()
+            .map(|(name, db_type)| ColumnOut {
+                name: name.clone(),
+                db_type: db_type.clone(),
+            })
             .collect(),
-        rows: inner.rows,
-        total_rows: inner.total,
+        total_rows: stored.store.total_seen(),
+        stored_rows: stored.store.stored(),
+        truncated: stored.store.truncated(),
         rows_affected: summary.rows_affected,
         elapsed_ms: summary.duration_ms,
-    })
+    };
+    *state.result.lock().map_err(|_| "result lock poisoned")? = Some(stored);
+    Ok(out)
+}
+
+/// Pages a window of rows out of the last query's backend store.
+#[tauri::command]
+pub fn pg_rows(
+    state: tauri::State<'_, PgState>,
+    offset: usize,
+    limit: usize,
+) -> Result<Vec<Vec<serde_json::Value>>, String> {
+    let guard = state.result.lock().map_err(|_| "result lock poisoned")?;
+    let stored = guard.as_ref().ok_or("no result")?;
+    Ok(stored.store.window(offset, limit.min(1_000)).to_vec())
 }
 
 #[derive(serde::Serialize)]
