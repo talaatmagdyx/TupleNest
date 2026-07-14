@@ -4037,6 +4037,7 @@ dependencies = [
 name = "tuplenest-desktop"
 version = "0.0.1"
 dependencies = [
+ "async-trait",
  "serde",
  "serde_json",
  "tauri",

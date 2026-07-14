@@ -19,3 +19,4 @@ tuplenest-driver-api = { path = "../../../crates/driver-api" }
 tuplenest-driver-postgres = { path = "../../../crates/driver-postgres" }
 tracing = { workspace = true }
 tokio = { workspace = true }
+async-trait = { workspace = true }

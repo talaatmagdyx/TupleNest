@@ -26,59 +26,30 @@ pub const BATCH_SIZE: usize = 1_000;
 pub struct PostgresDriver;
 
 impl PostgresDriver {
-    fn pg_config(config: &ConnectionConfig) -> tokio_postgres::Config {
+    /// `password` is resolved by the caller (connection-core / app shell)
+    /// from the credential store; this crate never touches the keychain.
+    fn pg_config(config: &ConnectionConfig, password: Option<&str>) -> tokio_postgres::Config {
         let mut c = tokio_postgres::Config::new();
         c.host(&config.host)
             .port(config.port)
             .dbname(&config.database)
             .user(&config.username)
             .application_name("TupleNest");
+        if let Some(pw) = password {
+            c.password(pw);
+        }
         c
     }
-}
 
-#[async_trait]
-impl DatabaseDriver for PostgresDriver {
-    fn descriptor(&self) -> DriverDescriptor {
-        DriverDescriptor {
-            id: "postgres".into(),
-            display_name: "PostgreSQL".into(),
-            version: env!("CARGO_PKG_VERSION").into(),
-            maturity: DriverMaturity::Experimental,
-            supported_server_versions: vec![
-                "13".into(),
-                "14".into(),
-                "15".into(),
-                "16".into(),
-                "17".into(),
-                "18".into(),
-            ],
-        }
-    }
-
-    fn capabilities(&self) -> DriverCapabilities {
-        DriverCapabilities {
-            sql: true,
-            transactions: true,
-            savepoints: true,
-            query_cancellation: true,
-            editable_results: true,
-            explain: true,
-            explain_analyze: true,
-            schemas: true,
-            catalogs: true,
-            functions: true,
-            procedures: true,
-            triggers: true,
-            roles: true,
-            ..Default::default()
-        }
-    }
-
-    async fn test(&self, config: ConnectionConfig) -> Result<ConnectionTestReport, DriverError> {
+    /// [`DatabaseDriver::test`] with an explicit resolved password.
+    pub async fn test_with_password(
+        &self,
+        config: &ConnectionConfig,
+        password: Option<&str>,
+    ) -> Result<ConnectionTestReport, DriverError> {
         let mut stages = Vec::new();
         let started = Instant::now();
-        let result = Self::pg_config(&config).connect(NoTls).await;
+        let result = Self::pg_config(config, password).connect(NoTls).await;
         let elapsed = started.elapsed().as_millis() as u64;
         match result {
             Ok((client, connection)) => {
@@ -126,25 +97,57 @@ impl DatabaseDriver for PostgresDriver {
             }
         }
     }
+}
+
+#[async_trait]
+impl DatabaseDriver for PostgresDriver {
+    fn descriptor(&self) -> DriverDescriptor {
+        DriverDescriptor {
+            id: "postgres".into(),
+            display_name: "PostgreSQL".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            maturity: DriverMaturity::Experimental,
+            supported_server_versions: vec![
+                "13".into(),
+                "14".into(),
+                "15".into(),
+                "16".into(),
+                "17".into(),
+                "18".into(),
+            ],
+        }
+    }
+
+    fn capabilities(&self) -> DriverCapabilities {
+        DriverCapabilities {
+            sql: true,
+            transactions: true,
+            savepoints: true,
+            query_cancellation: true,
+            editable_results: true,
+            explain: true,
+            explain_analyze: true,
+            schemas: true,
+            catalogs: true,
+            functions: true,
+            procedures: true,
+            triggers: true,
+            roles: true,
+            ..Default::default()
+        }
+    }
+
+    async fn test(&self, config: ConnectionConfig) -> Result<ConnectionTestReport, DriverError> {
+        self.test_with_password(&config, None).await
+    }
 
     async fn connect(
         &self,
         config: ConnectionConfig,
     ) -> Result<Box<dyn DatabaseSession>, DriverError> {
-        let (client, connection) = Self::pg_config(&config)
-            .connect(NoTls)
-            .await
-            .map_err(normalize_error)?;
-        let conn_task = tokio::spawn(async move {
-            let _ = connection.await;
-        });
-        let cancel_token = client.cancel_token();
-        Ok(Box::new(PostgresSession {
-            client,
-            cancel_token: Arc::new(AsyncMutex::new(cancel_token)),
-            _conn_task: conn_task,
-            in_transaction: None,
-        }))
+        Ok(Box::new(
+            self.connect_concrete_with_password(config, None).await?,
+        ))
     }
 }
 
@@ -180,7 +183,16 @@ impl PostgresDriver {
         &self,
         config: ConnectionConfig,
     ) -> Result<PostgresSession, DriverError> {
-        let (client, connection) = Self::pg_config(&config)
+        self.connect_concrete_with_password(config, None).await
+    }
+
+    /// Like [`PostgresDriver::connect_concrete`] with an explicit resolved password.
+    pub async fn connect_concrete_with_password(
+        &self,
+        config: ConnectionConfig,
+        password: Option<&str>,
+    ) -> Result<PostgresSession, DriverError> {
+        let (client, connection) = Self::pg_config(&config, password)
             .connect(NoTls)
             .await
             .map_err(normalize_error)?;
@@ -439,11 +451,9 @@ pub fn normalize_error(e: tokio_postgres::Error) -> DriverError {
         let mut err = DriverError::new(category, title)
             .with_native_code(db.code().code())
             .with_original_message(db.message());
-        if let Some(pos) = db.position() {
-            if let tokio_postgres::error::ErrorPosition::Original(p) = pos {
-                let p = *p as usize;
-                err = err.with_query_range(p.saturating_sub(1), p);
-            }
+        if let Some(tokio_postgres::error::ErrorPosition::Original(p)) = db.position() {
+            let p = *p as usize;
+            err = err.with_query_range(p.saturating_sub(1), p);
         }
         err
     } else if e.is_closed() {

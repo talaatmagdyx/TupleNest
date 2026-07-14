@@ -10,6 +10,8 @@ use std::sync::Mutex;
 use tauri::Manager;
 use tuplenest_workspace_store::Store;
 
+mod pg;
+
 struct AppState {
     store: Mutex<Store>,
     /// Keeps the background log writer alive for the app's lifetime.
@@ -99,9 +101,14 @@ fn main() {
 
             // E0.7: structured file logging (rotated daily) + crash capture.
             // JSON logs in release; human-readable in dev.
-            let log_guard = tuplenest_telemetry::init_app(&dir.join("logs"), !cfg!(debug_assertions)).ok();
+            let log_guard =
+                tuplenest_telemetry::init_app(&dir.join("logs"), !cfg!(debug_assertions)).ok();
             tuplenest_telemetry::install_panic_hook(dir.join("crashes"));
-            tracing::info!(component = "app", version = env!("CARGO_PKG_VERSION"), "TupleNest starting");
+            tracing::info!(
+                component = "app",
+                version = env!("CARGO_PKG_VERSION"),
+                "TupleNest starting"
+            );
 
             let store = Store::open(&dir.join("tuplenest.db"))
                 .map_err(|e| -> Box<dyn std::error::Error> { format!("{e}").into() })?;
@@ -109,6 +116,7 @@ fn main() {
                 store: Mutex::new(store),
                 _log_guard: log_guard,
             });
+            app.manage(pg::PgState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -116,7 +124,13 @@ fn main() {
             settings_get,
             settings_set,
             layout_save,
-            layout_load
+            layout_load,
+            pg::pg_secret_save,
+            pg::pg_test,
+            pg::pg_connect,
+            pg::pg_disconnect,
+            pg::pg_query,
+            pg::pg_cancel
         ])
         .run(tauri::generate_context!())
         .expect("error while running TupleNest");
