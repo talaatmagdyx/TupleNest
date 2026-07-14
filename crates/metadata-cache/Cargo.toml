@@ -1,8 +1,13 @@
 [package]
 name = "tuplenest-metadata-cache"
-version = "0.0.1"
-edition = "2021"
-license = "MIT"
-description = "TupleNest metadata-cache crate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SQLite-backed metadata cache: instant explorer loads, offline browsing"
 
 [dependencies]
+rusqlite = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

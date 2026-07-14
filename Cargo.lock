@@ -4240,6 +4240,7 @@ dependencies = [
  "tuplenest-credential-store",
  "tuplenest-driver-api",
  "tuplenest-driver-postgres",
+ "tuplenest-metadata-cache",
  "tuplenest-telemetry",
  "tuplenest-workspace-store",
  "uuid",
@@ -4281,6 +4282,11 @@ version = "0.0.1"
 [[package]]
 name = "tuplenest-metadata-cache"
 version = "0.0.1"
+dependencies = [
+ "rusqlite",
+ "tempfile",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "tuplenest-metadata-core"

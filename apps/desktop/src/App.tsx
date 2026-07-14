@@ -36,6 +36,8 @@ type ConnectionRecord = {
   tlsCaPath: string | null;
 };
 
+type MetadataOut<T> = { payload: T; cached: boolean; fetchedAt: number | null };
+
 type DbObject = { name: string; kind: string; comment: string | null };
 
 type DbColumn = {
@@ -87,6 +89,7 @@ export default function App() {
   const [objects, setObjects] = useState<Record<string, DbObject[]>>({});
   const [openTables, setOpenTables] = useState<Record<string, boolean>>({});
   const [columns, setColumns] = useState<Record<string, DbColumn[]>>({});
+  const [metaCached, setMetaCached] = useState(false);
 
   const refreshSaved = useCallback(async () => {
     try {
@@ -161,7 +164,31 @@ export default function App() {
     setObjects({});
     setOpenTables({});
     setColumns({});
+    setMetaCached(false);
   }, []);
+
+  /// Live metadata when connected (server may still serve stale cache on
+  /// failure); pure cache lookups otherwise.
+  const metaFetch = useCallback(
+    async (request: Record<string, unknown>): Promise<MetadataOut<unknown> | null> => {
+      if (connected) {
+        return await invoke<MetadataOut<unknown>>("pg_metadata", { request });
+      }
+      return await invoke<MetadataOut<unknown> | null>("pg_metadata_cached", {
+        params: {
+          host,
+          port,
+          database,
+          username,
+          secretRef: null,
+          tlsMode,
+          tlsCaPath: null,
+        },
+        request,
+      });
+    },
+    [connected, host, port, database, username, tlsMode]
+  );
 
   const doConnect = useCallback(async () => {
     setStatus("Connecting…");
@@ -171,8 +198,11 @@ export default function App() {
       setConnectedEnv(environment);
       setStatus("Connected");
       resetExplorer();
-      invoke<string[]>("pg_metadata", { request: { kind: "list_schemas" } })
-        .then(setSchemas)
+      invoke<MetadataOut<string[]>>("pg_metadata", { request: { kind: "list_schemas" } })
+        .then((r) => {
+          setSchemas(r.payload);
+          setMetaCached(r.cached);
+        })
         .catch((e) => setStatus(`Explorer error: ${e}`));
     } catch (e) {
       setStatus(`Error: ${e}`);
@@ -194,16 +224,19 @@ export default function App() {
       setOpenSchemas((m) => ({ ...m, [schema]: opening }));
       if (opening && !(schema in objects)) {
         try {
-          const objs = await invoke<DbObject[]>("pg_metadata", {
-            request: { kind: "list_objects", schema },
-          });
-          setObjects((m) => ({ ...m, [schema]: objs }));
+          const r = await metaFetch({ kind: "list_objects", schema });
+          if (r) {
+            setObjects((m) => ({ ...m, [schema]: r.payload as DbObject[] }));
+            if (r.cached) setMetaCached(true);
+          } else {
+            setObjects((m) => ({ ...m, [schema]: [] }));
+          }
         } catch (e) {
           setStatus(`Explorer error: ${e}`);
         }
       }
     },
-    [openSchemas, objects]
+    [openSchemas, objects, metaFetch]
   );
 
   const toggleTable = useCallback(
@@ -213,16 +246,20 @@ export default function App() {
       setOpenTables((m) => ({ ...m, [key]: opening }));
       if (opening && !(key in columns)) {
         try {
-          const desc = await invoke<{ columns: DbColumn[] }>("pg_metadata", {
-            request: { kind: "describe_object", schema, name },
-          });
-          setColumns((m) => ({ ...m, [key]: desc.columns }));
+          const r = await metaFetch({ kind: "describe_object", schema, name });
+          if (r) {
+            const desc = r.payload as { columns: DbColumn[] };
+            setColumns((m) => ({ ...m, [key]: desc.columns }));
+            if (r.cached) setMetaCached(true);
+          } else {
+            setColumns((m) => ({ ...m, [key]: [] }));
+          }
         } catch (e) {
           setStatus(`Explorer error: ${e}`);
         }
       }
     },
-    [openTables, columns]
+    [openTables, columns, metaFetch]
   );
 
   const insertSelect = useCallback((schema: string, name: string) => {
@@ -287,20 +324,45 @@ export default function App() {
     }
   }, [profileId, profileName, environment, host, port, database, username, password, tlsMode, tlsCaPath, refreshSaved]);
 
-  const loadProfile = useCallback((c: ConnectionRecord) => {
-    setProfileId(c.id);
-    setProfileName(c.name);
-    setEnvironment(c.environment ?? "dev");
-    setHost(c.host);
-    setPort(c.port);
-    setDatabase(c.database);
-    setUsername(c.username);
-    setSecretRef(c.secretRef);
-    setTlsMode(c.tlsMode || "verify-full");
-    setTlsCaPath(c.tlsCaPath ?? "");
-    setPassword("");
-    setStatus(`Loaded "${c.name}"`);
-  }, []);
+  const loadProfile = useCallback(
+    (c: ConnectionRecord) => {
+      setProfileId(c.id);
+      setProfileName(c.name);
+      setEnvironment(c.environment ?? "dev");
+      setHost(c.host);
+      setPort(c.port);
+      setDatabase(c.database);
+      setUsername(c.username);
+      setSecretRef(c.secretRef);
+      setTlsMode(c.tlsMode || "verify-full");
+      setTlsCaPath(c.tlsCaPath ?? "");
+      setPassword("");
+      setStatus(`Loaded "${c.name}"`);
+      if (connected) return; // live explorer stays as-is
+      // Offline/pre-connect: render the explorer from the metadata cache.
+      resetExplorer();
+      invoke<MetadataOut<string[]> | null>("pg_metadata_cached", {
+        params: {
+          host: c.host,
+          port: c.port,
+          database: c.database,
+          username: c.username,
+          secretRef: null,
+          tlsMode: c.tlsMode || "verify-full",
+          tlsCaPath: null,
+        },
+        request: { kind: "list_schemas" },
+      })
+        .then((r) => {
+          if (r) {
+            setSchemas(r.payload);
+            setMetaCached(true);
+          }
+        })
+        .catch(() => {});
+    },
+    [connected, resetExplorer]
+  );
 
   const newProfile = useCallback(() => {
     setProfileId(null);
@@ -375,9 +437,16 @@ export default function App() {
               </li>
             ))}
           </ul>
-          {connected && (
+          {(connected || schemas !== null) && (
             <div className="explorer">
-              <h2>Explorer</h2>
+              <h2>
+                Explorer{" "}
+                {metaCached && (
+                  <span className="cache-badge" title="Served from local metadata cache">
+                    cached
+                  </span>
+                )}
+              </h2>
               {schemas === null && <p className="muted">Loading schemas…</p>}
               <ul className="tree">
                 {(schemas ?? []).map((s) => (

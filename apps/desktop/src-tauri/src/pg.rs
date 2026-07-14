@@ -66,15 +66,26 @@ impl PgParams {
 pub struct PgState {
     session: AsyncMutex<Option<PostgresSession>>,
     cancel: StdMutex<Option<PgCancelHandle>>,
+    /// Metadata cache (E1.3): instant explorer loads + offline browsing.
+    cache: StdMutex<tuplenest_metadata_cache::MetadataCache>,
+    /// Cache key of the currently connected session.
+    cache_key: StdMutex<Option<String>>,
 }
 
-impl Default for PgState {
-    fn default() -> Self {
+impl PgState {
+    pub fn new(cache: tuplenest_metadata_cache::MetadataCache) -> Self {
         Self {
             session: AsyncMutex::new(None),
             cancel: StdMutex::new(None),
+            cache: StdMutex::new(cache),
+            cache_key: StdMutex::new(None),
         }
     }
+}
+
+/// Stable, secret-free cache identity for a connection target.
+fn cache_key_of(p: &PgParams) -> String {
+    format!("{}@{}:{}/{}", p.username, p.host, p.port, p.database)
 }
 
 fn resolve_password(secret_ref: &Option<String>) -> Result<Option<Secret>, String> {
@@ -174,6 +185,7 @@ pub async fn pg_connect(state: tauri::State<'_, PgState>, params: PgParams) -> R
         .map_err(err_to_string)?;
     *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = Some(session.cancel_handle());
     *state.session.lock().await = Some(session);
+    *state.cache_key.lock().map_err(|_| "key lock poisoned")? = Some(cache_key_of(&params));
     tracing::info!(component = "pg", host = %params.host, db = %params.database, "session opened");
     Ok(())
 }
@@ -304,18 +316,165 @@ pub async fn pg_query(
     })
 }
 
-/// Metadata for the explorer tree (E1.3). `request` mirrors driver-api's
-/// MetadataRequest: {"kind":"list_schemas"} | {"kind":"list_objects","schema":..}
-/// | {"kind":"describe_object","schema":..,"name":..}.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataOut {
+    pub payload: serde_json::Value,
+    /// True when served from the local cache rather than the live server.
+    pub cached: bool,
+    /// Unix seconds of the cache write, when `cached`.
+    pub fetched_at: Option<i64>,
+}
+
+/// (object_type, schema_scope, name_scope) addressing for a request.
+fn cache_scope(request: &MetadataRequest) -> (&'static str, String, String) {
+    match request {
+        MetadataRequest::ServerInfo => ("server", String::new(), String::new()),
+        MetadataRequest::ListSchemas => ("schema", String::new(), String::new()),
+        MetadataRequest::ListObjects { schema } => ("object", schema.clone(), String::new()),
+        MetadataRequest::DescribeObject { schema, name } => {
+            ("columns", schema.clone(), name.clone())
+        }
+    }
+}
+
+fn read_cache(
+    state: &PgState,
+    key: &str,
+    request: &MetadataRequest,
+) -> Result<Option<MetadataOut>, String> {
+    let cache = state.cache.lock().map_err(|_| "cache lock poisoned")?;
+    let (object_type, schema, name) = cache_scope(request);
+    let out = match request {
+        MetadataRequest::ListSchemas | MetadataRequest::ListObjects { .. } => {
+            let entries = cache
+                .list(key, object_type, &schema)
+                .map_err(|e| e.to_string())?;
+            if entries.is_empty() {
+                None
+            } else {
+                let fetched_at = entries.iter().map(|e| e.fetched_at).min();
+                let items: Result<Vec<serde_json::Value>, _> = entries
+                    .iter()
+                    .map(|e| serde_json::from_str(&e.payload_json))
+                    .collect();
+                Some(MetadataOut {
+                    payload: serde_json::Value::Array(items.map_err(|e| e.to_string())?),
+                    cached: true,
+                    fetched_at,
+                })
+            }
+        }
+        _ => cache
+            .get(key, object_type, &schema, &name)
+            .map_err(|e| e.to_string())?
+            .map(|entry| {
+                Ok::<_, String>(MetadataOut {
+                    payload: serde_json::from_str(&entry.payload_json)
+                        .map_err(|e| e.to_string())?,
+                    cached: true,
+                    fetched_at: Some(entry.fetched_at),
+                })
+            })
+            .transpose()?,
+    };
+    Ok(out)
+}
+
+fn write_cache(
+    state: &PgState,
+    key: &str,
+    request: &MetadataRequest,
+    payload: &serde_json::Value,
+) -> Result<(), String> {
+    let mut cache = state.cache.lock().map_err(|_| "cache lock poisoned")?;
+    let (object_type, schema, name) = cache_scope(request);
+    match request {
+        MetadataRequest::ListSchemas => {
+            // Payload is an array of schema-name strings.
+            let entries: Vec<(String, String)> = payload
+                .as_array()
+                .unwrap_or(&vec![])
+                .iter()
+                .filter_map(|v| {
+                    v.as_str()
+                        .map(|s| (s.to_string(), serde_json::json!(s).to_string()))
+                })
+                .collect();
+            cache
+                .replace_list(key, object_type, &schema, &entries)
+                .map_err(|e| e.to_string())
+        }
+        MetadataRequest::ListObjects { .. } => {
+            // Payload is an array of {name, kind, comment} objects.
+            let entries: Vec<(String, String)> = payload
+                .as_array()
+                .unwrap_or(&vec![])
+                .iter()
+                .filter_map(|v| v["name"].as_str().map(|n| (n.to_string(), v.to_string())))
+                .collect();
+            cache
+                .replace_list(key, object_type, &schema, &entries)
+                .map_err(|e| e.to_string())
+        }
+        _ => cache
+            .put(key, object_type, &schema, &name, &payload.to_string())
+            .map_err(|e| e.to_string()),
+    }
+}
+
+/// Metadata for the explorer tree (E1.3). Live when connected — with
+/// write-through to the cache — falling back to cached data on live errors.
 #[tauri::command]
 pub async fn pg_metadata(
     state: tauri::State<'_, PgState>,
     request: MetadataRequest,
-) -> Result<serde_json::Value, String> {
+) -> Result<MetadataOut, String> {
+    let key = state
+        .cache_key
+        .lock()
+        .map_err(|_| "key lock poisoned")?
+        .clone();
     let guard = state.session.lock().await;
     let session = guard.as_ref().ok_or("not connected")?;
-    let response = session.metadata(request).await.map_err(err_to_string)?;
-    Ok(response.payload)
+    match session.metadata(request.clone()).await {
+        Ok(response) => {
+            if let Some(key) = &key {
+                // Cache failures must never break live metadata.
+                if let Err(e) = write_cache(&state, key, &request, &response.payload) {
+                    tracing::warn!(component = "metadata-cache", error = %e, "write-through failed");
+                }
+            }
+            Ok(MetadataOut {
+                payload: response.payload,
+                cached: false,
+                fetched_at: None,
+            })
+        }
+        Err(live_err) => {
+            if let Some(key) = &key {
+                if let Some(cached) = read_cache(&state, key, &request)? {
+                    tracing::warn!(
+                        component = "metadata-cache",
+                        "serving stale cache after live failure"
+                    );
+                    return Ok(cached);
+                }
+            }
+            Err(err_to_string(live_err))
+        }
+    }
+}
+
+/// Cache-only metadata: renders the explorer for a saved profile before —
+/// or without — connecting. Never touches the network.
+#[tauri::command]
+pub fn pg_metadata_cached(
+    state: tauri::State<'_, PgState>,
+    params: PgParams,
+    request: MetadataRequest,
+) -> Result<Option<MetadataOut>, String> {
+    read_cache(&state, &cache_key_of(&params), &request)
 }
 
 /// Cancels the in-flight query via the wire-protocol cancel key. Does not

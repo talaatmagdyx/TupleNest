@@ -117,7 +117,10 @@ fn main() {
                 store: Mutex::new(store),
                 _log_guard: log_guard,
             });
-            app.manage(pg::PgState::default());
+            let cache =
+                tuplenest_metadata_cache::MetadataCache::open(&dir.join("metadata-cache.db"))
+                    .map_err(|e| -> Box<dyn std::error::Error> { format!("{e}").into() })?;
+            app.manage(pg::PgState::new(cache));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -135,6 +138,7 @@ fn main() {
             pg::pg_disconnect,
             pg::pg_query,
             pg::pg_metadata,
+            pg::pg_metadata_cached,
             pg::pg_cancel
         ])
         .run(tauri::generate_context!())
