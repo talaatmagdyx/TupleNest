@@ -15,7 +15,7 @@ export default function StatusBar(p: Props) {
   const txLabel =
     txSecs >= 60 ? `${Math.floor(txSecs / 60)}m ${String(txSecs % 60).padStart(2, "0")}s` : `${txSecs}s`;
   return (
-    <footer className="statusbar">
+    <footer className={`statusbar ${p.connected ? "" : "off"}`}>
       <span className="item">
         <span
           className="dot"

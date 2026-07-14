@@ -53,3 +53,31 @@ export const WarnIcon = ({ size }: { size?: number }) => (
     <line x1="12" y1="17" x2="12.01" y2="17" />
   </svg>
 );
+
+/* — Activity-rail icons (20px, 1.7 stroke) — */
+export const ExplorerRailIcon = ({ size }: { size?: number }) => (
+  <svg {...S({ size: size ?? 20 })}>
+    <ellipse cx="12" cy="5" rx="7.5" ry="2.8" />
+    <path d="M4.5 5v14c0 1.55 3.36 2.8 7.5 2.8s7.5-1.25 7.5-2.8V5" />
+    <path d="M4.5 12c0 1.55 3.36 2.8 7.5 2.8s7.5-1.25 7.5-2.8" />
+  </svg>
+);
+export const HistoryRailIcon = ({ size }: { size?: number }) => (
+  <svg {...S({ size: size ?? 20 })}>
+    <path d="M3 3v5h5" />
+    <path d="M3.05 13a9 9 0 1 0 2.6-6.36L3 8" />
+    <path d="M12 7v5l3 2" />
+  </svg>
+);
+export const MonitorRailIcon = ({ size }: { size?: number }) => (
+  <svg {...S({ size: size ?? 20 })}>
+    <path d="M3 12h4l2 6 4-14 2 8h6" />
+  </svg>
+);
+export const DiagramRailIcon = ({ size }: { size?: number }) => (
+  <svg {...S({ size: size ?? 20 })}>
+    <rect x="3" y="3" width="7" height="6" rx="1" />
+    <rect x="14" y="15" width="7" height="6" rx="1" />
+    <path d="M6.5 9v4a2 2 0 0 0 2 2h5" />
+  </svg>
+);

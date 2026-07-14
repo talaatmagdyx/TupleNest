@@ -916,3 +916,66 @@ body { background: var(--tn-desk); background-image: none; }
 /* — Titlebar: compact toolbar height like a native app — */
 .titlebar { height: 40px; }
 .statusbar { height: 24px; }
+
+
+/* ============================================================
+   ACTIVITY RAIL + FINAL IDE POLISH
+   ============================================================ */
+
+.activity-rail {
+  flex: none; width: 46px; display: flex; flex-direction: column;
+  justify-content: space-between; align-items: center;
+  padding: 8px 0; background: var(--tn-desk);
+  border-right: 1px solid var(--tn-bh);
+}
+[data-tn-theme="light"] .activity-rail { background: var(--tn-s2); }
+.rail-group { display: flex; flex-direction: column; gap: 2px; width: 100%; align-items: center; }
+.rail-btn {
+  position: relative; width: 40px; height: 40px; display: grid; place-items: center;
+  border: none; background: transparent; color: var(--tn-tm); cursor: pointer;
+  border-radius: 6px; transition: color .12s ease, background-color .12s ease;
+}
+.rail-btn:hover:not(:disabled) { color: var(--tn-ts); background: var(--tn-s2); }
+.rail-btn.on { color: var(--tn-accent); }
+.rail-btn:disabled { opacity: .32; cursor: default; }
+.rail-ind {
+  position: absolute; left: -3px; top: 9px; bottom: 9px; width: 2.5px;
+  border-radius: 2px; background: var(--tn-accent);
+}
+
+/* — Status bar: colored connection segment (VS Code feel) — */
+.statusbar { padding: 0; gap: 0; }
+.statusbar .item { padding: 0 12px; height: 100%; display: flex; align-items: center; gap: 6px; }
+.statusbar .bar-sep { display: none; }
+.statusbar .item:first-child {
+  background: var(--tn-accent); color: #fff; font-weight: 600;
+}
+.statusbar .item:first-child .dot { background: #fff !important; box-shadow: none !important; }
+[data-tn-theme="dark"] .statusbar .item:not(:first-child):hover,
+[data-tn-theme="light"] .statusbar .item:not(:first-child):hover { background: var(--tn-s2); }
+.statusbar .grow { flex: 1; }
+.statusbar .txwarn { background: rgba(224, 161, 58, .16); }
+
+/* When disconnected, the first segment is muted grey, not accent */
+.statusbar.off .item:first-child { background: var(--tn-s2); color: var(--tn-tm); }
+
+/* — History-in-sidebar fits the narrow panel — */
+.sidebar .hist-pane { flex: 1; min-height: 0; }
+.sidebar .hist-row { padding: 6px 10px; }
+.sidebar .hist-row .hmeta { display: none; }
+.sidebar .hist-bar { padding: 8px 10px; }
+
+/* — Sidebar panel header consistency — */
+.sidebar > .side-head:first-child { padding-top: 12px; }
+
+/* — Refined tree hover with accent affordance — */
+.tree-row:hover .tree-label { color: var(--tn-tp); }
+
+/* — Editor active-line gutter accent (subtle) — */
+.gutter { color: var(--tn-tm); }
+
+/* — Result tabs: hover state — */
+.rtab:hover { color: var(--tn-ts); }
+
+/* — Toolbar primary Run keeps prominence in dense bar — */
+.toolbar .btn.primary { height: 26px; }

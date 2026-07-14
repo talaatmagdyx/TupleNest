@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Titlebar from "./app-shell/Titlebar";
 import StatusBar from "./app-shell/StatusBar";
+import ActivityRail, { type RailView } from "./app-shell/ActivityRail";
+import HistoryPanel from "./history/HistoryPanel";
 import SavedList from "./connections/SavedList";
 import ConnectionForm from "./connections/ConnectionForm";
 import ExplorerTree from "./explorer/ExplorerTree";
@@ -122,6 +124,7 @@ export default function App() {
   const [paletteQ, setPaletteQ] = useState("");
   const [paletteIdx, setPaletteIdx] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [railView, setRailView] = useState<RailView>("explorer");
   const [connMenu, setConnMenu] = useState(false);
   const [exportMenu, setExportMenu] = useState(false);
   const [resultTab, setResultTab] = useState<ResultTab>("results");
@@ -1124,30 +1127,66 @@ export default function App() {
         </div>
       )}
       <div className="body">
+        <ActivityRail
+          view={railView}
+          connected={connected}
+          onView={setRailView}
+          onMonitor={() => setOverlay("monitor")}
+          onDiagram={() => setOverlay("diagram")}
+          onSettings={() => setOverlay("settings")}
+        />
         <aside className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
-          <SavedList
-            saved={saved}
-            activeId={profileId}
-            connected={connected}
-            onLoad={editProfile}
-            onNew={newProfile}
-            onDelete={doDeleteProfile}
-          />
-          <div className="side-sep" />
-          <ExplorerTree
-            schemas={schemas}
-            metaCached={metaCached}
-            connected={connected}
-            openSchemas={openSchemas}
-            objects={objects}
-            openTables={openTables}
-            columns={columns}
-            onToggleSchema={toggleSchema}
-            onToggleTable={toggleTable}
-            onInsertSelect={insertSelect}
-            onDescribe={describeObject}
-            onConnect={saved.length ? () => setConnMenu(true) : newProfile}
-          />
+          {railView === "explorer" ? (
+            <>
+              <SavedList
+                saved={saved}
+                activeId={profileId}
+                connected={connected}
+                onLoad={editProfile}
+                onNew={newProfile}
+                onDelete={doDeleteProfile}
+              />
+              <div className="side-sep" />
+              <ExplorerTree
+                schemas={schemas}
+                metaCached={metaCached}
+                connected={connected}
+                openSchemas={openSchemas}
+                objects={objects}
+                openTables={openTables}
+                columns={columns}
+                onToggleSchema={toggleSchema}
+                onToggleTable={toggleTable}
+                onInsertSelect={insertSelect}
+                onDescribe={describeObject}
+                onConnect={saved.length ? () => setConnMenu(true) : newProfile}
+              />
+            </>
+          ) : (
+            <>
+              <div className="side-head">
+                <span className="label">History</span>
+              </div>
+              <HistoryPanel
+                items={historyItems}
+                search={historySearch}
+                onSearch={setHistorySearch}
+                onClear={async () => {
+                  await invoke("history_clear", { includeFavorites: false }).catch(() => {});
+                  refreshHistory(historySearch);
+                  showToast("Cleared history — favorites kept");
+                }}
+                onToggleFavorite={async (h) => {
+                  await invoke("history_favorite", { id: h.id, favorite: !h.favorite }).catch(() => {});
+                  refreshHistory(historySearch);
+                }}
+                onLoad={(sql) => {
+                  setActiveSql(sql);
+                  showToast("Loaded into editor");
+                }}
+              />
+            </>
+          )}
         </aside>
         <main className="main-col">
           <TabsBar tabs={tabs} active={activeTab} onSelect={setActiveTab} onClose={closeTab} onNew={newTab} />
