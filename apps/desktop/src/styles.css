@@ -684,3 +684,106 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 /* Result-tab active underline sits flush */
 .rtab { position: relative; }
+
+
+/* ============================================================
+   VISUAL REFINEMENT LAYER  (loaded last — refines the HUD)
+   Goal: more restraint, depth, and motion — premium feel,
+   same identity.
+   ============================================================ */
+
+/* — More restrained, elegant backdrop — */
+:root, [data-tn-theme="dark"] {
+  --tn-glow1: rgba(56, 208, 255, .32);
+  --tn-glow2: rgba(157, 123, 255, .28);
+  --tn-glow3: rgba(70, 240, 176, .18);
+}
+body {
+  background-image:
+    radial-gradient(50% 60% at 12% 4%, var(--tn-glow1), transparent 60%),
+    radial-gradient(45% 60% at 92% 8%, var(--tn-glow2), transparent 62%),
+    radial-gradient(60% 70% at 70% 104%, var(--tn-glow3), transparent 64%),
+    linear-gradient(165deg, var(--tn-desk2), var(--tn-desk));
+}
+
+/* — Consistent, smooth motion — */
+.btn, .icon-btn, .tree-row, .conn-card, .qtab, .rtab, .pal-item,
+.conn-menu .row, .drop-menu button, .hist-row, .mon-row, .plus,
+.palette-btn, .conn-switch > button, .toggle, .toggle .knob, .seg button {
+  transition: background-color .13s ease, border-color .13s ease,
+              color .13s ease, box-shadow .13s ease, transform .08s ease;
+}
+.btn:active, .icon-btn:active, .qtab-new:active { transform: translateY(1px); }
+
+/* — Elevation: panels get a soft top highlight + real border — */
+.titlebar, .qtabs, .toolbar, .rtabs {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
+}
+.sidebar { box-shadow: inset -1px 0 0 rgba(255, 255, 255, .03); }
+
+/* — Refined brand mark — */
+.brand-glyph {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .12) inset,
+              0 2px 10px var(--tn-as);
+}
+.brand-glyph::after {
+  content: "◆"; position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 8px; color: rgba(255, 255, 255, .92);
+}
+
+/* — Primary button: subtle lift & gradient — */
+.btn.primary {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--tn-accent) 92%, white), var(--tn-accent));
+  box-shadow: 0 1px 0 rgba(255,255,255,.25) inset, 0 4px 14px rgba(56,208,255,.22);
+}
+.btn.primary:hover { box-shadow: 0 1px 0 rgba(255,255,255,.3) inset, 0 6px 18px rgba(56,208,255,.32); }
+
+/* — Query tabs: crisper active state — */
+.qtab.on { box-shadow: inset 0 -2px 0 var(--tn-accent); border-bottom-color: transparent; }
+
+/* — Sidebar section headers: more air, letter-spacing — */
+.side-head .label { letter-spacing: .14em; opacity: .85; }
+.conn-card.active { box-shadow: inset 2px 0 0 var(--tn-accent); }
+
+/* — Grid: zebra rows, gradient header, sharper selection — */
+.g-hcell { background: linear-gradient(180deg, var(--tn-s2), color-mix(in srgb, var(--tn-s2) 80%, transparent)); }
+.g-row:nth-child(even of .g-row) { background: rgba(255, 255, 255, .012); }
+.g-row:hover { background: rgba(56, 208, 255, .05); }
+.g-row.sel { background: var(--tn-as); box-shadow: inset 2px 0 0 var(--tn-accent); }
+.g-rownum { transition: color .13s ease; }
+.g-row:hover .g-rownum { color: var(--tn-ts); }
+
+/* — Floating surfaces: deeper, softer shadow — */
+.conn-menu, .drop-menu, .toast, .update-toast, .modal {
+  box-shadow: 0 24px 70px rgba(0, 10, 30, .55), 0 2px 8px rgba(0, 0, 0, .3);
+}
+
+/* — Result meta ✓ pill feel — */
+.rtabs .meta { opacity: .9; }
+
+/* — Status bar: subtle top hairline — */
+.statusbar { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035); }
+
+/* — Inputs: calmer default, clear focus — */
+.field input, .field select, .filter-box, .pal-input input, .search-box {
+  transition: border-color .13s ease, box-shadow .13s ease, background-color .13s ease;
+}
+.filter-box:focus-within { border-color: var(--tn-accent); box-shadow: 0 0 0 3px var(--tn-as); }
+
+/* — Empty-state polish — */
+.center-note .big { letter-spacing: -.01em; }
+.onboard-glyph { box-shadow: 0 0 0 1px var(--tn-bh) inset, 0 6px 20px var(--tn-as); }
+
+/* — Env pill: tiny refinement — */
+.env-pill { letter-spacing: .08em; }
+
+/* — Light theme: soften the glow so text stays crisp — */
+[data-tn-theme="light"] {
+  --tn-glow1: rgba(56, 208, 255, .22);
+  --tn-glow2: rgba(157, 123, 255, .18);
+  --tn-glow3: rgba(70, 240, 176, .14);
+}
+[data-tn-theme="light"] .titlebar,
+[data-tn-theme="light"] .toolbar,
+[data-tn-theme="light"] .qtabs,
+[data-tn-theme="light"] .rtabs { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5); }
