@@ -1,8 +1,20 @@
 [package]
 name = "tuplenest-credential-store"
-version = "0.0.1"
-edition = "2021"
-license = "MIT"
-description = "TupleNest credential-store crate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "TupleNest credential store: secrets live only in the OS keychain, referenced by opaque IDs"
 
 [dependencies]
+tuplenest-driver-api = { path = "../driver-api" }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service"] }
