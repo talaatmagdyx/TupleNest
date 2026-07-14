@@ -187,6 +187,9 @@ fn main() {
             pg::pg_rows,
             pg::pg_metadata,
             pg::pg_metadata_cached,
+            pg::pg_begin,
+            pg::pg_commit,
+            pg::pg_rollback,
             pg::pg_cancel
         ])
         .run(tauri::generate_context!())

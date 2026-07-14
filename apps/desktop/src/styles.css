@@ -392,3 +392,29 @@ button.star.on {
   opacity: 1;
   color: #d90;
 }
+
+
+/* --- Transactions (E1.4) --- */
+.tx-sep {
+  flex: 0 0 8px;
+}
+.tx-chip {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid #d90;
+  color: #d90;
+}
+.tx-prompt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  border: 1px solid #d90;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 6px 0;
+  font-size: 12.5px;
+}

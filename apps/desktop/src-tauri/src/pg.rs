@@ -593,6 +593,33 @@ pub fn pg_metadata_cached(
     read_cache(&state, &cache_key_of(&params), &request)
 }
 
+// --- Transactions (E1.4) ----------------------------------------------------
+
+#[tauri::command]
+pub async fn pg_begin(state: tauri::State<'_, PgState>) -> Result<(), String> {
+    let mut guard = state.session.lock().await;
+    let session = guard.as_mut().ok_or("not connected")?;
+    session
+        .begin(tuplenest_driver_api::TransactionOptions::default())
+        .await
+        .map(|_| ())
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn pg_commit(state: tauri::State<'_, PgState>) -> Result<(), String> {
+    let mut guard = state.session.lock().await;
+    let session = guard.as_mut().ok_or("not connected")?;
+    session.commit().await.map_err(err_to_string)
+}
+
+#[tauri::command]
+pub async fn pg_rollback(state: tauri::State<'_, PgState>) -> Result<(), String> {
+    let mut guard = state.session.lock().await;
+    let session = guard.as_mut().ok_or("not connected")?;
+    session.rollback().await.map_err(err_to_string)
+}
+
 /// Cancels the in-flight query via the wire-protocol cancel key. Does not
 /// require the session lock, so it works while `pg_query` is blocked.
 #[tauri::command]

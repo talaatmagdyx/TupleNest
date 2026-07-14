@@ -98,6 +98,8 @@ export default function App() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [queryEpoch, setQueryEpoch] = useState(0);
+  const [inTx, setInTx] = useState(false);
+  const [txPrompt, setTxPrompt] = useState(false);
 
   // Explorer tree (E1.3): lazily loaded schemas → objects → columns.
   const [schemas, setSchemas] = useState<string[] | null>(null);
@@ -244,14 +246,72 @@ export default function App() {
     }
   }, [withSecret, environment, resetExplorer]);
 
-  const doDisconnect = useCallback(async () => {
+  const reallyDisconnect = useCallback(async () => {
     await invoke("pg_disconnect").catch(() => {});
     setConnected(false);
     setConnectedEnv(null);
     setResult(null);
+    setInTx(false);
+    setTxPrompt(false);
     resetExplorer();
     setStatus("Disconnected");
   }, [resetExplorer]);
+
+  const doDisconnect = useCallback(async () => {
+    // E1.4 rule: never silently drop an open transaction.
+    if (inTx) {
+      setTxPrompt(true);
+      return;
+    }
+    await reallyDisconnect();
+  }, [inTx, reallyDisconnect]);
+
+  const doBegin = useCallback(async () => {
+    try {
+      await invoke("pg_begin");
+      setInTx(true);
+      setStatus("Transaction started");
+    } catch (e) {
+      setStatus(`Begin error: ${e}`);
+    }
+  }, []);
+
+  const doCommit = useCallback(async () => {
+    try {
+      await invoke("pg_commit");
+      setInTx(false);
+      setStatus("Committed");
+    } catch (e) {
+      setStatus(`Commit error: ${e}`);
+    }
+  }, []);
+
+  const doRollback = useCallback(async () => {
+    try {
+      await invoke("pg_rollback");
+      setInTx(false);
+      setStatus("Rolled back");
+    } catch (e) {
+      setStatus(`Rollback error: ${e}`);
+    }
+  }, []);
+
+  const commitAndDisconnect = useCallback(async () => {
+    try {
+      await invoke("pg_commit");
+    } catch (e) {
+      setStatus(`Commit error: ${e}`);
+      return; // stay connected; user can inspect
+    }
+    setInTx(false);
+    await reallyDisconnect();
+  }, [reallyDisconnect]);
+
+  const rollbackAndDisconnect = useCallback(async () => {
+    await invoke("pg_rollback").catch(() => {});
+    setInTx(false);
+    await reallyDisconnect();
+  }, [reallyDisconnect]);
 
   const toggleSchema = useCallback(
     async (schema: string) => {
@@ -664,7 +724,30 @@ export default function App() {
             <button onClick={doCancel} disabled={!running}>
               Cancel
             </button>
+            <span className="tx-sep" />
+            {!inTx ? (
+              <button onClick={doBegin} disabled={!connected}>
+                Begin
+              </button>
+            ) : (
+              <>
+                <span className="tx-chip">IN TRANSACTION</span>
+                <button onClick={doCommit}>Commit</button>
+                <button onClick={doRollback}>Rollback</button>
+              </>
+            )}
           </div>
+          {txPrompt && (
+            <div className="tx-prompt" role="alertdialog">
+              <span>
+                A transaction is still open. What should happen to it before
+                disconnecting?
+              </span>
+              <button onClick={commitAndDisconnect}>Commit &amp; disconnect</button>
+              <button onClick={rollbackAndDisconnect}>Rollback &amp; disconnect</button>
+              <button onClick={() => setTxPrompt(false)}>Stay connected</button>
+            </div>
+          )}
           {result && result.columns.length > 0 && (
             <Grid
               columns={result.columns}
