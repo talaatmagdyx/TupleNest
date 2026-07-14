@@ -135,6 +135,52 @@ export function TxPrompt(p: {
   );
 }
 
+/* ---------- query parameters prompt (Phase 3) ---------- */
+
+export function ParamPrompt(p: {
+  count: number;
+  values: string[];
+  onChange: (i: number, v: string) => void;
+  onRun: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Overlay onClose={p.onCancel} center>
+      <div className="modal dialog" style={{ width: 460 }}>
+        <div className="d-title">Bind query parameters</div>
+        <p style={{ marginBottom: 12 }}>
+          This query has {p.count} placeholder{p.count > 1 ? "s" : ""}. Values are typed
+          automatically: <span className="mono">null</span>, <span className="mono">true</span>/
+          <span className="mono">false</span>, numbers, else text.
+        </p>
+        {Array.from({ length: p.count }).map((_, i) => (
+          <div key={i} className="field">
+            <label>${i + 1}</label>
+            <input
+              className="mono"
+              autoFocus={i === 0}
+              value={p.values[i] ?? ""}
+              onChange={(e) => p.onChange(i, e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") p.onRun();
+              }}
+              placeholder="value (empty = null)"
+            />
+          </div>
+        ))}
+        <div className="d-actions" style={{ marginTop: 6 }}>
+          <button className="btn primary" onClick={p.onRun}>
+            Run with values
+          </button>
+          <button className="btn" onClick={p.onCancel}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </Overlay>
+  );
+}
+
 /* ---------- destructive statement guard ---------- */
 
 export function Guard(p: { sql: string; onCancel: () => void; onRun: () => void }) {

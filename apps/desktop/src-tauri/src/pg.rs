@@ -326,6 +326,23 @@ pub async fn pg_disconnect(state: tauri::State<'_, PgState>) -> Result<(), Strin
     Ok(())
 }
 
+fn json_to_param(v: serde_json::Value) -> tuplenest_driver_api::ParamValue {
+    use tuplenest_driver_api::ParamValue as P;
+    match v {
+        serde_json::Value::Null => P::Null,
+        serde_json::Value::Bool(b) => P::Bool(b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                P::Int(i)
+            } else {
+                P::Float(n.as_f64().unwrap_or(0.0))
+            }
+        }
+        serde_json::Value::String(s) => P::Text(s),
+        other => P::Json(other),
+    }
+}
+
 fn cell_to_json(cell: CellValue) -> serde_json::Value {
     match cell {
         CellValue::Null => serde_json::Value::Null,
@@ -461,6 +478,7 @@ pub async fn pg_query(
     app: tauri::State<'_, crate::AppState>,
     state: tauri::State<'_, PgState>,
     sql: String,
+    params: Option<Vec<serde_json::Value>>,
 ) -> Result<QueryResultOut, String> {
     // Drop the previous result before running (frees memory immediately).
     *state.result.lock().map_err(|_| "result lock poisoned")? = None;
@@ -475,10 +493,17 @@ pub async fn pg_query(
             store: tuplenest_result_stream::RowStore::new(RESULT_STORE_CAP),
         }),
     };
+    // JSON param values from the WebView → typed ParamValue. Text is the
+    // safe default; the server casts as needed for the placeholder's type.
+    let bound: Vec<tuplenest_driver_api::ParamValue> = params
+        .unwrap_or_default()
+        .into_iter()
+        .map(json_to_param)
+        .collect();
     let request = QueryRequest {
         execution_id: ExecutionId::new(),
         sql: sql.clone(),
-        params: vec![],
+        params: bound,
         row_limit: 0,
         timeout_ms: 0,
     };
@@ -758,7 +783,10 @@ pub async fn pg_admin_backend(
 ) -> Result<bool, String> {
     let guard = state.session.lock().await;
     let session = guard.as_ref().ok_or("not connected")?;
-    session.admin_backend(pid, terminate).await.map_err(err_to_string)
+    session
+        .admin_backend(pid, terminate)
+        .await
+        .map_err(err_to_string)
 }
 
 /// Cache-only metadata: renders the explorer for a saved profile before —

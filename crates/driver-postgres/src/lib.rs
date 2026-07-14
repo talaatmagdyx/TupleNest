@@ -296,17 +296,16 @@ impl DatabaseSession for PostgresSession {
         use futures_util::StreamExt;
         let started = Instant::now();
 
-        let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
-        if !request.params.is_empty() {
-            return Err(DriverError::new(
-                ErrorCategory::Unsupported,
-                "Parameters not supported in the Phase 0 proof of concept",
-            ));
-        }
+        // Bind typed parameters ($1..$n). Passed as owned boxed ToSql so the
+        // borrow lives for the whole query_raw call (Phase 3).
+        let bound: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> =
+            request.params.iter().map(param_to_sql).collect();
+        let refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+            bound.iter().map(|b| b.as_ref() as _).collect();
 
         let stream = self
             .client
-            .query_raw(request.sql.as_str(), params)
+            .query_raw(request.sql.as_str(), refs)
             .await
             .map_err(normalize_error)?;
         tokio::pin!(stream);
@@ -606,11 +605,14 @@ impl DatabaseSession for PostgresSession {
                     )
                     .await
                     .map_err(normalize_error)?;
-                serde_json::json!(rows.iter().map(|r| serde_json::json!({
-                    "name": r.get::<_, String>(0),
-                    "from": r.get::<_, String>(1),
-                    "to": r.get::<_, String>(2),
-                })).collect::<Vec<_>>())
+                serde_json::json!(rows
+                    .iter()
+                    .map(|r| serde_json::json!({
+                        "name": r.get::<_, String>(0),
+                        "from": r.get::<_, String>(1),
+                        "to": r.get::<_, String>(2),
+                    }))
+                    .collect::<Vec<_>>())
             }
         };
         Ok(MetadataResponse {
@@ -702,6 +704,64 @@ fn other(ty: &Type) -> CellValue {
     CellValue::Other {
         rendered: "<unsupported in PoC>".into(),
         db_type: ty.name().to_string(),
+    }
+}
+
+/// An integer bind value that adapts to whatever integer width Postgres
+/// infers for the placeholder (int2/int4/int8), so `where id = $1` works
+/// whether the column is int4 or int8.
+#[derive(Debug)]
+struct AnyInt(i64);
+
+impl tokio_postgres::types::ToSql for AnyInt {
+    fn to_sql(
+        &self,
+        ty: &Type,
+        out: &mut tokio_postgres::types::private::BytesMut,
+    ) -> Result<tokio_postgres::types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
+        match *ty {
+            Type::INT2 => (self.0 as i16).to_sql(ty, out),
+            Type::INT4 => (self.0 as i32).to_sql(ty, out),
+            _ => self.0.to_sql(ty, out),
+        }
+    }
+    fn accepts(ty: &Type) -> bool {
+        matches!(*ty, Type::INT2 | Type::INT4 | Type::INT8)
+    }
+    tokio_postgres::types::to_sql_checked!();
+}
+
+/// A float bind value adapting to float4/float8.
+#[derive(Debug)]
+struct AnyFloat(f64);
+
+impl tokio_postgres::types::ToSql for AnyFloat {
+    fn to_sql(
+        &self,
+        ty: &Type,
+        out: &mut tokio_postgres::types::private::BytesMut,
+    ) -> Result<tokio_postgres::types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
+        match *ty {
+            Type::FLOAT4 => (self.0 as f32).to_sql(ty, out),
+            _ => self.0.to_sql(ty, out),
+        }
+    }
+    fn accepts(ty: &Type) -> bool {
+        matches!(*ty, Type::FLOAT4 | Type::FLOAT8)
+    }
+    tokio_postgres::types::to_sql_checked!();
+}
+
+/// Convert a driver-api ParamValue into an owned tokio-postgres bind value.
+fn param_to_sql(p: &ParamValue) -> Box<dyn tokio_postgres::types::ToSql + Sync + Send> {
+    match p {
+        ParamValue::Null => Box::new(Option::<String>::None),
+        ParamValue::Bool(b) => Box::new(*b),
+        ParamValue::Int(i) => Box::new(AnyInt(*i)),
+        ParamValue::Float(f) => Box::new(AnyFloat(*f)),
+        ParamValue::Text(s) => Box::new(s.clone()),
+        ParamValue::Bytes(b) => Box::new(b.clone()),
+        ParamValue::Json(v) => Box::new(v.clone()),
     }
 }
 

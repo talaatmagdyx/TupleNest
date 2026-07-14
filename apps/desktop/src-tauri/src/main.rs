@@ -164,7 +164,10 @@ fn snippet_save(
         body,
         tags,
     };
-    let store = state.store.lock().map_err(|_| "store lock poisoned".to_string())?;
+    let store = state
+        .store
+        .lock()
+        .map_err(|_| "store lock poisoned".to_string())?;
     store.snippet_upsert(&rec).map_err(|e| e.to_string())?;
     Ok(rec)
 }

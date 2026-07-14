@@ -487,9 +487,15 @@ async fn killed_backend_yields_network_error_and_broken_session() {
 #[tokio::test]
 #[ignore]
 async fn live_server_activity_reports_sessions_and_db_stats() {
-    let session = PostgresDriver.connect_concrete(test_config()).await.unwrap();
+    let session = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
     // Open a second connection so there is at least one other session.
-    let _other = PostgresDriver.connect_concrete(test_config()).await.unwrap();
+    let _other = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
 
     let resp = session
         .metadata(MetadataRequest::ServerActivity)
@@ -500,14 +506,20 @@ async fn live_server_activity_reports_sessions_and_db_stats() {
     assert!(p["locks"].is_array(), "locks array present");
     // db stats populated
     assert!(p["db"]["backends"].as_i64().unwrap() >= 1);
-    assert!(p["db"]["size"].as_str().unwrap().len() > 0);
+    assert!(!p["db"]["size"].as_str().unwrap().is_empty());
 }
 
 #[tokio::test]
 #[ignore]
 async fn live_terminate_backend_kills_target_session() {
-    let admin = PostgresDriver.connect_concrete(test_config()).await.unwrap();
-    let mut victim = PostgresDriver.connect_concrete(test_config()).await.unwrap();
+    let admin = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    let mut victim = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
 
     let sink = FirstCellSink(Mutex::new(None));
     victim
@@ -526,9 +538,15 @@ async fn live_terminate_backend_kills_target_session() {
 #[tokio::test]
 #[ignore]
 async fn live_relationships_lists_foreign_keys() {
-    let mut session = PostgresDriver.connect_concrete(test_config()).await.unwrap();
+    let mut session = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
     session
-        .execute(req("CREATE TABLE tn_parent (id int primary key)"), &NullSink)
+        .execute(
+            req("CREATE TABLE tn_parent (id int primary key)"),
+            &NullSink,
+        )
         .await
         .unwrap();
     session
@@ -540,7 +558,9 @@ async fn live_relationships_lists_foreign_keys() {
         .unwrap();
 
     let resp = session
-        .metadata(MetadataRequest::Relationships { schema: "public".into() })
+        .metadata(MetadataRequest::Relationships {
+            schema: "public".into(),
+        })
         .await
         .unwrap();
     let fks = resp.payload.as_array().unwrap().clone();
@@ -549,6 +569,106 @@ async fn live_relationships_lists_foreign_keys() {
         .find(|f| f["from"] == "tn_child" && f["to"] == "tn_parent");
     assert!(hit.is_some(), "child→parent FK present: {fks:?}");
 
-    session.execute(req("DROP TABLE tn_child"), &NullSink).await.unwrap();
-    session.execute(req("DROP TABLE tn_parent"), &NullSink).await.unwrap();
+    session
+        .execute(req("DROP TABLE tn_child"), &NullSink)
+        .await
+        .unwrap();
+    session
+        .execute(req("DROP TABLE tn_parent"), &NullSink)
+        .await
+        .unwrap();
+}
+
+// --- Query parameters (Phase 3) ---------------------------------------------
+
+fn req_params(sql: impl Into<String>, params: Vec<ParamValue>) -> QueryRequest {
+    QueryRequest {
+        execution_id: ExecutionId::new(),
+        sql: sql.into(),
+        params,
+        row_limit: 0,
+        timeout_ms: 0,
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_typed_parameters_bind_correctly() {
+    let mut session = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+
+    // Real-world shape: params matched against typed columns (the common
+    // `where col = $n` case). Postgres infers each param type from context.
+    session
+        .execute(
+            req(
+                "CREATE TABLE tn_param (id int4 primary key, name text, active bool, score float4)",
+            ),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+    session
+        .execute(
+            req_params(
+                "INSERT INTO tn_param VALUES ($1, $2, $3, $4)",
+                vec![
+                    ParamValue::Int(7), // i64 → adapts to int4 column
+                    ParamValue::Text("alice".into()),
+                    ParamValue::Bool(true),
+                    ParamValue::Float(9.5),
+                ],
+            ),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+
+    // Read it back filtering by an int4 column with an i64 param.
+    let sink = FirstCellSink(Mutex::new(None));
+    session
+        .execute(
+            req_params(
+                "SELECT name FROM tn_param WHERE id = $1 AND active = $2",
+                vec![ParamValue::Int(7), ParamValue::Bool(true)],
+            ),
+            &sink,
+        )
+        .await
+        .unwrap();
+    assert_eq!(sink.0.lock().unwrap().as_deref(), Some("alice"));
+
+    // Null parameter: rows where name = $1 with $1 null returns nothing.
+    #[derive(Default)]
+    struct Counter(std::sync::atomic::AtomicU64);
+    #[async_trait]
+    impl BatchSink for Counter {
+        async fn deliver(&self, b: RowBatch) -> Result<(), DriverError> {
+            self.0.fetch_add(b.rows.len() as u64, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    let counter = Counter::default();
+    session
+        .execute(
+            req_params(
+                "SELECT * FROM tn_param WHERE name = $1",
+                vec![ParamValue::Null],
+            ),
+            &counter,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        counter.0.load(Ordering::SeqCst),
+        0,
+        "= null matches nothing"
+    );
+
+    session
+        .execute(req("DROP TABLE tn_param"), &NullSink)
+        .await
+        .unwrap();
 }

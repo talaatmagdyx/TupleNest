@@ -85,6 +85,27 @@ export function looksLikeSelect(sql: string): boolean {
   return /^\s*(select|with|values|table)\b/i.test(sql);
 }
 
+/** Highest $n placeholder referenced in the SQL (ignoring string literals). */
+export function paramCount(sql: string): number {
+  const stripped = sql.replace(/'(?:[^']|'')*'/g, "''").replace(/--[^\n]*/g, "");
+  let max = 0;
+  for (const m of stripped.matchAll(/\$(\d+)/g)) {
+    max = Math.max(max, Number(m[1]));
+  }
+  return max;
+}
+
+/** Coerce a UI string into a JSON value the backend maps to a ParamValue. */
+export function coerceParam(raw: string): unknown {
+  const t = raw.trim();
+  if (t === "" || t.toLowerCase() === "null") return null;
+  if (t.toLowerCase() === "true") return true;
+  if (t.toLowerCase() === "false") return false;
+  if (/^-?\d+$/.test(t)) return Number(t);
+  if (/^-?\d*\.\d+$/.test(t)) return Number(t);
+  return raw; // text as-is
+}
+
 export const ENV_COLORS: Record<string, { color: string; bg: string }> = {
   dev: { color: "#3fb950", bg: "rgba(63,185,80,.14)" },
   test: { color: "#9aa0a9", bg: "rgba(154,160,169,.14)" },

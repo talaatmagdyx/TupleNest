@@ -110,12 +110,19 @@ pub enum IsolationLevel {
 pub enum MetadataRequest {
     ServerInfo,
     ListSchemas,
-    ListObjects { schema: String },
-    DescribeObject { schema: String, name: String },
+    ListObjects {
+        schema: String,
+    },
+    DescribeObject {
+        schema: String,
+        name: String,
+    },
     /// Live server activity (sessions), locks, and database stats (Phase 6).
     ServerActivity,
     /// Foreign-key relationships across a schema for the ER view (Phase 2).
-    Relationships { schema: String },
+    Relationships {
+        schema: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -465,7 +465,12 @@ impl Store {
         self.conn.execute(
             "INSERT INTO audit_log (id, connection_key, environment, sql_text, at)
              VALUES (?1, ?2, ?3, ?4, unixepoch())",
-            params![uuid::Uuid::new_v4().to_string(), connection_key, environment, sql_text],
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                connection_key,
+                environment,
+                sql_text
+            ],
         )?;
         self.conn.execute(
             "DELETE FROM audit_log WHERE id NOT IN (
@@ -845,8 +850,11 @@ mod tests {
             conn.execute_batch(MIGRATION_V1).unwrap();
             conn.execute_batch(MIGRATION_V2).unwrap();
             conn.execute_batch(MIGRATION_V3).unwrap();
-            conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '3')", [])
-                .unwrap();
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES ('schema_version', '3')",
+                [],
+            )
+            .unwrap();
         }
         let store = Store::open(&path).unwrap();
         assert_eq!(store.schema_version().unwrap(), 4);

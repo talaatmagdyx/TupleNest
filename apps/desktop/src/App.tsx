@@ -21,11 +21,14 @@ import SchemaModal, { type SchemaExtra } from "./overlays/SchemaModal";
 import MonitorModal from "./overlays/MonitorModal";
 import ExplainModal, { type PlanNode, type PlanStats } from "./overlays/ExplainModal";
 import { UpdateToast } from "./overlays/Overlays";
+import { ParamPrompt } from "./overlays/Overlays";
 import {
+  coerceParam,
   fetchAllRows,
   formatSQL,
   looksLikeSelect,
   needsGuard,
+  paramCount,
   toCSV,
   toJSONExport,
   toMarkdown,
@@ -57,7 +60,8 @@ type OverlayKind =
   | "schema"
   | "cheatsheet"
   | "inspect"
-  | "monitor";
+  | "monitor"
+  | "params";
 
 export default function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -124,6 +128,7 @@ export default function App() {
   const [inspectText, setInspectText] = useState("");
   const copyable = useRef<string | null>(null);
   const [guardSql, setGuardSql] = useState<string | null>(null);
+  const [paramValues, setParamValues] = useState<string[]>([]);
   const [connLostDetail, setConnLostDetail] = useState("");
   const [rowsInfo, setRowsInfo] = useState("");
   const [chart, setChart] = useState<{ title: string; sub: string; data: ChartDatum[] } | null>(null);
@@ -687,7 +692,7 @@ export default function App() {
   const currentSql = tabs[activeTab]?.sql ?? "";
 
   const doRun = useCallback(
-    async (force = false) => {
+    async (force = false, boundParams?: unknown[]) => {
       const sql = tabs[activeTab]?.sql ?? "";
       if (!sql.trim() || !connected) return;
       if (!force && needsGuard(sql, connectedEnv)) {
@@ -695,11 +700,21 @@ export default function App() {
         setOverlay("guard");
         return;
       }
+      // Phase 3: if the SQL has $n placeholders and none were supplied, prompt.
+      const pc = paramCount(sql);
+      if (pc > 0 && boundParams === undefined) {
+        setParamValues(Array(pc).fill(""));
+        setOverlay("params");
+        return;
+      }
       setRunning(true);
       setRunStatus(null);
       setChart(null);
       try {
-        const r = await invoke<QueryResult>("pg_query", { sql });
+        const r = await invoke<QueryResult>("pg_query", {
+          sql,
+          params: boundParams ?? null,
+        });
         setResult(r);
         setLastError(null);
         setQueryEpoch((n) => n + 1);
@@ -1316,6 +1331,18 @@ export default function App() {
           onTheme={applyTheme}
           onTelemetry={applyTelemetry}
           onClose={() => setOverlay(null)}
+        />
+      )}
+      {overlay === "params" && (
+        <ParamPrompt
+          count={paramValues.length}
+          values={paramValues}
+          onChange={(i, v) => setParamValues((vs) => vs.map((x, j) => (j === i ? v : x)))}
+          onRun={() => {
+            setOverlay(null);
+            doRun(true, paramValues.map(coerceParam));
+          }}
+          onCancel={() => setOverlay(null)}
         />
       )}
       {overlay === "monitor" && <MonitorModal onToast={showToast} onClose={() => setOverlay(null)} />}
