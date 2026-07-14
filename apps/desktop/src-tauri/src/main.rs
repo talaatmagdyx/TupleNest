@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use tauri::Manager;
 use tuplenest_workspace_store::Store;
 
+mod connections;
 mod pg;
 
 struct AppState {
@@ -125,6 +126,9 @@ fn main() {
             settings_set,
             layout_save,
             layout_load,
+            connections::connection_save,
+            connections::connection_list,
+            connections::connection_delete,
             pg::pg_secret_save,
             pg::pg_test,
             pg::pg_connect,

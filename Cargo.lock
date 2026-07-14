@@ -4049,6 +4049,7 @@ dependencies = [
  "tuplenest-driver-postgres",
  "tuplenest-telemetry",
  "tuplenest-workspace-store",
+ "uuid",
 ]
 
 [[package]]

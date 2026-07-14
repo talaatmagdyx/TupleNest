@@ -17,7 +17,7 @@ pub enum StoreError {
     Json(#[from] serde_json::Error),
 }
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const MIGRATION_V1: &str = r#"
 CREATE TABLE meta        (key TEXT PRIMARY KEY, value TEXT);
@@ -29,6 +29,21 @@ CREATE TABLE tabs        (id TEXT PRIMARY KEY,
                           workspace_id TEXT REFERENCES workspaces(id),
                           kind TEXT NOT NULL, title TEXT, position INTEGER,
                           pinned INTEGER DEFAULT 0, state_json TEXT);
+"#;
+
+/// Phase 1 (E1.2): connection profiles. `secret_ref` is a keychain
+/// reference — the secret itself never touches SQLite.
+const MIGRATION_V2: &str = r#"
+CREATE TABLE connections (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, driver TEXT NOT NULL DEFAULT 'postgres',
+  environment TEXT CHECK (environment IN ('dev','test','staging','prod')),
+  color TEXT, read_only INTEGER DEFAULT 0,
+  host TEXT, port INTEGER, database TEXT, username TEXT,
+  secret_ref TEXT,
+  tls_mode TEXT NOT NULL DEFAULT 'verify-full', tls_ca_path TEXT,
+  ssh_json TEXT,
+  options_json TEXT, created_at INTEGER, updated_at INTEGER
+);
 "#;
 
 pub struct Store {
@@ -86,6 +101,11 @@ impl Store {
         }
         if current < 1 {
             self.conn.execute_batch(MIGRATION_V1)?;
+        }
+        if current < 2 {
+            self.conn.execute_batch(MIGRATION_V2)?;
+        }
+        if current < SCHEMA_VERSION {
             self.conn.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
                 params![SCHEMA_VERSION.to_string()],
@@ -210,6 +230,128 @@ impl Store {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
+
+    // --- Connections (schema v2, E1.2) --------------------------------------
+
+    /// Insert or update a connection profile. `record.secret_ref` must be a
+    /// keychain reference — this store never sees secret values.
+    pub fn connection_upsert(&self, record: &ConnectionRecord) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO connections
+               (id, name, driver, environment, color, read_only,
+                host, port, database, username, secret_ref,
+                tls_mode, tls_ca_path, ssh_json, options_json,
+                created_at, updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,unixepoch(),unixepoch())
+             ON CONFLICT(id) DO UPDATE SET
+               name=?2, driver=?3, environment=?4, color=?5, read_only=?6,
+               host=?7, port=?8, database=?9, username=?10, secret_ref=?11,
+               tls_mode=?12, tls_ca_path=?13, ssh_json=?14, options_json=?15,
+               updated_at=unixepoch()",
+            params![
+                record.id,
+                record.name,
+                record.driver,
+                record.environment,
+                record.color,
+                record.read_only as i64,
+                record.host,
+                record.port as i64,
+                record.database,
+                record.username,
+                record.secret_ref,
+                record.tls_mode,
+                record.tls_ca_path,
+                record.ssh_json,
+                record.options_json,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn connection_get(&self, id: &str) -> Result<Option<ConnectionRecord>, StoreError> {
+        let row = self
+            .conn
+            .query_row(
+                &format!("{CONNECTION_SELECT} WHERE id = ?1"),
+                params![id],
+                Self::row_to_connection,
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    pub fn connection_list(&self) -> Result<Vec<ConnectionRecord>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!("{CONNECTION_SELECT} ORDER BY name COLLATE NOCASE"))?;
+        let rows = stmt
+            .query_map([], Self::row_to_connection)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Deletes the profile; returns its secret_ref (if any) so the caller
+    /// can remove the keychain entry too.
+    pub fn connection_delete(&self, id: &str) -> Result<Option<String>, StoreError> {
+        let secret_ref: Option<Option<String>> = self
+            .conn
+            .query_row(
+                "SELECT secret_ref FROM connections WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        self.conn
+            .execute("DELETE FROM connections WHERE id = ?1", params![id])?;
+        Ok(secret_ref.flatten())
+    }
+
+    fn row_to_connection(r: &rusqlite::Row<'_>) -> rusqlite::Result<ConnectionRecord> {
+        Ok(ConnectionRecord {
+            id: r.get(0)?,
+            name: r.get(1)?,
+            driver: r.get(2)?,
+            environment: r.get(3)?,
+            color: r.get(4)?,
+            read_only: r.get::<_, i64>(5)? != 0,
+            host: r.get(6)?,
+            port: r.get::<_, i64>(7)? as u16,
+            database: r.get(8)?,
+            username: r.get(9)?,
+            secret_ref: r.get(10)?,
+            tls_mode: r.get(11)?,
+            tls_ca_path: r.get(12)?,
+            ssh_json: r.get(13)?,
+            options_json: r.get(14)?,
+        })
+    }
+}
+
+const CONNECTION_SELECT: &str = "SELECT id, name, driver, environment, color, read_only,
+        host, port, database, username, secret_ref,
+        tls_mode, tls_ca_path, ssh_json, options_json FROM connections";
+
+/// A saved connection profile. Never contains a secret value.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionRecord {
+    pub id: String,
+    pub name: String,
+    pub driver: String,
+    pub environment: Option<String>,
+    pub color: Option<String>,
+    pub read_only: bool,
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub username: String,
+    /// Opaque keychain reference (see credential-store), never the secret.
+    pub secret_ref: Option<String>,
+    pub tls_mode: String,
+    pub tls_ca_path: Option<String>,
+    pub ssh_json: Option<String>,
+    pub options_json: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,9 +369,101 @@ mod tests {
     use super::*;
 
     #[test]
-    fn migrates_fresh_store_to_v1() {
+    fn migrates_fresh_store_to_current() {
         let store = Store::open_in_memory().unwrap();
-        assert_eq!(store.schema_version().unwrap(), 1);
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn upgrades_v1_store_to_v2_preserving_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v1.db");
+        // Build a genuine v1 store on disk.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(MIGRATION_V1).unwrap();
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES ('schema_version', '1')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO settings (key, value_json, updated_at) VALUES ('theme','\"dark\"',0)",
+                [],
+            )
+            .unwrap();
+        }
+        // Reopen: must migrate to v2 and keep old data.
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 2);
+        assert_eq!(
+            store.setting_get::<String>("theme").unwrap().unwrap(),
+            "dark"
+        );
+        assert!(store.connection_list().unwrap().is_empty());
+    }
+
+    fn sample_connection(id: &str, name: &str) -> ConnectionRecord {
+        ConnectionRecord {
+            id: id.into(),
+            name: name.into(),
+            driver: "postgres".into(),
+            environment: Some("dev".into()),
+            color: Some("#3fa7ff".into()),
+            read_only: false,
+            host: "localhost".into(),
+            port: 5432,
+            database: "postgres".into(),
+            username: "talaat".into(),
+            secret_ref: Some("tn-secret-abc".into()),
+            tls_mode: "disabled".into(),
+            tls_ca_path: None,
+            ssh_json: None,
+            options_json: None,
+        }
+    }
+
+    #[test]
+    fn connection_crud_roundtrip() {
+        let store = Store::open_in_memory().unwrap();
+        let mut rec = sample_connection("c1", "Local PG");
+        store.connection_upsert(&rec).unwrap();
+        assert_eq!(store.connection_get("c1").unwrap().unwrap(), rec);
+
+        // Update in place keeps a single row.
+        rec.name = "Local PG (renamed)".into();
+        rec.read_only = true;
+        store.connection_upsert(&rec).unwrap();
+        let listed = store.connection_list().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0], rec);
+
+        // List is name-sorted, case-insensitive.
+        store
+            .connection_upsert(&sample_connection("c2", "aurora"))
+            .unwrap();
+        let names: Vec<_> = store
+            .connection_list()
+            .unwrap()
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        assert_eq!(names, vec!["aurora", "Local PG (renamed)"]);
+
+        // Delete returns the secret_ref for keychain cleanup.
+        let secret_ref = store.connection_delete("c1").unwrap();
+        assert_eq!(secret_ref.as_deref(), Some("tn-secret-abc"));
+        assert!(store.connection_get("c1").unwrap().is_none());
+        // Idempotent delete.
+        assert!(store.connection_delete("c1").unwrap().is_none());
+    }
+
+    #[test]
+    fn connection_rejects_invalid_environment() {
+        let store = Store::open_in_memory().unwrap();
+        let mut rec = sample_connection("c1", "bad env");
+        rec.environment = Some("production".into()); // not in CHECK list
+        assert!(store.connection_upsert(&rec).is_err());
     }
 
     #[test]

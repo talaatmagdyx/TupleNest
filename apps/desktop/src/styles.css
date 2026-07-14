@@ -81,3 +81,95 @@ table.grid thead th {
   top: 0;
   background: var(--bg, #1e1e1e);
 }
+
+
+/* --- Saved connections sidebar (E1.2) --- */
+.content.with-sidebar {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.main-col {
+  flex: 1;
+  min-width: 0;
+}
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  border: 1px solid var(--border, #3333);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.sidebar-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.sidebar-head h2 {
+  margin: 0;
+  font-size: 14px;
+  opacity: 0.8;
+}
+.conn-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.conn-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.conn-list li:hover {
+  background: #8881;
+}
+.conn-list li.active {
+  background: #8882;
+}
+.conn-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.env {
+  font-size: 10px;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border, #5555);
+  opacity: 0.85;
+}
+.env-prod {
+  border-color: #d33;
+  color: #d33;
+  font-weight: 600;
+}
+.env-staging {
+  border-color: #d90;
+  color: #d90;
+}
+button.ghost {
+  background: transparent;
+  border: none;
+  color: inherit;
+  opacity: 0.5;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+}
+button.ghost:hover {
+  opacity: 1;
+}
+select {
+  background: transparent;
+  color: inherit;
+  border: 1px solid var(--border, #5555);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}

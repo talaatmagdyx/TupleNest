@@ -20,3 +20,4 @@ tuplenest-driver-postgres = { path = "../../../crates/driver-postgres" }
 tracing = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
+uuid = { workspace = true }
