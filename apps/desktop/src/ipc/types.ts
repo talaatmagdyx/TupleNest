@@ -82,6 +82,13 @@ export type HistoryEntry = {
   favorite: boolean;
 };
 
+export type SnippetRecord = {
+  id: string;
+  name: string;
+  body: string;
+  tags: string | null;
+};
+
 export type QueryResult = {
   columns: { name: string; dbType: string }[];
   totalRows: number;

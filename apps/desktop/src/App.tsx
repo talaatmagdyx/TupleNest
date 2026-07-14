@@ -39,6 +39,7 @@ import type {
   MetadataOut,
   PgParams,
   QueryResult,
+  SnippetRecord,
   SshParams,
   TestReport,
   TestStage,
@@ -151,6 +152,9 @@ export default function App() {
   const [historyItems, setHistoryItems] = useState<HistoryEntry[]>([]);
   const [historySearch, setHistorySearch] = useState("");
 
+  // Snippets (Phase 2)
+  const [snippets, setSnippets] = useState<SnippetRecord[]>([]);
+
   const showToast = useCallback((t: string) => {
     setToast(t);
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -178,6 +182,15 @@ export default function App() {
     }
   }, []);
 
+  const refreshSnippets = useCallback(async () => {
+    try {
+      setSnippets(await invoke<SnippetRecord[]>("snippet_list"));
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+
   useEffect(() => {
     invoke<AppInfo>("app_get_info").then(setInfo).catch(console.error);
     invoke<"dark" | "light" | null>("settings_get", { key: "theme" })
@@ -187,7 +200,8 @@ export default function App() {
       .then((v) => setTelemetry(!!v))
       .catch(() => {});
     refreshSaved();
-  }, [refreshSaved]);
+    refreshSnippets();
+  }, [refreshSaved, refreshSnippets]);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-tn-theme", theme);
@@ -630,6 +644,23 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabs, activeTab, setActiveSql, showToast]);
 
+  const saveSnippet = useCallback(async () => {
+    const body = tabs[activeTab]?.sql ?? "";
+    if (!body.trim()) {
+      showToast("Nothing to save");
+      return;
+    }
+    const name = window.prompt("Snippet name:", body.slice(0, 40).replace(/\s+/g, " ").trim());
+    if (!name) return;
+    try {
+      await invoke("snippet_save", { id: null, name, body, tags: null });
+      await refreshSnippets();
+      showToast(`Saved snippet "${name}"`);
+    } catch (e) {
+      showToast(String(e).slice(0, 70));
+    }
+  }, [tabs, activeTab, showToast, refreshSnippets]);
+
   /* ---------------- tabs ---------------- */
 
   const newTab = useCallback(() => {
@@ -969,6 +1000,7 @@ export default function App() {
     const items: PaletteItem[] = [
       { icon: "▶", label: "Run query", type: "Action", kbd: "⌘↵", exec: () => doRun() },
       { icon: "⧉", label: "Format SQL", type: "Action", kbd: "⌘⇧F", exec: doFormat },
+      { icon: "✎", label: "Save current query as snippet", type: "Action", exec: saveSnippet },
       { icon: "＋", label: "New query tab", type: "Action", kbd: "⌘T", exec: newTab },
       { icon: "◐", label: "Toggle theme", type: "Action", kbd: "⌘⇧L", exec: () => applyTheme(theme === "dark" ? "light" : "dark") },
       { icon: "⛁", label: "Open connection…", type: "Action", kbd: "⌘O", exec: () => setOverlay("connEditor") },
@@ -1004,6 +1036,17 @@ export default function App() {
         });
       }
     }
+    for (const sn of snippets) {
+      items.push({
+        icon: "✎",
+        label: sn.name,
+        type: "Snippet",
+        exec: () => {
+          setActiveSql(sn.body);
+          showToast(`Inserted snippet "${sn.name}"`);
+        },
+      });
+    }
     for (const h of historyItems.slice(0, 6)) {
       if (h.sqlText) {
         items.push({
@@ -1015,7 +1058,7 @@ export default function App() {
       }
     }
     return items;
-  }, [doRun, newTab, applyTheme, theme, newProfile, runExplain, connected, inTx, doDisconnect, doBegin, doCommit, doRollback, saved, selectProfile, objects, insertSelect, historyItems, setActiveSql]);
+  }, [doRun, doFormat, saveSnippet, newTab, applyTheme, theme, newProfile, runExplain, connected, inTx, doDisconnect, doBegin, doCommit, doRollback, saved, selectProfile, objects, insertSelect, describeObject, snippets, historyItems, setActiveSql, showToast]);
 
   /* ---------------- render ---------------- */
 

@@ -17,7 +17,7 @@ pub enum StoreError {
     Json(#[from] serde_json::Error),
 }
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 const MIGRATION_V1: &str = r#"
 CREATE TABLE meta        (key TEXT PRIMARY KEY, value TEXT);
@@ -62,6 +62,19 @@ CREATE TABLE query_history (
   favorite INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_history_search ON query_history(connection_key, started_at DESC);
+"#;
+
+/// Phase 2/6: reusable SQL snippets and a prod audit trail.
+const MIGRATION_V4: &str = r#"
+CREATE TABLE snippets (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, body TEXT NOT NULL,
+  tags TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE audit_log (
+  id TEXT PRIMARY KEY, connection_key TEXT NOT NULL, environment TEXT,
+  sql_text TEXT NOT NULL, at INTEGER NOT NULL
+);
+CREATE INDEX idx_audit_conn ON audit_log(connection_key, at DESC);
 "#;
 
 pub struct Store {
@@ -125,6 +138,9 @@ impl Store {
         }
         if current < 3 {
             self.conn.execute_batch(MIGRATION_V3)?;
+        }
+        if current < 4 {
+            self.conn.execute_batch(MIGRATION_V4)?;
         }
         if current < SCHEMA_VERSION {
             self.conn.execute(
@@ -401,6 +417,82 @@ impl Store {
         Ok(())
     }
 
+    // --- Snippets (schema v4, Phase 2) --------------------------------------
+
+    pub fn snippet_upsert(&self, s: &SnippetRecord) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO snippets (id, name, body, tags, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, unixepoch(), unixepoch())
+             ON CONFLICT(id) DO UPDATE SET name=?2, body=?3, tags=?4, updated_at=unixepoch()",
+            params![s.id, s.name, s.body, s.tags],
+        )?;
+        Ok(())
+    }
+
+    pub fn snippet_list(&self) -> Result<Vec<SnippetRecord>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, name, body, tags FROM snippets ORDER BY name COLLATE NOCASE")?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(SnippetRecord {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    body: r.get(2)?,
+                    tags: r.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn snippet_delete(&self, id: &str) -> Result<(), StoreError> {
+        self.conn
+            .execute("DELETE FROM snippets WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    // --- Audit log (schema v4, Phase 6) -------------------------------------
+
+    /// Appends a full-text audit entry (used for prod connections where the
+    /// history intentionally omits the SQL). Keeps the newest 5,000.
+    pub fn audit_add(
+        &self,
+        connection_key: &str,
+        environment: Option<&str>,
+        sql_text: &str,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO audit_log (id, connection_key, environment, sql_text, at)
+             VALUES (?1, ?2, ?3, ?4, unixepoch())",
+            params![uuid::Uuid::new_v4().to_string(), connection_key, environment, sql_text],
+        )?;
+        self.conn.execute(
+            "DELETE FROM audit_log WHERE id NOT IN (
+               SELECT id FROM audit_log ORDER BY at DESC LIMIT 5000)",
+            [],
+        )?;
+        Ok(())
+    }
+
+    pub fn audit_list(&self, limit: usize) -> Result<Vec<AuditEntry>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT connection_key, environment, sql_text, at FROM audit_log
+             ORDER BY at DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit as i64], |r| {
+                Ok(AuditEntry {
+                    connection_key: r.get(0)?,
+                    environment: r.get(1)?,
+                    sql_text: r.get(2)?,
+                    at: r.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     fn row_to_history(r: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
         Ok(HistoryEntry {
             id: r.get(0)?,
@@ -461,6 +553,26 @@ pub struct ConnectionRecord {
     pub tls_ca_path: Option<String>,
     pub ssh_json: Option<String>,
     pub options_json: Option<String>,
+}
+
+/// A reusable SQL snippet (Phase 2).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnippetRecord {
+    pub id: String,
+    pub name: String,
+    pub body: String,
+    pub tags: Option<String>,
+}
+
+/// A prod audit entry (Phase 6): full SQL text, always retained.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditEntry {
+    pub connection_key: String,
+    pub environment: Option<String>,
+    pub sql_text: String,
+    pub at: i64,
 }
 
 /// One recorded execution. `sql_text` may be None (prod text exclusion).
@@ -686,8 +798,60 @@ mod tests {
             .unwrap();
         }
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 3);
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
         assert!(store.history_list(None, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn snippets_and_audit_roundtrip() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .snippet_upsert(&SnippetRecord {
+                id: "s1".into(),
+                name: "count rows".into(),
+                body: "select count(*) from ".into(),
+                tags: Some("util".into()),
+            })
+            .unwrap();
+        store
+            .snippet_upsert(&SnippetRecord {
+                id: "s1".into(),
+                name: "count rows".into(),
+                body: "select count(*) from orders".into(),
+                tags: None,
+            })
+            .unwrap();
+        let list = store.snippet_list().unwrap();
+        assert_eq!(list.len(), 1, "upsert keeps one row");
+        assert_eq!(list[0].body, "select count(*) from orders");
+        store.snippet_delete("s1").unwrap();
+        assert!(store.snippet_list().unwrap().is_empty());
+
+        store
+            .audit_add("app@prod:5432/pay", Some("prod"), "delete from t")
+            .unwrap();
+        let audit = store.audit_list(10).unwrap();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(audit[0].sql_text, "delete from t");
+        assert_eq!(audit[0].environment.as_deref(), Some("prod"));
+    }
+
+    #[test]
+    fn upgrades_v3_store_to_v4() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v3.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(MIGRATION_V1).unwrap();
+            conn.execute_batch(MIGRATION_V2).unwrap();
+            conn.execute_batch(MIGRATION_V3).unwrap();
+            conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '3')", [])
+                .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 4);
+        assert!(store.snippet_list().unwrap().is_empty());
+        assert!(store.audit_list(10).unwrap().is_empty());
     }
 
     #[test]

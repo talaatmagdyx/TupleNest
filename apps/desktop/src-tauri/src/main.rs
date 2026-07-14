@@ -138,6 +138,60 @@ fn history_clear(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn snippet_list(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<tuplenest_workspace_store::SnippetRecord>, String> {
+    state
+        .store
+        .lock()
+        .map_err(|_| "store lock poisoned".to_string())?
+        .snippet_list()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn snippet_save(
+    state: tauri::State<'_, AppState>,
+    id: Option<String>,
+    name: String,
+    body: String,
+    tags: Option<String>,
+) -> Result<tuplenest_workspace_store::SnippetRecord, String> {
+    let rec = tuplenest_workspace_store::SnippetRecord {
+        id: id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        name,
+        body,
+        tags,
+    };
+    let store = state.store.lock().map_err(|_| "store lock poisoned".to_string())?;
+    store.snippet_upsert(&rec).map_err(|e| e.to_string())?;
+    Ok(rec)
+}
+
+#[tauri::command]
+fn snippet_delete(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
+    state
+        .store
+        .lock()
+        .map_err(|_| "store lock poisoned".to_string())?
+        .snippet_delete(&id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn audit_list(
+    state: tauri::State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<Vec<tuplenest_workspace_store::AuditEntry>, String> {
+    state
+        .store
+        .lock()
+        .map_err(|_| "store lock poisoned".to_string())?
+        .audit_list(limit.unwrap_or(200))
+        .map_err(|e| e.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -176,6 +230,10 @@ fn main() {
             history_list,
             history_favorite,
             history_clear,
+            snippet_list,
+            snippet_save,
+            snippet_delete,
+            audit_list,
             connections::connection_save,
             connections::connection_list,
             connections::connection_delete,

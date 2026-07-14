@@ -446,6 +446,11 @@ fn record_history(
         if let Err(e) = store.history_add(&entry, 1_000) {
             tracing::warn!(component = "history", error = %e, "failed to record history");
         }
+        // Prod audit trail: full SQL text is always retained here even though
+        // the history row omits it (Phase 6).
+        if is_prod {
+            let _ = store.audit_add(&entry.connection_key, Some("prod"), sql);
+        }
     }
 }
 
