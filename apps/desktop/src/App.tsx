@@ -1,81 +1,28 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import Grid from "./results/Grid";
-
-type AppInfo = { name: string; version: string; os: string };
-
-type PgParams = {
-  host: string;
-  port: number;
-  database: string;
-  username: string;
-  secretRef: string | null;
-  tlsMode: string;
-  tlsCaPath: string | null;
-  environment?: string | null;
-};
-
-type TestStage = { name: string; passed: boolean; durationMs: number; detail: string | null };
-
-type TestReport = {
-  serverVersion: string | null;
-  stages: TestStage[];
-};
-
-type ConnectionRecord = {
-  id: string;
-  name: string;
-  driver: string;
-  environment: string | null;
-  color: string | null;
-  readOnly: boolean;
-  host: string;
-  port: number;
-  database: string;
-  username: string;
-  secretRef: string | null;
-  tlsMode: string;
-  tlsCaPath: string | null;
-};
-
-type MetadataOut<T> = { payload: T; cached: boolean; fetchedAt: number | null };
-
-type DbObject = { name: string; kind: string; comment: string | null };
-
-type DbColumn = {
-  name: string;
-  dbType: string;
-  nullable: boolean;
-  primaryKey: boolean;
-  comment: string | null;
-};
-
-type HistoryEntry = {
-  id: string;
-  connectionKey: string;
-  sqlText: string | null;
-  status: "success" | "error" | "cancelled";
-  errorText: string | null;
-  rowsReturned: number;
-  rowsAffected: number | null;
-  startedAt: number;
-  durationMs: number;
-  favorite: boolean;
-};
-
-type QueryResult = {
-  columns: { name: string; dbType: string }[];
-  totalRows: number;
-  storedRows: number;
-  truncated: boolean;
-  rowsAffected: number | null;
-  elapsedMs: number;
-};
+import SavedList from "./connections/SavedList";
+import ConnectionForm from "./connections/ConnectionForm";
+import ExplorerTree from "./explorer/ExplorerTree";
+import QueryPanel from "./editor/QueryPanel";
+import HistoryPanel from "./history/HistoryPanel";
+import type {
+  AppInfo,
+  ConnectionRecord,
+  DbColumn,
+  DbObject,
+  HistoryEntry,
+  MetadataOut,
+  PgParams,
+  QueryResult,
+  TestReport,
+  TestStage,
+} from "./ipc/types";
 
 export default function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
 
+  // Connection form
   const [host, setHost] = useState("localhost");
   const [port, setPort] = useState(5432);
   const [database, setDatabase] = useState("postgres");
@@ -85,11 +32,13 @@ export default function App() {
   const [tlsMode, setTlsMode] = useState("verify-full");
   const [tlsCaPath, setTlsCaPath] = useState("");
 
+  // Profiles
   const [profileId, setProfileId] = useState<string | null>(null);
   const [profileName, setProfileName] = useState("");
   const [environment, setEnvironment] = useState<string>("dev");
   const [saved, setSaved] = useState<ConnectionRecord[]>([]);
 
+  // Session
   const [status, setStatus] = useState<string>("");
   const [stages, setStages] = useState<TestStage[] | null>(null);
   const [connected, setConnected] = useState(false);
@@ -101,7 +50,7 @@ export default function App() {
   const [inTx, setInTx] = useState(false);
   const [txPrompt, setTxPrompt] = useState(false);
 
-  // Explorer tree (E1.3): lazily loaded schemas → objects → columns.
+  // Explorer (E1.3)
   const [schemas, setSchemas] = useState<string[] | null>(null);
   const [openSchemas, setOpenSchemas] = useState<Record<string, boolean>>({});
   const [objects, setObjects] = useState<Record<string, DbObject[]>>({});
@@ -109,9 +58,11 @@ export default function App() {
   const [columns, setColumns] = useState<Record<string, DbColumn[]>>({});
   const [metaCached, setMetaCached] = useState(false);
 
-  // Query history (E1.5)
+  // History (E1.5)
   const [historyItems, setHistoryItems] = useState<HistoryEntry[]>([]);
   const [historySearch, setHistorySearch] = useState("");
+
+  // --- bootstrap ------------------------------------------------------------
 
   const refreshHistory = useCallback(async (search: string) => {
     try {
@@ -153,6 +104,7 @@ export default function App() {
     await invoke("settings_set", { key: "theme", value: next });
   }, [theme]);
 
+  // --- secrets & connection -------------------------------------------------
 
   const savePassword = useCallback(async () => {
     if (!password) return null;
@@ -204,8 +156,7 @@ export default function App() {
     setMetaCached(false);
   }, []);
 
-  /// Live metadata when connected (server may still serve stale cache on
-  /// failure); pure cache lookups otherwise.
+  /** Live metadata when connected; pure cache lookups otherwise. */
   const metaFetch = useCallback(
     async (request: Record<string, unknown>): Promise<MetadataOut<unknown> | null> => {
       if (connected) {
@@ -266,6 +217,8 @@ export default function App() {
     await reallyDisconnect();
   }, [inTx, reallyDisconnect]);
 
+  // --- transactions (E1.4) ----------------------------------------------------
+
   const doBegin = useCallback(async () => {
     try {
       await invoke("pg_begin");
@@ -312,6 +265,8 @@ export default function App() {
     setInTx(false);
     await reallyDisconnect();
   }, [reallyDisconnect]);
+
+  // --- explorer (E1.3) --------------------------------------------------------
 
   const toggleSchema = useCallback(
     async (schema: string) => {
@@ -361,6 +316,8 @@ export default function App() {
     setSql(`select * from "${schema}"."${name}" limit 100`);
   }, []);
 
+  // --- query & history --------------------------------------------------------
+
   const doRun = useCallback(async () => {
     setRunning(true);
     setStatus("Running…");
@@ -384,6 +341,15 @@ export default function App() {
     }
   }, [sql, refreshHistory, historySearch]);
 
+  const doCancel = useCallback(async () => {
+    try {
+      await invoke("pg_cancel");
+      setStatus("Cancel requested");
+    } catch (e) {
+      setStatus(`Cancel error: ${e}`);
+    }
+  }, []);
+
   const toggleFavorite = useCallback(
     async (h: HistoryEntry) => {
       try {
@@ -405,14 +371,7 @@ export default function App() {
     }
   }, [refreshHistory, historySearch]);
 
-  const doCancel = useCallback(async () => {
-    try {
-      await invoke("pg_cancel");
-      setStatus("Cancel requested");
-    } catch (e) {
-      setStatus(`Cancel error: ${e}`);
-    }
-  }, []);
+  // --- profiles (E1.2) ----------------------------------------------------------
 
   const doSaveProfile = useCallback(async () => {
     try {
@@ -506,13 +465,13 @@ export default function App() {
     [profileId, newProfile, refreshSaved]
   );
 
+  // --- layout -------------------------------------------------------------------
+
   return (
     <div className="shell">
       <header className="titlebar">
         <span className="brand">TupleNest</span>
-        <span className="muted">
-          {info ? `v${info.version} · ${info.os}` : ""}
-        </span>
+        <span className="muted">{info ? `v${info.version} · ${info.os}` : ""}</span>
         <button onClick={toggleTheme}>
           {theme === "dark" ? "Light theme" : "Dark theme"}
         </button>
@@ -524,289 +483,87 @@ export default function App() {
       )}
       <main className="content with-sidebar">
         <aside className="sidebar">
-          <div className="sidebar-head">
-            <h2>Connections</h2>
-            <button onClick={newProfile} title="New connection">
-              +
-            </button>
-          </div>
-          {saved.length === 0 && <p className="muted">No saved connections yet.</p>}
-          <ul className="conn-list">
-            {saved.map((c) => (
-              <li
-                key={c.id}
-                className={c.id === profileId ? "active" : ""}
-                onClick={() => loadProfile(c)}
-              >
-                <span className={`env env-${c.environment ?? "dev"}`}>
-                  {(c.environment ?? "dev").slice(0, 4)}
-                </span>
-                <span className="conn-name" title={`${c.username}@${c.host}:${c.port}/${c.database}`}>
-                  {c.name}
-                </span>
-                <button
-                  className="ghost"
-                  title="Delete"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    doDeleteProfile(c);
-                  }}
-                >
-                  ×
-                </button>
-              </li>
-            ))}
-          </ul>
+          <SavedList
+            saved={saved}
+            activeId={profileId}
+            onLoad={loadProfile}
+            onNew={newProfile}
+            onDelete={doDeleteProfile}
+          />
           {(connected || schemas !== null) && (
-            <div className="explorer">
-              <h2>
-                Explorer{" "}
-                {metaCached && (
-                  <span className="cache-badge" title="Served from local metadata cache">
-                    cached
-                  </span>
-                )}
-              </h2>
-              {schemas === null && <p className="muted">Loading schemas…</p>}
-              <ul className="tree">
-                {(schemas ?? []).map((s) => (
-                  <li key={s}>
-                    <div className="tree-row" onClick={() => toggleSchema(s)}>
-                      <span className="twisty">{openSchemas[s] ? "▾" : "▸"}</span>
-                      <span className="tree-label">{s}</span>
-                    </div>
-                    {openSchemas[s] && (
-                      <ul className="tree nested">
-                        {!(s in objects) && <li className="muted">loading…</li>}
-                        {(objects[s] ?? []).length === 0 && s in objects && (
-                          <li className="muted">empty</li>
-                        )}
-                        {(objects[s] ?? []).map((o) => {
-                          const key = `${s}.${o.name}`;
-                          return (
-                            <li key={o.name}>
-                              <div className="tree-row" title={o.comment ?? o.kind}>
-                                <span
-                                  className="twisty"
-                                  onClick={() => toggleTable(s, o.name)}
-                                >
-                                  {openTables[key] ? "▾" : "▸"}
-                                </span>
-                                <span className={`obj-kind kind-${o.kind}`}>
-                                  {o.kind === "table" ? "T" : o.kind === "view" ? "V" : "M"}
-                                </span>
-                                <span
-                                  className="tree-label clickable"
-                                  onClick={() => insertSelect(s, o.name)}
-                                  title={`Insert SELECT for ${key}`}
-                                >
-                                  {o.name}
-                                </span>
-                              </div>
-                              {openTables[key] && (
-                                <ul className="tree nested cols">
-                                  {!(key in columns) && (
-                                    <li className="muted">loading…</li>
-                                  )}
-                                  {(columns[key] ?? []).map((c) => (
-                                    <li key={c.name} title={c.comment ?? ""}>
-                                      <span className="col-name">
-                                        {c.primaryKey ? "🔑 " : ""}
-                                        {c.name}
-                                      </span>
-                                      <span className="muted">
-                                        {c.dbType}
-                                        {c.nullable ? "" : " · not null"}
-                                      </span>
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <ExplorerTree
+              schemas={schemas}
+              metaCached={metaCached}
+              openSchemas={openSchemas}
+              objects={objects}
+              openTables={openTables}
+              columns={columns}
+              onToggleSchema={toggleSchema}
+              onToggleTable={toggleTable}
+              onInsertSelect={insertSelect}
+            />
           )}
         </aside>
         <div className="main-col">
-        <section className="panel">
-          <h2>{profileId ? "Edit connection" : "New connection"}</h2>
-          <div className="form-row">
-            <input
-              placeholder="profile name"
-              value={profileName}
-              onChange={(e) => setProfileName(e.target.value)}
-            />
-            <select value={environment} onChange={(e) => setEnvironment(e.target.value)}>
-              <option value="dev">dev</option>
-              <option value="test">test</option>
-              <option value="staging">staging</option>
-              <option value="prod">prod</option>
-            </select>
-          </div>
-          <div className="form-row">
-            <input placeholder="host" value={host} onChange={(e) => setHost(e.target.value)} />
-            <input
-              placeholder="port"
-              type="number"
-              value={port}
-              onChange={(e) => setPort(Number(e.target.value) || 5432)}
-              style={{ width: 80 }}
-            />
-            <input placeholder="database" value={database} onChange={(e) => setDatabase(e.target.value)} />
-            <input placeholder="username" value={username} onChange={(e) => setUsername(e.target.value)} />
-            <input
-              placeholder={secretRef ? "password saved in keychain" : "password (optional)"}
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </div>
-          <div className="form-row">
-            <label className="muted">TLS</label>
-            <select value={tlsMode} onChange={(e) => setTlsMode(e.target.value)}>
-              <option value="verify-full">verify-full (default)</option>
-              <option value="verify-ca">verify-ca</option>
-              <option value="prefer">prefer (no verification)</option>
-              <option value="disabled">disabled (local only)</option>
-            </select>
-            {(tlsMode === "verify-full" || tlsMode === "verify-ca") && (
-              <input
-                placeholder="CA file path (optional, PEM)"
-                value={tlsCaPath}
-                onChange={(e) => setTlsCaPath(e.target.value)}
-                style={{ flex: 1 }}
-              />
-            )}
-          </div>
-          <div className="form-row">
-            <button onClick={doSaveProfile}>Save</button>
-            <button onClick={doTest}>Test</button>
-            {connected ? (
-              <button onClick={doDisconnect}>Disconnect</button>
-            ) : (
-              <button onClick={doConnect}>Connect</button>
-            )}
-            <span className="status">{status}</span>
-          </div>
-          {stages && (
-            <ul className="stage-list">
-              {stages.map((s) => (
-                <li key={s.name} className={s.passed ? "ok" : "fail"}>
-                  <span className="stage-icon">{s.passed ? "✓" : "✗"}</span>
-                  <span className="stage-name">{s.name}</span>
-                  <span className="muted">{s.durationMs}ms</span>
-                  {s.detail && <span className="stage-detail">{s.detail}</span>}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="panel">
-          <h2>Query</h2>
-          <textarea
-            rows={4}
-            value={sql}
-            onChange={(e) => setSql(e.target.value)}
-            spellCheck={false}
-            disabled={!connected}
+          <ConnectionForm
+            isEdit={profileId !== null}
+            profileName={profileName}
+            environment={environment}
+            host={host}
+            port={port}
+            database={database}
+            username={username}
+            password={password}
+            hasSecret={secretRef !== null}
+            tlsMode={tlsMode}
+            tlsCaPath={tlsCaPath}
+            connected={connected}
+            status={status}
+            stages={stages}
+            onProfileName={setProfileName}
+            onEnvironment={setEnvironment}
+            onHost={setHost}
+            onPort={setPort}
+            onDatabase={setDatabase}
+            onUsername={setUsername}
+            onPassword={setPassword}
+            onTlsMode={setTlsMode}
+            onTlsCaPath={setTlsCaPath}
+            onSave={doSaveProfile}
+            onTest={doTest}
+            onConnect={doConnect}
+            onDisconnect={doDisconnect}
           />
-          <div className="form-row">
-            <button onClick={doRun} disabled={!connected || running}>
-              {running ? "Running…" : "Run"}
-            </button>
-            <button onClick={doCancel} disabled={!running}>
-              Cancel
-            </button>
-            <span className="tx-sep" />
-            {!inTx ? (
-              <button onClick={doBegin} disabled={!connected}>
-                Begin
-              </button>
-            ) : (
-              <>
-                <span className="tx-chip">IN TRANSACTION</span>
-                <button onClick={doCommit}>Commit</button>
-                <button onClick={doRollback}>Rollback</button>
-              </>
-            )}
-          </div>
-          {txPrompt && (
-            <div className="tx-prompt" role="alertdialog">
-              <span>
-                A transaction is still open. What should happen to it before
-                disconnecting?
-              </span>
-              <button onClick={commitAndDisconnect}>Commit &amp; disconnect</button>
-              <button onClick={rollbackAndDisconnect}>Rollback &amp; disconnect</button>
-              <button onClick={() => setTxPrompt(false)}>Stay connected</button>
-            </div>
-          )}
-          {result && result.columns.length > 0 && (
-            <Grid
-              columns={result.columns}
-              storedRows={result.storedRows}
-              epoch={queryEpoch}
-            />
-          )}
-        </section>
-
-        <section className="panel">
-          <h2>History</h2>
-          <div className="form-row">
-            <input
-              placeholder="search history…"
-              value={historySearch}
-              onChange={(e) => setHistorySearch(e.target.value)}
-              style={{ flex: 1 }}
-            />
-            <button onClick={clearHistory} title="Clear non-favorites">
-              Clear
-            </button>
-          </div>
-          {historyItems.length === 0 && <p className="muted">No history yet.</p>}
-          <ul className="history-list">
-            {historyItems.map((h) => (
-              <li key={h.id} title={h.errorText ?? h.sqlText ?? ""}>
-                <span className={`hstatus ${h.status}`}>
-                  {h.status === "success" ? "✓" : h.status === "cancelled" ? "⊘" : "✗"}
-                </span>
-                <span
-                  className={`hsql ${h.sqlText ? "clickable" : ""}`}
-                  onClick={() => h.sqlText && setSql(h.sqlText)}
-                >
-                  {h.sqlText ?? <em className="muted">(query text hidden — prod)</em>}
-                </span>
-                <span className="muted hmeta">
-                  {h.status === "success"
-                    ? `${h.rowsReturned || h.rowsAffected || 0} rows`
-                    : h.status}
-                  {" · "}
-                  {h.durationMs}ms
-                  {" · "}
-                  {new Date(h.startedAt * 1000).toLocaleTimeString()}
-                </span>
-                <button
-                  className={`ghost star ${h.favorite ? "on" : ""}`}
-                  title={h.favorite ? "Unfavorite" : "Favorite"}
-                  onClick={() => toggleFavorite(h)}
-                >
-                  {h.favorite ? "★" : "☆"}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-        <p className="hint">
-          Credentials never enter this WebView beyond one-time entry: they go
-          straight to the OS keychain and only an opaque reference remains.
-        </p>
+          <QueryPanel
+            sql={sql}
+            onSqlChange={setSql}
+            connected={connected}
+            running={running}
+            inTx={inTx}
+            txPrompt={txPrompt}
+            result={result}
+            queryEpoch={queryEpoch}
+            onRun={doRun}
+            onCancel={doCancel}
+            onBegin={doBegin}
+            onCommit={doCommit}
+            onRollback={doRollback}
+            onCommitAndDisconnect={commitAndDisconnect}
+            onRollbackAndDisconnect={rollbackAndDisconnect}
+            onStayConnected={() => setTxPrompt(false)}
+          />
+          <HistoryPanel
+            items={historyItems}
+            search={historySearch}
+            onSearch={setHistorySearch}
+            onClear={clearHistory}
+            onToggleFavorite={toggleFavorite}
+            onLoad={setSql}
+          />
+          <p className="hint">
+            Credentials never enter this WebView beyond one-time entry: they go
+            straight to the OS keychain and only an opaque reference remains.
+          </p>
         </div>
       </main>
     </div>
