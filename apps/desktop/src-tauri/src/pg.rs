@@ -583,6 +583,9 @@ fn cache_scope(request: &MetadataRequest) -> (&'static str, String, String) {
         MetadataRequest::DescribeObject { schema, name } => {
             ("columns", schema.clone(), name.clone())
         }
+        // Live-only requests are never cached.
+        MetadataRequest::ServerActivity => ("activity", String::new(), String::new()),
+        MetadataRequest::Relationships { schema } => ("rels", schema.clone(), String::new()),
     }
 }
 
