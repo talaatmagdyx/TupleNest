@@ -19,6 +19,8 @@ import {
 } from "./overlays/Overlays";
 import SchemaModal, { type SchemaExtra } from "./overlays/SchemaModal";
 import MonitorModal from "./overlays/MonitorModal";
+import DiagramModal from "./overlays/DiagramModal";
+import AuditModal from "./overlays/AuditModal";
 import ExplainModal, { type PlanNode, type PlanStats } from "./overlays/ExplainModal";
 import { UpdateToast } from "./overlays/Overlays";
 import { ParamPrompt } from "./overlays/Overlays";
@@ -61,7 +63,9 @@ type OverlayKind =
   | "cheatsheet"
   | "inspect"
   | "monitor"
-  | "params";
+  | "params"
+  | "diagram"
+  | "audit";
 
 export default function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -1025,6 +1029,9 @@ export default function App() {
     ];
     if (connected) {
       items.push({ icon: "📊", label: "Server monitor (sessions & locks)", type: "Action", exec: () => setOverlay("monitor") });
+      items.push({ icon: "◫", label: "ER diagram (relationships)", type: "Action", exec: () => setOverlay("diagram") });
+      if (connectedEnv === "prod")
+        items.push({ icon: "🛡", label: "Prod audit log", type: "Action", exec: () => setOverlay("audit") });
       items.push({ icon: "⏻", label: "Disconnect current session", type: "Action", exec: doDisconnect });
       if (!inTx) items.push({ icon: "▣", label: "Begin transaction", type: "Action", exec: doBegin });
       else {
@@ -1073,7 +1080,7 @@ export default function App() {
       }
     }
     return items;
-  }, [doRun, doFormat, saveSnippet, newTab, applyTheme, theme, newProfile, runExplain, connected, inTx, doDisconnect, doBegin, doCommit, doRollback, saved, selectProfile, objects, insertSelect, describeObject, snippets, historyItems, setActiveSql, showToast]);
+  }, [doRun, doFormat, saveSnippet, newTab, applyTheme, theme, newProfile, runExplain, connected, connectedEnv, inTx, doDisconnect, doBegin, doCommit, doRollback, saved, selectProfile, objects, insertSelect, describeObject, snippets, historyItems, setActiveSql, showToast]);
 
   /* ---------------- render ---------------- */
 
@@ -1346,6 +1353,13 @@ export default function App() {
         />
       )}
       {overlay === "monitor" && <MonitorModal onToast={showToast} onClose={() => setOverlay(null)} />}
+      {overlay === "diagram" && (
+        <DiagramModal
+          schema={(schemas ?? []).includes("public") ? "public" : schemas?.[0] ?? "public"}
+          onClose={() => setOverlay(null)}
+        />
+      )}
+      {overlay === "audit" && <AuditModal onClose={() => setOverlay(null)} />}
       {overlay === "cheatsheet" && <Cheatsheet onClose={() => setOverlay(null)} />}
       {overlay === "inspect" && (
         <Inspector text={inspectText} colName={inspectCol} onClose={() => setOverlay(null)} />
