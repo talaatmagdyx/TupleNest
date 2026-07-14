@@ -1,0 +1,8 @@
+[package]
+name = "tuplenest-sql-parser"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+description = "TupleNest sql-parser crate"
+
+[dependencies]

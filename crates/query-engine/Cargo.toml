@@ -1,0 +1,8 @@
+[package]
+name = "tuplenest-query-engine"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+description = "TupleNest query-engine crate"
+
+[dependencies]

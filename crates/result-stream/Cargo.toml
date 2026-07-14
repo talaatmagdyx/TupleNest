@@ -1,0 +1,8 @@
+[package]
+name = "tuplenest-result-stream"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+description = "TupleNest result-stream crate"
+
+[dependencies]

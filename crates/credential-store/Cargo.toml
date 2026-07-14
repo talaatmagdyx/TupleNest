@@ -1,0 +1,8 @@
+[package]
+name = "tuplenest-credential-store"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+description = "TupleNest credential-store crate"
+
+[dependencies]

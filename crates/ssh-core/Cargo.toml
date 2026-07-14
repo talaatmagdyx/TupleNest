@@ -1,0 +1,8 @@
+[package]
+name = "tuplenest-ssh-core"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+description = "TupleNest ssh-core crate"
+
+[dependencies]

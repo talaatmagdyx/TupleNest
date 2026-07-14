@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/app-core",
+  "crates/driver-api",
+  "crates/driver-postgres",
+  "crates/connection-core",
+  "crates/query-engine",
+  "crates/result-stream",
+  "crates/metadata-core",
+  "crates/metadata-cache",
+  "crates/sql-parser",
+  "crates/sql-language-service",
+  "crates/transaction-core",
+  "crates/safety-engine",
+  "crates/credential-store",
+  "crates/ssh-core",
+  "crates/tunnel-core",
+  "crates/export-core",
+  "crates/workspace-store",
+  "crates/task-engine",
+  "crates/telemetry",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
