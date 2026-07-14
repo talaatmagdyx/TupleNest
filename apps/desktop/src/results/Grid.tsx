@@ -22,7 +22,7 @@ type Props = {
   columns: GridColumn[];
   storedRows: number;
   epoch: number;
-  onInspect: (text: string) => void;
+  onInspect: (text: string, colName: string) => void;
   onCopyable: (text: string | null) => void; // selected cell value for ⌘C
   onToast: (t: string) => void;
   onVisible?: (first: number, last: number) => void;
@@ -62,6 +62,7 @@ export default function Grid(p: Props) {
   const [sortDir, setSortDir] = useState<"asc" | "desc" | null>(null);
   const [allRows, setAllRows] = useState<unknown[][] | null>(null);
   const [selCell, setSelCell] = useState<{ r: number; c: number } | null>(null);
+  const [selRow, setSelRow] = useState<number>(-1);
   const pending = useRef<Set<number>>(new Set());
   const viewRef = useRef<HTMLDivElement | null>(null);
 
@@ -73,6 +74,7 @@ export default function Grid(p: Props) {
     setSortDir(null);
     setAllRows(null);
     setSelCell(null);
+    setSelRow(-1);
     p.onCopyable(null);
     if (viewRef.current) viewRef.current.scrollTop = 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -155,9 +157,10 @@ export default function Grid(p: Props) {
 
   const select = (ri: number, ci: number, col: GridColumn, v: unknown) => {
     setSelCell({ r: ri, c: ci });
+    setSelRow(ri);
     p.onCopyable(cellText(v));
     if ((col.dbType === "jsonb" || col.dbType === "json") && v !== null && v !== undefined) {
-      p.onInspect(typeof v === "object" ? JSON.stringify(v) : String(v));
+      p.onInspect(typeof v === "object" ? JSON.stringify(v) : String(v), col.name);
     }
   };
 
@@ -181,7 +184,12 @@ export default function Grid(p: Props) {
       {indices.map((i) => {
         const row = rowAt(i);
         return (
-          <div key={i} className="g-row" style={{ minWidth: totalW }}>
+          <div
+            key={i}
+            className={`g-row ${i === selRow ? "sel" : ""}`}
+            style={{ minWidth: totalW }}
+            onClick={() => setSelRow(i)}
+          >
             <div className="g-rownum" style={{ width: 56 }}>
               {i + 1}
             </div>

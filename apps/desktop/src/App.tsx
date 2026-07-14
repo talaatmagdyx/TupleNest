@@ -17,10 +17,12 @@ import {
   TxPrompt,
   type PaletteItem,
 } from "./overlays/Overlays";
-import SchemaModal from "./overlays/SchemaModal";
+import SchemaModal, { type SchemaExtra } from "./overlays/SchemaModal";
 import ExplainModal, { type PlanNode, type PlanStats } from "./overlays/ExplainModal";
+import { UpdateToast } from "./overlays/Overlays";
 import {
   fetchAllRows,
+  formatSQL,
   looksLikeSelect,
   needsGuard,
   toCSV,
@@ -55,7 +57,7 @@ type OverlayKind =
   | "inspect";
 
 export default function App() {
-  const [, setInfo] = useState<AppInfo | null>(null);
+  const [info, setInfo] = useState<AppInfo | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [telemetry, setTelemetry] = useState(false);
 
@@ -85,6 +87,8 @@ export default function App() {
   const [status, setStatus] = useState("");
   const [stages, setStages] = useState<TestStage[] | null>(null);
   const [testing, setTesting] = useState(false);
+  const [testSummary, setTestSummary] = useState("");
+  const [updateInfo, setUpdateInfo] = useState<{ version: string; notes: string } | null>(null);
   const [connected, setConnected] = useState(false);
   const [connectedEnv, setConnectedEnv] = useState<string | null>(null);
   const [serverVersion, setServerVersion] = useState<string | null>(null);
@@ -122,6 +126,8 @@ export default function App() {
   const [chart, setChart] = useState<{ title: string; sub: string; data: ChartDatum[] } | null>(null);
   const [schemaTarget, setSchemaTarget] = useState<{ schema: string; name: string; kind: string } | null>(null);
   const [schemaCols, setSchemaCols] = useState<DbColumn[] | null>(null);
+  const [schemaExtra, setSchemaExtra] = useState<SchemaExtra | null>(null);
+  const [inspectCol, setInspectCol] = useState<string | undefined>(undefined);
   const [explain, setExplain] = useState<{
     title: string;
     analyzed: boolean;
@@ -419,17 +425,19 @@ export default function App() {
       const report = await invoke<TestReport>("pg_test", { params: await withSecret() });
       // Progressive reveal (HUD design): stages appear one by one.
       setStages([]);
+      setTestSummary("");
       report.stages.forEach((s, i) => {
         setTimeout(() => {
           setStages((prev) => [...(prev ?? []), s]);
           if (i === report.stages.length - 1) {
             setTesting(false);
             const failed = report.stages.filter((x) => !x.passed);
-            setStatus(
+            const summary =
               failed.length === 0
                 ? `OK — server ${report.serverVersion ?? "?"}`
-                : `FAILED at ${failed[0].name}`
-            );
+                : `FAILED at ${failed[0].name}`;
+            setTestSummary(summary);
+            setStatus(summary);
           }
         }, 160 * (i + 1));
       });
@@ -585,16 +593,40 @@ export default function App() {
       const kind = (objects[schema] ?? []).find((o) => o.name === name)?.kind ?? "table";
       setSchemaTarget({ schema, name, kind });
       setSchemaCols(null);
+      setSchemaExtra(null);
       setOverlay("schema");
       try {
         const r = await metaFetch({ kind: "describe_object", schema, name });
-        if (r) setSchemaCols((r.payload as { columns: DbColumn[] }).columns);
+        if (r) {
+          const payload = r.payload as {
+            columns: DbColumn[];
+            indexes?: { name: string; def: string }[];
+            rowsEstimate?: number | null;
+            totalSize?: string | null;
+            comment?: string | null;
+          };
+          setSchemaCols(payload.columns);
+          setSchemaExtra({
+            indexes: payload.indexes ?? [],
+            rowsEstimate: payload.rowsEstimate ?? null,
+            totalSize: payload.totalSize ?? null,
+            comment: payload.comment ?? null,
+          });
+        }
       } catch (e) {
         showToast(`Describe failed: ${String(e).slice(0, 60)}`);
       }
     },
     [objects, metaFetch, showToast]
   );
+
+  const doFormat = useCallback(() => {
+    const sql = tabs[activeTab]?.sql ?? "";
+    if (!sql.trim()) return;
+    setActiveSql(formatSQL(sql));
+    showToast("Formatted");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs, activeTab, setActiveSql, showToast]);
 
   /* ---------------- tabs ---------------- */
 
@@ -870,7 +902,7 @@ export default function App() {
   useEffect(() => {
     const move = (e: MouseEvent) => {
       if (!dragRef.current) return;
-      setEditorH(Math.max(100, Math.min(500, dragRef.current.h + (e.clientY - dragRef.current.y))));
+      setEditorH(Math.max(120, Math.min(480, dragRef.current.h + (e.clientY - dragRef.current.y))));
     };
     const up = () => {
       dragRef.current = null;
@@ -892,6 +924,15 @@ export default function App() {
       if (mod && e.key === "Enter") {
         e.preventDefault();
         doRun();
+      } else if (mod && e.shiftKey && (e.key === "f" || e.key === "F")) {
+        e.preventDefault();
+        doFormat();
+      } else if (mod && e.shiftKey && (e.key === "l" || e.key === "L")) {
+        e.preventDefault();
+        applyTheme(theme === "dark" ? "light" : "dark");
+      } else if (mod && (e.key === "o" || e.key === "O")) {
+        e.preventDefault();
+        setOverlay("connEditor");
       } else if (mod && (e.key === "k" || e.key === "K")) {
         e.preventDefault();
         setPaletteQ("");
@@ -920,14 +961,16 @@ export default function App() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [doRun, newTab, overlay, running, doCancel, showToast]);
+  }, [doRun, newTab, overlay, running, doCancel, showToast, doFormat, applyTheme, theme]);
 
   const paletteItems = useCallback((): PaletteItem[] => {
     const items: PaletteItem[] = [
       { icon: "▶", label: "Run query", type: "Action", kbd: "⌘↵", exec: () => doRun() },
+      { icon: "⧉", label: "Format SQL", type: "Action", kbd: "⌘⇧F", exec: doFormat },
       { icon: "＋", label: "New query tab", type: "Action", kbd: "⌘T", exec: newTab },
-      { icon: "◐", label: "Toggle theme", type: "Action", exec: () => applyTheme(theme === "dark" ? "light" : "dark") },
-      { icon: "⛁", label: "New connection…", type: "Action", exec: newProfile },
+      { icon: "◐", label: "Toggle theme", type: "Action", kbd: "⌘⇧L", exec: () => applyTheme(theme === "dark" ? "light" : "dark") },
+      { icon: "⛁", label: "Open connection…", type: "Action", kbd: "⌘O", exec: () => setOverlay("connEditor") },
+      { icon: "＋", label: "New connection…", type: "Action", exec: newProfile },
       { icon: "⌥", label: "Show EXPLAIN plan", type: "Action", exec: runExplain },
       { icon: "⚙", label: "Open settings", type: "Action", exec: () => setOverlay("settings") },
     ];
@@ -950,6 +993,12 @@ export default function App() {
           type: "Table",
           exec: () => insertSelect(schema, o.name),
         });
+        items.push({
+          icon: "▤",
+          label: `Describe ${schema}.${o.name}`,
+          type: "Table",
+          exec: () => describeObject(schema, o.name),
+        });
       }
     }
     for (const h of historyItems.slice(0, 6)) {
@@ -969,7 +1018,14 @@ export default function App() {
 
   const activeProfile = saved.find((c) => c.id === profileId) ?? null;
   const isProd = connected && connectedEnv === "prod";
-  const explorerSource: "live" | "cached" | "—" = metaCached ? "cached" : connected ? "live" : "—";
+  // HUD design: two-state label — live when connected, cached otherwise.
+  const explorerSource: "live" | "cached" | "—" =
+    connected && !metaCached ? "live" : schemas !== null || metaCached ? "cached" : "—";
+
+  // Dormant updater hook: a future Tauri updater event can surface the toast.
+  useEffect(() => {
+    (window as unknown as Record<string, unknown>).__tuplenestUpdate = setUpdateInfo;
+  }, []);
 
   return (
     <div className="shell">
@@ -1029,6 +1085,9 @@ export default function App() {
           {tabs.length === 0 ? (
             <div className="onboard">
               <div className="card">
+                <div className="onboard-glyph">
+                  <span className="brand-glyph" style={{ width: 26, height: 26 }} />
+                </div>
                 <div className="big">No query open</div>
                 <p>
                   Open a new query tab, pick a table from the Explorer to insert a select, or jump
@@ -1065,12 +1124,14 @@ export default function App() {
               onCommit={doCommit}
               onRollback={doRollback}
               onExplain={runExplain}
+              onFormat={doFormat}
               exportMenu={exportMenu}
               onToggleExport={() => setExportMenu((v) => !v)}
               onExport={doExport}
               chart={chart}
-              onInspect={(t) => {
+              onInspect={(t, col) => {
                 setInspectText(t);
+                setInspectCol(col);
                 setOverlay("inspect");
               }}
               onCopyable={(v) => {
@@ -1111,6 +1172,7 @@ export default function App() {
         rowsInfo={result && result.columns.length > 0 ? rowsInfo : ""}
         txOpenSince={txOpenSince}
         serverVersion={serverVersion}
+        osLabel={info?.os ?? ""}
       />
 
       {toast && <div className="toast">{toast}</div>}
@@ -1146,6 +1208,7 @@ export default function App() {
           status={status}
           stages={stages}
           testing={testing}
+          testSummary={testSummary}
           sshEnabled={sshEnabled}
           sshHost={sshHost}
           sshPort={sshPort}
@@ -1210,14 +1273,28 @@ export default function App() {
         />
       )}
       {overlay === "cheatsheet" && <Cheatsheet onClose={() => setOverlay(null)} />}
-      {overlay === "inspect" && <Inspector text={inspectText} onClose={() => setOverlay(null)} />}
+      {overlay === "inspect" && (
+        <Inspector text={inspectText} colName={inspectCol} onClose={() => setOverlay(null)} />
+      )}
       {overlay === "schema" && schemaTarget && (
         <SchemaModal
           schema={schemaTarget.schema}
           name={schemaTarget.name}
           kind={schemaTarget.kind}
           columns={schemaCols}
+          extra={schemaExtra}
           onClose={() => setOverlay(null)}
+        />
+      )}
+      {updateInfo && (
+        <UpdateToast
+          version={updateInfo.version}
+          notes={updateInfo.notes}
+          onUpdate={() => {
+            setUpdateInfo(null);
+            showToast("Restarting to update…");
+          }}
+          onDismiss={() => setUpdateInfo(null)}
         />
       )}
       {overlay === "explain" && explain && (

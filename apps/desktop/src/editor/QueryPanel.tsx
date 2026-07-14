@@ -2,6 +2,7 @@ import type { HistoryEntry, QueryResult } from "../ipc/types";
 import Grid from "../results/Grid";
 import HistoryPanel from "../history/HistoryPanel";
 import SqlEditor from "./SqlEditor";
+import { PlayIcon } from "../lib/icons";
 
 export type ResultTab = "results" | "chart" | "messages" | "history";
 export type ChartDatum = { label: string; v: number };
@@ -26,11 +27,12 @@ type Props = {
   onCommit: () => void;
   onRollback: () => void;
   onExplain: () => void;
+  onFormat: () => void;
   exportMenu: boolean;
   onToggleExport: () => void;
   onExport: (kind: "csv" | "json" | "md") => void;
   chart: { title: string; sub: string; data: ChartDatum[] } | null;
-  onInspect: (text: string) => void;
+  onInspect: (text: string, colName: string) => void;
   onCopyable: (v: string | null) => void;
   onToast: (t: string) => void;
   onVisibleRows: (first: number, last: number) => void;
@@ -67,7 +69,7 @@ export default function QueryPanel(p: Props) {
     <>
       <div className="toolbar">
         <button className="btn primary" onClick={p.onRun} disabled={!p.connected || p.running}>
-          {p.running ? <span className="spin" /> : "▶"} {p.running ? "Running" : "Run"}{" "}
+          {p.running ? <span className="spin" /> : <PlayIcon />} {p.running ? "Running" : "Run"}{" "}
           <span className="kbd" style={{ background: "rgba(0,0,0,.2)", color: "inherit", borderColor: "transparent" }}>
             ⌘↵
           </span>
@@ -96,6 +98,9 @@ export default function QueryPanel(p: Props) {
         <div className="grow" />
         <button className="btn" onClick={p.onExplain} disabled={!p.connected}>
           Explain
+        </button>
+        <button className="btn" onClick={p.onFormat} title="Format SQL (⌘⇧F)">
+          Format
         </button>
         <div className="menu-wrap">
           <button className="btn" onClick={p.onToggleExport} disabled={!r || r.columns.length === 0}>
@@ -138,6 +143,9 @@ export default function QueryPanel(p: Props) {
             {label}
           </button>
         ))}
+        <button className="rtab" onClick={p.onExplain} title="Run EXPLAIN and show the plan">
+          Plan
+        </button>
         <div className="meta">
           {r && !p.lastError && <span style={{ color: "var(--tn-success)" }}>✓</span>}
           <span>{meta}</span>

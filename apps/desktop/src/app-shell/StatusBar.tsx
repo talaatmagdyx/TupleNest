@@ -7,6 +7,7 @@ type Props = {
   rowsInfo: string;
   txOpenSince: number | null; // epoch ms
   serverVersion: string | null;
+  osLabel: string;
 };
 
 export default function StatusBar(p: Props) {
@@ -34,7 +35,12 @@ export default function StatusBar(p: Props) {
       )}
       <div className="grow" />
       {p.txOpenSince && <span className="item txwarn">⚠ tx open {txLabel}</span>}
-      {p.serverVersion && <span className="item">PostgreSQL {p.serverVersion}</span>}
+      {p.serverVersion && (
+        <span className="item">
+          PostgreSQL {p.serverVersion}
+          {p.osLabel ? ` · ${p.osLabel}` : ""}
+        </span>
+      )}
     </footer>
   );
 }

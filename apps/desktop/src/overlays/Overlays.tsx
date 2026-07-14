@@ -255,7 +255,9 @@ const SHORTCUTS: [string, string][] = [
   ["Run query", "⌘ ↵"],
   ["Command palette", "⌘ K"],
   ["New query tab", "⌘ T"],
+  ["Format SQL", "⌘ ⇧ F"],
   ["Copy selected cell", "⌘ C"],
+  ["Cancel running query", "Esc"],
   ["Close overlay", "Esc"],
   ["This cheatsheet", "?"],
 ];
@@ -278,9 +280,42 @@ export function Cheatsheet(p: { onClose: () => void }) {
   );
 }
 
+/* ---------- update available toast ---------- */
+
+export function UpdateToast(p: {
+  version: string;
+  notes: string;
+  onUpdate: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="update-toast">
+      <div className="ut-head">
+        <span className="dot" style={{ background: "var(--tn-accent)" }} />
+        <span style={{ fontWeight: 750, fontSize: 12.5 }}>Update available</span>
+        <div style={{ flex: 1 }} />
+        <button className="x" style={{ border: "none", background: "none", color: "var(--tn-tm)", cursor: "pointer" }} onClick={p.onDismiss}>
+          ×
+        </button>
+      </div>
+      <p>
+        TupleNest {p.version} is ready to install — <b style={{ color: "var(--tn-ts)" }}>{p.notes}</b>
+      </p>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="btn primary" onClick={p.onUpdate}>
+          Restart &amp; update
+        </button>
+        <button className="btn" onClick={p.onDismiss}>
+          Later
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- JSON cell inspector ---------- */
 
-export function Inspector(p: { text: string; onClose: () => void }) {
+export function Inspector(p: { text: string; colName?: string; onClose: () => void }) {
   let pretty = p.text;
   try {
     pretty = JSON.stringify(JSON.parse(p.text), null, 2);
@@ -293,7 +328,7 @@ export function Inspector(p: { text: string; onClose: () => void }) {
         <ModalHead
           title={
             <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-              <span className="chip jsonb">JSONB</span> cell value
+              <span className="chip jsonb">JSONB</span> {p.colName ?? "cell value"}
             </span>
           }
           onClose={p.onClose}

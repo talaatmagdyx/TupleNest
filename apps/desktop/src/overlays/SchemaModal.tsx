@@ -1,11 +1,19 @@
 import type { DbColumn } from "../ipc/types";
 import { ModalHead, Overlay } from "./Overlays";
 
+export type SchemaExtra = {
+  indexes: { name: string; def: string }[];
+  rowsEstimate: number | null;
+  totalSize: string | null;
+  comment: string | null;
+};
+
 type Props = {
   schema: string;
   name: string;
   kind: string;
   columns: DbColumn[] | null; // null = loading
+  extra: SchemaExtra | null;
   onClose: () => void;
 };
 
@@ -46,20 +54,24 @@ export default function SchemaModal(p: Props) {
         <div className="modal-body">
           <div className="meta-grid">
             <div className="meta-cell">
-              <div className="ml">Columns</div>
-              <div className="mv">{p.columns ? cols.length : "…"}</div>
+              <div className="ml">Rows (est.)</div>
+              <div className="mv">
+                {p.extra?.rowsEstimate != null && p.extra.rowsEstimate >= 0
+                  ? p.extra.rowsEstimate.toLocaleString()
+                  : "—"}
+              </div>
             </div>
             <div className="meta-cell">
-              <div className="ml">Primary key</div>
-              <div className="mv">{cols.find((c) => c.primaryKey)?.name ?? "—"}</div>
+              <div className="ml">Table size</div>
+              <div className="mv">{p.extra?.totalSize ?? "—"}</div>
             </div>
             <div className="meta-cell">
-              <div className="ml">Not null</div>
-              <div className="mv">{cols.filter((c) => !c.nullable).length}</div>
+              <div className="ml">Indexes</div>
+              <div className="mv">{p.extra ? p.extra.indexes.length : "…"}</div>
             </div>
             <div className="meta-cell">
-              <div className="ml">Kind</div>
-              <div className="mv">{p.kind}</div>
+              <div className="ml">Comment</div>
+              <div className="mv" style={{ fontSize: 11 }}>{p.extra?.comment ?? "—"}</div>
             </div>
           </div>
           <div className="sect-label">Columns</div>
@@ -70,6 +82,18 @@ export default function SchemaModal(p: Props) {
               <span style={{ color: "var(--tn-tp)", width: 170 }}>{c.name}</span>
               <span className="ty">{c.dbType}</span>
               {!c.nullable && <span className="nn">not null</span>}
+            </div>
+          ))}
+          <div className="sect-label">Indexes</div>
+          {p.extra && p.extra.indexes.length === 0 && <div className="note muted">no indexes</div>}
+          {(p.extra?.indexes ?? []).map((ix) => (
+            <div key={ix.name} className="col-line" style={{ paddingLeft: 4 }}>
+              <span style={{ color: "var(--tn-tp)", width: 220, flex: "none", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {ix.name}
+              </span>
+              <span className="ty" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                {ix.def.replace(/^CREATE (UNIQUE )?INDEX \S+ ON \S+ USING /i, "$1")}
+              </span>
             </div>
           ))}
           <div className="sect-label">DDL (reconstructed)</div>

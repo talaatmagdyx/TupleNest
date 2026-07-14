@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { DbColumn, DbObject } from "../ipc/types";
+import { DbIcon, SearchIcon } from "../lib/icons";
 
 type Props = {
   schemas: string[] | null;
@@ -41,7 +42,9 @@ export default function ExplorerTree(p: Props) {
         ) : null}
       </div>
       <div className="filter-box">
-        <span className="muted">⌕</span>
+        <span className="muted" style={{ display: "inline-flex" }}>
+          <SearchIcon />
+        </span>
         <input placeholder="Filter objects…" value={filter} onChange={(e) => setFilter(e.target.value)} />
       </div>
       <div className="tree">
@@ -54,7 +57,9 @@ export default function ExplorerTree(p: Props) {
             <div key={s}>
               <button className="tree-row" onClick={() => p.onToggleSchema(s)}>
                 <span className={`caret ${p.openSchemas[s] || f ? "open" : ""}`}>▶</span>
-                <span style={{ color: "var(--tn-warning)" }}>◈</span>
+                <span style={{ color: "var(--tn-ts)", display: "inline-flex" }}>
+                  <DbIcon />
+                </span>
                 <span style={{ fontWeight: 600, color: "var(--tn-tp)" }}>{s}</span>
                 {objs && <span className="count">{objs.length}</span>}
               </button>

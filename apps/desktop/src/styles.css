@@ -618,3 +618,21 @@ a { color: var(--tn-accent); text-decoration: none; }
 .onboard .big { font-size: 17px; font-weight: 750; margin-bottom: 8px; }
 .onboard p { color: var(--tn-tm); font-size: 12.5px; line-height: 1.6; margin-bottom: 18px; }
 .onboard .row { display: flex; gap: 10px; justify-content: center; }
+
+
+/* --- Update-available toast (HUD design) --- */
+.update-toast {
+  position: fixed; right: 18px; bottom: 42px; z-index: 110; width: 320px;
+  background: var(--tn-s1); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
+  border: 1px solid var(--tn-bh); border-radius: 13px; box-shadow: var(--tn-shadow);
+  padding: 13px 15px; animation: tnfade .16s ease;
+}
+.update-toast .ut-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.update-toast p { font-size: 11.5px; color: var(--tn-tm); line-height: 1.5; margin-bottom: 11px; }
+
+/* --- Onboarding glyph --- */
+.onboard-glyph {
+  width: 52px; height: 52px; margin: 0 auto 14px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--tn-as); border: 1px solid var(--tn-bh);
+}

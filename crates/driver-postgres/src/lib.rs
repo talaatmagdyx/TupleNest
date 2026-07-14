@@ -444,6 +444,31 @@ impl DatabaseSession for PostgresSession {
                         format!("Relation {schema}.{name} not found"),
                     ));
                 }
+                // Indexes + size/row estimates for the object-detail view.
+                let idx_rows = self
+                    .client
+                    .query(
+                        "SELECT indexname, indexdef FROM pg_indexes
+                         WHERE schemaname = $1 AND tablename = $2
+                         ORDER BY indexname",
+                        &[&schema, &name],
+                    )
+                    .await
+                    .unwrap_or_default();
+                let stats_row = self
+                    .client
+                    .query_opt(
+                        "SELECT c.reltuples::bigint,
+                                pg_size_pretty(pg_total_relation_size(c.oid)),
+                                obj_description(c.oid, 'pg_class')
+                         FROM pg_class c
+                         JOIN pg_namespace n ON n.oid = c.relnamespace
+                         WHERE n.nspname = $1 AND c.relname = $2",
+                        &[&schema, &name],
+                    )
+                    .await
+                    .ok()
+                    .flatten();
                 serde_json::json!({
                     "columns": rows
                         .iter()
@@ -457,6 +482,18 @@ impl DatabaseSession for PostgresSession {
                             })
                         })
                         .collect::<Vec<_>>(),
+                    "indexes": idx_rows
+                        .iter()
+                        .map(|r| {
+                            serde_json::json!({
+                                "name": r.get::<_, String>(0),
+                                "def": r.get::<_, String>(1),
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                    "rowsEstimate": stats_row.as_ref().map(|r| r.get::<_, i64>(0)),
+                    "totalSize": stats_row.as_ref().map(|r| r.get::<_, String>(1)),
+                    "comment": stats_row.as_ref().and_then(|r| r.get::<_, Option<String>>(2)),
                 })
             }
         };

@@ -1,5 +1,6 @@
 import type { ConnectionRecord } from "../ipc/types";
 import { envMeta } from "../lib/sql";
+import { GearIcon, SidebarIcon } from "../lib/icons";
 
 type Props = {
   theme: "dark" | "light";
@@ -24,7 +25,7 @@ export default function Titlebar(p: Props) {
   return (
     <header className="titlebar">
       <button className="icon-btn" title="Toggle sidebar" onClick={p.onToggleSidebar}>
-        ▤
+        <SidebarIcon />
       </button>
       <div className="brand">
         <span className="brand-glyph" /> TupleNest
@@ -88,7 +89,7 @@ export default function Titlebar(p: Props) {
         {p.theme === "dark" ? "☾" : "☀"}
       </button>
       <button className="icon-btn" title="Settings" onClick={p.onOpenSettings}>
-        ⚙
+        <GearIcon />
       </button>
     </header>
   );

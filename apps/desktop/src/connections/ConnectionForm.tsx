@@ -17,6 +17,7 @@ type Props = {
   status: string;
   stages: TestStage[] | null;
   testing: boolean;
+  testSummary: string;
   sshEnabled: boolean;
   sshHost: string;
   sshPort: number;
@@ -178,7 +179,10 @@ export default function ConnectionForm(p: Props) {
                         : "var(--tn-danger)",
                   }}
                 >
-                  {p.testing ? "running…" : p.stages && p.stages.every((s) => s.passed) ? "all stages passed" : "failed"}
+                  {p.testing
+                    ? "running…"
+                    : p.testSummary ||
+                      (p.stages && p.stages.every((s) => s.passed) ? "all stages passed" : "failed")}
                 </span>
               </div>
               {(p.stages ?? []).map((s) => (

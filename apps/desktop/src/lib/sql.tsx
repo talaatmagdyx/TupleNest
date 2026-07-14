@@ -69,6 +69,18 @@ export function needsGuard(sql: string, env: string | null): boolean {
   return env === "prod" && /^\s*(update|delete)\b/i.test(sql) && !/\bwhere\b/i.test(sql);
 }
 
+/** Lightweight SQL formatter: uppercases keywords, breaks major clauses. */
+export function formatSQL(sql: string): string {
+  const KW =
+    /\b(select|from|where|join|left join|right join|inner join|full join|cross join|on|group by|order by|having|limit|offset|insert into|values|update|set|delete from|union all|union|and|or|as|desc|asc|distinct|case|when|then|else|end|returning|with)\b/gi;
+  let out = sql.replace(KW, (m) => m.toUpperCase());
+  const BREAK_BEFORE =
+    /\s+(FROM|WHERE|LEFT JOIN|RIGHT JOIN|INNER JOIN|FULL JOIN|CROSS JOIN|JOIN|GROUP BY|ORDER BY|HAVING|LIMIT|OFFSET|UNION ALL|UNION|VALUES|SET|RETURNING)\b/g;
+  out = out.replace(BREAK_BEFORE, "\n$1");
+  out = out.replace(/\s+(AND|OR)\b/g, "\n  $1");
+  return out.replace(/[ \t]+$/gm, "").trim();
+}
+
 export function looksLikeSelect(sql: string): boolean {
   return /^\s*(select|with|values|table)\b/i.test(sql);
 }
