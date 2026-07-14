@@ -20,7 +20,14 @@ export default function SavedList(p: Props) {
         </button>
       </div>
       <div className="conn-list">
-        {p.saved.length === 0 && <div className="note muted" style={{ padding: "2px 8px", fontSize: 11 }}>No saved connections yet.</div>}
+        {p.saved.length === 0 && (
+          <div className="conn-empty">
+            <p>No connections yet.</p>
+            <button className="btn primary" onClick={p.onNew}>
+              ＋ New connection
+            </button>
+          </div>
+        )}
         {p.saved.map((c) => {
           const m = envMeta(c.environment);
           const active = c.id === p.activeId;

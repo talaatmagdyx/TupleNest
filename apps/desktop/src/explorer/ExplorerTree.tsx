@@ -14,6 +14,7 @@ type Props = {
   onToggleTable: (schema: string, name: string) => void;
   onInsertSelect: (schema: string, name: string) => void;
   onDescribe: (schema: string, name: string) => void;
+  onConnect?: () => void;
 };
 
 function objIcon(kind: string): { ch: string; color: string } {
@@ -41,14 +42,26 @@ export default function ExplorerTree(p: Props) {
           </span>
         ) : null}
       </div>
-      <div className="filter-box">
-        <span className="muted" style={{ display: "inline-flex" }}>
-          <SearchIcon />
-        </span>
-        <input placeholder="Filter objects…" value={filter} onChange={(e) => setFilter(e.target.value)} />
-      </div>
+      {p.schemas !== null && (
+        <div className="filter-box">
+          <span className="muted" style={{ display: "inline-flex" }}>
+            <SearchIcon />
+          </span>
+          <input placeholder="Filter objects…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        </div>
+      )}
       <div className="tree">
-        {p.schemas === null && <div className="note">Loading schemas…</div>}
+        {p.schemas === null && p.connected && <div className="note">Loading schemas…</div>}
+        {p.schemas === null && !p.connected && (
+          <div className="explorer-empty">
+            <p>Not connected.</p>
+            {p.onConnect && (
+              <button className="btn" onClick={p.onConnect}>
+                New connection
+              </button>
+            )}
+          </div>
+        )}
         {(p.schemas ?? []).map((s) => {
           const objs = p.objects[s];
           const visible = f && objs ? objs.filter((o) => match(o.name)) : objs;

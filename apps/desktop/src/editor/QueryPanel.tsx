@@ -156,7 +156,13 @@ export default function QueryPanel(p: Props) {
         {p.resultTab === "results" && (
           <>
             {p.lastError && <div className="error-box">{p.lastError}</div>}
-            {!p.lastError && !r && (
+            {!p.lastError && !r && !p.connected && (
+              <div className="center-note">
+                <div className="big">Not connected</div>
+                <div>Connect to a database to run queries — ⌘K or the connection menu.</div>
+              </div>
+            )}
+            {!p.lastError && !r && p.connected && (
               <div className="center-note">Run the query (⌘↵) to see results</div>
             )}
             {!p.lastError && r && r.columns.length === 0 && (

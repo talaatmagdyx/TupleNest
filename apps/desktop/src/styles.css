@@ -659,3 +659,28 @@ a { color: var(--tn-accent); text-decoration: none; }
   color: var(--tn-tm); background: var(--tn-s2);
 }
 .state-badge.act { color: var(--tn-success); background: rgba(70,240,176,.12); }
+
+
+/* --- Deep UX pass: empty states & focus polish --- */
+.conn-empty, .explorer-empty {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+  padding: 10px 8px 6px;
+}
+.conn-empty p, .explorer-empty p { font-size: 12px; color: var(--tn-tm); }
+.conn-empty .btn, .explorer-empty .btn { width: 100%; justify-content: center; }
+
+/* Stronger overlay backdrop so modals truly focus */
+.overlay { background: rgba(2, 5, 14, .66); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+/* Tall modals center rather than top-align */
+.overlay:has(.modal) { align-items: center; padding-top: 0; }
+
+/* Clearer disabled affordance on primary buttons */
+.btn.primary:disabled { background: var(--tn-s2); color: var(--tn-tm); border-color: var(--tn-bs); }
+
+/* Focus ring for keyboard users on all interactive controls */
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--tn-focus); outline-offset: 1px;
+}
+
+/* Result-tab active underline sits flush */
+.rtab { position: relative; }

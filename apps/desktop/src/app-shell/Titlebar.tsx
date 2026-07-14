@@ -39,11 +39,13 @@ export default function Titlebar(p: Props) {
               boxShadow: p.connected ? `0 0 8px ${p.activeEnv === "prod" ? "rgba(239,77,77,.5)" : "rgba(63,185,80,.5)"}` : "none",
             }}
           />
-          <span className="name">{p.activeName || "No connection"}</span>
-          {p.activeUserHost && <span className="host">{p.activeUserHost}</span>}
-          <span className="env-pill" style={{ color: em.color, background: em.bg }}>
-            {p.activeEnv}
-          </span>
+          <span className="name">{p.connected ? p.activeName : "Not connected"}</span>
+          {p.connected && p.activeUserHost && <span className="host">{p.activeUserHost}</span>}
+          {p.connected && (
+            <span className="env-pill" style={{ color: em.color, background: em.bg }}>
+              {p.activeEnv}
+            </span>
+          )}
           <span style={{ fontSize: 9, color: "var(--tn-tm)" }}>▾</span>
         </button>
         {p.connMenu && (

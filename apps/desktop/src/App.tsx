@@ -1146,6 +1146,7 @@ export default function App() {
             onToggleTable={toggleTable}
             onInsertSelect={insertSelect}
             onDescribe={describeObject}
+            onConnect={saved.length ? () => setConnMenu(true) : newProfile}
           />
         </aside>
         <main className="main-col">
