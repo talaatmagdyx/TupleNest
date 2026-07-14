@@ -1,4 +1,5 @@
 import type { TestStage } from "../ipc/types";
+import { ModalHead, Overlay } from "../overlays/Overlays";
 
 type Props = {
   isEdit: boolean;
@@ -15,6 +16,7 @@ type Props = {
   connected: boolean;
   status: string;
   stages: TestStage[] | null;
+  testing: boolean;
   sshEnabled: boolean;
   sshHost: string;
   sshPort: number;
@@ -38,141 +40,183 @@ type Props = {
   onTlsCaPath: (v: string) => void;
   onSave: () => void;
   onTest: () => void;
-  onConnect: () => void;
-  onDisconnect: () => void;
+  onSaveConnect: () => void;
+  onClose: () => void;
 };
 
-/** Connection profile editor with staged test results (E1.2). */
+/** Connection editor modal (HUD design, screen "Connection editor"). */
 export default function ConnectionForm(p: Props) {
   return (
-    <section className="panel">
-      <h2>{p.isEdit ? "Edit connection" : "New connection"}</h2>
-      <div className="form-row">
-        <input
-          placeholder="profile name"
-          value={p.profileName}
-          onChange={(e) => p.onProfileName(e.target.value)}
-        />
-        <select value={p.environment} onChange={(e) => p.onEnvironment(e.target.value)}>
-          <option value="dev">dev</option>
-          <option value="test">test</option>
-          <option value="staging">staging</option>
-          <option value="prod">prod</option>
-        </select>
-      </div>
-      <div className="form-row">
-        <input placeholder="host" value={p.host} onChange={(e) => p.onHost(e.target.value)} />
-        <input
-          placeholder="port"
-          type="number"
-          value={p.port}
-          onChange={(e) => p.onPort(Number(e.target.value) || 5432)}
-          style={{ width: 80 }}
-        />
-        <input
-          placeholder="database"
-          value={p.database}
-          onChange={(e) => p.onDatabase(e.target.value)}
-        />
-        <input
-          placeholder="username"
-          value={p.username}
-          onChange={(e) => p.onUsername(e.target.value)}
-        />
-        <input
-          placeholder={p.hasSecret ? "password saved in keychain" : "password (optional)"}
-          type="password"
-          value={p.password}
-          onChange={(e) => p.onPassword(e.target.value)}
-        />
-      </div>
-      <div className="form-row">
-        <label className="muted">TLS</label>
-        <select value={p.tlsMode} onChange={(e) => p.onTlsMode(e.target.value)}>
-          <option value="verify-full">verify-full (default)</option>
-          <option value="verify-ca">verify-ca</option>
-          <option value="prefer">prefer (no verification)</option>
-          <option value="disabled">disabled (local only)</option>
-        </select>
-        {(p.tlsMode === "verify-full" || p.tlsMode === "verify-ca") && (
-          <input
-            placeholder="CA file path (optional, PEM)"
-            value={p.tlsCaPath}
-            onChange={(e) => p.onTlsCaPath(e.target.value)}
-            style={{ flex: 1 }}
-          />
-        )}
-      </div>
-      <div className="form-row">
-        <label className="muted">
-          <input
-            type="checkbox"
-            checked={p.sshEnabled}
-            onChange={(e) => p.onSshEnabled(e.target.checked)}
-          />{" "}
-          via SSH tunnel
-        </label>
-        {p.sshEnabled && (
-          <>
+    <Overlay onClose={p.onClose}>
+      <div className="modal" style={{ width: 620 }}>
+        <ModalHead title={p.isEdit ? "Edit connection" : "New connection"} onClose={p.onClose} />
+        <div className="modal-body">
+          <div className="frow">
+            <div className="field">
+              <label>Name</label>
+              <input value={p.profileName} onChange={(e) => p.onProfileName(e.target.value)} />
+            </div>
+            <div className="field" style={{ flex: "0 0 240px" }}>
+              <label>Environment</label>
+              <div className="seg">
+                {["dev", "test", "staging", "prod"].map((env) => (
+                  <button
+                    key={env}
+                    className={`${p.environment === env ? "on" : ""} ${env === "prod" ? "prod" : ""}`}
+                    onClick={() => p.onEnvironment(env)}
+                  >
+                    {env}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="frow">
+            <div className="field">
+              <label>Host</label>
+              <input className="mono" value={p.host} onChange={(e) => p.onHost(e.target.value)} />
+            </div>
+            <div className="field w90">
+              <label>Port</label>
+              <input
+                className="mono"
+                type="number"
+                value={p.port}
+                onChange={(e) => p.onPort(Number(e.target.value) || 5432)}
+              />
+            </div>
+          </div>
+          <div className="frow">
+            <div className="field">
+              <label>Database</label>
+              <input className="mono" value={p.database} onChange={(e) => p.onDatabase(e.target.value)} />
+            </div>
+            <div className="field">
+              <label>Username</label>
+              <input className="mono" value={p.username} onChange={(e) => p.onUsername(e.target.value)} />
+            </div>
+          </div>
+          <div className="field">
+            <label>Password</label>
             <input
-              placeholder="ssh host"
-              value={p.sshHost}
-              onChange={(e) => p.onSshHost(e.target.value)}
+              type="password"
+              placeholder={p.hasSecret ? "password saved in keychain" : "password (optional)"}
+              value={p.password}
+              onChange={(e) => p.onPassword(e.target.value)}
             />
-            <input
-              placeholder="22"
-              type="number"
-              value={p.sshPort}
-              onChange={(e) => p.onSshPort(Number(e.target.value) || 22)}
-              style={{ width: 70 }}
-            />
-            <input
-              placeholder="ssh user"
-              value={p.sshUser}
-              onChange={(e) => p.onSshUser(e.target.value)}
-              style={{ width: 110 }}
-            />
-          </>
-        )}
-      </div>
-      {p.sshEnabled && (
-        <div className="form-row">
-          <input
-            placeholder="private key path (~/.ssh/id_ed25519)"
-            value={p.sshKeyPath}
-            onChange={(e) => p.onSshKeyPath(e.target.value)}
-            style={{ flex: 1 }}
-          />
-          <input
-            placeholder="host key SHA256 fingerprint (empty = known_hosts)"
-            value={p.sshFingerprint}
-            onChange={(e) => p.onSshFingerprint(e.target.value)}
-            style={{ flex: 1 }}
-          />
+            <div className="hint">🔒 Stored in the OS keychain — never in config files.</div>
+          </div>
+          <div className="frow">
+            <div className="field" style={{ flex: "0 0 170px" }}>
+              <label>TLS mode</label>
+              <select value={p.tlsMode} onChange={(e) => p.onTlsMode(e.target.value)}>
+                <option value="verify-full">verify-full</option>
+                <option value="verify-ca">verify-ca</option>
+                <option value="prefer">prefer</option>
+                <option value="disabled">disabled</option>
+              </select>
+            </div>
+            {(p.tlsMode === "verify-full" || p.tlsMode === "verify-ca") && (
+              <div className="field">
+                <label>CA file (optional)</label>
+                <input
+                  className="mono"
+                  placeholder="/etc/ssl/ca.pem"
+                  value={p.tlsCaPath}
+                  onChange={(e) => p.onTlsCaPath(e.target.value)}
+                />
+              </div>
+            )}
+          </div>
+          <div className="section-row">
+            <span className="st">SSH tunnel</span>
+            <button className={`toggle ${p.sshEnabled ? "on" : ""}`} onClick={() => p.onSshEnabled(!p.sshEnabled)}>
+              <span className="knob" />
+            </button>
+          </div>
+          {p.sshEnabled && (
+            <>
+              <div className="frow">
+                <div className="field">
+                  <label>SSH host</label>
+                  <input className="mono" placeholder="bastion.internal" value={p.sshHost} onChange={(e) => p.onSshHost(e.target.value)} />
+                </div>
+                <div className="field w90">
+                  <label>Port</label>
+                  <input className="mono" type="number" value={p.sshPort} onChange={(e) => p.onSshPort(Number(e.target.value) || 22)} />
+                </div>
+              </div>
+              <div className="frow">
+                <div className="field">
+                  <label>SSH user</label>
+                  <input className="mono" placeholder="deploy" value={p.sshUser} onChange={(e) => p.onSshUser(e.target.value)} />
+                </div>
+                <div className="field">
+                  <label>Private key path</label>
+                  <input className="mono" placeholder="~/.ssh/id_ed25519" value={p.sshKeyPath} onChange={(e) => p.onSshKeyPath(e.target.value)} />
+                </div>
+              </div>
+              <div className="field">
+                <label>Host-key SHA256 fingerprint</label>
+                <input className="mono" placeholder="empty → known_hosts" value={p.sshFingerprint} onChange={(e) => p.onSshFingerprint(e.target.value)} />
+              </div>
+            </>
+          )}
+          {(p.stages || p.testing) && (
+            <div className="test-panel">
+              <div className="tp-head">
+                <span className="tp-title">Connection test</span>
+                <span
+                  className="mono"
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 700,
+                    color: p.testing
+                      ? "var(--tn-warning)"
+                      : p.stages && p.stages.every((s) => s.passed)
+                        ? "var(--tn-success)"
+                        : "var(--tn-danger)",
+                  }}
+                >
+                  {p.testing ? "running…" : p.stages && p.stages.every((s) => s.passed) ? "all stages passed" : "failed"}
+                </span>
+              </div>
+              {(p.stages ?? []).map((s) => (
+                <div key={s.name} className="stage-line">
+                  <span className={s.passed ? "ok" : "fail"}>{s.passed ? "✓" : "✕"}</span>
+                  <span className="sn">{s.name}</span>
+                  <span className="ms">{s.durationMs} ms</span>
+                  <span className="det">{s.detail ?? ""}</span>
+                </div>
+              ))}
+              {p.testing && (
+                <div className="stage-line">
+                  <span className="spin" style={{ width: 11, height: 11 }} />
+                  <span className="sn muted">testing…</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
-      )}
-      <div className="form-row">
-        <button onClick={p.onSave}>Save</button>
-        <button onClick={p.onTest}>Test</button>
-        {p.connected ? (
-          <button onClick={p.onDisconnect}>Disconnect</button>
-        ) : (
-          <button onClick={p.onConnect}>Connect</button>
-        )}
-        <span className="status">{p.status}</span>
+        <div className="modal-foot">
+          <button className="btn" onClick={p.onTest}>
+            Test
+          </button>
+          <span className="muted" style={{ fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
+            {p.status}
+          </span>
+          <div className="grow" />
+          <button className="btn" onClick={p.onClose}>
+            Cancel
+          </button>
+          <button className="btn" onClick={p.onSave}>
+            Save
+          </button>
+          <button className="btn primary" onClick={p.onSaveConnect}>
+            Save &amp; Connect
+          </button>
+        </div>
       </div>
-      {p.stages && (
-        <ul className="stage-list">
-          {p.stages.map((s) => (
-            <li key={s.name} className={s.passed ? "ok" : "fail"}>
-              <span className="stage-icon">{s.passed ? "✓" : "✗"}</span>
-              <span className="stage-name">{s.name}</span>
-              <span className="muted">{s.durationMs}ms</span>
-              {s.detail && <span className="stage-detail">{s.detail}</span>}
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+    </Overlay>
   );
 }

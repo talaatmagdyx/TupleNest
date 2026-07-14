@@ -1,10 +1,32 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import Titlebar from "./app-shell/Titlebar";
+import StatusBar from "./app-shell/StatusBar";
 import SavedList from "./connections/SavedList";
 import ConnectionForm from "./connections/ConnectionForm";
 import ExplorerTree from "./explorer/ExplorerTree";
-import QueryPanel from "./editor/QueryPanel";
-import HistoryPanel from "./history/HistoryPanel";
+import TabsBar, { type QueryTab } from "./editor/TabsBar";
+import QueryPanel, { type ChartDatum, type ResultTab } from "./editor/QueryPanel";
+import {
+  Cheatsheet,
+  ConnLost,
+  Guard,
+  Inspector,
+  Palette,
+  Settings,
+  TxPrompt,
+  type PaletteItem,
+} from "./overlays/Overlays";
+import SchemaModal from "./overlays/SchemaModal";
+import ExplainModal, { type PlanNode, type PlanStats } from "./overlays/ExplainModal";
+import {
+  fetchAllRows,
+  looksLikeSelect,
+  needsGuard,
+  toCSV,
+  toJSONExport,
+  toMarkdown,
+} from "./lib/sql";
 import type {
   AppInfo,
   ConnectionRecord,
@@ -19,9 +41,23 @@ import type {
   TestStage,
 } from "./ipc/types";
 
+type OverlayKind =
+  | null
+  | "palette"
+  | "connEditor"
+  | "txPrompt"
+  | "guard"
+  | "connLost"
+  | "settings"
+  | "explain"
+  | "schema"
+  | "cheatsheet"
+  | "inspect";
+
 export default function App() {
-  const [info, setInfo] = useState<AppInfo | null>(null);
+  const [, setInfo] = useState<AppInfo | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [telemetry, setTelemetry] = useState(false);
 
   // Connection form
   const [host, setHost] = useState("localhost");
@@ -32,8 +68,6 @@ export default function App() {
   const [secretRef, setSecretRef] = useState<string | null>(null);
   const [tlsMode, setTlsMode] = useState("verify-full");
   const [tlsCaPath, setTlsCaPath] = useState("");
-
-  // SSH tunnel (E1.2)
   const [sshEnabled, setSshEnabled] = useState(false);
   const [sshHost, setSshHost] = useState("");
   const [sshPort, setSshPort] = useState(22);
@@ -48,18 +82,56 @@ export default function App() {
   const [saved, setSaved] = useState<ConnectionRecord[]>([]);
 
   // Session
-  const [status, setStatus] = useState<string>("");
+  const [status, setStatus] = useState("");
   const [stages, setStages] = useState<TestStage[] | null>(null);
+  const [testing, setTesting] = useState(false);
   const [connected, setConnected] = useState(false);
   const [connectedEnv, setConnectedEnv] = useState<string | null>(null);
-  const [sql, setSql] = useState("select now(), version()");
+  const [serverVersion, setServerVersion] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
   const [queryEpoch, setQueryEpoch] = useState(0);
+  const [runStatus, setRunStatus] = useState<{ icon: string; text: string; color: string } | null>(null);
   const [inTx, setInTx] = useState(false);
-  const [txPrompt, setTxPrompt] = useState(false);
+  const [txOpenSince, setTxOpenSince] = useState<number | null>(null);
+  const [, setTick] = useState(0); // re-render for tx timer
 
-  // Explorer (E1.3)
+  // Workspace / UI
+  const [tabs, setTabs] = useState<QueryTab[]>([
+    { name: "untitled-1.sql", sql: "select now(), version()", dirty: false },
+  ]);
+  const [activeTab, setActiveTab] = useState(0);
+  const untitledSeq = useRef(2);
+  const [overlay, setOverlay] = useState<OverlayKind>(null);
+  const [paletteQ, setPaletteQ] = useState("");
+  const [paletteIdx, setPaletteIdx] = useState(0);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [connMenu, setConnMenu] = useState(false);
+  const [exportMenu, setExportMenu] = useState(false);
+  const [resultTab, setResultTab] = useState<ResultTab>("results");
+  const [editorH, setEditorH] = useState(200);
+  const dragRef = useRef<{ y: number; h: number } | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [inspectText, setInspectText] = useState("");
+  const copyable = useRef<string | null>(null);
+  const [guardSql, setGuardSql] = useState<string | null>(null);
+  const [connLostDetail, setConnLostDetail] = useState("");
+  const [rowsInfo, setRowsInfo] = useState("");
+  const [chart, setChart] = useState<{ title: string; sub: string; data: ChartDatum[] } | null>(null);
+  const [schemaTarget, setSchemaTarget] = useState<{ schema: string; name: string; kind: string } | null>(null);
+  const [schemaCols, setSchemaCols] = useState<DbColumn[] | null>(null);
+  const [explain, setExplain] = useState<{
+    title: string;
+    analyzed: boolean;
+    nodes: PlanNode[] | null;
+    stats: PlanStats;
+    suggestion: string | null;
+    error: string | null;
+  } | null>(null);
+
+  // Explorer
   const [schemas, setSchemas] = useState<string[] | null>(null);
   const [openSchemas, setOpenSchemas] = useState<Record<string, boolean>>({});
   const [objects, setObjects] = useState<Record<string, DbObject[]>>({});
@@ -67,22 +139,25 @@ export default function App() {
   const [columns, setColumns] = useState<Record<string, DbColumn[]>>({});
   const [metaCached, setMetaCached] = useState(false);
 
-  // History (E1.5)
+  // History
   const [historyItems, setHistoryItems] = useState<HistoryEntry[]>([]);
   const [historySearch, setHistorySearch] = useState("");
 
-  // --- bootstrap ------------------------------------------------------------
+  const showToast = useCallback((t: string) => {
+    setToast(t);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2100);
+  }, []);
+
+  /* ---------------- bootstrap ---------------- */
 
   const refreshHistory = useCallback(async (search: string) => {
     try {
-      setHistoryItems(
-        await invoke<HistoryEntry[]>("history_list", { search: search || null, limit: 50 })
-      );
+      setHistoryItems(await invoke<HistoryEntry[]>("history_list", { search: search || null, limit: 50 }));
     } catch (e) {
       console.error(e);
     }
   }, []);
-
   useEffect(() => {
     refreshHistory(historySearch);
   }, [historySearch, refreshHistory]);
@@ -100,41 +175,46 @@ export default function App() {
     invoke<"dark" | "light" | null>("settings_get", { key: "theme" })
       .then((t) => t && setTheme(t))
       .catch(() => {});
+    invoke<boolean | null>("settings_get", { key: "telemetry" })
+      .then((v) => setTelemetry(!!v))
+      .catch(() => {});
     refreshSaved();
   }, [refreshSaved]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+    document.documentElement.setAttribute("data-tn-theme", theme);
   }, [theme]);
 
-  const toggleTheme = useCallback(async () => {
-    const next = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    await invoke("settings_set", { key: "theme", value: next });
-  }, [theme]);
+  useEffect(() => {
+    if (!txOpenSince) return;
+    const id = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [txOpenSince]);
 
-  // --- secrets & connection -------------------------------------------------
+  const applyTheme = useCallback(async (t: "dark" | "light") => {
+    setTheme(t);
+    await invoke("settings_set", { key: "theme", value: t }).catch(() => {});
+  }, []);
+
+  const applyTelemetry = useCallback(async (v: boolean) => {
+    setTelemetry(v);
+    await invoke("settings_set", { key: "telemetry", value: v }).catch(() => {});
+  }, []);
+
+  /* ---------------- params & connection ---------------- */
+
+  const sshValue = useCallback((): SshParams | null => {
+    if (!sshEnabled || !sshHost) return null;
+    return { host: sshHost, port: sshPort, username: sshUser, keyPath: sshKeyPath, fingerprint: sshFingerprint };
+  }, [sshEnabled, sshHost, sshPort, sshUser, sshKeyPath, sshFingerprint]);
 
   const savePassword = useCallback(async () => {
     if (!password) return null;
-    // The password crosses the IPC boundary exactly once, is stored in the
-    // OS keychain, and only the opaque reference stays in frontend state.
     const ref = await invoke<string>("pg_secret_save", { password });
     setPassword("");
     setSecretRef(ref);
     return ref;
   }, [password]);
-
-  const sshValue = useCallback((): SshParams | null => {
-    if (!sshEnabled || !sshHost) return null;
-    return {
-      host: sshHost,
-      port: sshPort,
-      username: sshUser,
-      keyPath: sshKeyPath,
-      fingerprint: sshFingerprint,
-    };
-  }, [sshEnabled, sshHost, sshPort, sshUser, sshKeyPath, sshFingerprint]);
 
   const withSecret = useCallback(async (): Promise<PgParams> => {
     const ref = password ? await savePassword() : secretRef;
@@ -151,23 +231,6 @@ export default function App() {
     };
   }, [password, savePassword, secretRef, host, port, database, username, tlsMode, tlsCaPath, environment, sshValue]);
 
-  const doTest = useCallback(async () => {
-    setStatus("Testing…");
-    setStages(null);
-    try {
-      const report = await invoke<TestReport>("pg_test", { params: await withSecret() });
-      setStages(report.stages);
-      const failed = report.stages.filter((s) => !s.passed);
-      setStatus(
-        failed.length === 0
-          ? `OK — server ${report.serverVersion ?? "?"}`
-          : `FAILED at ${failed[0].name}: ${failed[0].detail ?? "unknown"}`
-      );
-    } catch (e) {
-      setStatus(`Error: ${e}`);
-    }
-  }, [withSecret]);
-
   const resetExplorer = useCallback(() => {
     setSchemas(null);
     setOpenSchemas({});
@@ -177,34 +240,33 @@ export default function App() {
     setMetaCached(false);
   }, []);
 
-  /** Live metadata when connected; pure cache lookups otherwise. */
   const metaFetch = useCallback(
     async (request: Record<string, unknown>): Promise<MetadataOut<unknown> | null> => {
-      if (connected) {
-        return await invoke<MetadataOut<unknown>>("pg_metadata", { request });
-      }
+      if (connected) return await invoke<MetadataOut<unknown>>("pg_metadata", { request });
       return await invoke<MetadataOut<unknown> | null>("pg_metadata_cached", {
-        params: {
-          host,
-          port,
-          database,
-          username,
-          secretRef: null,
-          tlsMode,
-          tlsCaPath: null,
-        },
+        params: { host, port, database, username, secretRef: null, tlsMode, tlsCaPath: null },
         request,
       });
     },
     [connected, host, port, database, username, tlsMode]
   );
 
-  const doConnect = useCallback(async () => {
-    setStatus("Connecting…");
+  const loadServerVersion = useCallback(async () => {
     try {
-      await invoke("pg_connect", { params: await withSecret() });
+      const r = await invoke<MetadataOut<{ version: string }>>("pg_metadata", {
+        request: { kind: "server_info" },
+      });
+      const m = /PostgreSQL ([\d.]+)/.exec(r.payload.version ?? "");
+      setServerVersion(m ? m[1] : null);
+    } catch {
+      setServerVersion(null);
+    }
+  }, []);
+
+  const afterConnect = useCallback(
+    (env: string) => {
       setConnected(true);
-      setConnectedEnv(environment);
+      setConnectedEnv(env);
       setStatus("Connected");
       resetExplorer();
       invoke<MetadataOut<string[]>>("pg_metadata", { request: { kind: "list_schemas" } })
@@ -213,226 +275,45 @@ export default function App() {
           setMetaCached(r.cached);
         })
         .catch((e) => setStatus(`Explorer error: ${e}`));
+      loadServerVersion();
+    },
+    [resetExplorer, loadServerVersion]
+  );
+
+  const doConnect = useCallback(async () => {
+    setStatus("Connecting…");
+    try {
+      await invoke("pg_connect", { params: await withSecret() });
+      afterConnect(environment);
+      showToast(`Connected — ${username}@${host}/${database}`);
     } catch (e) {
       setStatus(`Error: ${e}`);
+      showToast(String(e).slice(0, 90));
     }
-  }, [withSecret, environment, resetExplorer]);
+  }, [withSecret, environment, afterConnect, showToast, username, host, database]);
 
   const reallyDisconnect = useCallback(async () => {
     await invoke("pg_disconnect").catch(() => {});
     setConnected(false);
     setConnectedEnv(null);
+    setServerVersion(null);
     setResult(null);
+    setLastError(null);
+    setRunStatus(null);
     setInTx(false);
-    setTxPrompt(false);
+    setTxOpenSince(null);
+    setOverlay(null);
     resetExplorer();
     setStatus("Disconnected");
   }, [resetExplorer]);
 
   const doDisconnect = useCallback(async () => {
-    // E1.4 rule: never silently drop an open transaction.
     if (inTx) {
-      setTxPrompt(true);
+      setOverlay("txPrompt");
       return;
     }
     await reallyDisconnect();
   }, [inTx, reallyDisconnect]);
-
-  // --- transactions (E1.4) ----------------------------------------------------
-
-  const doBegin = useCallback(async () => {
-    try {
-      await invoke("pg_begin");
-      setInTx(true);
-      setStatus("Transaction started");
-    } catch (e) {
-      setStatus(`Begin error: ${e}`);
-    }
-  }, []);
-
-  const doCommit = useCallback(async () => {
-    try {
-      await invoke("pg_commit");
-      setInTx(false);
-      setStatus("Committed");
-    } catch (e) {
-      setStatus(`Commit error: ${e}`);
-    }
-  }, []);
-
-  const doRollback = useCallback(async () => {
-    try {
-      await invoke("pg_rollback");
-      setInTx(false);
-      setStatus("Rolled back");
-    } catch (e) {
-      setStatus(`Rollback error: ${e}`);
-    }
-  }, []);
-
-  const commitAndDisconnect = useCallback(async () => {
-    try {
-      await invoke("pg_commit");
-    } catch (e) {
-      setStatus(`Commit error: ${e}`);
-      return; // stay connected; user can inspect
-    }
-    setInTx(false);
-    await reallyDisconnect();
-  }, [reallyDisconnect]);
-
-  const rollbackAndDisconnect = useCallback(async () => {
-    await invoke("pg_rollback").catch(() => {});
-    setInTx(false);
-    await reallyDisconnect();
-  }, [reallyDisconnect]);
-
-  // --- explorer (E1.3) --------------------------------------------------------
-
-  const toggleSchema = useCallback(
-    async (schema: string) => {
-      const opening = !openSchemas[schema];
-      setOpenSchemas((m) => ({ ...m, [schema]: opening }));
-      if (opening && !(schema in objects)) {
-        try {
-          const r = await metaFetch({ kind: "list_objects", schema });
-          if (r) {
-            setObjects((m) => ({ ...m, [schema]: r.payload as DbObject[] }));
-            if (r.cached) setMetaCached(true);
-          } else {
-            setObjects((m) => ({ ...m, [schema]: [] }));
-          }
-        } catch (e) {
-          setStatus(`Explorer error: ${e}`);
-        }
-      }
-    },
-    [openSchemas, objects, metaFetch]
-  );
-
-  const toggleTable = useCallback(
-    async (schema: string, name: string) => {
-      const key = `${schema}.${name}`;
-      const opening = !openTables[key];
-      setOpenTables((m) => ({ ...m, [key]: opening }));
-      if (opening && !(key in columns)) {
-        try {
-          const r = await metaFetch({ kind: "describe_object", schema, name });
-          if (r) {
-            const desc = r.payload as { columns: DbColumn[] };
-            setColumns((m) => ({ ...m, [key]: desc.columns }));
-            if (r.cached) setMetaCached(true);
-          } else {
-            setColumns((m) => ({ ...m, [key]: [] }));
-          }
-        } catch (e) {
-          setStatus(`Explorer error: ${e}`);
-        }
-      }
-    },
-    [openTables, columns, metaFetch]
-  );
-
-  const insertSelect = useCallback((schema: string, name: string) => {
-    setSql(`select * from "${schema}"."${name}" limit 100`);
-  }, []);
-
-  // --- query & history --------------------------------------------------------
-
-  const doRun = useCallback(async () => {
-    setRunning(true);
-    setStatus("Running…");
-    try {
-      const r = await invoke<QueryResult>("pg_query", { sql });
-      setResult(r);
-      setQueryEpoch((n) => n + 1);
-      setStatus(
-        r.columns.length > 0
-          ? `${r.totalRows} row(s) in ${r.elapsedMs}ms${
-              r.truncated ? ` (first ${r.storedRows.toLocaleString()} kept for scrolling)` : ""
-            }`
-          : `${r.rowsAffected ?? 0} row(s) affected in ${r.elapsedMs}ms`
-      );
-    } catch (e) {
-      const msg = String(e);
-      setStatus(`Error: ${msg}`);
-      setResult(null);
-      // Backend marks the session broken on network failures (E1.1);
-      // reflect that here — the user must reconnect explicitly.
-      if (msg.startsWith("Connection lost:")) {
-        setConnected(false);
-        setConnectedEnv(null);
-        setInTx(false);
-        setTxPrompt(false);
-      }
-    } finally {
-      setRunning(false);
-      refreshHistory(historySearch);
-    }
-  }, [sql, refreshHistory, historySearch]);
-
-  const doCancel = useCallback(async () => {
-    try {
-      await invoke("pg_cancel");
-      setStatus("Cancel requested");
-    } catch (e) {
-      setStatus(`Cancel error: ${e}`);
-    }
-  }, []);
-
-  const toggleFavorite = useCallback(
-    async (h: HistoryEntry) => {
-      try {
-        await invoke("history_favorite", { id: h.id, favorite: !h.favorite });
-        await refreshHistory(historySearch);
-      } catch (e) {
-        console.error(e);
-      }
-    },
-    [refreshHistory, historySearch]
-  );
-
-  const clearHistory = useCallback(async () => {
-    try {
-      await invoke("history_clear", { includeFavorites: false });
-      await refreshHistory(historySearch);
-    } catch (e) {
-      console.error(e);
-    }
-  }, [refreshHistory, historySearch]);
-
-  // --- profiles (E1.2) ----------------------------------------------------------
-
-  const doSaveProfile = useCallback(async () => {
-    try {
-      const rec = await invoke<ConnectionRecord>("connection_save", {
-        input: {
-          id: profileId,
-          name: profileName || `${username || "user"}@${host}/${database}`,
-          environment,
-          color: null,
-          readOnly: false,
-          host,
-          port,
-          database,
-          username,
-          // Password (if typed) crosses IPC once and lands in the keychain.
-          password: password || null,
-          tlsMode,
-          tlsCaPath: tlsCaPath || null,
-          sshJson: sshValue() ? JSON.stringify(sshValue()) : null,
-        },
-      });
-      setPassword("");
-      setProfileId(rec.id);
-      setProfileName(rec.name);
-      setSecretRef(rec.secretRef);
-      setStatus(`Saved "${rec.name}"`);
-      await refreshSaved();
-    } catch (e) {
-      setStatus(`Save error: ${e}`);
-    }
-  }, [profileId, profileName, environment, host, port, database, username, password, tlsMode, tlsCaPath, sshValue, refreshSaved]);
 
   const loadProfile = useCallback(
     (c: ConnectionRecord) => {
@@ -466,9 +347,7 @@ export default function App() {
         setSshFingerprint("");
       }
       setPassword("");
-      setStatus(`Loaded "${c.name}"`);
-      if (connected) return; // live explorer stays as-is
-      // Offline/pre-connect: render the explorer from the metadata cache.
+      if (connected) return;
       resetExplorer();
       invoke<MetadataOut<string[]> | null>("pg_metadata_cached", {
         params: {
@@ -493,6 +372,113 @@ export default function App() {
     [connected, resetExplorer]
   );
 
+  /** Titlebar switcher: load profile AND connect (HUD behavior). */
+  const selectProfile = useCallback(
+    async (c: ConnectionRecord) => {
+      setConnMenu(false);
+      if (inTx) {
+        setOverlay("txPrompt");
+        return;
+      }
+      await invoke("pg_disconnect").catch(() => {});
+      setConnected(false);
+      loadProfile(c);
+      setStatus("Connecting…");
+      try {
+        const ssh = c.sshJson ? (JSON.parse(c.sshJson) as SshParams) : null;
+        await invoke("pg_connect", {
+          params: {
+            host: c.host,
+            port: c.port,
+            database: c.database,
+            username: c.username,
+            secretRef: c.secretRef,
+            tlsMode: c.tlsMode || "verify-full",
+            tlsCaPath: c.tlsCaPath,
+            environment: c.environment,
+            ssh,
+          },
+        });
+        afterConnect(c.environment ?? "dev");
+        showToast(`Connected — ${c.name}`);
+      } catch (e) {
+        setStatus(`Error: ${e}`);
+        showToast(String(e).slice(0, 90));
+      }
+    },
+    [inTx, loadProfile, afterConnect, showToast]
+  );
+
+  /* ---------------- test / save profile ---------------- */
+
+  const doTest = useCallback(async () => {
+    setTesting(true);
+    setStages(null);
+    setStatus("Testing…");
+    try {
+      const report = await invoke<TestReport>("pg_test", { params: await withSecret() });
+      // Progressive reveal (HUD design): stages appear one by one.
+      setStages([]);
+      report.stages.forEach((s, i) => {
+        setTimeout(() => {
+          setStages((prev) => [...(prev ?? []), s]);
+          if (i === report.stages.length - 1) {
+            setTesting(false);
+            const failed = report.stages.filter((x) => !x.passed);
+            setStatus(
+              failed.length === 0
+                ? `OK — server ${report.serverVersion ?? "?"}`
+                : `FAILED at ${failed[0].name}`
+            );
+          }
+        }, 160 * (i + 1));
+      });
+      if (report.stages.length === 0) setTesting(false);
+    } catch (e) {
+      setTesting(false);
+      setStatus(`Error: ${e}`);
+    }
+  }, [withSecret]);
+
+  const doSaveProfile = useCallback(async (): Promise<ConnectionRecord | null> => {
+    try {
+      const rec = await invoke<ConnectionRecord>("connection_save", {
+        input: {
+          id: profileId,
+          name: profileName || `${username || "user"}@${host}/${database}`,
+          environment,
+          color: null,
+          readOnly: false,
+          host,
+          port,
+          database,
+          username,
+          password: password || null,
+          tlsMode,
+          tlsCaPath: tlsCaPath || null,
+          sshJson: sshValue() ? JSON.stringify(sshValue()) : null,
+        },
+      });
+      setPassword("");
+      setProfileId(rec.id);
+      setProfileName(rec.name);
+      setSecretRef(rec.secretRef);
+      setStatus(`Saved "${rec.name}"`);
+      await refreshSaved();
+      return rec;
+    } catch (e) {
+      setStatus(`Save error: ${e}`);
+      return null;
+    }
+  }, [profileId, profileName, environment, host, port, database, username, password, tlsMode, tlsCaPath, sshValue, refreshSaved]);
+
+  const saveAndConnect = useCallback(async () => {
+    const rec = await doSaveProfile();
+    if (!rec) return;
+    setOverlay(null);
+    await doConnect();
+  }, [doSaveProfile, doConnect]);
+
   const newProfile = useCallback(() => {
     setProfileId(null);
     setProfileName("");
@@ -503,136 +489,748 @@ export default function App() {
     setSshUser("");
     setSshKeyPath("");
     setSshFingerprint("");
+    setStages(null);
     setStatus("");
+    setOverlay("connEditor");
+    setConnMenu(false);
   }, []);
+
+  const editProfile = useCallback(
+    (c: ConnectionRecord) => {
+      loadProfile(c);
+      setStages(null);
+      setOverlay("connEditor");
+    },
+    [loadProfile]
+  );
 
   const doDeleteProfile = useCallback(
     async (c: ConnectionRecord) => {
       try {
         await invoke("connection_delete", { id: c.id });
-        if (profileId === c.id) newProfile();
-        setStatus(`Deleted "${c.name}"`);
+        if (profileId === c.id) setProfileId(null);
+        showToast(`Deleted "${c.name}"`);
         await refreshSaved();
       } catch (e) {
         setStatus(`Delete error: ${e}`);
       }
     },
-    [profileId, newProfile, refreshSaved]
+    [profileId, refreshSaved, showToast]
   );
 
-  // --- layout -------------------------------------------------------------------
+  /* ---------------- explorer ---------------- */
+
+  const toggleSchema = useCallback(
+    async (schema: string) => {
+      const opening = !openSchemas[schema];
+      setOpenSchemas((m) => ({ ...m, [schema]: opening }));
+      if (opening && !(schema in objects)) {
+        try {
+          const r = await metaFetch({ kind: "list_objects", schema });
+          if (r) {
+            setObjects((m) => ({ ...m, [schema]: r.payload as DbObject[] }));
+            if (r.cached) setMetaCached(true);
+          } else setObjects((m) => ({ ...m, [schema]: [] }));
+        } catch (e) {
+          setStatus(`Explorer error: ${e}`);
+        }
+      }
+    },
+    [openSchemas, objects, metaFetch]
+  );
+
+  const toggleTable = useCallback(
+    async (schema: string, name: string) => {
+      const key = `${schema}.${name}`;
+      const opening = !openTables[key];
+      setOpenTables((m) => ({ ...m, [key]: opening }));
+      if (opening && !(key in columns)) {
+        try {
+          const r = await metaFetch({ kind: "describe_object", schema, name });
+          if (r) {
+            const desc = r.payload as { columns: DbColumn[] };
+            setColumns((m) => ({ ...m, [key]: desc.columns }));
+            if (r.cached) setMetaCached(true);
+          } else setColumns((m) => ({ ...m, [key]: [] }));
+        } catch (e) {
+          setStatus(`Explorer error: ${e}`);
+        }
+      }
+    },
+    [openTables, columns, metaFetch]
+  );
+
+  const setActiveSql = useCallback(
+    (sql: string, opts?: { markClean?: boolean }) => {
+      setTabs((ts) => {
+        const out = [...ts];
+        if (out.length === 0) return [{ name: "untitled-1.sql", sql, dirty: false }];
+        out[activeTab] = { ...out[activeTab], sql, dirty: !opts?.markClean };
+        return out;
+      });
+    },
+    [activeTab]
+  );
+
+  const insertSelect = useCallback(
+    (schema: string, name: string) => {
+      setActiveSql(`select * from "${schema}"."${name}" limit 100`);
+      showToast(`Inserted select for ${schema}.${name}`);
+    },
+    [setActiveSql, showToast]
+  );
+
+  const describeObject = useCallback(
+    async (schema: string, name: string) => {
+      const kind = (objects[schema] ?? []).find((o) => o.name === name)?.kind ?? "table";
+      setSchemaTarget({ schema, name, kind });
+      setSchemaCols(null);
+      setOverlay("schema");
+      try {
+        const r = await metaFetch({ kind: "describe_object", schema, name });
+        if (r) setSchemaCols((r.payload as { columns: DbColumn[] }).columns);
+      } catch (e) {
+        showToast(`Describe failed: ${String(e).slice(0, 60)}`);
+      }
+    },
+    [objects, metaFetch, showToast]
+  );
+
+  /* ---------------- tabs ---------------- */
+
+  const newTab = useCallback(() => {
+    setTabs((ts) => [...ts, { name: `untitled-${untitledSeq.current++}.sql`, sql: "", dirty: false }]);
+    setTabs((ts) => {
+      setActiveTab(ts.length - 1);
+      return ts;
+    });
+  }, []);
+
+  const closeTab = useCallback(
+    (i: number) => {
+      setTabs((ts) => {
+        const out = ts.filter((_, x) => x !== i);
+        setActiveTab((a) => Math.max(0, Math.min(a >= i ? a - 1 : a, out.length - 1)));
+        return out;
+      });
+    },
+    []
+  );
+
+  /* ---------------- run / transactions / explain ---------------- */
+
+  const currentSql = tabs[activeTab]?.sql ?? "";
+
+  const doRun = useCallback(
+    async (force = false) => {
+      const sql = tabs[activeTab]?.sql ?? "";
+      if (!sql.trim() || !connected) return;
+      if (!force && needsGuard(sql, connectedEnv)) {
+        setGuardSql(sql);
+        setOverlay("guard");
+        return;
+      }
+      setRunning(true);
+      setRunStatus(null);
+      setChart(null);
+      try {
+        const r = await invoke<QueryResult>("pg_query", { sql });
+        setResult(r);
+        setLastError(null);
+        setQueryEpoch((n) => n + 1);
+        setResultTab("results");
+        setTabs((ts) => {
+          const out = [...ts];
+          if (out[activeTab]) out[activeTab] = { ...out[activeTab], dirty: false };
+          return out;
+        });
+        const text =
+          r.columns.length > 0
+            ? `${r.totalRows.toLocaleString()} row(s) in ${r.elapsedMs}ms${
+                r.truncated ? ` (first ${r.storedRows.toLocaleString()} kept for scrolling)` : ""
+              }`
+            : `${r.rowsAffected ?? 0} row(s) affected in ${r.elapsedMs}ms`;
+        setRunStatus({ icon: "✓", text, color: "var(--tn-success)" });
+      } catch (e) {
+        const msg = String(e);
+        setResult(null);
+        setLastError(msg);
+        setRunStatus({ icon: "✕", text: msg, color: "var(--tn-danger)" });
+        if (msg.startsWith("Connection lost:")) {
+          setConnected(false);
+          setConnectedEnv(null);
+          setInTx(false);
+          setTxOpenSince(null);
+          setConnLostDetail(msg);
+          setOverlay("connLost");
+        }
+      } finally {
+        setRunning(false);
+        refreshHistory(historySearch);
+      }
+    },
+    [tabs, activeTab, connected, connectedEnv, refreshHistory, historySearch]
+  );
+
+  const doCancel = useCallback(async () => {
+    try {
+      await invoke("pg_cancel");
+      showToast("Cancel requested");
+    } catch (e) {
+      showToast(`Cancel error: ${String(e).slice(0, 60)}`);
+    }
+  }, [showToast]);
+
+  const doBegin = useCallback(async () => {
+    try {
+      await invoke("pg_begin");
+      setInTx(true);
+      setTxOpenSince(Date.now());
+      showToast("Transaction started");
+    } catch (e) {
+      showToast(String(e).slice(0, 80));
+    }
+  }, [showToast]);
+
+  const doCommit = useCallback(async () => {
+    try {
+      await invoke("pg_commit");
+      setInTx(false);
+      setTxOpenSince(null);
+      showToast("COMMIT");
+    } catch (e) {
+      showToast(`Commit error: ${String(e).slice(0, 70)}`);
+    }
+  }, [showToast]);
+
+  const doRollback = useCallback(async () => {
+    try {
+      await invoke("pg_rollback");
+      setInTx(false);
+      setTxOpenSince(null);
+      showToast("ROLLBACK");
+    } catch (e) {
+      showToast(`Rollback error: ${String(e).slice(0, 70)}`);
+    }
+  }, [showToast]);
+
+  const commitAndDisconnect = useCallback(async () => {
+    try {
+      await invoke("pg_commit");
+    } catch (e) {
+      showToast(`Commit error: ${String(e).slice(0, 70)}`);
+      setOverlay(null);
+      return;
+    }
+    setInTx(false);
+    setTxOpenSince(null);
+    await reallyDisconnect();
+    showToast("Committed & disconnected");
+  }, [reallyDisconnect, showToast]);
+
+  const rollbackAndDisconnect = useCallback(async () => {
+    await invoke("pg_rollback").catch(() => {});
+    setInTx(false);
+    setTxOpenSince(null);
+    await reallyDisconnect();
+    showToast("Rolled back & disconnected");
+  }, [reallyDisconnect, showToast]);
+
+  type RawPlan = Record<string, unknown> & { Plans?: RawPlan[] };
+
+  const runExplain = useCallback(async () => {
+    const sql = tabs[activeTab]?.sql ?? "";
+    if (!sql.trim() || !connected) return;
+    const analyzed = looksLikeSelect(sql);
+    setExplain({ title: tabs[activeTab]?.name ?? "query", analyzed, nodes: null, stats: [], suggestion: null, error: null });
+    setOverlay("explain");
+    try {
+      const stmt = `explain (${analyzed ? "analyze, " : ""}format json, buffers) ${sql}`;
+      await invoke<QueryResult>("pg_query", { sql: stmt });
+      const rows = await invoke<unknown[][]>("pg_rows", { offset: 0, limit: 1 });
+      const cell = rows[0]?.[0];
+      const parsed = typeof cell === "string" ? JSON.parse(cell) : cell;
+      const root = (Array.isArray(parsed) ? parsed[0] : parsed) as Record<string, unknown>;
+      const plan = root["Plan"] as RawPlan;
+      const total = (plan["Actual Total Time"] as number) ?? (plan["Total Cost"] as number) ?? 1;
+      const nodes: PlanNode[] = [];
+      let hotIdx = 0;
+      let hotVal = -1;
+      const walk = (n: RawPlan, depth: number) => {
+        const ms = (n["Actual Total Time"] as number) ?? null;
+        const cost = (n["Total Cost"] as number) ?? 0;
+        const metric = ms ?? cost;
+        const rel = n["Relation Name"] ? ` on ${n["Relation Name"]}` : "";
+        const detailBits = [
+          n["Index Name"] ? `index: ${n["Index Name"]}` : null,
+          n["Filter"] ? `filter: ${n["Filter"]}` : null,
+          n["Hash Cond"] ? `cond: ${n["Hash Cond"]}` : null,
+          n["Sort Key"] ? `sort key: ${(n["Sort Key"] as string[]).join(", ")}` : null,
+          n["Actual Rows"] !== undefined ? `rows ${(n["Actual Rows"] as number).toLocaleString()}` : n["Plan Rows"] !== undefined ? `est rows ${(n["Plan Rows"] as number).toLocaleString()}` : null,
+        ].filter(Boolean);
+        const i = nodes.length;
+        nodes.push({
+          kind: String(n["Node Type"] ?? "node"),
+          title: `${n["Node Type"]}${rel}`,
+          detail: detailBits.join(" · "),
+          ms,
+          pct: Math.min(100, (metric / total) * 100),
+          indent: depth,
+          hot: false,
+        });
+        if ((n["Node Type"] as string)?.includes("Seq Scan") && metric > hotVal) {
+          hotVal = metric;
+          hotIdx = i;
+        }
+        (n.Plans ?? []).forEach((c) => walk(c, depth + 1));
+      };
+      walk(plan, 0);
+      if (hotVal > 0 && nodes.length > 1) nodes[hotIdx].hot = true;
+      const stats: PlanStats = [];
+      if (root["Planning Time"] !== undefined) stats.push({ label: "Planning time", value: `${(root["Planning Time"] as number).toFixed(2)} ms` });
+      if (root["Execution Time"] !== undefined) stats.push({ label: "Execution time", value: `${(root["Execution Time"] as number).toFixed(1)} ms` });
+      stats.push({ label: "Plan nodes", value: String(nodes.length) });
+      const hot = nodes.find((n) => n.hot);
+      const suggestion = hot
+        ? `${hot.title} dominates this plan. An index matching its filter could avoid the full scan.`
+        : null;
+      setExplain({ title: tabs[activeTab]?.name ?? "query", analyzed, nodes, stats, suggestion, error: null });
+      setResult(null); // explain replaced the backend row store
+      setRunStatus(null);
+    } catch (e) {
+      setExplain((x) => (x ? { ...x, error: String(e) } : x));
+    }
+  }, [tabs, activeTab, connected]);
+
+  /* ---------------- export / chart ---------------- */
+
+  const doExport = useCallback(
+    async (kind: "csv" | "json" | "md") => {
+      setExportMenu(false);
+      if (!result || result.columns.length === 0) return;
+      showToast("Collecting rows…");
+      const rows = await fetchAllRows(result.storedRows);
+      const text =
+        kind === "csv" ? toCSV(result.columns, rows) : kind === "json" ? toJSONExport(result.columns, rows) : toMarkdown(result.columns, rows);
+      await navigator.clipboard.writeText(text);
+      showToast(`${kind.toUpperCase()} copied to clipboard — ${rows.length.toLocaleString()} rows`);
+    },
+    [result, showToast]
+  );
+
+  const buildChart = useCallback(async () => {
+    if (!result || result.columns.length === 0 || result.storedRows === 0) {
+      setChart(null);
+      return;
+    }
+    const isNum = (t: string) => /int|numeric|float|double|real|money/.test(t);
+    const li = result.columns.findIndex((c) => !isNum(c.dbType));
+    const vi = result.columns.findIndex((c) => isNum(c.dbType));
+    if (li < 0 || vi < 0) {
+      setChart(null);
+      return;
+    }
+    const rows = await fetchAllRows(Math.min(result.storedRows, 50_000));
+    const agg = new Map<string, number>();
+    for (const r of rows) {
+      const k = r[li] === null || r[li] === undefined ? "null" : String(r[li]);
+      const v = Number(r[vi]);
+      if (!Number.isFinite(v)) continue;
+      agg.set(k, (agg.get(k) ?? 0) + v);
+    }
+    const data = [...agg.entries()]
+      .map(([label, v]) => ({ label, v }))
+      .sort((a, b) => b.v - a.v)
+      .slice(0, 12);
+    setChart({
+      title: `sum(${result.columns[vi].name}) by ${result.columns[li].name}`,
+      sub: `aggregated from ${rows.length.toLocaleString()} rows · bar`,
+      data,
+    });
+  }, [result]);
+
+  const pickResultTab = useCallback(
+    (t: ResultTab) => {
+      setResultTab(t);
+      if (t === "chart" && !chart) buildChart();
+    },
+    [chart, buildChart]
+  );
+
+  /* ---------------- splitter / shortcuts / palette ---------------- */
+
+  const onSplitStart = useCallback(
+    (e: React.MouseEvent) => {
+      dragRef.current = { y: e.clientY, h: editorH };
+      document.body.style.cursor = "row-resize";
+    },
+    [editorH]
+  );
+
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      if (!dragRef.current) return;
+      setEditorH(Math.max(100, Math.min(500, dragRef.current.h + (e.clientY - dragRef.current.y))));
+    };
+    const up = () => {
+      dragRef.current = null;
+      document.body.style.cursor = "";
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+    return () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      const tag = (e.target as HTMLElement | null)?.tagName ?? "";
+      const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+      if (mod && e.key === "Enter") {
+        e.preventDefault();
+        doRun();
+      } else if (mod && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        setPaletteQ("");
+        setPaletteIdx(0);
+        setOverlay("palette");
+      } else if (mod && (e.key === "t" || e.key === "T")) {
+        e.preventDefault();
+        newTab();
+      } else if (mod && (e.key === "c" || e.key === "C")) {
+        const noSel = !window.getSelection || String(window.getSelection()) === "";
+        if (copyable.current !== null && noSel && !typing) {
+          navigator.clipboard.writeText(copyable.current).catch(() => {});
+          showToast(`Copied cell: ${copyable.current.slice(0, 48)}`);
+        }
+      } else if (e.key === "?" && !typing) {
+        e.preventDefault();
+        setOverlay("cheatsheet");
+      } else if (e.key === "Escape") {
+        if (overlay) setOverlay(null);
+        else if (running) doCancel();
+        else {
+          setConnMenu(false);
+          setExportMenu(false);
+        }
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [doRun, newTab, overlay, running, doCancel, showToast]);
+
+  const paletteItems = useCallback((): PaletteItem[] => {
+    const items: PaletteItem[] = [
+      { icon: "▶", label: "Run query", type: "Action", kbd: "⌘↵", exec: () => doRun() },
+      { icon: "＋", label: "New query tab", type: "Action", kbd: "⌘T", exec: newTab },
+      { icon: "◐", label: "Toggle theme", type: "Action", exec: () => applyTheme(theme === "dark" ? "light" : "dark") },
+      { icon: "⛁", label: "New connection…", type: "Action", exec: newProfile },
+      { icon: "⌥", label: "Show EXPLAIN plan", type: "Action", exec: runExplain },
+      { icon: "⚙", label: "Open settings", type: "Action", exec: () => setOverlay("settings") },
+    ];
+    if (connected) {
+      items.push({ icon: "⏻", label: "Disconnect current session", type: "Action", exec: doDisconnect });
+      if (!inTx) items.push({ icon: "▣", label: "Begin transaction", type: "Action", exec: doBegin });
+      else {
+        items.push({ icon: "✓", label: "Commit transaction", type: "Action", exec: doCommit });
+        items.push({ icon: "↩", label: "Rollback transaction", type: "Action", exec: doRollback });
+      }
+    }
+    for (const c of saved) {
+      items.push({ icon: "⇄", label: `Connect to ${c.name}`, type: "Connection", exec: () => selectProfile(c) });
+    }
+    for (const [schema, objs] of Object.entries(objects)) {
+      for (const o of objs) {
+        items.push({
+          icon: o.kind === "view" || o.kind === "matview" ? "V" : "T",
+          label: `${schema}.${o.name}`,
+          type: "Table",
+          exec: () => insertSelect(schema, o.name),
+        });
+      }
+    }
+    for (const h of historyItems.slice(0, 6)) {
+      if (h.sqlText) {
+        items.push({
+          icon: "↺",
+          label: h.sqlText.slice(0, 70),
+          type: "Recent",
+          exec: () => setActiveSql(h.sqlText!),
+        });
+      }
+    }
+    return items;
+  }, [doRun, newTab, applyTheme, theme, newProfile, runExplain, connected, inTx, doDisconnect, doBegin, doCommit, doRollback, saved, selectProfile, objects, insertSelect, historyItems, setActiveSql]);
+
+  /* ---------------- render ---------------- */
+
+  const activeProfile = saved.find((c) => c.id === profileId) ?? null;
+  const isProd = connected && connectedEnv === "prod";
+  const explorerSource: "live" | "cached" | "—" = metaCached ? "cached" : connected ? "live" : "—";
 
   return (
     <div className="shell">
-      <header className="titlebar">
-        <span className="brand">TupleNest</span>
-        <span className="muted">{info ? `v${info.version} · ${info.os}` : ""}</span>
-        <button onClick={toggleTheme}>
-          {theme === "dark" ? "Light theme" : "Dark theme"}
-        </button>
-      </header>
-      {connected && connectedEnv === "prod" && (
-        <div className="prod-banner" role="alert">
-          PRODUCTION — connected to a prod-tagged database. Changes are live.
+      <Titlebar
+        theme={theme}
+        connected={connected}
+        activeName={activeProfile?.name ?? profileName ?? "No connection"}
+        activeUserHost={host ? `${username || "?"}@${host}:${port}` : ""}
+        activeEnv={connected ? (connectedEnv ?? "dev") : environment}
+        saved={saved}
+        activeId={profileId}
+        connMenu={connMenu}
+        onToggleConnMenu={() => setConnMenu((v) => !v)}
+        onSelectProfile={selectProfile}
+        onNewConnection={newProfile}
+        onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
+        onOpenPalette={() => {
+          setPaletteQ("");
+          setPaletteIdx(0);
+          setOverlay("palette");
+        }}
+        onToggleTheme={() => applyTheme(theme === "dark" ? "light" : "dark")}
+        onOpenSettings={() => setOverlay("settings")}
+      />
+      {isProd && (
+        <div className="prod-banner">
+          ⚠ PRODUCTION — changes are live. Query text is excluded from history.
         </div>
       )}
-      <main className="content with-sidebar">
-        <aside className="sidebar">
+      <div className="body">
+        <aside className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
           <SavedList
             saved={saved}
             activeId={profileId}
-            onLoad={loadProfile}
+            connected={connected}
+            onLoad={editProfile}
             onNew={newProfile}
             onDelete={doDeleteProfile}
           />
-          {(connected || schemas !== null) && (
-            <ExplorerTree
-              schemas={schemas}
-              metaCached={metaCached}
-              openSchemas={openSchemas}
-              objects={objects}
-              openTables={openTables}
-              columns={columns}
-              onToggleSchema={toggleSchema}
-              onToggleTable={toggleTable}
-              onInsertSelect={insertSelect}
+          <div className="side-sep" />
+          <ExplorerTree
+            schemas={schemas}
+            metaCached={metaCached}
+            connected={connected}
+            openSchemas={openSchemas}
+            objects={objects}
+            openTables={openTables}
+            columns={columns}
+            onToggleSchema={toggleSchema}
+            onToggleTable={toggleTable}
+            onInsertSelect={insertSelect}
+            onDescribe={describeObject}
+          />
+        </aside>
+        <main className="main-col">
+          <TabsBar tabs={tabs} active={activeTab} onSelect={setActiveTab} onClose={closeTab} onNew={newTab} />
+          {tabs.length === 0 ? (
+            <div className="onboard">
+              <div className="card">
+                <div className="big">No query open</div>
+                <p>
+                  Open a new query tab, pick a table from the Explorer to insert a select, or jump
+                  anywhere with the command palette.
+                </p>
+                <div className="row">
+                  <button className="btn primary" onClick={newTab}>
+                    New query <span className="kbd">⌘T</span>
+                  </button>
+                  <button className="btn" onClick={() => setOverlay("palette")}>
+                    Command palette <span className="kbd">⌘K</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <QueryPanel
+              sql={currentSql}
+              onSqlChange={(s) => setActiveSql(s)}
+              connected={connected}
+              running={running}
+              inTx={inTx}
+              editorH={editorH}
+              onSplitStart={onSplitStart}
+              status={runStatus}
+              result={result}
+              lastError={lastError}
+              queryEpoch={queryEpoch}
+              resultTab={resultTab}
+              onResultTab={pickResultTab}
+              onRun={() => doRun()}
+              onCancel={doCancel}
+              onBegin={doBegin}
+              onCommit={doCommit}
+              onRollback={doRollback}
+              onExplain={runExplain}
+              exportMenu={exportMenu}
+              onToggleExport={() => setExportMenu((v) => !v)}
+              onExport={doExport}
+              chart={chart}
+              onInspect={(t) => {
+                setInspectText(t);
+                setOverlay("inspect");
+              }}
+              onCopyable={(v) => {
+                copyable.current = v;
+              }}
+              onToast={showToast}
+              onVisibleRows={(a, b) =>
+                setRowsInfo(result ? `rows ${a.toLocaleString()}–${b.toLocaleString()} of ${result.storedRows.toLocaleString()}` : "")
+              }
+              history={{
+                items: historyItems,
+                search: historySearch,
+                onSearch: setHistorySearch,
+                onClear: async () => {
+                  await invoke("history_clear", { includeFavorites: false }).catch(() => {});
+                  refreshHistory(historySearch);
+                  showToast("Cleared history — favorites kept");
+                },
+                onToggleFavorite: async (h) => {
+                  await invoke("history_favorite", { id: h.id, favorite: !h.favorite }).catch(() => {});
+                  refreshHistory(historySearch);
+                },
+                onLoad: (sql) => {
+                  setActiveSql(sql);
+                  showToast("Loaded into editor");
+                },
+              }}
             />
           )}
-        </aside>
-        <div className="main-col">
-          <ConnectionForm
-            isEdit={profileId !== null}
-            profileName={profileName}
-            environment={environment}
-            host={host}
-            port={port}
-            database={database}
-            username={username}
-            password={password}
-            hasSecret={secretRef !== null}
-            tlsMode={tlsMode}
-            tlsCaPath={tlsCaPath}
-            connected={connected}
-            status={status}
-            stages={stages}
-            sshEnabled={sshEnabled}
-            sshHost={sshHost}
-            sshPort={sshPort}
-            sshUser={sshUser}
-            sshKeyPath={sshKeyPath}
-            sshFingerprint={sshFingerprint}
-            onSshEnabled={setSshEnabled}
-            onSshHost={setSshHost}
-            onSshPort={setSshPort}
-            onSshUser={setSshUser}
-            onSshKeyPath={setSshKeyPath}
-            onSshFingerprint={setSshFingerprint}
-            onProfileName={setProfileName}
-            onEnvironment={setEnvironment}
-            onHost={setHost}
-            onPort={setPort}
-            onDatabase={setDatabase}
-            onUsername={setUsername}
-            onPassword={setPassword}
-            onTlsMode={setTlsMode}
-            onTlsCaPath={setTlsCaPath}
-            onSave={doSaveProfile}
-            onTest={doTest}
-            onConnect={doConnect}
-            onDisconnect={doDisconnect}
-          />
-          <QueryPanel
-            sql={sql}
-            onSqlChange={setSql}
-            connected={connected}
-            running={running}
-            inTx={inTx}
-            txPrompt={txPrompt}
-            result={result}
-            queryEpoch={queryEpoch}
-            onRun={doRun}
-            onCancel={doCancel}
-            onBegin={doBegin}
-            onCommit={doCommit}
-            onRollback={doRollback}
-            onCommitAndDisconnect={commitAndDisconnect}
-            onRollbackAndDisconnect={rollbackAndDisconnect}
-            onStayConnected={() => setTxPrompt(false)}
-          />
-          <HistoryPanel
-            items={historyItems}
-            search={historySearch}
-            onSearch={setHistorySearch}
-            onClear={clearHistory}
-            onToggleFavorite={toggleFavorite}
-            onLoad={setSql}
-          />
-          <p className="hint">
-            Credentials never enter this WebView beyond one-time entry: they go
-            straight to the OS keychain and only an opaque reference remains.
-          </p>
-        </div>
-      </main>
+        </main>
+      </div>
+      <StatusBar
+        connected={connected}
+        isProd={isProd}
+        connName={activeProfile?.name ?? `${username || "?"}@${host}`}
+        tlsMode={tlsMode}
+        explorerSource={explorerSource}
+        rowsInfo={result && result.columns.length > 0 ? rowsInfo : ""}
+        txOpenSince={txOpenSince}
+        serverVersion={serverVersion}
+      />
+
+      {toast && <div className="toast">{toast}</div>}
+
+      {overlay === "palette" && (
+        <Palette
+          items={paletteItems()}
+          q={paletteQ}
+          idx={paletteIdx}
+          onQ={setPaletteQ}
+          onIdx={setPaletteIdx}
+          onPick={(it) => {
+            setOverlay(null);
+            it.exec();
+          }}
+          onClose={() => setOverlay(null)}
+        />
+      )}
+      {overlay === "connEditor" && (
+        <ConnectionForm
+          isEdit={profileId !== null}
+          profileName={profileName}
+          environment={environment}
+          host={host}
+          port={port}
+          database={database}
+          username={username}
+          password={password}
+          hasSecret={secretRef !== null}
+          tlsMode={tlsMode}
+          tlsCaPath={tlsCaPath}
+          connected={connected}
+          status={status}
+          stages={stages}
+          testing={testing}
+          sshEnabled={sshEnabled}
+          sshHost={sshHost}
+          sshPort={sshPort}
+          sshUser={sshUser}
+          sshKeyPath={sshKeyPath}
+          sshFingerprint={sshFingerprint}
+          onSshEnabled={setSshEnabled}
+          onSshHost={setSshHost}
+          onSshPort={setSshPort}
+          onSshUser={setSshUser}
+          onSshKeyPath={setSshKeyPath}
+          onSshFingerprint={setSshFingerprint}
+          onProfileName={setProfileName}
+          onEnvironment={setEnvironment}
+          onHost={setHost}
+          onPort={setPort}
+          onDatabase={setDatabase}
+          onUsername={setUsername}
+          onPassword={setPassword}
+          onTlsMode={setTlsMode}
+          onTlsCaPath={setTlsCaPath}
+          onSave={doSaveProfile}
+          onTest={doTest}
+          onSaveConnect={saveAndConnect}
+          onClose={() => setOverlay(null)}
+        />
+      )}
+      {overlay === "txPrompt" && (
+        <TxPrompt onCommit={commitAndDisconnect} onRollback={rollbackAndDisconnect} onStay={() => setOverlay(null)} />
+      )}
+      {overlay === "guard" && guardSql && (
+        <Guard
+          sql={guardSql}
+          onCancel={() => {
+            setGuardSql(null);
+            setOverlay(null);
+          }}
+          onRun={() => {
+            setGuardSql(null);
+            setOverlay(null);
+            doRun(true);
+          }}
+        />
+      )}
+      {overlay === "connLost" && (
+        <ConnLost
+          detail={connLostDetail}
+          onReconnect={async () => {
+            setOverlay(null);
+            await doConnect();
+          }}
+          onClose={() => setOverlay(null)}
+        />
+      )}
+      {overlay === "settings" && (
+        <Settings
+          theme={theme}
+          telemetry={telemetry}
+          onTheme={applyTheme}
+          onTelemetry={applyTelemetry}
+          onClose={() => setOverlay(null)}
+        />
+      )}
+      {overlay === "cheatsheet" && <Cheatsheet onClose={() => setOverlay(null)} />}
+      {overlay === "inspect" && <Inspector text={inspectText} onClose={() => setOverlay(null)} />}
+      {overlay === "schema" && schemaTarget && (
+        <SchemaModal
+          schema={schemaTarget.schema}
+          name={schemaTarget.name}
+          kind={schemaTarget.kind}
+          columns={schemaCols}
+          onClose={() => setOverlay(null)}
+        />
+      )}
+      {overlay === "explain" && explain && (
+        <ExplainModal
+          title={explain.title}
+          analyzed={explain.analyzed}
+          nodes={explain.nodes}
+          stats={explain.stats}
+          suggestion={explain.suggestion}
+          error={explain.error}
+          onClose={() => setOverlay(null)}
+        />
+      )}
     </div>
   );
 }

@@ -1,8 +1,10 @@
+import { useState } from "react";
 import type { DbColumn, DbObject } from "../ipc/types";
 
 type Props = {
   schemas: string[] | null;
   metaCached: boolean;
+  connected: boolean;
   openSchemas: Record<string, boolean>;
   objects: Record<string, DbObject[]>;
   openTables: Record<string, boolean>;
@@ -10,81 +12,123 @@ type Props = {
   onToggleSchema: (schema: string) => void;
   onToggleTable: (schema: string, name: string) => void;
   onInsertSelect: (schema: string, name: string) => void;
+  onDescribe: (schema: string, name: string) => void;
 };
 
-/** Lazy metadata tree: schemas → objects → columns (E1.3). */
+function objIcon(kind: string): { ch: string; color: string } {
+  if (kind === "view") return { ch: "V", color: "var(--tn-purple)" };
+  if (kind === "matview") return { ch: "M", color: "var(--tn-purple)" };
+  if (kind === "foreign") return { ch: "F", color: "var(--tn-warning)" };
+  return { ch: "T", color: "var(--tn-accent)" };
+}
+
 export default function ExplorerTree(p: Props) {
+  const [filter, setFilter] = useState("");
+  const f = filter.trim().toLowerCase();
+  const match = (name: string) => !f || name.toLowerCase().includes(f);
+
   return (
-    <div className="explorer">
-      <h2>
-        Explorer{" "}
-        {p.metaCached && (
-          <span className="cache-badge" title="Served from local metadata cache">
-            cached
+    <>
+      <div className="side-head">
+        <span className="label">Explorer</span>
+        {p.metaCached ? (
+          <span className="src-chip cached">CACHED</span>
+        ) : p.connected ? (
+          <span className="src-chip live">
+            <span className="dot" style={{ background: "var(--tn-success)" }} />
+            live
           </span>
-        )}
-      </h2>
-      {p.schemas === null && <p className="muted">Loading schemas…</p>}
-      <ul className="tree">
-        {(p.schemas ?? []).map((s) => (
-          <li key={s}>
-            <div className="tree-row" onClick={() => p.onToggleSchema(s)}>
-              <span className="twisty">{p.openSchemas[s] ? "▾" : "▸"}</span>
-              <span className="tree-label">{s}</span>
-            </div>
-            {p.openSchemas[s] && (
-              <ul className="tree nested">
-                {!(s in p.objects) && <li className="muted">loading…</li>}
-                {(p.objects[s] ?? []).length === 0 && s in p.objects && (
-                  <li className="muted">empty</li>
-                )}
-                {(p.objects[s] ?? []).map((o) => {
-                  const key = `${s}.${o.name}`;
-                  return (
-                    <li key={o.name}>
-                      <div className="tree-row" title={o.comment ?? o.kind}>
-                        <span
-                          className="twisty"
-                          onClick={() => p.onToggleTable(s, o.name)}
-                        >
-                          {p.openTables[key] ? "▾" : "▸"}
-                        </span>
-                        <span className={`obj-kind kind-${o.kind}`}>
-                          {o.kind === "table" ? "T" : o.kind === "view" ? "V" : "M"}
-                        </span>
-                        <span
-                          className="tree-label clickable"
-                          onClick={() => p.onInsertSelect(s, o.name)}
-                          title={`Insert SELECT for ${key}`}
-                        >
-                          {o.name}
-                        </span>
+        ) : null}
+      </div>
+      <div className="filter-box">
+        <span className="muted">⌕</span>
+        <input placeholder="Filter objects…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+      </div>
+      <div className="tree">
+        {p.schemas === null && <div className="note">Loading schemas…</div>}
+        {(p.schemas ?? []).map((s) => {
+          const objs = p.objects[s];
+          const visible = f && objs ? objs.filter((o) => match(o.name)) : objs;
+          if (f && objs && visible && visible.length === 0) return null;
+          return (
+            <div key={s}>
+              <button className="tree-row" onClick={() => p.onToggleSchema(s)}>
+                <span className={`caret ${p.openSchemas[s] || f ? "open" : ""}`}>▶</span>
+                <span style={{ color: "var(--tn-warning)" }}>◈</span>
+                <span style={{ fontWeight: 600, color: "var(--tn-tp)" }}>{s}</span>
+                {objs && <span className="count">{objs.length}</span>}
+              </button>
+              {(p.openSchemas[s] || (f && objs)) && (
+                <div className="nested">
+                  {!objs && <div className="note">loading…</div>}
+                  {objs && objs.length === 0 && <div className="note">empty</div>}
+                  {(visible ?? []).map((o) => {
+                    const key = `${s}.${o.name}`;
+                    const ic = objIcon(o.kind);
+                    return (
+                      <div key={o.name}>
+                        <button className="tree-row" title={o.comment ?? o.kind}>
+                          <span
+                            className={`caret ${p.openTables[key] ? "open" : ""}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              p.onToggleTable(s, o.name);
+                            }}
+                          >
+                            ▶
+                          </span>
+                          <span className="obj-ic" style={{ color: ic.color }}>
+                            {ic.ch}
+                          </span>
+                          <span
+                            style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", textAlign: "left" }}
+                            onClick={() => p.onInsertSelect(s, o.name)}
+                          >
+                            {o.name}
+                          </span>
+                          <span className="hover-act">
+                            <span
+                              title="Describe"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                p.onDescribe(s, o.name);
+                              }}
+                            >
+                              ⓘ
+                            </span>
+                            <span
+                              title="Insert select"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                p.onInsertSelect(s, o.name);
+                              }}
+                            >
+                              ↵
+                            </span>
+                          </span>
+                        </button>
+                        {p.openTables[key] && (
+                          <div>
+                            {!(key in p.columns) && <div className="note">loading…</div>}
+                            {(p.columns[key] ?? []).map((c) => (
+                              <div key={c.name} className="col-line" title={c.comment ?? ""}>
+                                <span style={{ width: 13 }}>{c.primaryKey ? "🔑" : ""}</span>
+                                <span style={{ color: "var(--tn-tp)" }}>{c.name}</span>
+                                <span className="ty">{c.dbType}</span>
+                                {!c.nullable && <span className="nn">not null</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      {p.openTables[key] && (
-                        <ul className="tree nested cols">
-                          {!(key in p.columns) && <li className="muted">loading…</li>}
-                          {(p.columns[key] ?? []).map((c) => (
-                            <li key={c.name} title={c.comment ?? ""}>
-                              <span className="col-name">
-                                {c.primaryKey ? "🔑 " : ""}
-                                {c.name}
-                              </span>
-                              <span className="muted">
-                                {c.dbType}
-                                {c.nullable ? "" : " · not null"}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }

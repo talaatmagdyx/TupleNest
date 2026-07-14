@@ -9,54 +9,64 @@ type Props = {
   onLoad: (sql: string) => void;
 };
 
-/** Query history with search, favorites, click-to-load (E1.5). */
+const GLYPH: Record<string, [string, string]> = {
+  success: ["✓", "var(--tn-success)"],
+  error: ["✕", "var(--tn-danger)"],
+  cancelled: ["⊘", "var(--tn-warning)"],
+};
+
+/** History as a result-drawer tab (HUD design). */
 export default function HistoryPanel(p: Props) {
   return (
-    <section className="panel">
-      <h2>History</h2>
-      <div className="form-row">
-        <input
-          placeholder="search history…"
-          value={p.search}
-          onChange={(e) => p.onSearch(e.target.value)}
-          style={{ flex: 1 }}
-        />
-        <button onClick={p.onClear} title="Clear non-favorites">
+    <div className="hist-pane">
+      <div className="hist-bar">
+        <div className="filter-box">
+          <span className="muted">⌕</span>
+          <input placeholder="Search history…" value={p.search} onChange={(e) => p.onSearch(e.target.value)} />
+        </div>
+        <button className="btn" onClick={p.onClear} title="Clear non-favorites">
           Clear
         </button>
       </div>
-      {p.items.length === 0 && <p className="muted">No history yet.</p>}
-      <ul className="history-list">
-        {p.items.map((h) => (
-          <li key={h.id} title={h.errorText ?? h.sqlText ?? ""}>
-            <span className={`hstatus ${h.status}`}>
-              {h.status === "success" ? "✓" : h.status === "cancelled" ? "⊘" : "✗"}
-            </span>
-            <span
-              className={`hsql ${h.sqlText ? "clickable" : ""}`}
-              onClick={() => h.sqlText && p.onLoad(h.sqlText)}
-            >
-              {h.sqlText ?? <em className="muted">(query text hidden — prod)</em>}
-            </span>
-            <span className="muted hmeta">
-              {h.status === "success"
-                ? `${h.rowsReturned || h.rowsAffected || 0} rows`
-                : h.status}
-              {" · "}
-              {h.durationMs}ms
-              {" · "}
-              {new Date(h.startedAt * 1000).toLocaleTimeString()}
-            </span>
-            <button
-              className={`ghost star ${h.favorite ? "on" : ""}`}
-              title={h.favorite ? "Unfavorite" : "Favorite"}
-              onClick={() => p.onToggleFavorite(h)}
-            >
-              {h.favorite ? "★" : "☆"}
-            </button>
-          </li>
-        ))}
-      </ul>
-    </section>
+      <div className="hist-list">
+        {p.items.length === 0 && (
+          <div className="center-note" style={{ padding: 30 }}>
+            No history yet.
+          </div>
+        )}
+        {p.items.map((h) => {
+          const hidden = h.sqlText === null;
+          const [glyph, color] = hidden ? ["—", "var(--tn-tm)"] : GLYPH[h.status];
+          return (
+            <div key={h.id} className="hist-row" title={h.errorText ?? h.sqlText ?? ""}>
+              <span className="glyph" style={{ color }}>
+                {glyph}
+              </span>
+              <span
+                className={`sqltxt ${hidden ? "hidden-prod" : ""}`}
+                onClick={() => h.sqlText && p.onLoad(h.sqlText)}
+              >
+                {h.sqlText ?? "(query text hidden — prod)"}
+              </span>
+              <span className="hmeta">
+                {h.status === "success" ? `${h.rowsReturned || h.rowsAffected || 0} rows` : h.status}
+                {" · "}
+                {h.durationMs}ms
+                {" · "}
+                {new Date(h.startedAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </span>
+              <button
+                className="star"
+                style={{ color: h.favorite ? "var(--tn-warning)" : "var(--tn-bh)" }}
+                title={h.favorite ? "Unfavorite" : "Favorite"}
+                onClick={() => p.onToggleFavorite(h)}
+              >
+                ★
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
