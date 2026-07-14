@@ -354,8 +354,17 @@ export default function App() {
           : `${r.rowsAffected ?? 0} row(s) affected in ${r.elapsedMs}ms`
       );
     } catch (e) {
-      setStatus(`Error: ${e}`);
+      const msg = String(e);
+      setStatus(`Error: ${msg}`);
       setResult(null);
+      // Backend marks the session broken on network failures (E1.1);
+      // reflect that here — the user must reconnect explicitly.
+      if (msg.startsWith("Connection lost:")) {
+        setConnected(false);
+        setConnectedEnv(null);
+        setInTx(false);
+        setTxPrompt(false);
+      }
     } finally {
       setRunning(false);
       refreshHistory(historySearch);

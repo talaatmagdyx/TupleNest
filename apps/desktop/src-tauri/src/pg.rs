@@ -480,6 +480,10 @@ pub async fn pg_query(
     let summary = match session.execute(request, &sink).await {
         Ok(summary) => summary,
         Err(e) => {
+            // E1.1: a network-category failure means the session is broken.
+            // Mark it dead so nothing can silently re-run on a half-open
+            // connection; the user must reconnect explicitly.
+            let broken = matches!(e.category, tuplenest_driver_api::ErrorCategory::Network);
             let msg = err_to_string(e);
             let status = if msg.to_lowercase().contains("cancel") {
                 "cancelled"
@@ -496,6 +500,19 @@ pub async fn pg_query(
                 None,
                 started_wall.elapsed().as_millis() as u64,
             );
+            if broken {
+                *guard = None; // session
+                drop(guard);
+                *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = None;
+                *state.tunnel.lock().map_err(|_| "tunnel lock poisoned")? = None;
+                tracing::warn!(
+                    component = "pg",
+                    "session marked broken after network error"
+                );
+                return Err(format!(
+                    "Connection lost: {msg} — the session was closed. Reconnect to continue; nothing was re-run."
+                ));
+            }
             return Err(msg);
         }
     };

@@ -430,3 +430,54 @@ async fn live_metadata_schema_objects_columns_roundtrip() {
         .await
         .unwrap();
 }
+
+// --- Fault injection (E1.1) ---------------------------------------------------
+
+#[tokio::test]
+#[ignore]
+async fn killed_backend_yields_network_error_and_broken_session() {
+    let mut victim = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    let mut killer = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+
+    // Learn the victim's backend pid.
+    let sink = FirstCellSink(Mutex::new(None));
+    victim
+        .execute(req("select pg_backend_pid()::text"), &sink)
+        .await
+        .unwrap();
+    let pid = sink.0.lock().unwrap().clone().unwrap();
+
+    // Kill it server-side from the second session.
+    killer
+        .execute(
+            req(format!("select pg_terminate_backend({pid})")),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // The victim's next statement must fail with a normalized network-class
+    // error — never hang, never silently reconnect and re-run.
+    let err = victim
+        .execute(req("select 1"), &NullSink)
+        .await
+        .expect_err("statement on killed backend must fail");
+    assert!(
+        matches!(
+            err.category,
+            ErrorCategory::Network | ErrorCategory::DriverFailure
+        ),
+        "expected network-class category, got {:?}: {err}",
+        err.category
+    );
+
+    // And the session stays broken on subsequent use.
+    assert!(victim.execute(req("select 2"), &NullSink).await.is_err());
+}
