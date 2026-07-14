@@ -12,6 +12,8 @@ use tuplenest_workspace_store::Store;
 
 struct AppState {
     store: Mutex<Store>,
+    /// Keeps the background log writer alive for the app's lifetime.
+    _log_guard: Option<tuplenest_telemetry::LogGuard>,
 }
 
 #[derive(serde::Serialize)]
@@ -94,10 +96,18 @@ fn main() {
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
+
+            // E0.7: structured file logging (rotated daily) + crash capture.
+            // JSON logs in release; human-readable in dev.
+            let log_guard = tuplenest_telemetry::init_app(&dir.join("logs"), !cfg!(debug_assertions)).ok();
+            tuplenest_telemetry::install_panic_hook(dir.join("crashes"));
+            tracing::info!(component = "app", version = env!("CARGO_PKG_VERSION"), "TupleNest starting");
+
             let store = Store::open(&dir.join("tuplenest.db"))
                 .map_err(|e| -> Box<dyn std::error::Error> { format!("{e}").into() })?;
             app.manage(AppState {
                 store: Mutex::new(store),
+                _log_guard: log_guard,
             });
             Ok(())
         })
