@@ -77,6 +77,19 @@ export type DbPartition = {
   bounds: string | null;
   bytes: number;
   rowsEstimate: number;
+  /** A partition is frequently partitioned again — here by channel, then by
+   *  quarter. The tree needs this to offer a Partitions node without first
+   *  fetching a level it may never open. */
+  isPartitioned: boolean;
+  partitionCount: number;
+};
+
+export type DbConstraint = {
+  name: string;
+  /** primary key | foreign key | unique | check | exclusion | not null */
+  kind: string;
+  definition: string | null;
+  isValid: boolean;
 };
 
 export type DbIndex = {

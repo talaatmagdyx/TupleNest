@@ -622,6 +622,9 @@ fn cache_scope(request: &MetadataRequest) -> (&'static str, String, String) {
         // Index usage counters are live numbers — caching them would show
         // "never scanned" for an index that is being scanned right now.
         MetadataRequest::ListIndexes { schema, table } => ("indexes", schema.clone(), table.clone()),
+        MetadataRequest::ListConstraints { schema, table } => {
+            ("constraints", schema.clone(), table.clone())
+        }
         MetadataRequest::ListTypes { schema } => ("types", schema.clone(), String::new()),
         MetadataRequest::ListRoutines { schema } => ("routines", schema.clone(), String::new()),
     }

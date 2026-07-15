@@ -1,5 +1,13 @@
 import { useState } from "react";
-import type { DbColumn, DbIndex, DbObject, DbPartition, DbRoutine, DbType } from "../ipc/types";
+import type {
+  DbColumn,
+  DbConstraint,
+  DbIndex,
+  DbObject,
+  DbPartition,
+  DbRoutine,
+  DbType,
+} from "../ipc/types";
 import { DbIcon, SearchIcon } from "../lib/icons";
 
 /**
@@ -24,6 +32,7 @@ type Props = {
   objects: Record<string, DbObject[]>;
   columns: Record<string, DbColumn[]>;
   indexes: Record<string, DbIndex[]>;
+  constraints: Record<string, DbConstraint[]>;
   partitions: Record<string, DbPartition[]>;
   types: Record<string, DbType[]>;
   routines: Record<string, DbRoutine[]>;
@@ -102,6 +111,7 @@ export default function ExplorerTree(p: Props) {
     const meta = KINDS.find((k) => k.kind === o.kind) ?? KINDS[0];
     const cols = p.columns[key];
     const idx = p.indexes[key];
+    const cons = p.constraints[key];
     const parts = p.partitions[key];
 
     return (
@@ -176,7 +186,12 @@ export default function ExplorerTree(p: Props) {
                 </div>
               ) : idx.length === 0 ? (
                 <div className="note" style={{ paddingLeft: 8 + (depth + 2) * 13 }}>
-                  none
+                  {/* "none" on a partitioned table reads like a bug. It isn't:
+                      this database creates indexes on the leaves rather than on
+                      the parent, so the parent really has none. Say which. */}
+                  {o.isPartitioned
+                    ? "none on this level — defined on the partitions"
+                    : "none"}
                 </div>
               ) : (
                 idx.map((ix) => (
@@ -197,6 +212,38 @@ export default function ExplorerTree(p: Props) {
                       </span>
                     )}
                     <span className="ct">{fmtBytes(ix.bytes)}</span>
+                  </div>
+                ))
+              ))}
+
+            <Row
+              depth={depth + 1}
+              arrow
+              open={isOpen(`k:${key}`)}
+              label={<span className="grp">Constraints</span>}
+              badge={cons ? <span className="count">{cons.length}</span> : undefined}
+              onClick={() => p.onToggle(`k:${key}`)}
+            />
+            {isOpen(`k:${key}`) &&
+              (cons === undefined ? (
+                <div className="note" style={{ paddingLeft: 8 + (depth + 2) * 13 }}>
+                  loading…
+                </div>
+              ) : cons.length === 0 ? (
+                <div className="note" style={{ paddingLeft: 8 + (depth + 2) * 13 }}>
+                  none
+                </div>
+              ) : (
+                cons.map((cn) => (
+                  <div
+                    key={cn.name}
+                    className="tree-row leaf"
+                    style={{ paddingLeft: 8 + (depth + 2) * 13 }}
+                    title={cn.definition ?? cn.kind}
+                  >
+                    <span className="cn">{cn.name}</span>
+                    {!cn.isValid && <span className="dead">NOT VALID</span>}
+                    <span className="ct">{cn.kind}</span>
                   </div>
                 ))
               ))}
@@ -226,10 +273,11 @@ export default function ExplorerTree(p: Props) {
                             name: pt.name,
                             kind: "table",
                             comment: pt.bounds,
-                            // A partition may itself be partitioned; its own
-                            // child count arrives when it is expanded.
-                            isPartitioned: (p.partitions[`${schema}.${pt.name}`]?.length ?? 0) > 0,
-                            partitionCount: p.partitions[`${schema}.${pt.name}`]?.length ?? 0,
+                            // Straight from the server. Deriving this from
+                            // already-loaded partitions was circular: the node
+                            // only appeared once opened, so it never appeared.
+                            isPartitioned: pt.isPartitioned,
+                            partitionCount: pt.partitionCount,
                           },
                           depth + 2
                         )

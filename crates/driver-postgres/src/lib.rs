@@ -444,10 +444,17 @@ impl DatabaseSession for PostgresSession {
                 let rows = self
                     .client
                     .query(
+                        // A partition is very often partitioned again (here:
+                        // channel, then quarter), so each child reports its own
+                        // sub-partition count. Without it the tree cannot know
+                        // to offer a Partitions node before loading one.
                         "SELECT c.relname,
                                 pg_get_expr(c.relpartbound, c.oid) AS bounds,
                                 pg_total_relation_size(c.oid) AS bytes,
-                                c.reltuples::bigint AS rows_estimate
+                                c.reltuples::bigint AS rows_estimate,
+                                c.relkind = 'p' AS is_partitioned,
+                                (SELECT count(*) FROM pg_inherits ii WHERE ii.inhparent = c.oid)
+                                  AS partition_count
                          FROM pg_inherits i
                          JOIN pg_class c ON c.oid = i.inhrelid
                          JOIN pg_class p ON p.oid = i.inhparent
@@ -466,6 +473,46 @@ impl DatabaseSession for PostgresSession {
                             "bounds": r.get::<_, Option<String>>(1),
                             "bytes": r.get::<_, i64>(2),
                             "rowsEstimate": r.get::<_, i64>(3),
+                            "isPartitioned": r.get::<_, bool>(4),
+                            "partitionCount": r.get::<_, i64>(5),
+                        })
+                    })
+                    .collect::<Vec<_>>())
+            }
+            MetadataRequest::ListConstraints { schema, table } => {
+                let rows = self
+                    .client
+                    .query(
+                        "SELECT con.conname,
+                                CASE con.contype
+                                  WHEN 'p' THEN 'primary key'
+                                  WHEN 'f' THEN 'foreign key'
+                                  WHEN 'u' THEN 'unique'
+                                  WHEN 'c' THEN 'check'
+                                  WHEN 'x' THEN 'exclusion'
+                                  WHEN 'n' THEN 'not null'
+                                  WHEN 't' THEN 'trigger'
+                                  ELSE con.contype::text
+                                END AS kind,
+                                pg_get_constraintdef(con.oid) AS definition,
+                                con.convalidated
+                         FROM pg_constraint con
+                         JOIN pg_class c ON c.oid = con.conrelid
+                         JOIN pg_namespace n ON n.oid = c.relnamespace
+                         WHERE n.nspname = $1 AND c.relname = $2
+                         ORDER BY con.contype, con.conname",
+                        &[&schema, &table],
+                    )
+                    .await
+                    .map_err(normalize_error)?;
+                serde_json::json!(rows
+                    .iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "name": r.get::<_, String>(0),
+                            "kind": r.get::<_, String>(1),
+                            "definition": r.get::<_, Option<String>>(2),
+                            "isValid": r.get::<_, bool>(3),
                         })
                     })
                     .collect::<Vec<_>>())

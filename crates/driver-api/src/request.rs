@@ -136,6 +136,11 @@ pub enum MetadataRequest {
         schema: String,
         table: String,
     },
+    /// Primary keys, foreign keys, unique, check, not-null constraints.
+    ListConstraints {
+        schema: String,
+        table: String,
+    },
     /// User-defined types: enums, composites, domains.
     ListTypes {
         schema: String,

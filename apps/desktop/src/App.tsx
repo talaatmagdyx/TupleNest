@@ -63,6 +63,7 @@ import type {
   AppInfo,
   ConnectionRecord,
   DbColumn,
+  DbConstraint,
   DbIndex,
   DbObject,
   DbPartition,
@@ -211,6 +212,7 @@ export default function App() {
   const [objects, setObjects] = useState<Record<string, DbObject[]>>({});
   const [columns, setColumns] = useState<Record<string, DbColumn[]>>({});
   const [indexes, setIndexes] = useState<Record<string, DbIndex[]>>({});
+  const [constraints, setConstraints] = useState<Record<string, DbConstraint[]>>({});
   const [partitions, setPartitions] = useState<Record<string, DbPartition[]>>({});
   const [types, setTypes] = useState<Record<string, DbType[]>>({});
   const [routines, setRoutines] = useState<Record<string, DbRoutine[]>>({});
@@ -327,6 +329,7 @@ export default function App() {
     setObjects({});
     setColumns({});
     setIndexes({});
+    setConstraints({});
     setPartitions({});
     setTypes({});
     setRoutines({});
@@ -655,6 +658,10 @@ export default function App() {
           const { schema, name } = table();
           const r = await metaFetch({ kind: "list_indexes", schema, table: name });
           setIndexes((m) => ({ ...m, [rest]: r ? (r.payload as DbIndex[]) : [] }));
+        } else if (tag === "k" && !(rest in constraints)) {
+          const { schema, name } = table();
+          const r = await metaFetch({ kind: "list_constraints", schema, table: name });
+          setConstraints((m) => ({ ...m, [rest]: r ? (r.payload as DbConstraint[]) : [] }));
         } else if (tag === "p" && !(rest in partitions)) {
           const { schema, name } = table();
           const r = await metaFetch({ kind: "list_partitions", schema, table: name });
@@ -664,7 +671,7 @@ export default function App() {
         setStatus(`Explorer error: ${e}`);
       }
     },
-    [openNodes, objects, columns, indexes, partitions, metaFetch]
+    [openNodes, objects, columns, indexes, constraints, partitions, metaFetch]
   );
 
   /* ---------------- completion catalog ---------------- */
@@ -1576,6 +1583,7 @@ export default function App() {
                 objects={objects}
                 columns={columns}
                 indexes={indexes}
+                constraints={constraints}
                 partitions={partitions}
                 types={types}
                 routines={routines}
