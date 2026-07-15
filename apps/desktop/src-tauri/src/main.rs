@@ -202,6 +202,10 @@ fn main() {
         // rejected, so a compromised release host still cannot ship code.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Save dialog + write access, scoped by the capability file to paths
+        // the user picks in the dialog — no ambient filesystem access.
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;

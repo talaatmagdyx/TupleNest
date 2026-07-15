@@ -24,6 +24,18 @@ import {
 import { BrandMark } from "./lib/icons";
 import type { Catalog, CatalogTable } from "./lib/complete";
 import { summarizePlan, type PlanSummary } from "./lib/intel";
+import {
+  DEFAULT_EXPLAIN,
+  buildExplain,
+  optionIssues,
+  planFilename,
+  planToJson,
+  planToMarkdown,
+  planToText,
+  type ExplainOptions,
+  type ExportablePlan,
+} from "./lib/explain";
+import { FILTERS, baseName, saveText } from "./lib/save";
 import IntelModal from "./overlays/IntelModal";
 import ImportModal from "./overlays/ImportModal";
 import { analyzeEditability, buildStatements, type CellEdit } from "./lib/dml";
@@ -125,6 +137,12 @@ export default function App() {
   const [ranSql, setRanSql] = useState("");
   /** Recent EXPLAIN summaries, oldest first — Phase 3 plan comparison. */
   const [plans, setPlans] = useState<{ label: string; summary: PlanSummary }[]>([]);
+  /** Server major version, so options the server is too old for are disabled
+   *  rather than offered and rejected. */
+  const serverMajor = useMemo(() => {
+    const m = /^(\d+)/.exec(serverVersion ?? "");
+    return m ? Number(m[1]) : undefined;
+  }, [serverVersion]);
   const [runStatus, setRunStatus] = useState<{ icon: string; text: string; color: string } | null>(null);
   const [inTx, setInTx] = useState(false);
   const [txOpenSince, setTxOpenSince] = useState<number | null>(null);
@@ -163,12 +181,19 @@ export default function App() {
   const [inspectCol, setInspectCol] = useState<string | undefined>(undefined);
   const [explain, setExplain] = useState<{
     title: string;
-    analyzed: boolean;
+    /** The query being explained (not the EXPLAIN wrapper). */
+    sql: string;
+    /** The exact statement sent, shown in the modal and in exports. */
+    statement: string;
     nodes: PlanNode[] | null;
     stats: PlanStats;
     suggestion: string | null;
     error: string | null;
+    /** Raw server payload, kept verbatim so JSON export is byte-faithful. */
+    raw: string;
   } | null>(null);
+  const [explainOpts, setExplainOpts] = useState<ExplainOptions>(DEFAULT_EXPLAIN);
+  const [explainBusy, setExplainBusy] = useState(false);
 
   // Explorer
   const [schemas, setSchemas] = useState<string[] | null>(null);
@@ -984,17 +1009,50 @@ export default function App() {
 
   type RawPlan = Record<string, unknown> & { Plans?: RawPlan[] };
 
-  const runExplain = useCallback(async () => {
+  const runExplain = useCallback(async (override?: ExplainOptions | unknown) => {
     const sql = tabs[activeTab]?.sql ?? "";
     if (!sql.trim() || !connected) return;
-    const analyzed = looksLikeSelect(sql);
-    setExplain({ title: tabs[activeTab]?.name ?? "query", analyzed, nodes: null, stats: [], suggestion: null, error: null });
+
+    // Ignore anything that isn't really an options object. `onClick={runExplain}`
+    // hands over a MouseEvent, which used to sail through as `override` and
+    // blow up on `o.format.toUpperCase()` — the button silently did nothing.
+    const valid = override && typeof (override as ExplainOptions).format === "string";
+
+    // Default ANALYZE on for a plain SELECT (real timings, no side effects) and
+    // off otherwise — EXPLAIN ANALYZE *executes* the statement, so a DELETE
+    // would really delete. The user can still tick it, but that is a deliberate
+    // act with a warning attached, not something we do on their behalf.
+    const opts = valid ? (override as ExplainOptions) : { ...explainOpts, analyze: looksLikeSelect(sql) };
+    setExplainOpts(opts);
+    if (optionIssues(opts, sql, serverMajor).some((i) => i.level === "error")) return;
+
+    const stmt = buildExplain(sql, opts);
+    setExplainBusy(true);
+    setExplain((x) => ({
+      title: tabs[activeTab]?.name ?? "query",
+      sql,
+      statement: stmt,
+      nodes: x?.nodes ?? null,
+      stats: x?.stats ?? [],
+      suggestion: null,
+      error: null,
+      raw: "",
+    }));
     setOverlay("explain");
     try {
-      const stmt = `explain (${analyzed ? "analyze, " : ""}format json, buffers) ${sql}`;
       await invoke<QueryResult>("pg_query", { sql: stmt });
       const rows = await invoke<unknown[][]>("pg_rows", { offset: 0, limit: 1 });
       const cell = rows[0]?.[0];
+      const raw = typeof cell === "string" ? cell : JSON.stringify(cell);
+
+      // Only FORMAT JSON can be walked into a tree; the rest is export-only.
+      if (opts.format !== "json") {
+        setExplain((x) => (x ? { ...x, raw, nodes: [], stats: [], error: null } : x));
+        setResult(null);
+        setRunStatus(null);
+        return;
+      }
+
       const parsed = typeof cell === "string" ? JSON.parse(cell) : cell;
       const root = (Array.isArray(parsed) ? parsed[0] : parsed) as Record<string, unknown>;
       const plan = root["Plan"] as RawPlan;
@@ -1040,7 +1098,16 @@ export default function App() {
       const suggestion = hot
         ? `${hot.title} dominates this plan. An index matching its filter could avoid the full scan.`
         : null;
-      setExplain({ title: tabs[activeTab]?.name ?? "query", analyzed, nodes, stats, suggestion, error: null });
+      setExplain({
+        title: tabs[activeTab]?.name ?? "query",
+        sql,
+        statement: stmt,
+        nodes,
+        stats,
+        suggestion,
+        error: null,
+        raw,
+      });
       // Phase 3: keep the last few plan summaries so two runs can be compared.
       setPlans((ps) =>
         [...ps, { label: `${tabs[activeTab]?.name ?? "query"} · ${new Date().toLocaleTimeString()}`, summary: summarizePlan(root) }].slice(-6)
@@ -1048,12 +1115,57 @@ export default function App() {
       setResult(null); // explain replaced the backend row store
       setRunStatus(null);
     } catch (e) {
-      setExplain((x) => (x ? { ...x, error: String(e) } : x));
+      setExplain((x) => (x ? { ...x, error: String(e), nodes: [] } : x));
+    } finally {
+      setExplainBusy(false);
     }
-  }, [tabs, activeTab, connected]);
+  }, [tabs, activeTab, connected, explainOpts, serverMajor]);
+
+  /** Everything the exporters need from the current plan. */
+  const exportablePlan = useCallback((): ExportablePlan | null => {
+    if (!explain) return null;
+    return {
+      sql: explain.sql,
+      statement: explain.statement,
+      options: explainOpts,
+      raw: explain.raw,
+      nodes: explain.nodes ?? [],
+      stats: explain.stats,
+    };
+  }, [explain, explainOpts]);
+
+  const renderPlan = (kind: "json" | "txt" | "md", p: ExportablePlan) =>
+    kind === "json" ? planToJson(p) : kind === "txt" ? planToText(p) : planToMarkdown(p);
+
+  const exportPlan = useCallback(
+    async (kind: "json" | "txt" | "md") => {
+      const p = exportablePlan();
+      if (!p) return;
+      try {
+        const path = await saveText(planFilename(explain?.title ?? "query", kind), renderPlan(kind, p), FILTERS[kind]);
+        if (path) showToast(`Saved ${baseName(path)}`);
+      } catch (e) {
+        showToast(`Export failed: ${String(e).slice(0, 60)}`);
+      }
+    },
+    [exportablePlan, explain, showToast]
+  );
+
+  const copyPlan = useCallback(
+    async (kind: "json" | "txt" | "md") => {
+      const p = exportablePlan();
+      if (!p) return;
+      await navigator.clipboard.writeText(renderPlan(kind, p));
+      showToast(`Plan ${kind.toUpperCase()} copied`);
+    },
+    [exportablePlan, showToast]
+  );
 
   /* ---------------- export / chart ---------------- */
 
+  /** Export the result grid to a file the user picks. This used to copy to the
+   *  clipboard, which is not what "Export" means — and silently truncated
+   *  usefulness for anything larger than a paste. */
   const doExport = useCallback(
     async (kind: "csv" | "json" | "md") => {
       setExportMenu(false);
@@ -1062,8 +1174,30 @@ export default function App() {
       const rows = await fetchAllRows(result.storedRows);
       const text =
         kind === "csv" ? toCSV(result.columns, rows) : kind === "json" ? toJSONExport(result.columns, rows) : toMarkdown(result.columns, rows);
+      const ext = kind === "md" ? "md" : kind;
+      const name = `${(tabs[activeTab]?.name ?? "result").replace(/\.sql$/i, "")}-${new Date()
+        .toISOString()
+        .slice(0, 19)
+        .replace(/[:T]/g, "-")}.${ext}`;
+      try {
+        const path = await saveText(name, text, FILTERS[ext]);
+        if (path) showToast(`Saved ${baseName(path)} — ${rows.length.toLocaleString()} rows`);
+      } catch (e) {
+        showToast(`Export failed: ${String(e).slice(0, 60)}`);
+      }
+    },
+    [result, showToast, tabs, activeTab]
+  );
+
+  const doCopyResult = useCallback(
+    async (kind: "csv" | "json" | "md") => {
+      setExportMenu(false);
+      if (!result || result.columns.length === 0) return;
+      const rows = await fetchAllRows(result.storedRows);
+      const text =
+        kind === "csv" ? toCSV(result.columns, rows) : kind === "json" ? toJSONExport(result.columns, rows) : toMarkdown(result.columns, rows);
       await navigator.clipboard.writeText(text);
-      showToast(`${kind.toUpperCase()} copied to clipboard — ${rows.length.toLocaleString()} rows`);
+      showToast(`${kind.toUpperCase()} copied — ${rows.length.toLocaleString()} rows`);
     },
     [result, showToast]
   );
@@ -1224,7 +1358,7 @@ export default function App() {
       { icon: "◐", label: "Toggle theme", type: "Action", kbd: "⌘⇧L", exec: () => applyTheme(theme === "dark" ? "light" : "dark") },
       { icon: "⛁", label: "Open connection…", type: "Action", kbd: "⌘O", exec: () => setOverlay("connEditor") },
       { icon: "＋", label: "New connection…", type: "Action", exec: newProfile },
-      { icon: "⌥", label: "Show EXPLAIN plan", type: "Action", exec: runExplain },
+      { icon: "⌥", label: "Show EXPLAIN plan", type: "Action", exec: () => runExplain() },
       { icon: "⤓", label: "Import CSV…", type: "Action", exec: () => setOverlay("import") },
       { icon: "⌕", label: "Find usages & rename…", type: "Action", exec: () => setOverlay("intel") },
       { icon: "⇄", label: "Compare schemas…", type: "Action", exec: () => setOverlay("intel") },
@@ -1491,6 +1625,7 @@ export default function App() {
               exportMenu={exportMenu}
               onToggleExport={() => setExportMenu((v) => !v)}
               onExport={doExport}
+              onCopyResult={doCopyResult}
               chart={chart}
               onInspect={(t, col) => {
                 setInspectText(t);
@@ -1731,11 +1866,19 @@ export default function App() {
       {overlay === "explain" && explain && (
         <ExplainModal
           title={explain.title}
-          analyzed={explain.analyzed}
+          sql={explain.sql}
+          statement={explain.statement}
+          options={explainOpts}
+          serverMajor={serverMajor}
           nodes={explain.nodes}
           stats={explain.stats}
           suggestion={explain.suggestion}
           error={explain.error}
+          busy={explainBusy}
+          onOptions={setExplainOpts}
+          onRerun={() => runExplain(explainOpts)}
+          onExport={exportPlan}
+          onCopy={copyPlan}
           onClose={() => setOverlay(null)}
         />
       )}

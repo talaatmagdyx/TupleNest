@@ -33,6 +33,7 @@ type Props = {
   exportMenu: boolean;
   onToggleExport: () => void;
   onExport: (kind: "csv" | "json" | "md") => void;
+  onCopyResult?: (kind: "csv" | "json" | "md") => void;
   chart: { title: string; sub: string; data: ChartDatum[] } | null;
   onInspect: (text: string, colName: string) => void;
   onCopyable: (v: string | null) => void;
@@ -107,7 +108,9 @@ export default function QueryPanel(p: Props) {
           </button>
         )}
         <div className="grow" />
-        <button className="btn" onClick={p.onExplain} disabled={!p.connected}>
+        {/* Wrapped, not passed by reference: onClick would hand the click event
+            to onExplain's first parameter. */}
+        <button className="btn" onClick={() => p.onExplain()} disabled={!p.connected}>
           Explain
         </button>
         <button className="btn" onClick={p.onFormat} title="Format SQL (⌘⇧F)">
@@ -119,7 +122,7 @@ export default function QueryPanel(p: Props) {
           </button>
           {p.exportMenu && (
             <div className="drop-menu">
-              <div className="menu-label">Export result</div>
+              <div className="menu-label">Save result as</div>
               <button onClick={() => p.onExport("csv")}>
                 CSV <span>.csv</span>
               </button>
@@ -129,6 +132,14 @@ export default function QueryPanel(p: Props) {
               <button onClick={() => p.onExport("md")}>
                 Markdown <span>.md</span>
               </button>
+              {p.onCopyResult && (
+                <>
+                  <div className="divider" />
+                  <div className="menu-label">Copy to clipboard</div>
+                  <button onClick={() => p.onCopyResult!("csv")}>CSV</button>
+                  <button onClick={() => p.onCopyResult!("md")}>Markdown</button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -162,7 +173,7 @@ export default function QueryPanel(p: Props) {
             {label}
           </button>
         ))}
-        <button className="rtab" onClick={p.onExplain} title="Run EXPLAIN and show the plan">
+        <button className="rtab" onClick={() => p.onExplain()} title="Run EXPLAIN and show the plan">
           Plan
         </button>
         {p.editTarget && (
