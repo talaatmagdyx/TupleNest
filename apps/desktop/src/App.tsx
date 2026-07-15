@@ -32,6 +32,7 @@ import {
   planToJson,
   planToMarkdown,
   planToText,
+  rawExtension,
   type ExplainOptions,
   type ExportablePlan,
 } from "./lib/explain";
@@ -191,6 +192,9 @@ export default function App() {
     error: string | null;
     /** Raw server payload, kept verbatim so JSON export is byte-faithful. */
     raw: string;
+    /** The options that produced this plan — compared against the live ones to
+     *  tell the user when what they're looking at is out of date. */
+    ranOpts: ExplainOptions;
   } | null>(null);
   const [explainOpts, setExplainOpts] = useState<ExplainOptions>(DEFAULT_EXPLAIN);
   const [explainBusy, setExplainBusy] = useState(false);
@@ -1036,18 +1040,27 @@ export default function App() {
       stats: x?.stats ?? [],
       suggestion: null,
       error: null,
-      raw: "",
+      raw: x?.raw ?? "",
+      ranOpts: x?.ranOpts ?? opts,
     }));
     setOverlay("explain");
     try {
-      await invoke<QueryResult>("pg_query", { sql: stmt });
-      const rows = await invoke<unknown[][]>("pg_rows", { offset: 0, limit: 1 });
+      const qr = await invoke<QueryResult>("pg_query", { sql: stmt });
+      // FORMAT TEXT returns one row *per line* of the plan (295 for a real
+      // query here) — fetching a single row would silently keep only the first
+      // line. JSON/YAML/XML come back as one row holding the whole document.
+      const rows = await invoke<unknown[][]>("pg_rows", { offset: 0, limit: Math.max(1, qr.storedRows) });
+      const raw =
+        opts.format === "text"
+          ? rows.map((r) => String(r[0] ?? "")).join("\n")
+          : typeof rows[0]?.[0] === "string"
+            ? (rows[0][0] as string)
+            : JSON.stringify(rows[0]?.[0]);
       const cell = rows[0]?.[0];
-      const raw = typeof cell === "string" ? cell : JSON.stringify(cell);
 
-      // Only FORMAT JSON can be walked into a tree; the rest is export-only.
+      // Only FORMAT JSON can be walked into a tree; the others are shown raw.
       if (opts.format !== "json") {
-        setExplain((x) => (x ? { ...x, raw, nodes: [], stats: [], error: null } : x));
+        setExplain((x) => (x ? { ...x, raw, nodes: [], stats: [], error: null, ranOpts: opts } : x));
         setResult(null);
         setRunStatus(null);
         return;
@@ -1107,6 +1120,7 @@ export default function App() {
         suggestion,
         error: null,
         raw,
+        ranOpts: opts,
       });
       // Phase 3: keep the last few plan summaries so two runs can be compared.
       setPlans((ps) =>
@@ -1141,8 +1155,11 @@ export default function App() {
     async (kind: "json" | "txt" | "md") => {
       const p = exportablePlan();
       if (!p) return;
+      // A raw TEXT/YAML/XML payload isn't JSON, whatever menu item was clicked —
+      // don't hand it a .json extension.
+      const ext = kind === "json" ? rawExtension(p.options) : kind;
       try {
-        const path = await saveText(planFilename(explain?.title ?? "query", kind), renderPlan(kind, p), FILTERS[kind]);
+        const path = await saveText(planFilename(explain?.title ?? "query", ext), renderPlan(kind, p), FILTERS[ext]);
         if (path) showToast(`Saved ${baseName(path)}`);
       } catch (e) {
         showToast(`Export failed: ${String(e).slice(0, 60)}`);
@@ -1868,6 +1885,8 @@ export default function App() {
           title={explain.title}
           sql={explain.sql}
           statement={explain.statement}
+          raw={explain.raw}
+          stale={JSON.stringify(explain.ranOpts) !== JSON.stringify(explainOpts)}
           options={explainOpts}
           serverMajor={serverMajor}
           nodes={explain.nodes}

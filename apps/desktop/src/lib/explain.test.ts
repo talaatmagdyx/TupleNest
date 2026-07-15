@@ -9,6 +9,7 @@ import {
   planToJson,
   planToMarkdown,
   planToText,
+  rawExtension,
   type ExplainOptions,
   type ExportablePlan,
 } from "./explain";
@@ -182,6 +183,29 @@ describe("planToJson", () => {
     expect(planToJson({ ...plan, raw: "Seq Scan on users  (cost=0.00..10.00)" })).toBe(
       "Seq Scan on users  (cost=0.00..10.00)"
     );
+  });
+});
+
+describe("planToText — non-JSON formats", () => {
+  // FORMAT TEXT already *is* the plan; there are no parsed nodes to walk.
+  it("returns the raw payload verbatim for FORMAT TEXT", () => {
+    const raw = "Seq Scan on users  (cost=0.00..10.00 rows=1)\n  Filter: (id = 1)";
+    const out = planToText({ ...plan, options: opts({ format: "text" }), raw, nodes: [] });
+    expect(out).toBe(raw);
+  });
+
+  it("returns raw YAML verbatim", () => {
+    const raw = "- Plan:\n    Node Type: \"Seq Scan\"";
+    expect(planToText({ ...plan, options: opts({ format: "yaml" }), raw, nodes: [] })).toBe(raw);
+  });
+});
+
+describe("rawExtension", () => {
+  it("uses .json only for the JSON format", () => {
+    expect(rawExtension(opts({ format: "json" }))).toBe("json");
+    expect(rawExtension(opts({ format: "text" }))).toBe("txt");
+    expect(rawExtension(opts({ format: "yaml" }))).toBe("txt");
+    expect(rawExtension(opts({ format: "xml" }))).toBe("txt");
   });
 });
 

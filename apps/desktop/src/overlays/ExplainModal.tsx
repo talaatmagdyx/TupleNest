@@ -36,6 +36,10 @@ type Props = {
   options: ExplainOptions;
   serverMajor?: number;
   statement: string;
+  /** Raw server payload — shown as-is for the non-JSON formats. */
+  raw: string;
+  /** True when the options have been changed since the shown plan was produced. */
+  stale: boolean;
   nodes: PlanNode[] | null; // null = running
   stats: PlanStats;
   suggestion: string | null;
@@ -149,6 +153,12 @@ export default function ExplainModal(p: Props) {
             <strong>Careful.</strong> {i.message}
           </div>
         ))}
+        {/* Never let changed options imply the plan below reflects them. */}
+        {p.stale && !p.busy && errors.length === 0 && (
+          <div className="ex-issue stale">
+            Options changed — the plan below is from the previous run. Press <strong>Re-run</strong>.
+          </div>
+        )}
 
         <div className="ex-stmt mono" title={p.statement}>
           {p.statement}
@@ -158,11 +168,11 @@ export default function ExplainModal(p: Props) {
           <div className="plan-col">
             {p.error && <div className="error-box">{p.error}</div>}
             {!p.error && p.busy && <div className="note muted">running EXPLAIN…</div>}
+            {/* Non-JSON formats can't be drawn as a tree, but they are still
+                the plan — show them verbatim rather than sending the user away.
+                FORMAT TEXT in particular is what most people read in psql. */}
             {!p.error && !p.busy && rawOnly && (
-              <div className="note muted">
-                {p.options.format.toUpperCase()} output can't be drawn as a tree — use Export to get it verbatim,
-                or switch the format back to JSON.
-              </div>
+              <pre className="ex-raw">{p.raw || "—"}</pre>
             )}
             {!p.error && !rawOnly &&
               (p.nodes ?? []).map((n, i) => {

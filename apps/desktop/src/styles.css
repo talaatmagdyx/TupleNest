@@ -1100,6 +1100,15 @@ body { background: var(--tn-desk); background-image: none; }
 .ex-issue.error { background: rgba(239, 77, 77, .1); color: #ff9c9c; }
 .ex-issue.warn { background: rgba(255, 194, 75, .1); color: #ffd98a; }
 .ex-issue.warn strong { color: var(--tn-brand-a, #FFC24B); }
+.ex-issue.stale { background: var(--tn-as); color: var(--tn-ts); }
+.ex-issue.stale strong { color: var(--tn-accent); }
+/* Raw server output (FORMAT TEXT/YAML/XML) — shown as the plan itself. */
+.ex-raw {
+  margin: 0; padding: 12px 14px; border-radius: 6px;
+  background: var(--tn-bg); border: 1px solid var(--tn-bs);
+  font: 11.5px/1.6 "JetBrains Mono", monospace; color: var(--tn-tp);
+  white-space: pre; overflow: auto; user-select: text;
+}
 .ex-stmt {
   padding: 7px 18px; font-size: 10.5px; color: var(--tn-tm);
   background: var(--tn-bg); border-bottom: 1px solid var(--tn-bs);

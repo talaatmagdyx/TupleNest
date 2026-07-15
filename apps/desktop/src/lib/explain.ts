@@ -152,8 +152,16 @@ export function planToJson(p: ExportablePlan): string {
   }
 }
 
-/** An indented, human-readable tree with the statement and stats as a header. */
+/** Extension the raw payload should be saved under, given the server format. */
+export function rawExtension(o: ExplainOptions): "json" | "txt" | "md" {
+  return o.format === "json" ? "json" : "txt";
+}
+
+/** An indented, human-readable tree with the statement and stats as a header.
+ *  For a non-JSON server format there are no parsed nodes to walk, so the raw
+ *  payload (which already *is* the plan, e.g. FORMAT TEXT) is returned. */
 export function planToText(p: ExportablePlan): string {
+  if (p.options.format !== "json") return p.raw;
   const head = [
     `-- ${p.statement}`,
     ...p.stats.map((s) => `-- ${s.label}: ${s.value}`),
