@@ -23,6 +23,8 @@ import {
 } from "./overlays/Overlays";
 import { BrandMark } from "./lib/icons";
 import type { Catalog, CatalogTable } from "./lib/complete";
+import { summarizePlan, type PlanSummary } from "./lib/intel";
+import IntelModal from "./overlays/IntelModal";
 import { analyzeEditability, buildStatements, type CellEdit } from "./lib/dml";
 import EditReviewModal from "./overlays/EditReviewModal";
 import SchemaModal, { type SchemaExtra } from "./overlays/SchemaModal";
@@ -73,6 +75,7 @@ type OverlayKind =
   | "monitor"
   | "params"
   | "diagram"
+  | "intel"
   | "audit";
 
 export default function App() {
@@ -118,6 +121,8 @@ export default function App() {
   /** The SQL that produced `result` — editability is judged on this, not on
    *  whatever the user has since typed into the editor. */
   const [ranSql, setRanSql] = useState("");
+  /** Recent EXPLAIN summaries, oldest first — Phase 3 plan comparison. */
+  const [plans, setPlans] = useState<{ label: string; summary: PlanSummary }[]>([]);
   const [runStatus, setRunStatus] = useState<{ icon: string; text: string; color: string } | null>(null);
   const [inTx, setInTx] = useState(false);
   const [txOpenSince, setTxOpenSince] = useState<number | null>(null);
@@ -1034,6 +1039,10 @@ export default function App() {
         ? `${hot.title} dominates this plan. An index matching its filter could avoid the full scan.`
         : null;
       setExplain({ title: tabs[activeTab]?.name ?? "query", analyzed, nodes, stats, suggestion, error: null });
+      // Phase 3: keep the last few plan summaries so two runs can be compared.
+      setPlans((ps) =>
+        [...ps, { label: `${tabs[activeTab]?.name ?? "query"} · ${new Date().toLocaleTimeString()}`, summary: summarizePlan(root) }].slice(-6)
+      );
       setResult(null); // explain replaced the backend row store
       setRunStatus(null);
     } catch (e) {
@@ -1214,6 +1223,9 @@ export default function App() {
       { icon: "⛁", label: "Open connection…", type: "Action", kbd: "⌘O", exec: () => setOverlay("connEditor") },
       { icon: "＋", label: "New connection…", type: "Action", exec: newProfile },
       { icon: "⌥", label: "Show EXPLAIN plan", type: "Action", exec: runExplain },
+      { icon: "⌕", label: "Find usages & rename…", type: "Action", exec: () => setOverlay("intel") },
+      { icon: "⇄", label: "Compare schemas…", type: "Action", exec: () => setOverlay("intel") },
+      { icon: "◫", label: "Compare EXPLAIN plans…", type: "Action", exec: () => setOverlay("intel") },
       { icon: "⚙", label: "Open settings", type: "Action", exec: () => setOverlay("settings") },
     ];
     if (connected) {
@@ -1595,6 +1607,22 @@ export default function App() {
       )}
       {overlay === "txPrompt" && (
         <TxPrompt onCommit={commitAndDisconnect} onRollback={rollbackAndDisconnect} onStay={() => setOverlay(null)} />
+      )}
+      {overlay === "intel" && (
+        <IntelModal
+          tabs={tabs.map((t) => ({ name: t.name, sql: t.sql }))}
+          catalog={catalog}
+          plans={plans}
+          onJump={(tabIndex) => setActiveTab(tabIndex)}
+          onRename={(tabIndex, sql) =>
+            setTabs((ts) => {
+              const out = [...ts];
+              if (out[tabIndex]) out[tabIndex] = { ...out[tabIndex], sql, dirty: true };
+              return out;
+            })
+          }
+          onClose={() => setOverlay(null)}
+        />
       )}
       {reviewOpen && editTarget && edits.length > 0 && (
         <EditReviewModal

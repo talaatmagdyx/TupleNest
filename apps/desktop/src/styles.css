@@ -1056,6 +1056,75 @@ body { background: var(--tn-desk); background-image: none; }
 }
 
 /* ============================================================
+   PHASE 3 — SQL INTELLIGENCE (usages, schema diff, plan compare)
+   ============================================================ */
+.modal.intel { width: 720px; max-width: 94vw; height: 560px; max-height: 86vh; }
+.intel-tabs { display: flex; gap: 2px; padding: 0 16px; border-bottom: 1px solid var(--tn-bs); flex: none; }
+.intel-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.intel-input {
+  flex: 1; min-width: 0; height: 28px; padding: 0 9px; border-radius: 4px;
+  border: 1px solid var(--tn-bh); background: var(--tn-bg); color: var(--tn-tp);
+  font: 12px "JetBrains Mono", monospace; outline: none;
+}
+.intel-input:focus { border-color: var(--tn-accent); box-shadow: 0 0 0 3px var(--tn-as); }
+select.intel-input { font-family: Inter, sans-serif; }
+.intel-arrow { color: var(--tn-tm); font-size: 13px; }
+.intel-note { font-size: 11.5px; color: var(--tn-tm); line-height: 1.5; margin: 0 0 10px; }
+.intel-list { display: flex; flex-direction: column; gap: 3px; }
+.intel-hit {
+  display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
+  padding: 6px 9px; border: none; border-radius: 4px; background: transparent;
+  color: var(--tn-ts); cursor: pointer; font-size: 12px;
+}
+.intel-hit:hover { background: var(--tn-s2); }
+.ih-file { font-weight: 650; color: var(--tn-tp); }
+.ih-line { font: 10.5px "JetBrains Mono", monospace; color: var(--tn-accent); }
+.ih-prev {
+  font: 11px "JetBrains Mono", monospace; color: var(--tn-tm);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.diff-block { margin-bottom: 8px; border: 1px solid var(--tn-bs); border-radius: 6px; overflow: hidden; }
+.diff-t {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+  background: var(--tn-s2); font: 650 12px "JetBrains Mono", monospace; color: var(--tn-tp);
+}
+.dt-badge, .dc-badge {
+  font: 700 8.5px Inter; letter-spacing: .08em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 3px;
+}
+.k-added .dt-badge, .k-added .dc-badge { background: rgba(63,185,80,.18); color: #5fd07a; }
+.k-removed .dt-badge, .k-removed .dc-badge { background: rgba(239,77,77,.18); color: #ff8080; }
+.k-changed .dt-badge { background: rgba(255,194,75,.18); color: #ffc24b; }
+.k-type-changed .dc-badge, .k-nullability-changed .dc-badge, .k-pk-changed .dc-badge {
+  background: rgba(255,194,75,.18); color: #ffc24b;
+}
+.diff-c {
+  display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+  border-top: 1px solid var(--tn-bs); font-size: 11.5px;
+}
+.dc-name { font: 12px "JetBrains Mono", monospace; color: var(--tn-tp); }
+.dc-detail { margin-left: auto; font: 11px "JetBrains Mono", monospace; color: var(--tn-tm); }
+
+.plan-cmp-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-size: 12px;
+}
+.pc-old { color: var(--tn-tm); }
+.pc-new { color: var(--tn-tp); font-weight: 650; }
+.pc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.pc-cell {
+  display: flex; flex-direction: column; gap: 3px; padding: 12px;
+  border: 1px solid var(--tn-bs); border-radius: 8px; background: var(--tn-bg);
+}
+.pc-cell.worse { border-color: rgba(239,77,77,.4); }
+.pc-cell.better { border-color: rgba(63,185,80,.4); }
+.pc-k { font: 700 9px Inter; letter-spacing: .1em; text-transform: uppercase; color: var(--tn-tm); }
+.pc-v { font: 700 17px "JetBrains Mono", monospace; color: var(--tn-tp); }
+.pc-cell.worse .pc-v { color: #ff8080; }
+.pc-cell.better .pc-v { color: #5fd07a; }
+.pc-p { font: 11px "JetBrains Mono", monospace; color: var(--tn-tm); }
+
+/* ============================================================
    SAFE ROW EDITING — staged cells, pending bar, review modal
    ============================================================ */
 .edit-chip {
