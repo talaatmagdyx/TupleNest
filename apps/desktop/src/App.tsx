@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import Titlebar from "./app-shell/Titlebar";
 import StatusBar from "./app-shell/StatusBar";
 import ActivityRail, { type RailView } from "./app-shell/ActivityRail";
@@ -1277,10 +1279,48 @@ export default function App() {
   const explorerSource: "live" | "cached" | "—" =
     connected && !metaCached ? "live" : schemas !== null || metaCached ? "cached" : "—";
 
-  // Dormant updater hook: a future Tauri updater event can surface the toast.
+  /* ---------------- auto-update ---------------- */
+
+  // Held so the toast's "Update" button installs the very update we found,
+  // rather than re-checking and racing.
+  const pendingUpdate = useRef<Update | null>(null);
+  const [updating, setUpdating] = useState(false);
+
   useEffect(() => {
-    (window as unknown as Record<string, unknown>).__tuplenestUpdate = setUpdateInfo;
+    let cancelled = false;
+    (async () => {
+      try {
+        const up = await check();
+        if (!up || cancelled) return;
+        pendingUpdate.current = up;
+        setUpdateInfo({ version: up.version, notes: up.body ?? "" });
+      } catch {
+        // No endpoint configured, offline, or a dev build — never bother the
+        // user about a failed update check.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  const installUpdate = useCallback(async () => {
+    const up = pendingUpdate.current;
+    if (!up) return;
+    if (inTx) {
+      showToast("Commit or roll back your transaction before updating");
+      return;
+    }
+    setUpdating(true);
+    try {
+      showToast("Downloading update…");
+      await up.downloadAndInstall();
+      await relaunch();
+    } catch (e) {
+      setUpdating(false);
+      showToast(`Update failed: ${String(e).slice(0, 60)}`);
+    }
+  }, [inTx, showToast]);
 
   return (
     <div className={`shell ${connected ? `env-frame env-${connectedEnv ?? "dev"}` : ""}`}>
@@ -1639,10 +1679,8 @@ export default function App() {
         <UpdateToast
           version={updateInfo.version}
           notes={updateInfo.notes}
-          onUpdate={() => {
-            setUpdateInfo(null);
-            showToast("Restarting to update…");
-          }}
+          busy={updating}
+          onUpdate={installUpdate}
           onDismiss={() => setUpdateInfo(null)}
         />
       )}

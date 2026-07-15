@@ -197,6 +197,11 @@ fn audit_list(
 
 fn main() {
     tauri::Builder::default()
+        // Auto-update. Payloads are verified against the minisign public key in
+        // tauri.conf.json — an update that isn't signed with our private key is
+        // rejected, so a compromised release host still cannot ship code.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Hardened Runtime entitlements. Notarization requires the hardened runtime,
+    which blocks a few things by default; we opt back in only to what TupleNest
+    actually needs.
+
+    Deliberately NOT requested:
+      - com.apple.security.cs.allow-unsigned-executable-memory
+      - com.apple.security.cs.disable-library-validation
+      - com.apple.security.cs.allow-dyld-environment-variables
+    A database client has no business with any of those, and each one weakens
+    the runtime protections notarization is meant to provide.
+  -->
+
+  <!-- Outbound TCP to database servers and SSH jump hosts. -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+
+  <!-- Reading CA bundles, SSH keys, and exporting CSV/JSON the user picks. -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+</dict>
+</plist>

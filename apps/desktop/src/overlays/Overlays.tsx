@@ -331,6 +331,7 @@ export function Cheatsheet(p: { onClose: () => void }) {
 export function UpdateToast(p: {
   version: string;
   notes: string;
+  busy?: boolean;
   onUpdate: () => void;
   onDismiss: () => void;
 }) {
@@ -348,10 +349,10 @@ export function UpdateToast(p: {
         TupleNest {p.version} is ready to install — <b style={{ color: "var(--tn-ts)" }}>{p.notes}</b>
       </p>
       <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn primary" onClick={p.onUpdate}>
-          Restart &amp; update
+        <button className="btn primary" onClick={p.onUpdate} disabled={p.busy}>
+          {p.busy ? "Updating…" : "Restart & update"}
         </button>
-        <button className="btn" onClick={p.onDismiss}>
+        <button className="btn" onClick={p.onDismiss} disabled={p.busy}>
           Later
         </button>
       </div>

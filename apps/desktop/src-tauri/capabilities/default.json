@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Main window: core runtime only. Every TupleNest command is explicitly listed; nothing broad is exposed.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "updater:default", "process:allow-restart"]
 }
