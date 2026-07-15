@@ -398,6 +398,9 @@ impl DatabaseSession for PostgresSession {
                     .collect::<Vec<_>>())
             }
             MetadataRequest::ListObjects { schema } => {
+                // `NOT c.relispartition` is the important clause: partitions are
+                // reached through their parent, never listed beside it. Without
+                // it this schema returns 4,196 rows of which 4,170 are noise.
                 let rows = self
                     .client
                     .query(
@@ -408,12 +411,17 @@ impl DatabaseSession for PostgresSession {
                                   WHEN 'v' THEN 'view'
                                   WHEN 'm' THEN 'matview'
                                   WHEN 'f' THEN 'foreign'
+                                  WHEN 'S' THEN 'sequence'
                                 END AS kind,
-                                obj_description(c.oid, 'pg_class') AS comment
+                                obj_description(c.oid, 'pg_class') AS comment,
+                                c.relkind = 'p' AS is_partitioned,
+                                (SELECT count(*) FROM pg_inherits i WHERE i.inhparent = c.oid)
+                                  AS partition_count
                          FROM pg_class c
                          JOIN pg_namespace n ON n.oid = c.relnamespace
                          WHERE n.nspname = $1
-                           AND c.relkind IN ('r','p','v','m','f')
+                           AND c.relkind IN ('r','p','v','m','f','S')
+                           AND NOT c.relispartition
                          ORDER BY c.relname",
                         &[&schema],
                     )
@@ -426,6 +434,157 @@ impl DatabaseSession for PostgresSession {
                             "name": r.get::<_, String>(0),
                             "kind": r.get::<_, String>(1),
                             "comment": r.get::<_, Option<String>>(2),
+                            "isPartitioned": r.get::<_, bool>(3),
+                            "partitionCount": r.get::<_, i64>(4),
+                        })
+                    })
+                    .collect::<Vec<_>>())
+            }
+            MetadataRequest::ListPartitions { schema, table } => {
+                let rows = self
+                    .client
+                    .query(
+                        "SELECT c.relname,
+                                pg_get_expr(c.relpartbound, c.oid) AS bounds,
+                                pg_total_relation_size(c.oid) AS bytes,
+                                c.reltuples::bigint AS rows_estimate
+                         FROM pg_inherits i
+                         JOIN pg_class c ON c.oid = i.inhrelid
+                         JOIN pg_class p ON p.oid = i.inhparent
+                         JOIN pg_namespace n ON n.oid = p.relnamespace
+                         WHERE n.nspname = $1 AND p.relname = $2
+                         ORDER BY c.relname",
+                        &[&schema, &table],
+                    )
+                    .await
+                    .map_err(normalize_error)?;
+                serde_json::json!(rows
+                    .iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "name": r.get::<_, String>(0),
+                            "bounds": r.get::<_, Option<String>>(1),
+                            "bytes": r.get::<_, i64>(2),
+                            "rowsEstimate": r.get::<_, i64>(3),
+                        })
+                    })
+                    .collect::<Vec<_>>())
+            }
+            MetadataRequest::ListIndexes { schema, table } => {
+                // `idx_scan` is what makes this worth showing: with 8,885
+                // indexes in one schema, "which have never been used" is the
+                // only question that matters.
+                let rows = self
+                    .client
+                    .query(
+                        "SELECT ic.relname,
+                                pg_get_indexdef(i.indexrelid) AS definition,
+                                i.indisunique,
+                                i.indisprimary,
+                                pg_relation_size(i.indexrelid) AS bytes,
+                                COALESCE(s.idx_scan, 0) AS scans,
+                                i.indisvalid
+                         FROM pg_index i
+                         JOIN pg_class ic ON ic.oid = i.indexrelid
+                         JOIN pg_class tc ON tc.oid = i.indrelid
+                         JOIN pg_namespace n ON n.oid = tc.relnamespace
+                         LEFT JOIN pg_stat_user_indexes s ON s.indexrelid = i.indexrelid
+                         WHERE n.nspname = $1 AND tc.relname = $2
+                         ORDER BY i.indisprimary DESC, ic.relname",
+                        &[&schema, &table],
+                    )
+                    .await
+                    .map_err(normalize_error)?;
+                serde_json::json!(rows
+                    .iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "name": r.get::<_, String>(0),
+                            "definition": r.get::<_, String>(1),
+                            "isUnique": r.get::<_, bool>(2),
+                            "isPrimary": r.get::<_, bool>(3),
+                            "bytes": r.get::<_, i64>(4),
+                            "scans": r.get::<_, i64>(5),
+                            "isValid": r.get::<_, bool>(6),
+                        })
+                    })
+                    .collect::<Vec<_>>())
+            }
+            MetadataRequest::ListTypes { schema } => {
+                let rows = self
+                    .client
+                    .query(
+                        "SELECT t.typname,
+                                CASE t.typtype
+                                  WHEN 'e' THEN 'enum'
+                                  WHEN 'c' THEN 'composite'
+                                  WHEN 'd' THEN 'domain'
+                                  WHEN 'r' THEN 'range'
+                                  ELSE 'type'
+                                END AS kind,
+                                obj_description(t.oid, 'pg_type') AS comment,
+                                (SELECT string_agg(e.enumlabel, ', ' ORDER BY e.enumsortorder)
+                                   FROM pg_enum e WHERE e.enumtypid = t.oid) AS labels
+                         FROM pg_type t
+                         JOIN pg_namespace n ON n.oid = t.typnamespace
+                         WHERE n.nspname = $1
+                           AND t.typtype IN ('e','c','d','r')
+                           -- skip the implicit row type every table creates
+                           AND NOT EXISTS (
+                             SELECT 1 FROM pg_class c
+                             WHERE c.oid = t.typrelid AND c.relkind <> 'c'
+                           )
+                         ORDER BY t.typname",
+                        &[&schema],
+                    )
+                    .await
+                    .map_err(normalize_error)?;
+                serde_json::json!(rows
+                    .iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "name": r.get::<_, String>(0),
+                            "kind": r.get::<_, String>(1),
+                            "comment": r.get::<_, Option<String>>(2),
+                            "labels": r.get::<_, Option<String>>(3),
+                        })
+                    })
+                    .collect::<Vec<_>>())
+            }
+            MetadataRequest::ListRoutines { schema } => {
+                let rows = self
+                    .client
+                    .query(
+                        "SELECT p.proname,
+                                CASE p.prokind
+                                  WHEN 'p' THEN 'procedure'
+                                  WHEN 'a' THEN 'aggregate'
+                                  WHEN 'w' THEN 'window'
+                                  ELSE 'function'
+                                END AS kind,
+                                pg_get_function_identity_arguments(p.oid) AS args,
+                                pg_get_function_result(p.oid) AS returns,
+                                obj_description(p.oid, 'pg_proc') AS comment,
+                                l.lanname
+                         FROM pg_proc p
+                         JOIN pg_namespace n ON n.oid = p.pronamespace
+                         JOIN pg_language l ON l.oid = p.prolang
+                         WHERE n.nspname = $1
+                         ORDER BY p.proname",
+                        &[&schema],
+                    )
+                    .await
+                    .map_err(normalize_error)?;
+                serde_json::json!(rows
+                    .iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "name": r.get::<_, String>(0),
+                            "kind": r.get::<_, String>(1),
+                            "args": r.get::<_, Option<String>>(2),
+                            "returns": r.get::<_, Option<String>>(3),
+                            "comment": r.get::<_, Option<String>>(4),
+                            "language": r.get::<_, String>(5),
                         })
                     })
                     .collect::<Vec<_>>())

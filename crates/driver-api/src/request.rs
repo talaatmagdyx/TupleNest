@@ -123,6 +123,27 @@ pub enum MetadataRequest {
     Relationships {
         schema: String,
     },
+    /// Child partitions of one partitioned table. Partitions are deliberately
+    /// excluded from `ListObjects` — a schema here has 153 partitioned parents
+    /// and 4,170 partitions, so listing them flat buries everything else.
+    ListPartitions {
+        schema: String,
+        table: String,
+    },
+    /// Indexes on one table, with size and usage counters so dead indexes are
+    /// visible rather than merely present.
+    ListIndexes {
+        schema: String,
+        table: String,
+    },
+    /// User-defined types: enums, composites, domains.
+    ListTypes {
+        schema: String,
+    },
+    /// Functions and procedures.
+    ListRoutines {
+        schema: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

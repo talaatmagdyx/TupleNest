@@ -616,6 +616,14 @@ fn cache_scope(request: &MetadataRequest) -> (&'static str, String, String) {
         // Live-only requests are never cached.
         MetadataRequest::ServerActivity => ("activity", String::new(), String::new()),
         MetadataRequest::Relationships { schema } => ("rels", schema.clone(), String::new()),
+        MetadataRequest::ListPartitions { schema, table } => {
+            ("partitions", schema.clone(), table.clone())
+        }
+        // Index usage counters are live numbers — caching them would show
+        // "never scanned" for an index that is being scanned right now.
+        MetadataRequest::ListIndexes { schema, table } => ("indexes", schema.clone(), table.clone()),
+        MetadataRequest::ListTypes { schema } => ("types", schema.clone(), String::new()),
+        MetadataRequest::ListRoutines { schema } => ("routines", schema.clone(), String::new()),
     }
 }
 

@@ -63,7 +63,11 @@ import type {
   AppInfo,
   ConnectionRecord,
   DbColumn,
+  DbIndex,
   DbObject,
+  DbPartition,
+  DbRoutine,
+  DbType,
   HistoryEntry,
   MetadataOut,
   PgParams,
@@ -201,10 +205,15 @@ export default function App() {
 
   // Explorer
   const [schemas, setSchemas] = useState<string[] | null>(null);
-  const [openSchemas, setOpenSchemas] = useState<Record<string, boolean>>({});
+  /** One flat map of expanded nodes: s:schema, g:schema:kind, t:schema.table,
+   *  c:/i:/p: for a table's columns, indexes and partitions. */
+  const [openNodes, setOpenNodes] = useState<Record<string, boolean>>({});
   const [objects, setObjects] = useState<Record<string, DbObject[]>>({});
-  const [openTables, setOpenTables] = useState<Record<string, boolean>>({});
   const [columns, setColumns] = useState<Record<string, DbColumn[]>>({});
+  const [indexes, setIndexes] = useState<Record<string, DbIndex[]>>({});
+  const [partitions, setPartitions] = useState<Record<string, DbPartition[]>>({});
+  const [types, setTypes] = useState<Record<string, DbType[]>>({});
+  const [routines, setRoutines] = useState<Record<string, DbRoutine[]>>({});
   const [metaCached, setMetaCached] = useState(false);
 
   // History
@@ -314,10 +323,13 @@ export default function App() {
 
   const resetExplorer = useCallback(() => {
     setSchemas(null);
-    setOpenSchemas({});
+    setOpenNodes({});
     setObjects({});
-    setOpenTables({});
     setColumns({});
+    setIndexes({});
+    setPartitions({});
+    setTypes({});
+    setRoutines({});
     setMetaCached(false);
   }, []);
 
@@ -603,44 +615,56 @@ export default function App() {
 
   /* ---------------- explorer ---------------- */
 
-  const toggleSchema = useCallback(
-    async (schema: string) => {
-      const opening = !openSchemas[schema];
-      setOpenSchemas((m) => ({ ...m, [schema]: opening }));
-      if (opening && !(schema in objects)) {
-        try {
-          const r = await metaFetch({ kind: "list_objects", schema });
-          if (r) {
-            setObjects((m) => ({ ...m, [schema]: r.payload as DbObject[] }));
-            if (r.cached) setMetaCached(true);
-          } else setObjects((m) => ({ ...m, [schema]: [] }));
-        } catch (e) {
-          setStatus(`Explorer error: ${e}`);
-        }
-      }
-    },
-    [openSchemas, objects, metaFetch]
-  );
+  /** Expand/collapse a tree node, fetching only what that node needs.
+   *
+   *  Nothing loads until it is opened: a schema here holds 13,103 relations,
+   *  so eager loading is not an option. Node ids carry their own meaning —
+   *  `s:` schema, `g:` group, `t:` table, `c:`/`i:`/`p:` a table's columns,
+   *  indexes and partitions. */
+  const toggleNode = useCallback(
+    async (key: string) => {
+      const opening = !openNodes[key];
+      setOpenNodes((m) => ({ ...m, [key]: opening }));
+      if (!opening) return;
 
-  const toggleTable = useCallback(
-    async (schema: string, name: string) => {
-      const key = `${schema}.${name}`;
-      const opening = !openTables[key];
-      setOpenTables((m) => ({ ...m, [key]: opening }));
-      if (opening && !(key in columns)) {
-        try {
+      const [tag, rest] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
+      const table = () => {
+        const i = rest.lastIndexOf(".");
+        return { schema: rest.slice(0, i), name: rest.slice(i + 1) };
+      };
+
+      try {
+        if (tag === "s" && !(rest in objects)) {
+          const r = await metaFetch({ kind: "list_objects", schema: rest });
+          setObjects((m) => ({ ...m, [rest]: r ? (r.payload as DbObject[]) : [] }));
+          if (r?.cached) setMetaCached(true);
+          // Types and routines are small and make the groups appear at once.
+          metaFetch({ kind: "list_types", schema: rest })
+            .then((t) => setTypes((m) => ({ ...m, [rest]: t ? (t.payload as DbType[]) : [] })))
+            .catch(() => setTypes((m) => ({ ...m, [rest]: [] })));
+          metaFetch({ kind: "list_routines", schema: rest })
+            .then((t) => setRoutines((m) => ({ ...m, [rest]: t ? (t.payload as DbRoutine[]) : [] })))
+            .catch(() => setRoutines((m) => ({ ...m, [rest]: [] })));
+        } else if (tag === "c" && !(rest in columns)) {
+          const { schema, name } = table();
           const r = await metaFetch({ kind: "describe_object", schema, name });
-          if (r) {
-            const desc = r.payload as { columns: DbColumn[] };
-            setColumns((m) => ({ ...m, [key]: desc.columns }));
-            if (r.cached) setMetaCached(true);
-          } else setColumns((m) => ({ ...m, [key]: [] }));
-        } catch (e) {
-          setStatus(`Explorer error: ${e}`);
+          const desc = r?.payload as { columns: DbColumn[] } | undefined;
+          setColumns((m) => ({ ...m, [rest]: desc?.columns ?? [] }));
+          if (r?.cached) setMetaCached(true);
+        } else if (tag === "i" && !(rest in indexes)) {
+          const { schema, name } = table();
+          const r = await metaFetch({ kind: "list_indexes", schema, table: name });
+          setIndexes((m) => ({ ...m, [rest]: r ? (r.payload as DbIndex[]) : [] }));
+        } else if (tag === "p" && !(rest in partitions)) {
+          const { schema, name } = table();
+          const r = await metaFetch({ kind: "list_partitions", schema, table: name });
+          setPartitions((m) => ({ ...m, [rest]: r ? (r.payload as DbPartition[]) : [] }));
         }
+      } catch (e) {
+        setStatus(`Explorer error: ${e}`);
       }
     },
-    [openTables, columns, metaFetch]
+    [openNodes, objects, columns, indexes, partitions, metaFetch]
   );
 
   /* ---------------- completion catalog ---------------- */
@@ -1547,12 +1571,14 @@ export default function App() {
                 schemas={schemas}
                 metaCached={metaCached}
                 connected={connected}
-                openSchemas={openSchemas}
+                open={openNodes}
+                onToggle={toggleNode}
                 objects={objects}
-                openTables={openTables}
                 columns={columns}
-                onToggleSchema={toggleSchema}
-                onToggleTable={toggleTable}
+                indexes={indexes}
+                partitions={partitions}
+                types={types}
+                routines={routines}
                 onInsertSelect={insertSelect}
                 onDescribe={describeObject}
                 onConnect={saved.length ? () => setConnMenu(true) : newProfile}

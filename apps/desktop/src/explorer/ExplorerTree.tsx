@@ -1,33 +1,352 @@
 import { useState } from "react";
-import type { DbColumn, DbObject } from "../ipc/types";
+import type { DbColumn, DbIndex, DbObject, DbPartition, DbRoutine, DbType } from "../ipc/types";
 import { DbIcon, SearchIcon } from "../lib/icons";
+
+/**
+ * Schema tree.
+ *
+ * Objects are grouped by kind, and partitions hang under their parent rather
+ * than beside it. On a real schema here that is the difference between 4,196
+ * top-level rows — 4,170 of them `_y2024q1`-style partitions — and 48.
+ * Partitioning is multi-level (channel, then quarter), so partitions recurse.
+ */
+
+export type NodeKey = string;
 
 type Props = {
   schemas: string[] | null;
   metaCached: boolean;
   connected: boolean;
-  openSchemas: Record<string, boolean>;
+  /** Expanded state, keyed by node id. */
+  open: Record<NodeKey, boolean>;
+  onToggle: (key: NodeKey) => void;
+
   objects: Record<string, DbObject[]>;
-  openTables: Record<string, boolean>;
   columns: Record<string, DbColumn[]>;
-  onToggleSchema: (schema: string) => void;
-  onToggleTable: (schema: string, name: string) => void;
+  indexes: Record<string, DbIndex[]>;
+  partitions: Record<string, DbPartition[]>;
+  types: Record<string, DbType[]>;
+  routines: Record<string, DbRoutine[]>;
+
   onInsertSelect: (schema: string, name: string) => void;
   onDescribe: (schema: string, name: string) => void;
   onConnect?: () => void;
 };
 
-function objIcon(kind: string): { ch: string; color: string } {
-  if (kind === "view") return { ch: "V", color: "var(--tn-purple)" };
-  if (kind === "matview") return { ch: "M", color: "var(--tn-purple)" };
-  if (kind === "foreign") return { ch: "F", color: "var(--tn-warning)" };
-  return { ch: "T", color: "var(--tn-accent)" };
+const KINDS: { kind: string; label: string; ch: string; color: string }[] = [
+  { kind: "table", label: "Tables", ch: "T", color: "var(--tn-accent)" },
+  { kind: "view", label: "Views", ch: "V", color: "var(--tn-purple)" },
+  { kind: "matview", label: "Materialized views", ch: "M", color: "var(--tn-purple)" },
+  { kind: "foreign", label: "Foreign tables", ch: "F", color: "var(--tn-warning)" },
+  { kind: "sequence", label: "Sequences", ch: "S", color: "var(--tn-success)" },
+];
+
+const fmtBytes = (n: number): string => {
+  if (n < 1024) return `${n} B`;
+  const u = ["KB", "MB", "GB", "TB"];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < u.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${u[i]}`;
+};
+
+function Row(p: {
+  depth: number;
+  open?: boolean;
+  arrow?: boolean;
+  icon?: React.ReactNode;
+  label: React.ReactNode;
+  badge?: React.ReactNode;
+  title?: string;
+  act?: React.ReactNode;
+  onClick?: () => void;
+  onDoubleClick?: () => void;
+}) {
+  return (
+    <div
+      className="tree-row"
+      style={{ paddingLeft: 8 + p.depth * 13 }}
+      title={p.title}
+      onClick={p.onClick}
+      onDoubleClick={p.onDoubleClick}
+    >
+      <span className={`caret ${p.open ? "open" : ""}`} style={{ visibility: p.arrow ? "visible" : "hidden" }}>
+        ▶
+      </span>
+      {p.icon}
+      <span className="tl">{p.label}</span>
+      {p.badge}
+      {p.act}
+    </div>
+  );
 }
+
+const Chip = ({ ch, color }: { ch: string; color: string }) => (
+  <span className="obj-ic" style={{ color }}>
+    {ch}
+  </span>
+);
 
 export default function ExplorerTree(p: Props) {
   const [filter, setFilter] = useState("");
   const f = filter.trim().toLowerCase();
   const match = (name: string) => !f || name.toLowerCase().includes(f);
+  const isOpen = (k: NodeKey) => !!p.open[k];
+
+  /** A table — or a partition, which is also a table — and its children. */
+  const renderTable = (schema: string, o: DbObject, depth: number) => {
+    const key = `${schema}.${o.name}`;
+    const meta = KINDS.find((k) => k.kind === o.kind) ?? KINDS[0];
+    const cols = p.columns[key];
+    const idx = p.indexes[key];
+    const parts = p.partitions[key];
+
+    return (
+      <div key={`t:${key}`}>
+        <Row
+          depth={depth}
+          arrow
+          open={isOpen(`t:${key}`)}
+          icon={<Chip ch={meta.ch} color={meta.color} />}
+          label={o.name}
+          title={o.comment ?? o.name}
+          badge={
+            o.isPartitioned ? (
+              <span className="part-badge" title={`Partitioned — ${o.partitionCount} direct partitions`}>
+                {o.partitionCount}
+              </span>
+            ) : undefined
+          }
+          act={
+            <span className="hover-act">
+              <span
+                title="Describe"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  p.onDescribe(schema, o.name);
+                }}
+              >
+                ⓘ
+              </span>
+            </span>
+          }
+          onClick={() => p.onToggle(`t:${key}`)}
+          onDoubleClick={() => p.onInsertSelect(schema, o.name)}
+        />
+        {isOpen(`t:${key}`) && (
+          <>
+            <Row
+              depth={depth + 1}
+              arrow
+              open={isOpen(`c:${key}`)}
+              label={<span className="grp">Columns</span>}
+              badge={cols ? <span className="count">{cols.length}</span> : undefined}
+              onClick={() => p.onToggle(`c:${key}`)}
+            />
+            {isOpen(`c:${key}`) &&
+              (cols === undefined ? (
+                <div className="note" style={{ paddingLeft: 8 + (depth + 2) * 13 }}>
+                  loading…
+                </div>
+              ) : (
+                cols.map((c) => (
+                  <div key={c.name} className="tree-row leaf" style={{ paddingLeft: 8 + (depth + 2) * 13 }}>
+                    <span className="cn">{c.name}</span>
+                    <span className="ct">{c.dbType}</span>
+                    {c.primaryKey && <span className="pk">PK</span>}
+                  </div>
+                ))
+              ))}
+
+            <Row
+              depth={depth + 1}
+              arrow
+              open={isOpen(`i:${key}`)}
+              label={<span className="grp">Indexes</span>}
+              badge={idx ? <span className="count">{idx.length}</span> : undefined}
+              onClick={() => p.onToggle(`i:${key}`)}
+            />
+            {isOpen(`i:${key}`) &&
+              (idx === undefined ? (
+                <div className="note" style={{ paddingLeft: 8 + (depth + 2) * 13 }}>
+                  loading…
+                </div>
+              ) : idx.length === 0 ? (
+                <div className="note" style={{ paddingLeft: 8 + (depth + 2) * 13 }}>
+                  none
+                </div>
+              ) : (
+                idx.map((ix) => (
+                  <div
+                    key={ix.name}
+                    className="tree-row leaf"
+                    style={{ paddingLeft: 8 + (depth + 2) * 13 }}
+                    title={ix.definition}
+                  >
+                    <span className="cn">{ix.name}</span>
+                    {ix.isPrimary && <span className="pk">PK</span>}
+                    {ix.isUnique && !ix.isPrimary && <span className="uq">UNIQUE</span>}
+                    {!ix.isValid && <span className="dead">INVALID</span>}
+                    {/* The number that matters on a schema with 8,885 indexes. */}
+                    {ix.scans === 0 && ix.isValid && !ix.isPrimary && (
+                      <span className="dead" title="Never scanned since the stats were last reset">
+                        UNUSED
+                      </span>
+                    )}
+                    <span className="ct">{fmtBytes(ix.bytes)}</span>
+                  </div>
+                ))
+              ))}
+
+            {o.isPartitioned && (
+              <>
+                <Row
+                  depth={depth + 1}
+                  arrow
+                  open={isOpen(`p:${key}`)}
+                  label={<span className="grp">Partitions</span>}
+                  badge={<span className="count">{o.partitionCount}</span>}
+                  onClick={() => p.onToggle(`p:${key}`)}
+                />
+                {isOpen(`p:${key}`) &&
+                  (parts === undefined ? (
+                    <div className="note" style={{ paddingLeft: 8 + (depth + 2) * 13 }}>
+                      loading…
+                    </div>
+                  ) : (
+                    parts
+                      .filter((pt) => match(pt.name))
+                      .map((pt) =>
+                        renderTable(
+                          schema,
+                          {
+                            name: pt.name,
+                            kind: "table",
+                            comment: pt.bounds,
+                            // A partition may itself be partitioned; its own
+                            // child count arrives when it is expanded.
+                            isPartitioned: (p.partitions[`${schema}.${pt.name}`]?.length ?? 0) > 0,
+                            partitionCount: p.partitions[`${schema}.${pt.name}`]?.length ?? 0,
+                          },
+                          depth + 2
+                        )
+                      )
+                  ))}
+              </>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
+
+  const renderSchema = (schema: string) => {
+    const objs = p.objects[schema];
+    const types = p.types[schema];
+    const routines = p.routines[schema];
+    const open = isOpen(`s:${schema}`);
+
+    return (
+      <div key={schema}>
+        <Row
+          depth={0}
+          arrow
+          open={open}
+          icon={
+            <span style={{ color: "var(--tn-ts)", display: "inline-flex" }}>
+              <DbIcon />
+            </span>
+          }
+          label={<span style={{ fontWeight: 600, color: "var(--tn-tp)" }}>{schema}</span>}
+          badge={objs ? <span className="count">{objs.length}</span> : undefined}
+          onClick={() => p.onToggle(`s:${schema}`)}
+        />
+        {open && objs === undefined && <div className="note" style={{ paddingLeft: 21 }}>loading…</div>}
+        {open &&
+          objs !== undefined &&
+          KINDS.map(({ kind, label }) => {
+            const all = objs.filter((o) => o.kind === kind);
+            if (all.length === 0) return null;
+            const items = all.filter((o) => match(o.name));
+            const gk = `g:${schema}:${kind}`;
+            return (
+              <div key={kind}>
+                <Row
+                  depth={1}
+                  arrow
+                  open={isOpen(gk)}
+                  label={<span className="grp">{label}</span>}
+                  badge={<span className="count">{f ? `${items.length}/${all.length}` : all.length}</span>}
+                  onClick={() => p.onToggle(gk)}
+                />
+                {isOpen(gk) &&
+                  (items.length === 0 ? (
+                    <div className="note" style={{ paddingLeft: 34 }}>no match</div>
+                  ) : (
+                    items.map((o) => renderTable(schema, o, 2))
+                  ))}
+              </div>
+            );
+          })}
+
+        {/* Enums live here. They were invisible before, despite being on the
+            table you look at most. */}
+        {open && types !== undefined && types.length > 0 && (
+          <>
+            <Row
+              depth={1}
+              arrow
+              open={isOpen(`g:${schema}:types`)}
+              label={<span className="grp">Types &amp; enums</span>}
+              badge={<span className="count">{types.length}</span>}
+              onClick={() => p.onToggle(`g:${schema}:types`)}
+            />
+            {isOpen(`g:${schema}:types`) &&
+              types
+                .filter((t) => match(t.name))
+                .map((t) => (
+                  <div key={t.name} className="tree-row leaf" style={{ paddingLeft: 34 }} title={t.labels ?? t.kind}>
+                    <Chip ch="E" color="var(--tn-brand-a, #FFC24B)" />
+                    <span className="cn">{t.name}</span>
+                    <span className="ct">{t.labels ?? t.kind}</span>
+                  </div>
+                ))}
+          </>
+        )}
+
+        {open && routines !== undefined && routines.length > 0 && (
+          <>
+            <Row
+              depth={1}
+              arrow
+              open={isOpen(`g:${schema}:routines`)}
+              label={<span className="grp">Functions</span>}
+              badge={<span className="count">{routines.length}</span>}
+              onClick={() => p.onToggle(`g:${schema}:routines`)}
+            />
+            {isOpen(`g:${schema}:routines`) &&
+              routines
+                .filter((r) => match(r.name))
+                .map((r) => (
+                  <div
+                    key={`${r.name}(${r.args ?? ""})`}
+                    className="tree-row leaf"
+                    style={{ paddingLeft: 34 }}
+                    title={`${r.name}(${r.args ?? ""}) → ${r.returns ?? "void"} · ${r.language}`}
+                  >
+                    <Chip ch="ƒ" color="var(--tn-success)" />
+                    <span className="cn">{r.name}</span>
+                    <span className="ct">{r.returns ?? r.kind}</span>
+                  </div>
+                ))}
+          </>
+        )}
+      </div>
+    );
+  };
 
   return (
     <>
@@ -47,7 +366,13 @@ export default function ExplorerTree(p: Props) {
           <span className="muted" style={{ display: "inline-flex" }}>
             <SearchIcon />
           </span>
-          <input placeholder="Filter objects…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+          <input
+            placeholder="Filter objects…"
+            spellCheck={false}
+            autoComplete="off"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
         </div>
       )}
       <div className="tree">
@@ -62,90 +387,7 @@ export default function ExplorerTree(p: Props) {
             )}
           </div>
         )}
-        {(p.schemas ?? []).map((s) => {
-          const objs = p.objects[s];
-          const visible = f && objs ? objs.filter((o) => match(o.name)) : objs;
-          if (f && objs && visible && visible.length === 0) return null;
-          return (
-            <div key={s}>
-              <button className="tree-row" onClick={() => p.onToggleSchema(s)}>
-                <span className={`caret ${p.openSchemas[s] || f ? "open" : ""}`}>▶</span>
-                <span style={{ color: "var(--tn-ts)", display: "inline-flex" }}>
-                  <DbIcon />
-                </span>
-                <span style={{ fontWeight: 600, color: "var(--tn-tp)" }}>{s}</span>
-                {objs && <span className="count">{objs.length}</span>}
-              </button>
-              {(p.openSchemas[s] || (f && objs)) && (
-                <div className="nested">
-                  {!objs && <div className="note">loading…</div>}
-                  {objs && objs.length === 0 && <div className="note">empty</div>}
-                  {(visible ?? []).map((o) => {
-                    const key = `${s}.${o.name}`;
-                    const ic = objIcon(o.kind);
-                    return (
-                      <div key={o.name}>
-                        <button className="tree-row" title={o.comment ?? o.kind}>
-                          <span
-                            className={`caret ${p.openTables[key] ? "open" : ""}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              p.onToggleTable(s, o.name);
-                            }}
-                          >
-                            ▶
-                          </span>
-                          <span className="obj-ic" style={{ color: ic.color }}>
-                            {ic.ch}
-                          </span>
-                          <span
-                            style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", textAlign: "left" }}
-                            onClick={() => p.onInsertSelect(s, o.name)}
-                          >
-                            {o.name}
-                          </span>
-                          <span className="hover-act">
-                            <span
-                              title="Describe"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                p.onDescribe(s, o.name);
-                              }}
-                            >
-                              ⓘ
-                            </span>
-                            <span
-                              title="Insert select"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                p.onInsertSelect(s, o.name);
-                              }}
-                            >
-                              ↵
-                            </span>
-                          </span>
-                        </button>
-                        {p.openTables[key] && (
-                          <div>
-                            {!(key in p.columns) && <div className="note">loading…</div>}
-                            {(p.columns[key] ?? []).map((c) => (
-                              <div key={c.name} className="col-line" title={c.comment ?? ""}>
-                                <span style={{ width: 13 }}>{c.primaryKey ? "🔑" : ""}</span>
-                                <span style={{ color: "var(--tn-tp)" }}>{c.name}</span>
-                                <span className="ty">{c.dbType}</span>
-                                {!c.nullable && <span className="nn">not null</span>}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {(p.schemas ?? []).map(renderSchema)}
       </div>
     </>
   );

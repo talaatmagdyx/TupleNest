@@ -1066,6 +1066,64 @@ body { background: var(--tn-desk); background-image: none; }
 }
 
 /* ============================================================
+   EXPLORER TREE — grouped objects, nested partitions
+   ============================================================ */
+.tree-row {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding-top: 3px; padding-bottom: 3px; padding-right: 8px;
+  border: none; background: transparent; cursor: pointer;
+  font-size: 12px; color: var(--tn-ts); text-align: left;
+  border-radius: 4px; user-select: none;
+}
+.tree-row:hover { background: var(--tn-s2); }
+.tree-row .caret {
+  flex: none; width: 10px; font-size: 7px; color: var(--tn-tm);
+  transition: transform .12s ease; transform-origin: 50% 50%;
+}
+.tree-row .caret.open { transform: rotate(90deg); }
+.tree-row .tl {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Group headers (Tables / Columns / Indexes / Partitions) read as labels,
+   not as objects. */
+.tree-row .grp {
+  font: 700 9.5px Inter; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--tn-tm);
+}
+.tree-row .count {
+  flex: none; font: 10px "JetBrains Mono", monospace; color: var(--tn-tm);
+  background: var(--tn-s2); border-radius: 8px; padding: 0 6px;
+}
+/* A partitioned parent carries its child count — the whole point is that you
+   never see those children unless you ask. */
+.part-badge {
+  flex: none; font: 700 9px "JetBrains Mono", monospace;
+  color: var(--tn-brand-a, #FFC24B); background: rgba(255, 194, 75, .14);
+  border: 1px solid rgba(255, 194, 75, .3); border-radius: 8px; padding: 0 5px;
+}
+.tree-row.leaf {
+  cursor: default; gap: 7px; padding-top: 2px; padding-bottom: 2px;
+}
+.tree-row.leaf:hover { background: transparent; }
+.tree-row .cn {
+  font: 11.5px "JetBrains Mono", monospace; color: var(--tn-ts);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px;
+}
+.tree-row .ct {
+  margin-left: auto; font: 10px "JetBrains Mono", monospace; color: var(--tn-tm);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px;
+}
+.tree-row .pk, .tree-row .uq, .tree-row .dead {
+  flex: none; font: 700 8px Inter; letter-spacing: .06em;
+  border-radius: 3px; padding: 1px 4px;
+}
+.tree-row .pk { color: #ffc24b; background: rgba(255, 194, 75, .16); }
+.tree-row .uq { color: #6fb4ff; background: rgba(74, 158, 255, .16); }
+/* An index nobody has scanned is dead weight — say so plainly. */
+.tree-row .dead { color: #ff8080; background: rgba(239, 77, 77, .16); }
+.tree .note { font-size: 11px; color: var(--tn-tm); padding: 3px 0; }
+
+/* ============================================================
    EXPLAIN OPTIONS BAR
    ============================================================ */
 .ex-opts {
