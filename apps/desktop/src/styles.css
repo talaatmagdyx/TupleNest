@@ -1056,6 +1056,73 @@ body { background: var(--tn-desk); background-image: none; }
 }
 
 /* ============================================================
+   SAFE ROW EDITING — staged cells, pending bar, review modal
+   ============================================================ */
+.edit-chip {
+  font: 700 8.5px "JetBrains Mono", monospace; letter-spacing: .1em; text-transform: uppercase;
+  color: #5fd07a; background: rgba(63, 185, 80, .14); border: 1px solid rgba(63, 185, 80, .3);
+  border-radius: 4px; padding: 2px 6px; margin-left: 10px;
+}
+.g-cell.editable:hover { box-shadow: inset 0 0 0 1px var(--tn-bh); cursor: text; }
+.g-cell.staged {
+  background: rgba(255, 194, 75, .13);
+  box-shadow: inset 2px 0 0 var(--tn-brand-a, #FFC24B);
+  color: var(--tn-tp);
+}
+.g-cell.editing { padding: 0; }
+.g-edit {
+  width: 100%; height: 100%; border: none; outline: 2px solid var(--tn-accent);
+  outline-offset: -2px; background: var(--tn-bg); color: var(--tn-tp);
+  font: 12px "JetBrains Mono", monospace; padding: 0 7px;
+}
+.edit-bar {
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px; font-size: 12px;
+  background: linear-gradient(90deg, rgba(255, 194, 75, .12), rgba(255, 122, 69, .06));
+  border-top: 1px solid rgba(255, 194, 75, .28);
+  border-bottom: 1px solid var(--tn-bs); color: var(--tn-tp);
+}
+.edit-bar .muted { color: var(--tn-tm); }
+.edit-bar .sep-dot { color: var(--tn-tm); }
+.edit-bar .btn { height: 24px; padding: 0 10px; font-size: 11.5px; }
+.dot-pulse {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--tn-brand-a, #FFC24B);
+  box-shadow: 0 0 0 0 rgba(255, 194, 75, .6); animation: dotpulse 1.8s ease-out infinite;
+}
+@keyframes dotpulse {
+  70% { box-shadow: 0 0 0 7px rgba(255, 194, 75, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 194, 75, 0); }
+}
+
+.modal.edit-review { width: 640px; max-width: 92vw; }
+.er-sum { display: flex; align-items: center; gap: 8px; padding: 14px 18px 10px; font-size: 12.5px; color: var(--tn-ts); }
+.er-sum code { font-family: "JetBrains Mono", monospace; color: var(--tn-tp); font-size: 12px; }
+.er-count {
+  display: grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px;
+  border-radius: 5px; background: var(--tn-brand-a, #FFC24B); color: #2a1a06;
+  font: 700 12px Inter;
+}
+.er-warn {
+  margin: 0 18px 10px; padding: 9px 11px; border-radius: 6px; font-size: 12px; line-height: 1.5;
+  background: rgba(239, 77, 77, .12); border: 1px solid rgba(239, 77, 77, .35); color: #ff9c9c;
+}
+.er-warn strong { color: #ff6b6b; }
+.er-list { max-height: 300px; overflow: auto; padding: 0 18px; display: flex; flex-direction: column; gap: 8px; }
+.er-sql {
+  margin: 0; padding: 10px 12px; border-radius: 6px; background: var(--tn-bg);
+  border: 1px solid var(--tn-bs); font: 11.5px/1.6 "JetBrains Mono", monospace;
+  color: var(--tn-tp); white-space: pre-wrap; word-break: break-word;
+}
+.er-error {
+  margin: 12px 18px 0; padding: 9px 11px; border-radius: 6px; font-size: 11.5px;
+  font-family: "JetBrains Mono", monospace; background: rgba(239, 77, 77, .1);
+  border: 1px solid rgba(239, 77, 77, .3); color: #ff9c9c; white-space: pre-wrap;
+}
+.er-foot { display: flex; align-items: center; gap: 8px; padding: 14px 18px 16px; }
+.er-note { font-size: 11px; color: var(--tn-tm); }
+.btn.danger { background: #ef4d4d; border-color: #ef4d4d; color: #fff; font-weight: 700; }
+.btn.danger:hover { background: #ff6060; }
+
+/* ============================================================
    SQL COMPLETION POPUP
    ============================================================ */
 .cmp-pop {

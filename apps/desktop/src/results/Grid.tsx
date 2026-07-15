@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { fetchAllRows } from "../lib/sql";
+import { coerceValue, rowKey, type CellEdit, type EditTarget } from "../lib/dml";
 
 /**
  * HUD result grid.
@@ -26,6 +27,11 @@ type Props = {
   onCopyable: (text: string | null) => void; // selected cell value for ⌘C
   onToast: (t: string) => void;
   onVisible?: (first: number, last: number) => void;
+  /** Set when this result maps to editable rows of one table. */
+  target?: EditTarget | null;
+  /** Staged, not-yet-applied cell changes. */
+  edits?: CellEdit[];
+  onStage?: (e: CellEdit) => void;
 };
 
 function colWidth(c: GridColumn): number {
@@ -63,8 +69,19 @@ export default function Grid(p: Props) {
   const [allRows, setAllRows] = useState<unknown[][] | null>(null);
   const [selCell, setSelCell] = useState<{ r: number; c: number } | null>(null);
   const [selRow, setSelRow] = useState<number>(-1);
+  const [editing, setEditing] = useState<{ r: number; c: number } | null>(null);
+  const [draft, setDraft] = useState("");
   const pending = useRef<Set<number>>(new Set());
   const viewRef = useRef<HTMLDivElement | null>(null);
+
+  /** "rowKey:column" → staged value, for O(1) lookup while rendering.
+   *  Keyed by primary key so sorting never repaints a pending value onto a
+   *  different row. */
+  const staged = useMemo(() => {
+    const m = new Map<string, unknown>();
+    for (const e of p.edits ?? []) m.set(`${e.rowKey}:${e.column}`, e.value);
+    return m;
+  }, [p.edits]);
 
   useEffect(() => {
     setBlocks({});
@@ -75,6 +92,7 @@ export default function Grid(p: Props) {
     setAllRows(null);
     setSelCell(null);
     setSelRow(-1);
+    setEditing(null);
     p.onCopyable(null);
     if (viewRef.current) viewRef.current.scrollTop = 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -164,6 +182,35 @@ export default function Grid(p: Props) {
     }
   };
 
+  const beginEdit = (ri: number, ci: number, v: unknown) => {
+    if (!p.target || !p.onStage || !p.target.writable[ci]) return;
+    setEditing({ r: ri, c: ci });
+    setDraft(v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
+  };
+
+  const commitEdit = (ri: number, ci: number, original: unknown) => {
+    const t = p.target;
+    if (!t || !p.onStage) return setEditing(null);
+    const row = rowAt(ri);
+    if (!row) return setEditing(null);
+
+    const value = coerceValue(draft, p.columns[ci].dbType);
+    const same =
+      value === original ||
+      (original === null && value === null) ||
+      String(value ?? "") === String(original ?? "");
+    if (!same) {
+      const pkValues = t.pk.map((k) => row[k.index]);
+      p.onStage({
+        rowKey: rowKey(pkValues),
+        pkValues,
+        column: p.columns[ci].name,
+        value,
+      });
+    }
+    setEditing(null);
+  };
+
   const indices: number[] = [];
   for (let i = first; i < last; i++) indices.push(i);
   const totalW = 56 + p.columns.reduce((a, c) => a + colWidth(c), 0);
@@ -199,15 +246,55 @@ export default function Grid(p: Props) {
               </div>
             ) : (
               p.columns.map((c, ci) => {
-                const v = row[ci];
+                const original = row[ci];
+                // Identity by primary key, not row position — the grid may be
+                // sorted after an edit was staged.
+                const rk = p.target ? rowKey(p.target.pk.map((k) => row[k.index])) : "";
+                const key = `${rk}:${c.name}`;
+                const isStaged = !!p.target && staged.has(key);
+                const v = isStaged ? staged.get(key) : original;
                 const isSel = selCell && selCell.r === i && selCell.c === ci;
+                const isEditing = editing && editing.r === i && editing.c === ci;
+                const canEdit = !!p.target?.writable[ci];
+
+                if (isEditing) {
+                  return (
+                    <div key={ci} className="g-cell editing" style={{ width: colWidth(c) }}>
+                      <input
+                        autoFocus
+                        className="g-edit"
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onBlur={() => commitEdit(i, ci, original)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            commitEdit(i, ci, original);
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            setEditing(null);
+                          }
+                        }}
+                      />
+                    </div>
+                  );
+                }
                 return (
                   <div
                     key={ci}
-                    className={`g-cell ${cellClass(c, v)} ${isSel ? "selcell" : ""}`}
+                    className={`g-cell ${cellClass(c, v)} ${isSel ? "selcell" : ""} ${
+                      isStaged ? "staged" : ""
+                    } ${canEdit ? "editable" : ""}`}
                     style={{ width: colWidth(c) }}
-                    title={cellText(v)}
+                    title={
+                      isStaged
+                        ? `${cellText(original)} → ${cellText(v)} (pending)`
+                        : canEdit
+                          ? `${cellText(v)} — double-click to edit`
+                          : cellText(v)
+                    }
                     onClick={() => select(i, ci, c, v)}
+                    onDoubleClick={() => beginEdit(i, ci, original)}
                   >
                     {cellText(v)}
                   </div>

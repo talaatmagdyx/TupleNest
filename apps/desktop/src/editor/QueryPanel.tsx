@@ -1,5 +1,6 @@
 import type { HistoryEntry, QueryResult } from "../ipc/types";
 import type { Catalog } from "../lib/complete";
+import type { CellEdit, EditTarget } from "../lib/dml";
 import Grid from "../results/Grid";
 import HistoryPanel from "../history/HistoryPanel";
 import SqlEditor from "./SqlEditor";
@@ -40,6 +41,12 @@ type Props = {
   catalog?: Catalog;
   onPrefetchTables?: (tables: { schema: string; name: string }[]) => void;
   onPrefetchSchema?: (schema: string) => void;
+  editTarget?: EditTarget | null;
+  editReason?: string | null;
+  edits?: CellEdit[];
+  onStageEdit?: (e: CellEdit) => void;
+  onReviewEdits?: () => void;
+  onDiscardEdits?: () => void;
   history: {
     items: HistoryEntry[];
     search: string;
@@ -158,11 +165,34 @@ export default function QueryPanel(p: Props) {
         <button className="rtab" onClick={p.onExplain} title="Run EXPLAIN and show the plan">
           Plan
         </button>
+        {p.editTarget && (
+          <span className="edit-chip" title={`Rows map to ${p.editTarget.schema}.${p.editTarget.table} — double-click a cell to edit`}>
+            editable
+          </span>
+        )}
         <div className="meta">
           {r && !p.lastError && <span style={{ color: "var(--tn-success)" }}>✓</span>}
           <span>{meta}</span>
         </div>
       </div>
+
+      {(p.edits?.length ?? 0) > 0 && (
+        <div className="edit-bar">
+          <span className="dot-pulse" />
+          <span>
+            <strong>{p.edits!.length}</strong> pending change{p.edits!.length === 1 ? "" : "s"}
+          </span>
+          <span className="sep-dot">·</span>
+          <span className="muted">nothing is written until you apply</span>
+          <div className="grow" />
+          <button className="btn" onClick={p.onDiscardEdits}>
+            Discard
+          </button>
+          <button className="btn primary" onClick={p.onReviewEdits}>
+            Review &amp; apply
+          </button>
+        </div>
+      )}
 
       <div className="results-zone">
         {p.resultTab === "results" && (
@@ -204,6 +234,9 @@ export default function QueryPanel(p: Props) {
                   onCopyable={p.onCopyable}
                   onToast={p.onToast}
                   onVisible={p.onVisibleRows}
+                  target={p.editTarget}
+                  edits={p.edits}
+                  onStage={p.onStageEdit}
                 />
               </>
             )}

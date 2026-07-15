@@ -21,6 +21,8 @@ import {
 } from "./overlays/Overlays";
 import { BrandMark } from "./lib/icons";
 import type { Catalog, CatalogTable } from "./lib/complete";
+import { analyzeEditability, buildStatements, type CellEdit } from "./lib/dml";
+import EditReviewModal from "./overlays/EditReviewModal";
 import SchemaModal, { type SchemaExtra } from "./overlays/SchemaModal";
 import MonitorModal from "./overlays/MonitorModal";
 import DiagramModal from "./overlays/DiagramModal";
@@ -111,6 +113,9 @@ export default function App() {
   const [result, setResult] = useState<QueryResult | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [queryEpoch, setQueryEpoch] = useState(0);
+  /** The SQL that produced `result` — editability is judged on this, not on
+   *  whatever the user has since typed into the editor. */
+  const [ranSql, setRanSql] = useState("");
   const [runStatus, setRunStatus] = useState<{ icon: string; text: string; color: string } | null>(null);
   const [inTx, setInTx] = useState(false);
   const [txOpenSince, setTxOpenSince] = useState<number | null>(null);
@@ -791,6 +796,7 @@ export default function App() {
           params: boundParams ?? null,
         });
         setResult(r);
+        setRanSql(sql);
         setLastError(null);
         setQueryEpoch((n) => n + 1);
         setResultTab("results");
@@ -826,6 +832,82 @@ export default function App() {
     },
     [tabs, activeTab, connected, connectedEnv, refreshHistory, historySearch]
   );
+
+  /* ---------------- safe row editing ---------------- */
+
+  const [edits, setEdits] = useState<CellEdit[]>([]);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+
+  /** Whether the current result maps back to editable rows of exactly one table. */
+  const editability = useMemo(
+    () => (result && result.columns.length > 0 ? analyzeEditability(ranSql, result.columns, catalog) : null),
+    [result, ranSql, catalog]
+  );
+  const editTarget = editability?.editable ? editability.target : null;
+
+  // Staged edits belong to the result they were made against — a new result
+  // invalidates them.
+  useEffect(() => {
+    setEdits([]);
+    setReviewOpen(false);
+    setApplyError(null);
+  }, [queryEpoch]);
+
+  const stageEdit = useCallback((e: CellEdit) => {
+    setEdits((list) => {
+      const i = list.findIndex((x) => x.rowKey === e.rowKey && x.column === e.column);
+      if (i === -1) return [...list, e];
+      const next = [...list];
+      next[i] = e;
+      return next;
+    });
+  }, []);
+
+  const discardEdits = useCallback(() => {
+    setEdits([]);
+    setReviewOpen(false);
+    setApplyError(null);
+  }, []);
+
+  /** Apply staged edits in one transaction: any failure rolls the whole set back.
+   *  If the user already has a transaction open we join it and leave the
+   *  commit decision to them. */
+  const applyEdits = useCallback(async () => {
+    if (!editTarget || edits.length === 0) return;
+    setApplying(true);
+    setApplyError(null);
+    const statements = buildStatements(editTarget, edits);
+    const joinExisting = inTx;
+    try {
+      if (!joinExisting) await invoke("pg_begin");
+      for (const st of statements) {
+        await invoke<QueryResult>("pg_query", { sql: st.sql, params: st.params });
+      }
+      if (!joinExisting) await invoke("pg_commit");
+      setEdits([]);
+      setReviewOpen(false);
+      showToast(
+        joinExisting
+          ? `${statements.length} statement(s) staged in your transaction`
+          : `Applied ${statements.length} statement${statements.length === 1 ? "" : "s"}`
+      );
+      refreshHistory(historySearch);
+      if (!joinExisting) doRun(true); // re-read so the grid shows what's actually stored
+    } catch (e) {
+      setApplyError(String(e));
+      if (!joinExisting) {
+        try {
+          await invoke("pg_rollback");
+        } catch {
+          /* session may already be gone; the original error is what matters */
+        }
+      }
+    } finally {
+      setApplying(false);
+    }
+  }, [editTarget, edits, inTx, doRun, refreshHistory, historySearch, showToast]);
 
   const doCancel = useCallback(async () => {
     try {
@@ -1370,6 +1452,12 @@ export default function App() {
               catalog={catalog}
               onPrefetchTables={prefetchTables}
               onPrefetchSchema={prefetchSchemaObjects}
+              editTarget={editTarget}
+              editReason={editability && !editability.editable ? editability.reason : null}
+              edits={edits}
+              onStageEdit={stageEdit}
+              onReviewEdits={() => setReviewOpen(true)}
+              onDiscardEdits={discardEdits}
               history={{
                 items: historyItems,
                 search: historySearch,
@@ -1467,6 +1555,18 @@ export default function App() {
       )}
       {overlay === "txPrompt" && (
         <TxPrompt onCommit={commitAndDisconnect} onRollback={rollbackAndDisconnect} onStay={() => setOverlay(null)} />
+      )}
+      {reviewOpen && editTarget && edits.length > 0 && (
+        <EditReviewModal
+          target={editTarget}
+          edits={edits}
+          env={connectedEnv}
+          applying={applying}
+          error={applyError}
+          onApply={applyEdits}
+          onDiscard={discardEdits}
+          onClose={() => setReviewOpen(false)}
+        />
       )}
       {overlay === "guard" && guardSql && (
         <Guard
