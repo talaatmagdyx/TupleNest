@@ -40,9 +40,30 @@ const KIND_GLYPH: Record<string, string> = {
  *  Adds schema-aware completion (⌃Space, or auto as you type). */
 export default function SqlEditor(p: Props) {
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const preRef = useRef<HTMLPreElement>(null);
+  const gutterRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [pop, setPop] = useState<PopupState | null>(null);
   const lines = p.sql.split("\n");
+
+  /** The textarea is the only scroller; the highlight layer and the gutter are
+   *  overflow:hidden and follow it. Without this they stay pinned and the text
+   *  simply stops rendering past the first screenful. */
+  const syncScroll = useCallback(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    if (preRef.current) {
+      preRef.current.scrollTop = ta.scrollTop;
+      preRef.current.scrollLeft = ta.scrollLeft;
+    }
+    if (gutterRef.current) gutterRef.current.scrollTop = ta.scrollTop;
+  }, []);
+
+  // Keep them aligned when the text changes height (paste, format, tab switch)
+  // rather than only on user scroll.
+  useEffect(() => {
+    syncScroll();
+  }, [p.sql, p.height, syncScroll]);
 
   const close = useCallback(() => setPop(null), []);
 
@@ -71,7 +92,9 @@ export default function SqlEditor(p: Props) {
         sel: 0,
         from: r.from,
         to: r.to,
-        left,
+        // Caret coords are relative to the text, so both scroll offsets have
+        // to come back out — long lines scroll horizontally now.
+        left: left - ta.scrollLeft,
         top: top + lineHeight - ta.scrollTop,
       });
     },
@@ -157,13 +180,15 @@ export default function SqlEditor(p: Props) {
 
   return (
     <div className="editor-frame" style={{ height: p.height }}>
-      <div className="gutter">
+      <div className="gutter" ref={gutterRef}>
         {lines.map((_, i) => (
           <div key={i}>{i + 1}</div>
         ))}
       </div>
       <div className="editor-rel">
-        <pre className="editor-pre">{tokenizeSQL(p.sql)}</pre>
+        <pre className="editor-pre" ref={preRef}>
+          {tokenizeSQL(p.sql)}
+        </pre>
         <textarea
           ref={taRef}
           className="editor-ta"
@@ -176,7 +201,10 @@ export default function SqlEditor(p: Props) {
           }}
           onKeyDown={onKeyDown}
           onBlur={() => setTimeout(close, 120)}
-          onScroll={close}
+          onScroll={() => {
+            syncScroll();
+            close();
+          }}
         />
         {pop && (
           <div className="cmp-pop" style={{ left: pop.left, top: pop.top }}>

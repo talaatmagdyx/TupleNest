@@ -316,17 +316,27 @@ a { color: var(--tn-accent); text-decoration: none; }
 
 /* ===== Editor ===== */
 .editor-zone { flex: none; display: flex; flex-direction: column; min-height: 0; }
-.editor-frame { display: flex; overflow: auto; background: var(--tn-bg); }
+/* The textarea is the ONE scroller. The frame must not scroll: the gutter is
+   as tall as the file, so an `overflow: auto` frame would scroll the numbers
+   while the absolutely-positioned text layer stayed pinned to the viewport —
+   which left blank rows next to every line past the first screenful.
+   The <pre> and the gutter are overflow:hidden and driven from the textarea's
+   scrollTop/scrollLeft in SqlEditor's onScroll. */
+.editor-frame { display: flex; overflow: hidden; background: var(--tn-bg); }
 .gutter {
   flex: none; width: 44px; padding: 11px 0; text-align: right;
   font: 12.5px/20px "JetBrains Mono", monospace; color: var(--tn-tm);
   user-select: none; background: var(--tn-bg); border-right: 1px solid var(--tn-bs);
+  overflow: hidden;
 }
-.gutter div { padding-right: 11px; }
+.gutter div { padding-right: 11px; height: 20px; }
 .editor-rel { position: relative; flex: 1; min-width: 0; }
+/* `pre`, not `pre-wrap`: one logical line must occupy exactly one 20px row or
+   it drifts out of step with the fixed-height gutter. Long lines scroll
+   horizontally instead, as in any SQL IDE. */
 .editor-pre, .editor-ta {
   margin: 0; padding: 11px 14px; font: 12.5px/20px "JetBrains Mono", monospace;
-  white-space: pre-wrap; overflow-wrap: break-word; position: absolute; inset: 0; border: none;
+  white-space: pre; position: absolute; inset: 0; border: none;
 }
 .editor-pre { pointer-events: none; color: var(--tn-tp); overflow: hidden; }
 .editor-ta {
