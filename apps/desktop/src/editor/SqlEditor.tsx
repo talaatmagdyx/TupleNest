@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { tokenizeSQL } from "../lib/sql";
-import { caretPosition } from "../lib/caret";
+import { caretPosition, offsetAt } from "../lib/caret";
 import {
   getCompletions,
   schemaToPrefetch,
@@ -64,6 +64,73 @@ export default function SqlEditor(p: Props) {
   useEffect(() => {
     syncScroll();
   }, [p.sql, p.height, syncScroll]);
+
+  /** Auto-scroll while drag-selecting past an edge.
+   *
+   *  The browser won't do this for us here: its drag-autoscroll looks for a
+   *  scrollable *ancestor*, and the editor deliberately has none (the frame is
+   *  overflow:hidden so the gutter can't drag the layout around). So a drag
+   *  below the last visible line just stopped dead.
+   *
+   *  While the pointer sits outside the box we scroll it ourselves and extend
+   *  the selection to the offset under the pointer — the pointer isn't moving,
+   *  so no mousemove fires and the browser would never update it. In-bounds
+   *  dragging is left entirely to native behaviour.
+   */
+  const onMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLTextAreaElement>) => {
+      const ta = taRef.current;
+      if (!ta || e.button !== 0) return;
+
+      let anchor: number | null = null;
+      // Read the anchor after the browser has placed the caret for this click.
+      requestAnimationFrame(() => {
+        anchor = ta.selectionStart;
+      });
+
+      let px = e.clientX;
+      let py = e.clientY;
+      const onMove = (ev: MouseEvent) => {
+        px = ev.clientX;
+        py = ev.clientY;
+      };
+
+      const EDGE = 14; // band from the edge where scrolling kicks in
+      const SPEED = 0.45; // px of scroll per px of overshoot, per frame
+      const MAX = 28; // cap so a fast flick doesn't rocket to the end
+
+      let raf = 0;
+      const tick = () => {
+        const r = ta.getBoundingClientRect();
+        let dy = 0;
+        if (py > r.bottom - EDGE) dy = Math.min((py - (r.bottom - EDGE)) * SPEED, MAX);
+        else if (py < r.top + EDGE) dy = Math.max((py - (r.top + EDGE)) * SPEED, -MAX);
+
+        if (dy !== 0) {
+          const before = ta.scrollTop;
+          ta.scrollTop += dy;
+          if (ta.scrollTop !== before) {
+            syncScroll();
+            if (anchor !== null) {
+              const head = offsetAt(ta, px, py);
+              ta.setSelectionRange(Math.min(anchor, head), Math.max(anchor, head), anchor <= head ? "forward" : "backward");
+            }
+          }
+        }
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+
+      const stop = () => {
+        cancelAnimationFrame(raf);
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", stop);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", stop);
+    },
+    [syncScroll]
+  );
 
   const close = useCallback(() => setPop(null), []);
 
@@ -200,6 +267,7 @@ export default function SqlEditor(p: Props) {
             requestAnimationFrame(() => openAt(false));
           }}
           onKeyDown={onKeyDown}
+          onMouseDown={onMouseDown}
           onBlur={() => setTimeout(close, 120)}
           onScroll={() => {
             syncScroll();
