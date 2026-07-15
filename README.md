@@ -32,6 +32,9 @@ Requires macOS 10.15+ on an arm64 (M-series) Mac.
 - **Query history** — searchable, with a production-statement audit log (full SQL captured on prod).
 - **Server monitoring** — live `pg_stat_activity`, locks, and DB stats; cancel or terminate a backend.
 - **ER diagram** — foreign-key relationship graph.
+- **SQL intelligence** — find usages of an identifier across every open tab (whole-identifier matches only, never inside a longer name, comment, or string), rename across tabs, diff two schemas column-by-column, and compare two EXPLAIN plans with cost/time deltas and a "new sequential scan" regression flag.
+- **CSV import** — pick a file, review the inferred column names and types, then import in batches inside one transaction. Full RFC-4180 parsing (quoted delimiters, escaped quotes, embedded newlines, BOM); values bind as text so `numeric` precision survives intact.
+- **Auto-update** — signed with a minisign key baked into the binary, so a compromised release host still can't push code. Refuses to update while a transaction is open.
 - **SQL snippets** — reusable snippet library via the command palette.
 - **Production safety** — prod connections flagged, guarded destructive statements, colored environment banner.
 - **Signature UX** — environment-reactive ambient window frame (dev / staging / prod), unified macOS titlebar, collapsible + resizable activity-rail sidebar.
