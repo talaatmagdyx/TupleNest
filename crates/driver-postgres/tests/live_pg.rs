@@ -84,6 +84,142 @@ impl BatchSink for CountingSink {
     }
 }
 
+/// Collects every cell so type rendering can be asserted on.
+#[derive(Default)]
+struct CollectSink {
+    rows: Mutex<Vec<Vec<CellValue>>>,
+}
+
+#[async_trait]
+impl BatchSink for CollectSink {
+    async fn deliver(&self, batch: RowBatch) -> Result<(), DriverError> {
+        self.rows.lock().unwrap().extend(batch.rows);
+        Ok(())
+    }
+}
+
+/// Run `sql` and return the first row's cells.
+async fn first_row(sql: &str) -> Vec<CellValue> {
+    let mut session = PostgresDriver.connect(test_config()).await.unwrap();
+    let sink = CollectSink::default();
+    session.execute(req(sql), &sink).await.unwrap();
+    let rows = sink.rows.lock().unwrap();
+    rows.first().cloned().unwrap_or_default()
+}
+
+fn text_of(c: &CellValue) -> String {
+    match c {
+        CellValue::Text(s) => s.clone(),
+        CellValue::Int(i) => i.to_string(),
+        CellValue::Float(f) => f.to_string(),
+        CellValue::Bool(b) => b.to_string(),
+        CellValue::Json(j) => j.to_string(),
+        CellValue::Null => "NULL".into(),
+        CellValue::Bytes(b) => format!("\\x{}", hex::encode(b)),
+        CellValue::Other { rendered, .. } => rendered.clone(),
+    }
+}
+
+// Regression: these types all rendered as "<unsupported in PoC>", which made
+// real tables unreadable — 7 of 22 columns on the reporter's table.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn renders_timestamps_and_dates() {
+    let cells = first_row(
+        "select '2024-01-15 10:30:00'::timestamp,
+                '2024-01-15 10:30:00+00'::timestamptz,
+                '2024-01-15'::date,
+                '10:30:00'::time",
+    )
+    .await;
+    assert_eq!(text_of(&cells[0]), "2024-01-15 10:30:00");
+    assert!(text_of(&cells[1]).starts_with("2024-01-15T10:30:00"), "{:?}", cells[1]);
+    assert_eq!(text_of(&cells[2]), "2024-01-15");
+    assert_eq!(text_of(&cells[3]), "10:30:00");
+}
+
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn renders_user_defined_enums() {
+    let mut session = PostgresDriver.connect(test_config()).await.unwrap();
+    session
+        .execute(req("drop type if exists tn_test_mood cascade"), &NullSink)
+        .await
+        .unwrap();
+    session
+        .execute(req("create type tn_test_mood as enum ('happy','sad')"), &NullSink)
+        .await
+        .unwrap();
+
+    let cells = first_row("select 'happy'::tn_test_mood").await;
+    assert_eq!(text_of(&cells[0]), "happy");
+
+    let mut s2 = PostgresDriver.connect(test_config()).await.unwrap();
+    s2.execute(req("drop type if exists tn_test_mood cascade"), &NullSink)
+        .await
+        .unwrap();
+}
+
+// Regression: rust_decimal is 96-bit (~28 digits) and silently failed on
+// values Postgres stores happily, falling back to a hex dump. numeric is
+// decoded from the wire format instead, which is exact at any precision.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn renders_numeric_without_losing_precision() {
+    let cells = first_row(
+        "select '123456789012345678901234567890.12345'::numeric,
+                '125000.50'::numeric,
+                '-42.001'::numeric,
+                '0.00001234'::numeric,
+                '0'::numeric,
+                '12'::numeric,
+                'NaN'::numeric",
+    )
+    .await;
+    assert_eq!(text_of(&cells[0]), "123456789012345678901234567890.12345");
+    assert_eq!(text_of(&cells[1]), "125000.50", "trailing zero must survive");
+    assert_eq!(text_of(&cells[2]), "-42.001");
+    assert_eq!(text_of(&cells[3]), "0.00001234", "leading zeros after the point");
+    assert_eq!(text_of(&cells[4]), "0");
+    assert_eq!(text_of(&cells[5]), "12");
+    assert_eq!(text_of(&cells[6]), "NaN");
+}
+
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn renders_arrays_and_network_types() {
+    let cells = first_row(
+        "select array[1,2,3]::int4[],
+                array['a',null,'c']::text[],
+                '192.168.1.1'::inet",
+    )
+    .await;
+    assert_eq!(text_of(&cells[0]), "{1,2,3}");
+    assert_eq!(text_of(&cells[1]), "{a,NULL,c}");
+    assert_eq!(text_of(&cells[2]), "192.168.1.1");
+}
+
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn renders_interval_money_and_xml_via_fallback() {
+    let cells = first_row("select '1 day 2 hours'::interval, '<a>b</a>'::xml, '$1.50'::money").await;
+    // Not "unsupported" — the fallback decodes the wire value.
+    for c in &cells {
+        let t = text_of(c);
+        assert!(!t.contains("unsupported"), "got {t:?}");
+    }
+    assert_eq!(text_of(&cells[1]), "<a>b</a>", "xml is sent as text on the wire");
+}
+
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn nulls_of_exotic_types_are_null_not_rendered() {
+    let cells = first_row("select null::timestamp, null::numeric, null::inet, null::int4[]").await;
+    for c in &cells {
+        assert!(matches!(c, CellValue::Null), "expected Null, got {c:?}");
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires live PostgreSQL"]
 async fn staged_connection_test_reports_server_version() {

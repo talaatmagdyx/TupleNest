@@ -15,7 +15,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio_postgres::error::SqlState;
-use tokio_postgres::types::Type;
+use tokio_postgres::types::{FromSql, Type};
 use tokio_postgres::{CancelToken, Client, NoTls, Row};
 
 mod tls;
@@ -672,6 +672,117 @@ fn convert_row(row: &Row) -> Vec<CellValue> {
     (0..row.len()).map(|i| convert_cell(row, i)).collect()
 }
 
+/// An exact `numeric`, decoded straight from the binary wire format.
+///
+/// Postgres `numeric` is arbitrary precision. Every fixed-width Rust decimal
+/// (`rust_decimal` is 96-bit, ~28 digits) silently fails on values a database
+/// happily stores, and an f64 mangles them. Decoding the wire format is only a
+/// few lines and is exact for any value the server can hold.
+///
+/// Wire format: i16 ndigits, i16 weight, u16 sign, u16 dscale, then `ndigits`
+/// base-10000 digits. The value is sum(digits[k] * 10000^(weight-k)).
+struct PgNumeric(String);
+
+impl<'a> FromSql<'a> for PgNumeric {
+    fn from_sql(_: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        if raw.len() < 8 {
+            return Err("numeric: header too short".into());
+        }
+        let rd = |o: usize| i16::from_be_bytes([raw[o], raw[o + 1]]);
+        let ndigits = rd(0);
+        let weight = rd(2) as i32;
+        let sign = u16::from_be_bytes([raw[4], raw[5]]);
+        let dscale = rd(6) as usize;
+
+        match sign {
+            0xC000 => return Ok(PgNumeric("NaN".into())),
+            0xD000 => return Ok(PgNumeric("Infinity".into())),
+            0xF000 => return Ok(PgNumeric("-Infinity".into())),
+            _ => {}
+        }
+        if ndigits < 0 || raw.len() < 8 + ndigits as usize * 2 {
+            return Err("numeric: digit count does not match payload".into());
+        }
+        let digits: Vec<i16> = (0..ndigits as usize).map(|k| rd(8 + k * 2)).collect();
+        let at = |k: i32| -> i16 {
+            if k < 0 {
+                0
+            } else {
+                digits.get(k as usize).copied().unwrap_or(0)
+            }
+        };
+
+        let mut s = String::new();
+        if sign == 0x4000 {
+            s.push('-');
+        }
+
+        // Integer part: the digit groups with a non-negative exponent.
+        if weight < 0 {
+            s.push('0');
+        } else {
+            for k in 0..=weight {
+                if k == 0 {
+                    s.push_str(&at(k).to_string());
+                } else {
+                    s.push_str(&format!("{:04}", at(k)));
+                }
+            }
+        }
+
+        // Fraction: groups after the point, padded then cut to the display scale
+        // so a stored 125000.50 keeps its trailing zero.
+        if dscale > 0 {
+            let mut frac = String::new();
+            let mut k = weight + 1;
+            while frac.len() < dscale {
+                frac.push_str(&format!("{:04}", at(k)));
+                k += 1;
+            }
+            frac.truncate(dscale);
+            s.push('.');
+            s.push_str(&frac);
+        }
+        Ok(PgNumeric(s))
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        *ty == Type::NUMERIC
+    }
+}
+
+/// Any value Postgres hands us that we have no dedicated Rust mapping for.
+///
+/// Postgres transmits enums, and a number of other types, as their plain text
+/// label even in the binary protocol — so decoding the raw bytes as UTF-8
+/// recovers the real value. This is what lets user-defined enums render
+/// without the driver knowing anything about them. Types whose binary form is
+/// genuinely not text fall back to a hex dump, which is at least honest and
+/// copyable, rather than a shrug.
+struct RawValue(Vec<u8>);
+
+impl<'a> FromSql<'a> for RawValue {
+    fn from_sql(_: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        Ok(RawValue(raw.to_vec()))
+    }
+    fn accepts(_: &Type) -> bool {
+        true
+    }
+}
+
+fn render_raw(v: RawValue, ty: &Type) -> CellValue {
+    match std::str::from_utf8(&v.0) {
+        // Printable UTF-8 is the value itself (enums, and friends).
+        Ok(s) if !s.is_empty() && !s.chars().any(|c| c.is_control() && c != '\t' && c != '\n') => {
+            CellValue::Text(s.to_owned())
+        }
+        _ => CellValue::Other {
+            rendered: format!("\\x{}", hex::encode(&v.0)),
+            db_type: ty.name().to_string(),
+        },
+    }
+}
+
 fn convert_cell(row: &Row, i: usize) -> CellValue {
     let ty = row.columns()[i].type_().clone();
     macro_rules! take {
@@ -679,31 +790,91 @@ fn convert_cell(row: &Row, i: usize) -> CellValue {
             match row.try_get::<_, Option<$t>>(i) {
                 Ok(Some(v)) => $wrap(v),
                 Ok(None) => CellValue::Null,
-                Err(_) => other(&ty),
+                Err(_) => fallback(row, i, &ty),
             }
         };
     }
+    /// Render `Vec<Option<T>>` as a Postgres array literal: {a,b,NULL}.
+    macro_rules! take_array {
+        ($t:ty) => {
+            match row.try_get::<_, Option<Vec<Option<$t>>>>(i) {
+                Ok(Some(v)) => CellValue::Text(format!(
+                    "{{{}}}",
+                    v.iter()
+                        .map(|e| e.as_ref().map(|x| x.to_string()).unwrap_or_else(|| "NULL".into()))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )),
+                Ok(None) => CellValue::Null,
+                Err(_) => fallback(row, i, &ty),
+            }
+        };
+    }
+
     match ty {
         Type::BOOL => take!(bool, CellValue::Bool),
         Type::INT2 => take!(i16, |v: i16| CellValue::Int(v as i64)),
         Type::INT4 => take!(i32, |v: i32| CellValue::Int(v as i64)),
         Type::INT8 => take!(i64, CellValue::Int),
+        Type::OID => take!(u32, |v: u32| CellValue::Int(v as i64)),
         Type::FLOAT4 => take!(f32, |v: f32| CellValue::Float(v as f64)),
         Type::FLOAT8 => take!(f64, CellValue::Float),
-        Type::TEXT | Type::VARCHAR | Type::BPCHAR | Type::NAME => {
+
+        // Arbitrary precision: decoded exactly, never via f64 or a fixed-width
+        // decimal that would silently fail on large values.
+        Type::NUMERIC => take!(PgNumeric, |v: PgNumeric| CellValue::Text(v.0)),
+
+        Type::TEXT | Type::VARCHAR | Type::BPCHAR | Type::NAME | Type::UNKNOWN => {
             take!(String, CellValue::Text)
         }
+        Type::CHAR => take!(i8, |v: i8| CellValue::Int(v as i64)),
+
+        // Dates and times. `timestamp` has no zone, so it must not be rendered
+        // as if it were UTC — NaiveDateTime keeps it as the wall clock the
+        // server stored.
+        Type::TIMESTAMP => take!(chrono::NaiveDateTime, |v: chrono::NaiveDateTime| {
+            CellValue::Text(v.format("%Y-%m-%d %H:%M:%S%.f").to_string())
+        }),
+        Type::TIMESTAMPTZ => take!(chrono::DateTime<chrono::Utc>, |v: chrono::DateTime<chrono::Utc>| {
+            CellValue::Text(v.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true))
+        }),
+        Type::DATE => take!(chrono::NaiveDate, |v: chrono::NaiveDate| CellValue::Text(v.to_string())),
+        Type::TIME => take!(chrono::NaiveTime, |v: chrono::NaiveTime| CellValue::Text(v.to_string())),
+
         Type::JSON | Type::JSONB => take!(serde_json::Value, CellValue::Json),
         Type::BYTEA => take!(Vec<u8>, CellValue::Bytes),
         Type::UUID => take!(uuid::Uuid, |v: uuid::Uuid| CellValue::Text(v.to_string())),
-        _ => other(&ty),
+        Type::INET | Type::CIDR => take!(std::net::IpAddr, |v: std::net::IpAddr| {
+            CellValue::Text(v.to_string())
+        }),
+
+        // Common array types.
+        Type::BOOL_ARRAY => take_array!(bool),
+        Type::INT2_ARRAY => take_array!(i16),
+        Type::INT4_ARRAY => take_array!(i32),
+        Type::INT8_ARRAY => take_array!(i64),
+        Type::FLOAT4_ARRAY => take_array!(f32),
+        Type::FLOAT8_ARRAY => take_array!(f64),
+        Type::TEXT_ARRAY | Type::VARCHAR_ARRAY | Type::NAME_ARRAY => take_array!(String),
+        Type::UUID_ARRAY => take_array!(uuid::Uuid),
+
+        // Enums, domains, ranges, geometry, intervals, money, xml, and anything
+        // else the server may have: decoded from the wire rather than refused.
+        _ => fallback(row, i, &ty),
     }
 }
 
-fn other(ty: &Type) -> CellValue {
-    CellValue::Other {
-        rendered: "<unsupported in PoC>".into(),
-        db_type: ty.name().to_string(),
+/// Last resort for a type with no dedicated mapping. Never returns
+/// "unsupported" — a database client that cannot show you your own data is
+/// not doing its job.
+fn fallback(row: &Row, i: usize, ty: &Type) -> CellValue {
+    match row.try_get::<_, Option<RawValue>>(i) {
+        Ok(Some(v)) => render_raw(v, ty),
+        Ok(None) => CellValue::Null,
+        Err(e) => CellValue::Other {
+            rendered: format!("<decode error: {e}>"),
+            db_type: ty.name().to_string(),
+        },
     }
 }
 
