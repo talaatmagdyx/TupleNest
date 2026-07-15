@@ -1056,6 +1056,44 @@ body { background: var(--tn-desk); background-image: none; }
 }
 
 /* ============================================================
+   PHASE 4 — CSV IMPORT WIZARD
+   ============================================================ */
+.modal.import { width: 780px; max-width: 94vw; }
+.imp-drop { padding: 30px 10px; }
+.imp-drop-in { text-align: center; }
+.imp-big { font-size: 15px; font-weight: 700; margin-bottom: 6px; color: var(--tn-tp); }
+.imp-file { font: 650 12px "JetBrains Mono", monospace; color: var(--tn-tp); }
+.imp-count {
+  font: 700 9px Inter; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--tn-brand-a, #FFC24B); background: rgba(255,194,75,.14);
+  border-radius: 4px; padding: 2px 7px;
+}
+.imp-cols {
+  display: flex; flex-direction: column; gap: 4px; max-height: 190px; overflow: auto;
+  padding: 8px; border: 1px solid var(--tn-bs); border-radius: 6px; margin-bottom: 10px;
+}
+.imp-col { display: flex; align-items: center; gap: 8px; }
+.imp-src {
+  flex: 0 0 150px; font: 11px "JetBrains Mono", monospace; color: var(--tn-tm);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.imp-preview {
+  max-height: 170px; overflow: auto; border: 1px solid var(--tn-bs);
+  border-radius: 6px; margin-bottom: 10px;
+}
+.imp-preview table { border-collapse: collapse; width: 100%; font: 11px "JetBrains Mono", monospace; }
+.imp-preview th {
+  position: sticky; top: 0; background: var(--tn-s2); color: var(--tn-tm);
+  font: 700 9.5px Inter; letter-spacing: .06em; text-transform: uppercase;
+  text-align: left; padding: 6px 9px; border-bottom: 1px solid var(--tn-bh);
+}
+.imp-error { flex: none; margin: 0 18px; max-height: 90px; overflow: auto; }
+.imp-preview td {
+  padding: 4px 9px; color: var(--tn-ts); border-bottom: 1px solid var(--tn-bs);
+  white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ============================================================
    PHASE 3 — SQL INTELLIGENCE (usages, schema diff, plan compare)
    ============================================================ */
 .modal.intel { width: 720px; max-width: 94vw; height: 560px; max-height: 86vh; }

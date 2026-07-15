@@ -25,6 +25,7 @@ import { BrandMark } from "./lib/icons";
 import type { Catalog, CatalogTable } from "./lib/complete";
 import { summarizePlan, type PlanSummary } from "./lib/intel";
 import IntelModal from "./overlays/IntelModal";
+import ImportModal from "./overlays/ImportModal";
 import { analyzeEditability, buildStatements, type CellEdit } from "./lib/dml";
 import EditReviewModal from "./overlays/EditReviewModal";
 import SchemaModal, { type SchemaExtra } from "./overlays/SchemaModal";
@@ -76,6 +77,7 @@ type OverlayKind =
   | "params"
   | "diagram"
   | "intel"
+  | "import"
   | "audit";
 
 export default function App() {
@@ -1223,6 +1225,7 @@ export default function App() {
       { icon: "⛁", label: "Open connection…", type: "Action", kbd: "⌘O", exec: () => setOverlay("connEditor") },
       { icon: "＋", label: "New connection…", type: "Action", exec: newProfile },
       { icon: "⌥", label: "Show EXPLAIN plan", type: "Action", exec: runExplain },
+      { icon: "⤓", label: "Import CSV…", type: "Action", exec: () => setOverlay("import") },
       { icon: "⌕", label: "Find usages & rename…", type: "Action", exec: () => setOverlay("intel") },
       { icon: "⇄", label: "Compare schemas…", type: "Action", exec: () => setOverlay("intel") },
       { icon: "◫", label: "Compare EXPLAIN plans…", type: "Action", exec: () => setOverlay("intel") },
@@ -1607,6 +1610,19 @@ export default function App() {
       )}
       {overlay === "txPrompt" && (
         <TxPrompt onCommit={commitAndDisconnect} onRollback={rollbackAndDisconnect} onStay={() => setOverlay(null)} />
+      )}
+      {overlay === "import" && (
+        <ImportModal
+          schemas={schemas ?? ["public"]}
+          env={connectedEnv}
+          inTx={inTx}
+          onDone={(m) => {
+            showToast(m);
+            resetExplorer();
+            refreshHistory(historySearch);
+          }}
+          onClose={() => setOverlay(null)}
+        />
       )}
       {overlay === "intel" && (
         <IntelModal
