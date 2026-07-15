@@ -1054,3 +1054,64 @@ body { background: var(--tn-desk); background-image: none; }
   content: ""; position: absolute; inset: 6.5px; border-radius: 1px;
   background: rgba(255,255,255,.9);
 }
+
+/* ============================================================
+   SQL COMPLETION POPUP
+   ============================================================ */
+.cmp-pop {
+  position: absolute; z-index: 40; min-width: 260px; max-width: 420px;
+  background: var(--tn-s1); border: 1px solid var(--tn-bh); border-radius: 6px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .5), 0 2px 6px rgba(0, 0, 0, .35);
+  overflow: hidden; font-size: 12px;
+}
+.cmp-list { max-height: 232px; overflow: auto; padding: 4px; }
+.cmp-item {
+  display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+  border-radius: 4px; cursor: pointer; white-space: nowrap;
+}
+.cmp-item.on { background: var(--tn-as); }
+.cmp-kind {
+  flex: none; width: 16px; height: 16px; display: grid; place-items: center;
+  border-radius: 3px; font: 700 9px "JetBrains Mono", monospace;
+  background: var(--tn-s2); color: var(--tn-tm);
+}
+.cmp-kind.k-column { background: rgba(74, 158, 255, .16); color: #6fb4ff; }
+.cmp-kind.k-table  { background: rgba(255, 122, 69, .16); color: #ff9a6a; }
+.cmp-kind.k-view   { background: rgba(157, 123, 255, .16); color: #b39aff; }
+.cmp-kind.k-schema { background: rgba(63, 185, 80, .16); color: #5fd07a; }
+.cmp-kind.k-function { background: rgba(255, 194, 75, .16); color: #ffc24b; }
+.cmp-item .cmp-label {
+  font-family: "JetBrains Mono", monospace; color: var(--tn-tp);
+  overflow: hidden; text-overflow: ellipsis;
+}
+.cmp-item.on .cmp-label { color: #fff; }
+.cmp-item .cmp-detail {
+  margin-left: auto; padding-left: 12px; color: var(--tn-tm); font-size: 10.5px;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.cmp-foot {
+  display: flex; gap: 12px; padding: 5px 9px; border-top: 1px solid var(--tn-bs);
+  background: var(--tn-s2); color: var(--tn-tm); font-size: 9.5px; letter-spacing: .04em;
+}
+
+/* ============================================================
+   WARM BRAND IDENTITY — amber → coral layered-stack mark
+   The functional accent stays blue (semantic), the brand is warm.
+   ============================================================ */
+:root { --tn-brand-a: #FFC24B; --tn-brand-b: #FF7A45; --tn-brand-c: #FF5560; }
+
+.brand { gap: 9px; }
+.brand svg { filter: drop-shadow(0 2px 5px rgba(255,122,69,.28)); flex: 0 0 auto; }
+.brand-word {
+  background: linear-gradient(90deg, var(--tn-brand-a), var(--tn-brand-c));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  font-weight: 750; letter-spacing: .01em;
+}
+
+/* Onboarding glyph: warm halo instead of the flat grey disc */
+.onboard-glyph {
+  background: radial-gradient(circle at 50% 42%, rgba(255,122,69,.20), rgba(255,85,96,.06) 70%);
+  border-color: rgba(255,122,69,.30);
+  box-shadow: 0 0 0 1px rgba(255,122,69,.18) inset, 0 8px 26px rgba(255,85,96,.16);
+}
+.onboard-glyph svg { filter: drop-shadow(0 2px 6px rgba(255,85,96,.30)); }

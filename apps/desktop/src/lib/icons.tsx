@@ -1,5 +1,32 @@
 /** Inline SVG icons matching the HUD design (1.6–1.8px stroke). */
 
+/** TupleNest brand mark — layered-stack, amber→coral. Scales crisply to any size. */
+export const BrandMark = ({ size = 18 }: { size?: number }) => {
+  const id = "tnb"; // gradient ids are page-unique enough for a single header/onboard use
+  return (
+    <svg width={size} height={size} viewBox="0 0 512 512" aria-hidden>
+      <defs>
+        <linearGradient id={`${id}w`} x1="0" y1="150" x2="0" y2="386" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#FFC24B" />
+          <stop offset="0.5" stopColor="#FF7A45" />
+          <stop offset="1" stopColor="#FF5560" />
+        </linearGradient>
+        <linearGradient id={`${id}t`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#FFD07A" />
+          <stop offset="1" stopColor="#FF9A45" />
+        </linearGradient>
+      </defs>
+      <rect x="132" y="322" width="248" height="64" rx="22" fill={`url(#${id}w)`} />
+      <rect x="132" y="234" width="248" height="64" rx="22" fill={`url(#${id}w)`} />
+      <g transform="rotate(-5 256 182)">
+        <rect x="146" y="150" width="248" height="64" rx="22" fill={`url(#${id}w)`} />
+        <rect x="146" y="150" width="248" height="33" rx="16" fill={`url(#${id}t)`} fillOpacity="0.55" />
+        <rect x="160" y="163" width="84" height="9" rx="4" fill="#ffffff" fillOpacity="0.55" />
+      </g>
+    </svg>
+  );
+};
+
 const S = (props: { size?: number }) => ({
   width: props.size ?? 15,
   height: props.size ?? 15,

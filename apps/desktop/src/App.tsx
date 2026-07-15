@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Titlebar from "./app-shell/Titlebar";
 import StatusBar from "./app-shell/StatusBar";
@@ -19,6 +19,8 @@ import {
   TxPrompt,
   type PaletteItem,
 } from "./overlays/Overlays";
+import { BrandMark } from "./lib/icons";
+import type { Catalog, CatalogTable } from "./lib/complete";
 import SchemaModal, { type SchemaExtra } from "./overlays/SchemaModal";
 import MonitorModal from "./overlays/MonitorModal";
 import DiagramModal from "./overlays/DiagramModal";
@@ -597,6 +599,70 @@ export default function App() {
     },
     [openTables, columns, metaFetch]
   );
+
+  /* ---------------- completion catalog ---------------- */
+
+  const searchPath = useMemo(
+    () => ((schemas ?? []).includes("public") ? ["public"] : schemas?.length ? [schemas[0]] : ["public"]),
+    [schemas]
+  );
+
+  const catalog: Catalog | undefined = useMemo(() => {
+    if (!schemas) return undefined;
+    const tables: CatalogTable[] = [];
+    for (const [schema, objs] of Object.entries(objects)) {
+      for (const o of objs) tables.push({ schema, name: o.name, kind: o.kind });
+    }
+    return { schemas, tables, columns, searchPath };
+  }, [schemas, objects, columns, searchPath]);
+
+  /** Load object lists / column lists the editor needs but the explorer
+   *  hasn't lazily opened yet. Guarded so each key is fetched once. */
+  const inFlight = useRef<Set<string>>(new Set());
+
+  const prefetchSchemaObjects = useCallback(
+    async (schema: string) => {
+      const key = `objs:${schema}`;
+      if (schema in objects || inFlight.current.has(key)) return;
+      inFlight.current.add(key);
+      try {
+        const r = await metaFetch({ kind: "list_objects", schema });
+        setObjects((m) => ({ ...m, [schema]: r ? (r.payload as DbObject[]) : [] }));
+      } catch {
+        /* completion is best-effort — never surface an error for it */
+      } finally {
+        inFlight.current.delete(key);
+      }
+    },
+    [objects, metaFetch]
+  );
+
+  const prefetchTables = useCallback(
+    (want: { schema: string; name: string }[]) => {
+      for (const { schema, name } of want) {
+        const key = `${schema}.${name}`;
+        if (key in columns || inFlight.current.has(key)) continue;
+        inFlight.current.add(key);
+        metaFetch({ kind: "describe_object", schema, name })
+          .then((r) => {
+            if (r) {
+              const desc = r.payload as { columns: DbColumn[] };
+              setColumns((m) => ({ ...m, [key]: desc.columns }));
+            }
+          })
+          .catch(() => {
+            /* table may not exist yet while the user is mid-type — ignore */
+          })
+          .finally(() => inFlight.current.delete(key));
+      }
+    },
+    [columns, metaFetch]
+  );
+
+  // Warm the default schema's object list so `from <tab>` works immediately.
+  useEffect(() => {
+    if (connected && schemas) prefetchSchemaObjects(searchPath[0]);
+  }, [connected, schemas, searchPath, prefetchSchemaObjects]);
 
   const setActiveSql = useCallback(
     (sql: string, opts?: { markClean?: boolean }) => {
@@ -1246,7 +1312,7 @@ export default function App() {
             <div className="onboard">
               <div className="card">
                 <div className="onboard-glyph">
-                  <span className="brand-glyph" style={{ width: 26, height: 26 }} />
+                  <BrandMark size={32} />
                 </div>
                 <div className="big">No query open</div>
                 <p>
@@ -1301,6 +1367,9 @@ export default function App() {
               onVisibleRows={(a, b) =>
                 setRowsInfo(result ? `rows ${a.toLocaleString()}–${b.toLocaleString()} of ${result.storedRows.toLocaleString()}` : "")
               }
+              catalog={catalog}
+              onPrefetchTables={prefetchTables}
+              onPrefetchSchema={prefetchSchemaObjects}
               history={{
                 items: historyItems,
                 search: historySearch,

@@ -1,4 +1,5 @@
 import type { HistoryEntry, QueryResult } from "../ipc/types";
+import type { Catalog } from "../lib/complete";
 import Grid from "../results/Grid";
 import HistoryPanel from "../history/HistoryPanel";
 import SqlEditor from "./SqlEditor";
@@ -36,6 +37,9 @@ type Props = {
   onCopyable: (v: string | null) => void;
   onToast: (t: string) => void;
   onVisibleRows: (first: number, last: number) => void;
+  catalog?: Catalog;
+  onPrefetchTables?: (tables: { schema: string; name: string }[]) => void;
+  onPrefetchSchema?: (schema: string) => void;
   history: {
     items: HistoryEntry[];
     search: string;
@@ -124,7 +128,15 @@ export default function QueryPanel(p: Props) {
       </div>
 
       <div className="editor-zone">
-        <SqlEditor sql={p.sql} disabled={!p.connected} height={p.editorH} onChange={p.onSqlChange} />
+        <SqlEditor
+          sql={p.sql}
+          disabled={!p.connected}
+          height={p.editorH}
+          onChange={p.onSqlChange}
+          catalog={p.catalog}
+          onPrefetchTables={p.onPrefetchTables}
+          onPrefetchSchema={p.onPrefetchSchema}
+        />
         {p.status && (
           <div className="run-status" style={{ color: p.status.color }}>
             <span>{p.status.icon}</span>

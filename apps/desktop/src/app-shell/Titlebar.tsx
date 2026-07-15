@@ -1,6 +1,6 @@
 import type { ConnectionRecord } from "../ipc/types";
 import { envMeta } from "../lib/sql";
-import { GearIcon, SidebarIcon } from "../lib/icons";
+import { GearIcon, SidebarIcon, BrandMark } from "../lib/icons";
 
 type Props = {
   theme: "dark" | "light";
@@ -29,7 +29,8 @@ export default function Titlebar(p: Props) {
         <SidebarIcon />
       </button>
       <div className="brand">
-        <span className="brand-glyph" /> TupleNest
+        <BrandMark size={18} />
+        <span className="brand-word">TupleNest</span>
       </div>
       <div className="conn-switch">
         <button onClick={p.onToggleConnMenu}>

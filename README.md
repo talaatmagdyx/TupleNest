@@ -1,47 +1,86 @@
 # TupleNest
 
-**A modern, open-source, cross-platform IDE for relational and NoSQL databases.**
+**A modern, safety-first desktop IDE for PostgreSQL.**
 
-Rust + Tauri 2 + React + TypeScript · macOS / Windows / Linux · MIT licensed
+Rust + Tauri 2 + React + TypeScript · macOS · MIT licensed
 
-TupleNest aims to be the fastest, safest workspace for exploring, developing, debugging, and operating databases — competing with DataGrip, DBeaver, TablePlus, and friends on five differentiators: performance, modern UX, production safety, native multi-model support, and local-first privacy.
+TupleNest is a fast, local-first workspace for exploring, developing, debugging, and operating PostgreSQL databases. Version 1.0 ships a complete PostgreSQL adapter; other engines are on the roadmap.
 
-## Status
+## Install (macOS, Apple Silicon)
 
-Pre-alpha. Currently executing **Phase 0** (foundation) and planning **Phase 1** (PostgreSQL daily-use product).
+1. Open **`TupleNest-1.0.0-macOS-arm64.dmg`**.
+2. Drag **TupleNest** into your **Applications** folder.
+3. Launch it. The build is not notarized, so the first launch needs Gatekeeper approval: right-click the app → **Open** → **Open**, or run once:
 
-- [docs/ROADMAP.md](docs/ROADMAP.md) — Phases 0–9 overview
-- [docs/phase-0-plan.md](docs/phase-0-plan.md) — full Phase 0 backlog: epics, stories, acceptance tests, milestones
-- [docs/phase-1-plan.md](docs/phase-1-plan.md) — full Phase 1 backlog
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/TupleNest.app
+   ```
 
-## Repository layout
+Requires macOS 10.15+ on an arm64 (M-series) Mac.
+
+## What's included (PostgreSQL, v1.0)
+
+- **Connections** — saved profiles, credentials stored only in the macOS Keychain, never in state/logs/SQLite.
+- **TLS** — disabled / prefer / verify-ca / verify-full, fails closed on cert problems.
+- **SSH tunnels** — host-key-pinned (fingerprint or known_hosts), fails closed.
+- **Schema explorer** — lazy tree of schemas → tables/views → columns, with indexes, size, and row estimates.
+- **Streaming result grid** — bounded, virtualized, backpressured; large result sets never corrupt or blow up memory.
+- **Query editor** — syntax highlighting, Format SQL, EXPLAIN / EXPLAIN ANALYZE plan tab, `$1..$n` parameter binding.
+- **Schema-aware autocomplete** — context-driven completion as you type or on ⌃Space: tables and schemas after `FROM`/`JOIN`/`UPDATE`, columns of the in-scope tables in `SELECT`/`WHERE`/`ON`, alias resolution (`t.` → that table's columns), `schema.` → its tables, plus keywords and functions. Columns and object lists are fetched lazily on demand and cached; comments and string literals are masked so they never trigger false context.
+- **Transactions** — begin / commit / rollback with an unsafe-close guard.
+- **Query history** — searchable, with a production-statement audit log (full SQL captured on prod).
+- **Server monitoring** — live `pg_stat_activity`, locks, and DB stats; cancel or terminate a backend.
+- **ER diagram** — foreign-key relationship graph.
+- **SQL snippets** — reusable snippet library via the command palette.
+- **Production safety** — prod connections flagged, guarded destructive statements, colored environment banner.
+- **Signature UX** — environment-reactive ambient window frame (dev / staging / prod), unified macOS titlebar, collapsible + resizable activity-rail sidebar.
+
+## Build from source
+
+```sh
+cd apps/desktop
+npm install --include=dev
+npm run tauri build      # produces target/release/bundle/{macos,dmg}
+```
+
+Dev mode: `npm run tauri dev`.
+
+> **`NODE_ENV` gotcha.** If your shell exports `NODE_ENV=production`, npm sets
+> `omit=dev` and silently strips `vite`, `vitest`, and `typescript` — later
+> installs then break the build. Always install with `--include=dev`. Do *not*
+> "fix" that by exporting `NODE_ENV=development`: Vite reads it at build time and
+> will bundle React's **development** build into the release (≈+400 kB and
+> slower). Install with `--include=dev`; build with `NODE_ENV` left at
+> production.
+
+Run the test suites:
+
+```sh
+cargo test                 # Rust unit tests
+cd apps/desktop && npm test # TypeScript (vitest): completion engine, DML generation
+```
+
+Live PostgreSQL / SSH contract tests are marked `#[ignore]` and require a local Postgres on `:5432` and the dev sshd from `docs/dev-sshd.md`:
+
+```sh
+cargo test -- --ignored
+```
+
+## Architecture
 
 ```
 apps/desktop/       Tauri 2 desktop app (React frontend + src-tauri)
-crates/             Rust workspace crates (driver-api, driver-postgres, query-engine, …)
-packages/           Shared frontend packages (ui, editor, grid)
-extensions/         Plugin ecosystem (reserved, Phase 8)
-docs/               Roadmap and phase plans
+crates/             Rust workspace: driver-api, driver-postgres, connection-core,
+                    credential-store, ssh-core, workspace-store, metadata-cache,
+                    result-stream, telemetry, …
+docs/               Roadmap, phase plans, dev setup
 ```
 
-## Core principles
+Design principles: Rust owns all connections, sessions, transactions, and result streams; the WebView only invokes narrow, capability-gated Tauri commands. Credentials live exclusively in the OS keychain. Results stream in bounded batches with backpressure. Query cancellation is a first-class, tested feature.
 
-1. Credentials live only in the OS keychain — never in frontend state, logs, or SQLite.
-2. Rust owns connections, sessions, transactions, executions, and result streams; the WebView invokes only narrow, capability-gated Tauri commands.
-3. Results stream in bounded binary batches with backpressure — no result corruption, ever (checksum-gated releases).
-4. Query cancellation is a first-class, tested feature.
-5. Every driver publishes an honest capability report and passes the contract test suite.
-
-## Getting started (Phase 0)
-
-```sh
-cargo build            # builds the Rust workspace
-# frontend: see apps/desktop/README.md to initialize the Tauri 2 + React app
-```
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). Everything is planned in the open — pick a story from the phase plans.
+- [docs/ROADMAP.md](docs/ROADMAP.md) — Phases 0–9 overview
+- [docs/design-requirements.md](docs/design-requirements.md) — UI design spec
+- [docs/dev-sshd.md](docs/dev-sshd.md) — local sshd for tunnel tests
 
 ## License
 
