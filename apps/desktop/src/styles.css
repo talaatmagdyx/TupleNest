@@ -1003,3 +1003,54 @@ body { background: var(--tn-desk); background-image: none; }
 .activity-rail { padding-top: 8px; }
 
 /* Collapsed: the toggle icon in the titlebar reads as "show panel" */
+
+
+/* ============================================================
+   SIGNATURE: ENVIRONMENT-REACTIVE AMBIENT FRAME
+   The whole window peripherally reflects the connected env —
+   you feel prod vs staging vs dev without reading a word.
+   ============================================================ */
+
+.shell { position: relative; }
+
+/* The ambient glow is a non-interactive overlay that frames the window
+   with an inset color wash keyed to the environment. */
+.env-glow {
+  position: absolute; inset: 0; z-index: 200; pointer-events: none;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--env-line, transparent),
+              inset 0 0 34px -6px var(--env-wash, transparent);
+  transition: box-shadow .5s ease;
+}
+
+/* Per-environment intensities (subtle → alarming) */
+.env-frame.env-dev     { --env-line: rgba(75,191,123,.28);  --env-wash: rgba(75,191,123,.12); }
+.env-frame.env-test    { --env-line: rgba(154,160,169,.30); --env-wash: rgba(154,160,169,.12); }
+.env-frame.env-staging { --env-line: rgba(224,161,58,.50);  --env-wash: rgba(224,161,58,.20); }
+.env-frame.env-prod    { --env-line: rgba(239,95,107,.75);  --env-wash: rgba(239,95,107,.30); }
+
+/* Prod breathes — a slow, calm pulse that draws the eye without nagging */
+.env-frame.env-prod .env-glow { animation: envpulse 3.4s ease-in-out infinite; }
+@keyframes envpulse {
+  0%, 100% { box-shadow: inset 0 0 0 1px rgba(239,95,107,.55), inset 0 0 30px -8px rgba(239,95,107,.22); }
+  50%      { box-shadow: inset 0 0 0 1.5px rgba(239,95,107,.9), inset 0 0 46px -4px rgba(239,95,107,.42); }
+}
+
+/* The activity rail top edge picks up the env color as a quiet accent line */
+.env-frame .activity-rail { border-top: 2px solid var(--env-line, transparent); }
+
+/* Env-tinted connection dot glow in the titlebar is already handled;
+   here we tint the status-bar first segment to match the env exactly */
+.env-frame.env-staging .statusbar .item:first-child { background: #e0a13a; }
+.env-frame.env-prod    .statusbar .item:first-child { background: #ef5f6b; }
+.env-frame.env-test    .statusbar .item:first-child { background: #6a7482; }
+
+/* ---- Signature brand mark: nested cells (a "tuple nest") ---- */
+.brand-glyph::after {
+  content: ""; position: absolute; inset: 4px; border-radius: 2px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.55);
+}
+.brand-glyph::before {
+  content: ""; position: absolute; inset: 6.5px; border-radius: 1px;
+  background: rgba(255,255,255,.9);
+}

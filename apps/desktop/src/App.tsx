@@ -1135,7 +1135,8 @@ export default function App() {
   }, []);
 
   return (
-    <div className="shell">
+    <div className={`shell ${connected ? `env-frame env-${connectedEnv ?? "dev"}` : ""}`}>
+      {connected && <div className="env-glow" aria-hidden />}
       <Titlebar
         theme={theme}
         connected={connected}
