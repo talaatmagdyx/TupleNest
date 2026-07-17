@@ -26,7 +26,7 @@ older distros.
 | Secret | Needed for | Without it |
 | --- | --- | --- |
 | `TAURI_SIGNING_PRIVATE_KEY` | updater artifacts, every platform | the build fails **after** producing the installers |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | as above | — |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | as above | the build fails at signing — the key is passphrase-protected, so this is **not** optional |
 | `APPLE_*` (see below) | notarizing the macOS builds | mac builds are ad-hoc signed; Gatekeeper warns |
 
 Windows installers are unsigned unless you add an Authenticode certificate;
@@ -99,20 +99,47 @@ A keypair already exists:
 ~/.tuplenest-keys/tuplenest.key.pub   ← public; already in tauri.conf.json
 ```
 
-> **Note:** it was generated without a password for convenience. Before you ship
-> publicly, regenerate it with one:
-> `npx tauri signer generate -w ~/.tuplenest-keys/tuplenest.key`
-> and paste the new public key into `plugins.updater.pubkey`.
->
-> **If you lose this private key, existing installs can never be updated again.**
-> Back it up somewhere durable (password manager / offline copy).
+It is passphrase-protected (key id `C35ED434C8AECC1B`). The first keypair was
+not, and this note used to tell you to fix that before shipping — which is now
+done, before anything shipped, because it could not have been done after.
+
+> **If you lose this private key *or its passphrase*, existing installs can
+> never be updated again.** Back both up somewhere durable and separate from
+> this laptop (password manager / offline copy). The passphrase is not a
+> recovery mechanism for the key; losing either loses both.
+
+### Checking the passphrase is real
+
+The file header reads `rsign encrypted secret key` **whether or not there is a
+passphrase** — minisign writes it either way, so reading the key tells you
+nothing. The first keypair had that header and no password. Test it instead:
+
+```sh
+cd apps/desktop
+npx tauri signer sign -f ~/.tuplenest-keys/tuplenest.key -p "" /tmp/probe.txt
+```
+
+This must **fail** with `Wrong password for that key`. If it succeeds, the key
+is unprotected regardless of what the header says. (Delete the probe and any
+`.sig` afterwards.)
+
+Two flags to avoid when generating: `-p <PASSWORD>` puts the passphrase in your
+shell history and in `ps`, and `--ci` skips the prompt — which yields an empty
+passphrase and a file that still claims to be encrypted. `--ci` also triggers
+off a `CI` environment variable, so check `echo $CI` is empty first. That is the
+likeliest way the first key ended up unprotected.
 
 To sign update artifacts during a build:
 
 ```sh
 export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tuplenest-keys/tuplenest.key)"
-export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""   # if you set one, put it here
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD='your passphrase'
 ```
+
+Both are required now — the build fails without the second, rather than
+producing an unsigned update. In CI they are repository secrets (see the table
+above); locally, prefer reading the passphrase from your password manager over
+leaving it in a shell profile.
 
 `bundle.createUpdaterArtifacts` is on, so the build emits a `.app.tar.gz` plus a
 `.sig` next to the `.dmg`.

@@ -31,7 +31,7 @@
     "updater": {
       "active": true,
       "dialog": false,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMyMzE3MTQ5NkZFNDNCMjEKUldRaE8rUnZTWEV4d3B6Rk9GOUh0QzZrazllbTFIaFQrcTB6N2NMM1NZeUg3Q0RwazdUYXhFQ3cK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMzNUVENDM0QzhBRUNDMUIKUldRYnpLN0lOTlJldytNbzZZdTUvbTRwZDV3U1l3UHEraGxiRzRwUHVLeXRiUjFvWjhMa1RnUWkK",
       "endpoints": [
         "https://github.com/talaatmagdyx/TupleNest/releases/latest/download/latest.json"
       ]
