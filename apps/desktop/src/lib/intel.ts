@@ -21,7 +21,18 @@ export type Usage = {
   preview: string;
 };
 
-const IDENT_CH = /[A-Za-z0-9_$]/;
+/**
+ * A character that can appear inside an identifier.
+ *
+ * `\p{L}` and `\p{N}` rather than `A-Za-z0-9`: PostgreSQL identifiers are
+ * unicode, and an ASCII-only class does not just miss them — it reports
+ * *spurious* matches. In `café_id`, `é` looked like a boundary, so searching
+ * for `id` found a whole-word match inside a longer name, which is the one
+ * thing this check exists to prevent.
+ *
+ * The `u` flag is what makes the property escapes work.
+ */
+const IDENT_CH = /[\p{L}\p{N}_$]/u;
 
 /** Every standalone occurrence of `name` in `sql`, ignoring comments, string
  *  literals, and substrings of longer identifiers (`users` must not match

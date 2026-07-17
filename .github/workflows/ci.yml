@@ -135,6 +135,88 @@ jobs:
         # `--include-ignored`, or this job re-runs exactly the tests the job
         # above already ran and proves nothing.
         run: cargo test -p tuplenest-driver-postgres -- --include-ignored
+  # SSH tunnels, against a real sshd.
+  #
+  # `ssh-core` had **zero** effective coverage: its only three tests were
+  # `#[ignore]`d and nothing ran them, so host-key pinning — the thing standing
+  # between a tunnelled production connection and a man in the middle — was
+  # verified by reading the code and nothing else.
+  #
+  # The dev sshd from docs/dev-sshd.md is userland and needs no privileges, so
+  # the same recipe works on a runner.
+  live-ssh:
+    name: SSH tunnel contract tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports: ["5432:5432"]
+    env:
+      TUPLENEST_TEST_PG_HOST: localhost
+      TUPLENEST_TEST_PG_PORT: "5432"
+      TUPLENEST_TEST_PG_DB: postgres
+      TUPLENEST_TEST_PG_USER: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux system dependencies (Tauri)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssh-server \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            librsvg2-dev libxdo-dev libayatana-appindicator3-dev \
+            build-essential curl wget file libssl-dev patchelf
+
+      - name: Userland sshd on 127.0.0.1:2222
+        run: |
+          set -euo pipefail
+          D="$HOME/.tuplenest-dev-sshd"
+          mkdir -p "$D" && chmod 700 "$D" && cd "$D"
+          ssh-keygen -q -t ed25519 -N "" -f host_ed25519
+          ssh-keygen -q -t ed25519 -N "" -f client_ed25519
+          cp client_ed25519.pub authorized_keys
+          chmod 600 authorized_keys client_ed25519 host_ed25519
+          cat > sshd_config <<EOF
+          Port 2222
+          ListenAddress 127.0.0.1
+          HostKey $D/host_ed25519
+          PidFile $D/sshd.pid
+          AuthorizedKeysFile $D/authorized_keys
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          PubkeyAuthentication yes
+          UsePAM no
+          StrictModes no
+          AllowTcpForwarding yes
+          X11Forwarding no
+          Subsystem sftp internal-sftp
+          LogLevel VERBOSE
+          EOF
+          sudo /usr/sbin/sshd -f "$D/sshd_config" -E "$D/sshd.log"
+          # Fail here rather than inside a test, where "connection refused"
+          # would read as a tunnel bug.
+          for _ in $(seq 1 20); do
+            if nc -z 127.0.0.1 2222; then echo "sshd up"; exit 0; fi
+            sleep 1
+          done
+          echo "sshd did not come up"; cat "$D/sshd.log" || true; exit 1
+
+      - name: Tunnel contract tests
+        run: cargo test -p tuplenest-ssh-core -- --include-ignored
+
+      - name: sshd log on failure
+        if: failure()
+        run: cat "$HOME/.tuplenest-dev-sshd/sshd.log" || true
+
   frontend:
     runs-on: ubuntu-latest
     # This job used to `echo` the commands below instead of running them — a

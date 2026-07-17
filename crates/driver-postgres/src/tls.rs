@@ -69,6 +69,20 @@ pub fn build(config: &ConnectionConfig) -> Result<TlsSetup, DriverError> {
                 let _ = roots.add(cert);
             }
             if let Some(path) = &config.tls_ca_path {
+                /*
+                 * An unscoped read, deliberately, and outside Tauri's fs ACL —
+                 * that scope only covers the plugin surface, and this runs
+                 * Rust-side.
+                 *
+                 * It is not a privilege boundary being crossed: the path is one
+                 * the user typed into their own connection form, read with
+                 * their own privileges, and a CA certificate can legitimately
+                 * live anywhere they keep one, so there is no meaningful root
+                 * to confine it to. The file's bytes never return to the
+                 * WebView — only "parsed" or "rejected" does — so a
+                 * hypothetically compromised frontend could not use this to
+                 * read a file it could not already read.
+                 */
                 let pem = std::fs::read(path).map_err(|e| {
                     DriverError::new(
                         ErrorCategory::Tls,

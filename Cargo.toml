@@ -1,25 +1,25 @@
 [workspace]
 resolver = "2"
+# Every member here has code in it. The workspace used to also list ten crates
+# — `app-core`, `safety-engine`, `query-engine`, `sql-parser`, `metadata-core`,
+# `sql-language-service`, `transaction-core`, `task-engine`, `export-core`,
+# `tunnel-core` — that were one doc-comment line each and that nothing, not even
+# each other, depended on. They were scaffolding from the phase plans, and they
+# made the tree read as though there were a backend safety engine when the
+# safety rules live in `apps/desktop/src/lib/sql.tsx` and `dml.ts`. A directory
+# named after a feature is a claim; these ones were not true. Deleted rather
+# than kept as placeholders — `git log` remembers them, and a real one can be
+# created the day something needs it.
 members = [
   "apps/desktop/src-tauri",
-  "crates/app-core",
   "crates/driver-api",
   "crates/driver-postgres",
   "crates/connection-core",
-  "crates/query-engine",
   "crates/result-stream",
-  "crates/metadata-core",
   "crates/metadata-cache",
-  "crates/sql-parser",
-  "crates/sql-language-service",
-  "crates/transaction-core",
-  "crates/safety-engine",
   "crates/credential-store",
   "crates/ssh-core",
-  "crates/tunnel-core",
-  "crates/export-core",
   "crates/workspace-store",
-  "crates/task-engine",
   "crates/telemetry",
 ]
 

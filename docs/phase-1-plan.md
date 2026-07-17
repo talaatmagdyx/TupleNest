@@ -1,5 +1,15 @@
 # TupleNest — Phase 1 Plan: PostgreSQL Daily-Use Product
 
+> **This is the plan as written before the code, kept as a record of intent.
+> The crate names below are not all real.** Most notably there is no
+> `safety-engine`: the write guards and DML generation this plan assigns to it
+> live in `apps/desktop/src/lib/sql.tsx` and `apps/desktop/src/lib/dml.ts`.
+> Likewise `sql-parser`, `sql-language-service`, `transaction-core`,
+> `metadata-core`, `query-engine`, `export-core`, `task-engine` and
+> `tunnel-core` were never written; they sat as empty stubs and have been
+> deleted. `Cargo.toml` and the README's Architecture section describe what is
+> actually here; where the two disagree, they are right and this is history.
+
 **Goal:** an internal team can use TupleNest as its **primary PostgreSQL client**: connect (TLS/SSH), explore, write SQL with completion, execute with reliable cancellation, browse and safely edit data, manage transactions, keep history, export CSV/JSON, read explain plans, and get basic production warnings.
 
 **Duration estimate:** 12–16 weeks (3–5 engineers), starting from Phase 0 exit.

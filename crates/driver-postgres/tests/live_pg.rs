@@ -1239,3 +1239,111 @@ async fn rows_affected_is_reported_for_writes() {
         .await
         .unwrap();
 }
+
+/// The isolation level must reach the server.
+///
+/// `begin(_options)` discarded them: `IsolationLevel`, `read_only` and
+/// `deferrable` were a complete API wired to nothing, and every transaction ran
+/// at the server default. Someone asking for SERIALIZABLE got READ COMMITTED
+/// and no sign of it. Unit tests cover the string; only the server can say it
+/// was honoured.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn isolation_level_reaches_the_server() {
+    let mut s = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+
+    s.begin(TransactionOptions {
+        isolation: Some(IsolationLevel::Serializable),
+        read_only: false,
+        deferrable: false,
+    })
+    .await
+    .expect("begin serializable");
+
+    let mut sink = CollectSink::default();
+    s.execute(req("SHOW transaction_isolation"), &sink)
+        .await
+        .unwrap();
+    let level = {
+        let rows = sink.rows.lock().unwrap();
+        text_of(&rows[0][0])
+    };
+    assert_eq!(
+        level, "serializable",
+        "the level the caller asked for must be the level in force"
+    );
+    s.rollback().await.unwrap();
+
+    // And a transaction that asks for nothing still gets the server default,
+    // rather than inheriting the last one.
+    s.begin(TransactionOptions::default()).await.unwrap();
+    sink = CollectSink::default();
+    s.execute(req("SHOW transaction_isolation"), &sink)
+        .await
+        .unwrap();
+    let dflt = {
+        let rows = sink.rows.lock().unwrap();
+        text_of(&rows[0][0])
+    };
+    assert_eq!(dflt, "read committed");
+    s.rollback().await.unwrap();
+}
+
+/// A READ ONLY transaction refuses writes, without the whole session being
+/// read-only.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn a_read_only_transaction_refuses_writes() {
+    let mut s = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    s.begin(TransactionOptions {
+        isolation: None,
+        read_only: true,
+        deferrable: false,
+    })
+    .await
+    .expect("begin read only");
+
+    let err = s
+        .execute(req("CREATE TEMP TABLE tn_ro_tx (id int)"), &NullSink)
+        .await
+        .expect_err("a write must be refused in a READ ONLY transaction");
+    assert!(
+        format!("{err:?}").to_lowercase().contains("read-only")
+            || format!("{err:?}").to_lowercase().contains("read only"),
+        "expected a read-only refusal, got {err:?}"
+    );
+    s.rollback().await.unwrap();
+}
+
+/// An array element containing a comma must survive the round trip.
+///
+/// Elements were joined with a bare comma, so `{"a,b", "c"}` rendered as
+/// `{a,b,c}` — three elements where there were two, and no way to tell.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn array_elements_are_quoted_like_postgres_does() {
+    // What PostgreSQL itself prints, as the reference.
+    let want = text_of(&first_row("SELECT ARRAY['a,b', 'c']::text[]").await[0]);
+    assert_eq!(want, r#"{"a,b",c}"#, "this is what array_out produces");
+
+    let cases = [
+        ("SELECT ARRAY['a,b','c']::text[]", r#"{"a,b",c}"#),
+        (
+            "SELECT ARRAY['plain','words here']::text[]",
+            r#"{plain,"words here"}"#,
+        ),
+        ("SELECT ARRAY['NULL', NULL]::text[]", r#"{"NULL",NULL}"#),
+        ("SELECT ARRAY['','x']::text[]", r#"{"",x}"#),
+        // Numbers never need quoting; the rule costs nothing where it is not used.
+        ("SELECT ARRAY[1,2,3]::int4[]", "{1,2,3}"),
+    ];
+    for (sql, want) in cases {
+        assert_eq!(text_of(&first_row(sql).await[0]), want, "for {sql}");
+    }
+}

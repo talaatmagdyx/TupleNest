@@ -179,3 +179,62 @@ but only the holder of the private key can make the app accept them.
 - A failed check (offline, no endpoint, dev build) is swallowed — no dialog.
 - **Updating is refused while a transaction is open**, so an in-flight
   transaction is never lost to a relaunch.
+
+## 4. Rolling back a bad release
+
+Write this down before you need it, not while you need it.
+
+The updater has **no downgrade path**. Tauri compares versions and installs
+only what is newer, so you cannot push 1.2.0 to fix 1.3.0. Everything below
+follows from that.
+
+### If it is still a draft
+
+Nothing has shipped. Delete the draft release and the tag:
+
+```sh
+gh release delete v1.3.0 --yes
+git push --delete origin v1.3.0
+git tag -d v1.3.0
+```
+
+### If it is published — stop the bleeding first
+
+`latest.json` is what installed copies read. Removing it is the fastest way to
+stop new machines taking the update; it takes effect on the next check.
+
+```sh
+# Un-publish. The previous release becomes `latest` again.
+gh release edit v1.3.0 --draft
+
+# Or, if you want the release page to stay up but the updater to go quiet:
+gh release delete-asset v1.3.0 latest.json
+```
+
+An installed copy that already updated stays on the bad version. There is no
+mechanism to pull it back, which is the whole reason to publish deliberately.
+
+### Then ship forward, never back
+
+Fix, bump to a version **higher** than the bad one (1.3.1, not 1.2.x), tag, and
+publish. Anyone who took 1.3.0 gets 1.3.1 on their next check; anyone who did
+not goes straight from 1.2.x to 1.3.1.
+
+If the bad version must be made unusable rather than merely superseded, that is
+a code change in 1.3.1 — a startup check — not a release operation. Prefer not
+to need it.
+
+### What is not recoverable
+
+- **A lost signing key.** Nothing you publish afterwards will be accepted by
+  any existing install. Back it up somewhere that is not this laptop.
+- **A leaked signing key.** An attacker who also controls a network path can
+  sign updates your users will accept. Rotating the key does not help existing
+  installs — their public key is baked into the binary they already have. They
+  would have to download a new build by hand, which means telling them.
+
+### Rehearse it
+
+Publish a `v0.0.1-rollback-drill` prerelease, un-publish it, and confirm
+`releases/latest/download/latest.json` goes back to what it was. Ten minutes
+now, versus finding out during an incident.

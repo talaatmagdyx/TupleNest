@@ -251,3 +251,34 @@ describe("comparePlans", () => {
     expect(comparePlans(a, a).msDelta).toBeNull();
   });
 });
+
+describe("findUsages — unicode identifiers", () => {
+  /*
+   * The identifier class was `[A-Za-z0-9_$]`. PostgreSQL identifiers are
+   * unicode, so `é` read as a word boundary and `id` matched *inside*
+   * `café_id` — a spurious whole-word hit, which is exactly what the boundary
+   * check exists to prevent. Rename would then have rewritten part of an
+   * unrelated column.
+   */
+  it("does not match inside a name with a non-ASCII letter", () => {
+    expect(findUsages("select café_id from t", "id")).toHaveLength(0);
+  });
+
+  it("finds a unicode identifier as a whole word", () => {
+    const hits = findUsages("select café_id from t where café_id = 1", "café_id");
+    expect(hits).toHaveLength(2);
+  });
+
+  it("still refuses a substring of a unicode name", () => {
+    expect(findUsages("select naïve_flag from t", "naïve")).toHaveLength(0);
+  });
+
+  it("handles a name that is entirely non-ASCII", () => {
+    expect(findUsages("select 数量 from t", "数量")).toHaveLength(1);
+  });
+
+  it("keeps ASCII behaviour unchanged", () => {
+    expect(findUsages("select users_archive from t", "users")).toHaveLength(0);
+    expect(findUsages("select users from users", "users")).toHaveLength(2);
+  });
+});

@@ -7,10 +7,24 @@ license.workspace = true
 publish.workspace = true
 description = "TupleNest credential store: secrets live only in the OS keychain, referenced by opaque IDs"
 
+[features]
+# `MemoryStore` keeps passwords in a plain `HashMap<String, String>` that is
+# never wiped — fine for tests, wrong for a shipped binary. It used to be
+# exported unconditionally, so "not for production use" was a doc comment and
+# nothing else; the app never called it, but nothing stopped it. Behind a
+# feature it cannot be compiled into the app at all, which is a guarantee
+# rather than a request.
+test-support = []
+
 [dependencies]
 tuplenest-driver-api = { path = "../driver-api" }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+
+[dev-dependencies]
+# Self-reference so the integration tests in `tests/` — which are separate
+# crates and so cannot see `#[cfg(test)]` items — can still use MemoryStore.
+tuplenest-credential-store = { path = ".", features = ["test-support"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }

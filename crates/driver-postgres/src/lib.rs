@@ -45,6 +45,67 @@ async fn connect_client(
     }
 }
 
+/// The `BEGIN` for these options.
+///
+/// Separate and pure so the mapping can be tested without a server — this is
+/// the kind of code where a wrong word is a wrong isolation level, silently.
+///
+/// `DEFERRABLE` only means anything for a SERIALIZABLE READ ONLY transaction;
+/// PostgreSQL ignores it otherwise, and emitting it anyway would suggest it did
+/// something.
+fn begin_statement(o: &TransactionOptions) -> String {
+    let mut sql = String::from("BEGIN");
+    if let Some(level) = o.isolation {
+        sql.push_str(" ISOLATION LEVEL ");
+        sql.push_str(match level {
+            // PostgreSQL accepts READ UNCOMMITTED and treats it as READ
+            // COMMITTED — it has no dirty reads. Passing it through is honest:
+            // the server's behaviour is the server's to explain.
+            IsolationLevel::ReadUncommitted => "READ UNCOMMITTED",
+            IsolationLevel::ReadCommitted => "READ COMMITTED",
+            IsolationLevel::RepeatableRead => "REPEATABLE READ",
+            IsolationLevel::Serializable => "SERIALIZABLE",
+        });
+    }
+    if o.read_only {
+        sql.push_str(" READ ONLY");
+    }
+    if o.deferrable && o.read_only && o.isolation == Some(IsolationLevel::Serializable) {
+        sql.push_str(" DEFERRABLE");
+    }
+    sql
+}
+
+/// One array element, quoted the way PostgreSQL's own `array_out` does.
+///
+/// The elements used to be joined with a bare comma, so a text array whose
+/// element contained a comma rendered as `{a,b}` — which reads as two elements
+/// and does not round-trip. Same for braces, quotes, backslashes, whitespace,
+/// the empty string, and the literal text `NULL`, which was indistinguishable
+/// from an actual NULL.
+///
+/// For numbers, bools and uuids none of this can trigger, so it costs nothing
+/// where it is not needed.
+fn quote_array_element(s: &str) -> String {
+    let needs = s.is_empty()
+        || s.eq_ignore_ascii_case("NULL")
+        || s.chars()
+            .any(|c| matches!(c, '{' | '}' | ',' | '"' | '\\') || c.is_whitespace());
+    if !needs {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        if c == '"' || c == '\\' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    out
+}
+
 /// Cancels via the wire-protocol cancel key, matching the session's TLS posture.
 async fn cancel_with(token: CancelToken, setup: &TlsSetup) -> Result<(), tokio_postgres::Error> {
     match setup.make() {
@@ -963,15 +1024,26 @@ impl DatabaseSession for PostgresSession {
         })
     }
 
-    async fn begin(&mut self, _options: TransactionOptions) -> Result<TransactionId, DriverError> {
+    async fn begin(&mut self, options: TransactionOptions) -> Result<TransactionId, DriverError> {
         if self.in_transaction.is_some() {
             return Err(DriverError::new(
                 ErrorCategory::Internal,
                 "Transaction already open",
             ));
         }
+        /*
+         * The options were discarded — the parameter was literally `_options` —
+         * so `IsolationLevel`, `read_only` and `deferrable` were a complete,
+         * documented API that did nothing, and every transaction ran at the
+         * server default. Anyone reaching for SERIALIZABLE got READ COMMITTED
+         * and no indication of it.
+         *
+         * Built from an enum rather than a string, so nothing here is
+         * interpolated: the only values that can reach the SQL are the four
+         * PostgreSQL defines.
+         */
         self.client
-            .batch_execute("BEGIN")
+            .batch_execute(&begin_statement(&options))
             .await
             .map_err(normalize_error)?;
         let id = TransactionId::new();
@@ -1826,7 +1898,7 @@ fn convert_cell(row: &Row, i: usize) -> CellValue {
                     v.iter()
                         .map(|e| e
                             .as_ref()
-                            .map(|x| x.to_string())
+                            .map(|x| quote_array_element(&x.to_string()))
                             .unwrap_or_else(|| "NULL".into()))
                         .collect::<Vec<_>>()
                         .join(",")
@@ -2020,5 +2092,127 @@ pub fn normalize_error(e: tokio_postgres::Error) -> DriverError {
     } else {
         DriverError::new(ErrorCategory::DriverFailure, "Driver error")
             .with_original_message(e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod begin_statement_tests {
+    use super::*;
+
+    fn opts(
+        isolation: Option<IsolationLevel>,
+        read_only: bool,
+        deferrable: bool,
+    ) -> TransactionOptions {
+        TransactionOptions {
+            isolation,
+            read_only,
+            deferrable,
+        }
+    }
+
+    #[test]
+    fn a_plain_begin_when_nothing_is_asked_for() {
+        assert_eq!(begin_statement(&opts(None, false, false)), "BEGIN");
+    }
+
+    #[test]
+    fn maps_every_isolation_level_to_its_postgres_spelling() {
+        // A wrong word here is a wrong isolation level, silently — the server
+        // would reject a typo, but a mapping to the *wrong valid* level would
+        // run and be undetectable.
+        let cases = [
+            (
+                IsolationLevel::ReadUncommitted,
+                "BEGIN ISOLATION LEVEL READ UNCOMMITTED",
+            ),
+            (
+                IsolationLevel::ReadCommitted,
+                "BEGIN ISOLATION LEVEL READ COMMITTED",
+            ),
+            (
+                IsolationLevel::RepeatableRead,
+                "BEGIN ISOLATION LEVEL REPEATABLE READ",
+            ),
+            (
+                IsolationLevel::Serializable,
+                "BEGIN ISOLATION LEVEL SERIALIZABLE",
+            ),
+        ];
+        for (level, want) in cases {
+            assert_eq!(begin_statement(&opts(Some(level), false, false)), want);
+        }
+    }
+
+    #[test]
+    fn read_only_without_an_isolation_level() {
+        assert_eq!(begin_statement(&opts(None, true, false)), "BEGIN READ ONLY");
+    }
+
+    #[test]
+    fn deferrable_only_where_postgres_honours_it() {
+        // DEFERRABLE means something only for SERIALIZABLE READ ONLY. Emitting
+        // it elsewhere would imply it did something.
+        assert_eq!(
+            begin_statement(&opts(Some(IsolationLevel::Serializable), true, true)),
+            "BEGIN ISOLATION LEVEL SERIALIZABLE READ ONLY DEFERRABLE"
+        );
+        assert_eq!(
+            begin_statement(&opts(Some(IsolationLevel::RepeatableRead), true, true)),
+            "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
+        );
+        assert_eq!(
+            begin_statement(&opts(Some(IsolationLevel::Serializable), false, true)),
+            "BEGIN ISOLATION LEVEL SERIALIZABLE"
+        );
+    }
+
+    #[test]
+    fn the_default_options_are_a_plain_begin() {
+        // What `pg_begin` passes today. It must stay the server default.
+        assert_eq!(begin_statement(&TransactionOptions::default()), "BEGIN");
+    }
+}
+
+#[cfg(test)]
+mod array_element_tests {
+    use super::*;
+
+    #[test]
+    fn leaves_a_plain_element_alone() {
+        assert_eq!(quote_array_element("ada"), "ada");
+        assert_eq!(quote_array_element("42"), "42");
+    }
+
+    #[test]
+    fn quotes_an_element_containing_a_comma() {
+        // `{a,b}` from one element reads as two. This is the case that made
+        // the rendering ambiguous rather than merely ugly.
+        assert_eq!(quote_array_element("a,b"), r#""a,b""#);
+    }
+
+    #[test]
+    fn quotes_braces_and_whitespace() {
+        assert_eq!(quote_array_element("{x}"), r#""{x}""#);
+        assert_eq!(quote_array_element("two words"), r#""two words""#);
+    }
+
+    #[test]
+    fn escapes_quotes_and_backslashes() {
+        assert_eq!(quote_array_element(r#"say "hi""#), r#""say \"hi\"""#);
+        assert_eq!(quote_array_element(r"back\slash"), r#""back\\slash""#);
+    }
+
+    #[test]
+    fn quotes_the_empty_string_so_it_is_not_nothing() {
+        assert_eq!(quote_array_element(""), r#""""#);
+    }
+
+    #[test]
+    fn quotes_the_literal_text_null() {
+        // Otherwise a text element holding "NULL" is indistinguishable from an
+        // actual NULL, which is a different fact about the data.
+        assert_eq!(quote_array_element("NULL"), r#""NULL""#);
+        assert_eq!(quote_array_element("null"), r#""null""#);
     }
 }

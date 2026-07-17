@@ -4,7 +4,10 @@
 //! - Secrets live ONLY in the OS keychain. SQLite, logs, IPC payloads, and
 //!   frontend state hold opaque [`SecretRef`] keys, never values.
 //! - `get` is never exposed over IPC; only backend crates resolve references.
-//! - [`Secret`] redacts its Debug output and zeroes its buffer on drop.
+//! - [`Secret`] redacts its Debug output and zeroes its own buffer on drop.
+//!   That last part is narrower than it sounds — the driver's connection config
+//!   keeps a copy `Secret` cannot reach. See the `secret` module docs for what
+//!   is and is not covered before relying on it.
 
 use tuplenest_driver_api::SecretRef;
 use uuid::Uuid;
@@ -17,7 +20,9 @@ mod keychain;
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 pub use keychain::KeychainStore;
 
+#[cfg(feature = "test-support")]
 mod memory;
+#[cfg(feature = "test-support")]
 pub use memory::MemoryStore;
 
 /// Errors surfaced by credential stores. Never contains secret material.

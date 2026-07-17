@@ -375,6 +375,40 @@ pub struct StoredResult {
 /// drained and counted, but rows are dropped and the result marked truncated.
 const RESULT_STORE_CAP: usize = 100_000;
 
+/// Hard cap on *memory* kept for scrolling, whichever comes first.
+///
+/// The row cap alone was not a memory bound, only a bound on rows: 100,000
+/// rows of a `jsonb` column holding 10 MB documents is a terabyte, and nothing
+/// stopped it. Wide rows are exactly the case where a user has no intuition
+/// for how much they just asked for.
+///
+/// 256 MB: comfortably more than any result someone reads, far less than
+/// enough to take the machine down with it.
+const RESULT_STORE_BYTES: usize = 256 * 1024 * 1024;
+
+/// Rough in-memory size of one row, for the byte budget.
+///
+/// An estimate, not a measurement: what matters is that a 10 MB document
+/// counts as far more than a small integer, not that the number is exact.
+/// `serde_json::to_string` on every row would be a real cost on the hot path
+/// to buy precision nobody needs.
+fn approx_bytes(row: &[serde_json::Value]) -> usize {
+    fn one(v: &serde_json::Value) -> usize {
+        match v {
+            serde_json::Value::Null | serde_json::Value::Bool(_) => 8,
+            serde_json::Value::Number(_) => 16,
+            // The bytes of the text, plus the String header.
+            serde_json::Value::String(s) => s.len() + 24,
+            serde_json::Value::Array(a) => 24 + a.iter().map(one).sum::<usize>(),
+            serde_json::Value::Object(o) => {
+                24 + o.iter().map(|(k, v)| k.len() + 24 + one(v)).sum::<usize>()
+            }
+        }
+    }
+    // The Vec header, plus every cell.
+    24 + row.iter().map(one).sum::<usize>()
+}
+
 /// Streams batches into a bounded RowStore.
 struct StoreSink {
     inner: StdMutex<StoredResult>,
@@ -392,9 +426,9 @@ impl BatchSink for StoreSink {
                 .collect();
         }
         for row in batch.rows {
-            inner
-                .store
-                .push(row.into_iter().map(cell_to_json).collect());
+            let json: Vec<serde_json::Value> = row.into_iter().map(cell_to_json).collect();
+            let bytes = approx_bytes(&json);
+            inner.store.push_sized(json, bytes);
         }
         Ok(())
     }
@@ -492,7 +526,10 @@ pub async fn pg_query(
     let sink = StoreSink {
         inner: StdMutex::new(StoredResult {
             columns: Vec::new(),
-            store: tuplenest_result_stream::RowStore::new(RESULT_STORE_CAP),
+            store: tuplenest_result_stream::RowStore::with_budget(
+                RESULT_STORE_CAP,
+                RESULT_STORE_BYTES,
+            ),
         }),
     };
     // JSON param values from the WebView → typed ParamValue. Text is the

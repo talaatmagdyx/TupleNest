@@ -1,5 +1,14 @@
 # TupleNest — Phase 0 Plan: Product and Technical Foundation
 
+> **This is the plan as written before the code, kept as a record of intent.
+> The crate names below are not all real.** The build consolidated: there is no
+> `app-core`, `query-engine`, `task-engine` or `sql-parser` crate — those
+> responsibilities live in `apps/desktop/src-tauri` and in the frontend's
+> `src/lib`. Ten crates named in these plans existed for a while as empty
+> one-line stubs and have been deleted. `Cargo.toml` and the README's
+> Architecture section describe what is actually here; where the two disagree,
+> they are right and this is history.
+
 **Goal:** a cross-platform (macOS/Windows/Linux) Tauri 2 + Rust + React shell with the core plumbing every later phase depends on, proven end-to-end by a PostgreSQL connection, streaming, and cancellation proof of concept.
 
 **Duration estimate:** 8–10 weeks (2–4 engineers).
