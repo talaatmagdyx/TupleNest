@@ -195,10 +195,37 @@ jobs:
           set -euo pipefail
           sudo apt-get install -y postgresql-client openssl
           dir="$RUNNER_TEMP/pgtls"; mkdir -p "$dir"
-          openssl req -new -x509 -days 1 -nodes -text \
-            -out "$dir/server.crt" -keyout "$dir/server.key" \
-            -subj "/CN=localhost" \
-            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+
+          # A real CA, and a server certificate signed by it — two certs, as on
+          # the local Homebrew server these tests were written against
+          # (`CN=TupleNest Test CA` signing `CN=localhost`).
+          #
+          # This step used to make ONE self-signed cert with `req -x509` and
+          # hand the same file to Postgres as its server cert *and* to the
+          # tests as their CA. `req -x509` produces a CA certificate
+          # (basicConstraints CA:TRUE), and rustls will not accept a CA
+          # certificate as an end-entity server cert — so both verify-full
+          # tests died with "error performing TLS handshake" while every
+          # non-TLS test passed. Self-signed-as-its-own-CA is a shortcut that
+          # only openssl's own client tolerates.
+          openssl req -new -x509 -days 1 -nodes \
+            -out "$dir/ca.crt" -keyout "$dir/ca.key" \
+            -subj "/CN=TupleNest CI Test CA"
+
+          openssl req -new -nodes \
+            -out "$dir/server.csr" -keyout "$dir/server.key" \
+            -subj "/CN=localhost"
+
+          # SAN must cover both spellings: the tests dial `localhost`, and
+          # verify-full checks the name, not the address.
+          openssl x509 -req -in "$dir/server.csr" -days 1 \
+            -CA "$dir/ca.crt" -CAkey "$dir/ca.key" -CAcreateserial \
+            -out "$dir/server.crt" \
+            -extfile <(printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE\n')
+
+          # Prove the chain before handing it to Postgres, so a bad cert says
+          # so here rather than as a handshake error inside a test.
+          openssl verify -CAfile "$dir/ca.crt" "$dir/server.crt"
           chmod 600 "$dir/server.key"
           cid=$(docker ps --filter "ancestor=postgres:${{ matrix.pg }}" --format '{{.ID}}' | head -1)
           docker cp "$dir/server.crt" "$cid:/var/lib/postgresql/server.crt"
@@ -210,7 +237,8 @@ jobs:
           docker exec -u postgres "$cid" psql -c "ALTER SYSTEM SET ssl_key_file = '/var/lib/postgresql/server.key'"
           docker restart "$cid"
           for _ in $(seq 1 30); do pg_isready -h localhost -p 5432 && break; sleep 1; done
-          cp "$dir/server.crt" "$RUNNER_TEMP/ca.crt"
+          # The tests trust the CA, not the leaf.
+          cp "$dir/ca.crt" "$RUNNER_TEMP/ca.crt"
       - name: Contract tests against a real server
         env:
           TUPLENEST_TEST_PG_SSL_CA: ${{ runner.temp }}/ca.crt
@@ -283,27 +311,35 @@ jobs:
           Subsystem sftp internal-sftp
           LogLevel VERBOSE
           EOF
-          # sshd refuses to start without its privilege separation directory,
-          # and a runner that has never started ssh via systemd does not have
-          # one. That is a fatal, exit-255, and the message only reaches the
-          # log file — which `set -e` then aborted before printing. The first
-          # run of this job failed with a bare "exit code 255" and an empty
-          # log, which is my fault twice: once for the missing directory, once
-          # for a diagnostic that could not diagnose.
-          sudo mkdir -p /run/sshd
-
-          # Validate the config before launching, so a syntax error says so
-          # instead of arriving as 255.
-          sudo /usr/sbin/sshd -t -f "$D/sshd_config" || {
+          # Run sshd as the *runner user*, not root. This is the whole trick,
+          # and the comment above this job has said "userland sshd, needs no
+          # privileges" from the start while the command underneath it said
+          # `sudo`. Both cannot be right.
+          #
+          # A root sshd validates the account against /etc/shadow. The `runner`
+          # account is locked (no password), and with `UsePAM no` that is an
+          # instant refusal no matter how good the key is — the first run of
+          # this job failed with `AuthFailed("runner")` for exactly that reason.
+          # A non-root sshd cannot read /etc/shadow, can only authenticate the
+          # user who launched it, and therefore skips the check entirely. That
+          # is also why this works on a Mac, where the dev recipe was written.
+          #
+          # /run/sshd is a privilege-separation thing and privsep needs root, so
+          # a userland sshd does not want it either.
+          #
+          # Verified in a Linux sandbox with this exact config, minus sudo:
+          # exit 0, listening on 2222.
+          /usr/sbin/sshd -t -f "$D/sshd_config" || {
             echo "::error::sshd rejected the config"; exit 1; }
 
-          # `-e` sends errors to stderr as well, so whatever goes wrong is in
-          # the step output rather than in a file nobody reaches.
-          sudo /usr/sbin/sshd -f "$D/sshd_config" -E "$D/sshd.log" -e || {
+          # `-e` puts sshd's errors on stderr, where the step output is. The
+          # previous attempt used only `-E "$D/sshd.log"` and then `set -e`
+          # aborted before the `cat` that would have shown it: a diagnostic
+          # that could not diagnose, which cost a whole CI round trip.
+          /usr/sbin/sshd -f "$D/sshd_config" -E "$D/sshd.log" || {
             echo "::error::sshd exited $? at startup"
-            echo "--- sshd.log:";        sudo cat "$D/sshd.log" 2>/dev/null || echo "(no log written)"
-            echo "--- effective config:"; sudo /usr/sbin/sshd -T -f "$D/sshd_config" 2>&1 | head -20
-            echo "--- /run/sshd:";        ls -ld /run/sshd 2>&1
+            echo "--- sshd.log:";         cat "$D/sshd.log" 2>/dev/null || echo "(no log written)"
+            echo "--- effective config:"; /usr/sbin/sshd -T -f "$D/sshd_config" 2>&1 | head -20
             exit 1
           }
 
