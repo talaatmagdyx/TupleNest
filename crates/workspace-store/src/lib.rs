@@ -680,7 +680,9 @@ mod tests {
 
         let store = Store::open(&path).unwrap();
         assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
-        store.snippet_list().expect("snippets should have been repaired");
+        store
+            .snippet_list()
+            .expect("snippets should have been repaired");
 
         // And it actually works now, rather than merely existing.
         store

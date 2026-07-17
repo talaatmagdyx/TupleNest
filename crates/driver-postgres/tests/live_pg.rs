@@ -133,7 +133,11 @@ async fn renders_timestamps_and_dates() {
     )
     .await;
     assert_eq!(text_of(&cells[0]), "2024-01-15 10:30:00");
-    assert!(text_of(&cells[1]).starts_with("2024-01-15T10:30:00"), "{:?}", cells[1]);
+    assert!(
+        text_of(&cells[1]).starts_with("2024-01-15T10:30:00"),
+        "{:?}",
+        cells[1]
+    );
     assert_eq!(text_of(&cells[2]), "2024-01-15");
     assert_eq!(text_of(&cells[3]), "10:30:00");
 }
@@ -147,7 +151,10 @@ async fn renders_user_defined_enums() {
         .await
         .unwrap();
     session
-        .execute(req("create type tn_test_mood as enum ('happy','sad')"), &NullSink)
+        .execute(
+            req("create type tn_test_mood as enum ('happy','sad')"),
+            &NullSink,
+        )
         .await
         .unwrap();
 
@@ -177,9 +184,17 @@ async fn renders_numeric_without_losing_precision() {
     )
     .await;
     assert_eq!(text_of(&cells[0]), "123456789012345678901234567890.12345");
-    assert_eq!(text_of(&cells[1]), "125000.50", "trailing zero must survive");
+    assert_eq!(
+        text_of(&cells[1]),
+        "125000.50",
+        "trailing zero must survive"
+    );
     assert_eq!(text_of(&cells[2]), "-42.001");
-    assert_eq!(text_of(&cells[3]), "0.00001234", "leading zeros after the point");
+    assert_eq!(
+        text_of(&cells[3]),
+        "0.00001234",
+        "leading zeros after the point"
+    );
     assert_eq!(text_of(&cells[4]), "0");
     assert_eq!(text_of(&cells[5]), "12");
     assert_eq!(text_of(&cells[6]), "NaN");
@@ -202,13 +217,18 @@ async fn renders_arrays_and_network_types() {
 #[tokio::test]
 #[ignore = "requires live PostgreSQL"]
 async fn renders_interval_money_and_xml_via_fallback() {
-    let cells = first_row("select '1 day 2 hours'::interval, '<a>b</a>'::xml, '$1.50'::money").await;
+    let cells =
+        first_row("select '1 day 2 hours'::interval, '<a>b</a>'::xml, '$1.50'::money").await;
     // Not "unsupported" — the fallback decodes the wire value.
     for c in &cells {
         let t = text_of(c);
         assert!(!t.contains("unsupported"), "got {t:?}");
     }
-    assert_eq!(text_of(&cells[1]), "<a>b</a>", "xml is sent as text on the wire");
+    assert_eq!(
+        text_of(&cells[1]),
+        "<a>b</a>",
+        "xml is sent as text on the wire"
+    );
 }
 
 #[tokio::test]
@@ -311,31 +331,40 @@ async fn syntax_error_is_normalized_with_sqlstate_and_position() {
 #[ignore = "requires live PostgreSQL"]
 async fn transactions_visible_only_after_commit() {
     let mut a = PostgresDriver.connect(test_config()).await.unwrap();
-    a.execute(req("DROP TABLE IF EXISTS tuplenest_poc"), &NullSink)
+    a.execute(req("DROP TABLE IF EXISTS public.tuplenest_poc"), &NullSink)
         .await
         .unwrap();
     a.execute(
-        req("CREATE TABLE tuplenest_poc (id int8 PRIMARY KEY)"),
+        req("CREATE TABLE public.tuplenest_poc (id int8 PRIMARY KEY)"),
         &NullSink,
     )
     .await
     .unwrap();
 
     a.begin(TransactionOptions::default()).await.unwrap();
-    a.execute(req("INSERT INTO tuplenest_poc VALUES (1)"), &NullSink)
-        .await
-        .unwrap();
+    a.execute(
+        req("INSERT INTO public.tuplenest_poc VALUES (1)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
     a.rollback().await.unwrap();
 
     a.begin(TransactionOptions::default()).await.unwrap();
-    a.execute(req("INSERT INTO tuplenest_poc VALUES (2)"), &NullSink)
-        .await
-        .unwrap();
+    a.execute(
+        req("INSERT INTO public.tuplenest_poc VALUES (2)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
     a.commit().await.unwrap();
 
     let sink = CountingSink::default();
     let summary = a
-        .execute(req("SELECT id FROM tuplenest_poc ORDER BY id"), &sink)
+        .execute(
+            req("SELECT id FROM public.tuplenest_poc ORDER BY id"),
+            &sink,
+        )
         .await
         .unwrap();
     assert_eq!(summary.rows_returned, 1, "rollback row must not be visible");
@@ -344,7 +373,7 @@ async fn transactions_visible_only_after_commit() {
         2,
         "only the committed row remains"
     );
-    a.execute(req("DROP TABLE tuplenest_poc"), &NullSink)
+    a.execute(req("DROP TABLE public.tuplenest_poc"), &NullSink)
         .await
         .unwrap();
 }
@@ -481,23 +510,41 @@ async fn live_metadata_schema_objects_columns_roundtrip() {
         .unwrap();
 
     // Fixture: table with PK, nullable column, comment; and a view.
+    //
+    // Dropped first, and schema-qualified throughout. Unqualified DDL lands in
+    // whatever schema the role's search_path names first — on a developer's own
+    // database that is their application schema, not `public`, which is the
+    // schema every assertion below asks about. And a run that panics never
+    // reaches its cleanup, so without this the next run fails on "already
+    // exists" and looks like a driver bug.
     session
         .execute(
-            req("CREATE TABLE tuplenest_meta (id bigint PRIMARY KEY, note text, qty int NOT NULL)"),
+            req("DROP VIEW IF EXISTS public.tuplenest_meta_v"),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+    session
+        .execute(req("DROP TABLE IF EXISTS public.tuplenest_meta"), &NullSink)
+        .await
+        .unwrap();
+    session
+        .execute(
+            req("CREATE TABLE public.tuplenest_meta (id bigint PRIMARY KEY, note text, qty int NOT NULL)"),
             &NullSink,
         )
         .await
         .unwrap();
     session
         .execute(
-            req("COMMENT ON COLUMN tuplenest_meta.note IS 'free text'"),
+            req("COMMENT ON COLUMN public.tuplenest_meta.note IS 'free text'"),
             &NullSink,
         )
         .await
         .unwrap();
     session
         .execute(
-            req("CREATE VIEW tuplenest_meta_v AS SELECT id FROM tuplenest_meta"),
+            req("CREATE VIEW public.tuplenest_meta_v AS SELECT id FROM public.tuplenest_meta"),
             &NullSink,
         )
         .await
@@ -558,11 +605,11 @@ async fn live_metadata_schema_objects_columns_roundtrip() {
         .is_err());
 
     session
-        .execute(req("DROP VIEW tuplenest_meta_v"), &NullSink)
+        .execute(req("DROP VIEW public.tuplenest_meta_v"), &NullSink)
         .await
         .unwrap();
     session
-        .execute(req("DROP TABLE tuplenest_meta"), &NullSink)
+        .execute(req("DROP TABLE public.tuplenest_meta"), &NullSink)
         .await
         .unwrap();
 }
@@ -678,16 +725,26 @@ async fn live_relationships_lists_foreign_keys() {
         .connect_concrete(test_config())
         .await
         .unwrap();
+    // Dropped first: a panicking run leaves these behind, and the child holds
+    // the foreign key so it has to go first.
+    session
+        .execute(req("DROP TABLE IF EXISTS public.tn_child"), &NullSink)
+        .await
+        .unwrap();
+    session
+        .execute(req("DROP TABLE IF EXISTS public.tn_parent"), &NullSink)
+        .await
+        .unwrap();
     session
         .execute(
-            req("CREATE TABLE tn_parent (id int primary key)"),
+            req("CREATE TABLE public.tn_parent (id int primary key)"),
             &NullSink,
         )
         .await
         .unwrap();
     session
         .execute(
-            req("CREATE TABLE tn_child (id int primary key, parent_id int references tn_parent(id))"),
+            req("CREATE TABLE public.tn_child (id int primary key, parent_id int references public.tn_parent(id))"),
             &NullSink,
         )
         .await
@@ -706,11 +763,11 @@ async fn live_relationships_lists_foreign_keys() {
     assert!(hit.is_some(), "child→parent FK present: {fks:?}");
 
     session
-        .execute(req("DROP TABLE tn_child"), &NullSink)
+        .execute(req("DROP TABLE public.tn_child"), &NullSink)
         .await
         .unwrap();
     session
-        .execute(req("DROP TABLE tn_parent"), &NullSink)
+        .execute(req("DROP TABLE public.tn_parent"), &NullSink)
         .await
         .unwrap();
 }
@@ -738,9 +795,13 @@ async fn live_typed_parameters_bind_correctly() {
     // Real-world shape: params matched against typed columns (the common
     // `where col = $n` case). Postgres infers each param type from context.
     session
+        .execute(req("DROP TABLE IF EXISTS public.tn_param"), &NullSink)
+        .await
+        .unwrap();
+    session
         .execute(
             req(
-                "CREATE TABLE tn_param (id int4 primary key, name text, active bool, score float4)",
+                "CREATE TABLE public.tn_param (id int4 primary key, name text, active bool, score float4)",
             ),
             &NullSink,
         )
@@ -749,7 +810,7 @@ async fn live_typed_parameters_bind_correctly() {
     session
         .execute(
             req_params(
-                "INSERT INTO tn_param VALUES ($1, $2, $3, $4)",
+                "INSERT INTO public.tn_param VALUES ($1, $2, $3, $4)",
                 vec![
                     ParamValue::Int(7), // i64 → adapts to int4 column
                     ParamValue::Text("alice".into()),
@@ -767,7 +828,7 @@ async fn live_typed_parameters_bind_correctly() {
     session
         .execute(
             req_params(
-                "SELECT name FROM tn_param WHERE id = $1 AND active = $2",
+                "SELECT name FROM public.tn_param WHERE id = $1 AND active = $2",
                 vec![ParamValue::Int(7), ParamValue::Bool(true)],
             ),
             &sink,
@@ -790,7 +851,7 @@ async fn live_typed_parameters_bind_correctly() {
     session
         .execute(
             req_params(
-                "SELECT * FROM tn_param WHERE name = $1",
+                "SELECT * FROM public.tn_param WHERE name = $1",
                 vec![ParamValue::Null],
             ),
             &counter,
@@ -804,7 +865,7 @@ async fn live_typed_parameters_bind_correctly() {
     );
 
     session
-        .execute(req("DROP TABLE tn_param"), &NullSink)
+        .execute(req("DROP TABLE public.tn_param"), &NullSink)
         .await
         .unwrap();
 }

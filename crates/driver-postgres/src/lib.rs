@@ -562,8 +562,13 @@ impl DatabaseSession for PostgresSession {
                 name,
                 object_kind,
             } => {
-                object_details(&self.client, schema.as_str(), name.as_str(), object_kind.as_str())
-                    .await?
+                object_details(
+                    &self.client,
+                    schema.as_str(),
+                    name.as_str(),
+                    object_kind.as_str(),
+                )
+                .await?
             }
             MetadataRequest::ListTypes { schema } => {
                 let rows = self
@@ -919,7 +924,12 @@ fn opt(v: Option<String>) -> String {
 /// enforce correctness and are scanned by the *constraint machinery*, not by
 /// planner index scans. Reporting those as waste would be actively dangerous.
 /// So the verdict, not the scan count, is what the UI leads with.
-fn index_verdict(scans: i64, pk: bool, backs_constraint: bool, unique: bool) -> (&'static str, &'static str) {
+fn index_verdict(
+    scans: i64,
+    pk: bool,
+    backs_constraint: bool,
+    unique: bool,
+) -> (&'static str, &'static str) {
     if scans > 0 {
         ("used", "Scanned since the last stats reset.")
     } else if pk || backs_constraint {
@@ -947,7 +957,10 @@ fn index_verdict(scans: i64, pk: bool, backs_constraint: bool, unique: bool) -> 
 /// this database attaches indexes to the leaves directly, so pg_inherits has
 /// no parent to group by. The column signature is what actually identifies
 /// "the same index" across a partition tree.
-async fn index_health(client: &Client, schema: Option<&str>) -> Result<serde_json::Value, DriverError> {
+async fn index_health(
+    client: &Client,
+    schema: Option<&str>,
+) -> Result<serde_json::Value, DriverError> {
     let rows = client
         .query(
             // `base` exists so the column signature can be computed per index
@@ -1049,7 +1062,10 @@ async fn index_health(client: &Client, schema: Option<&str>) -> Result<serde_jso
 /// Ordering by dead tuples alone would bury the real problem here: 2,603 tables
 /// have never been vacuumed at all, and a table nobody has analyzed reports
 /// zero dead tuples because nobody has counted them. Never-analyzed sorts first.
-async fn table_health(client: &Client, schema: Option<&str>) -> Result<serde_json::Value, DriverError> {
+async fn table_health(
+    client: &Client,
+    schema: Option<&str>,
+) -> Result<serde_json::Value, DriverError> {
     let rows = client
         .query(
             "SELECT schemaname, relname, n_live_tup, n_dead_tup,
@@ -1149,7 +1165,10 @@ async fn top_queries(client: &Client, limit: i64) -> Result<serde_json::Value, D
         "SELECT queryid::text, query, calls, {total} AS total_ms, {mean} AS mean_ms, rows
          FROM pg_stat_statements ORDER BY {total} DESC LIMIT $1"
     );
-    let rows = client.query(&sql, &[&limit]).await.map_err(normalize_error)?;
+    let rows = client
+        .query(&sql, &[&limit])
+        .await
+        .map_err(normalize_error)?;
     let items: Vec<_> = rows
         .iter()
         .map(|r| {
@@ -1170,8 +1189,17 @@ async fn top_queries(client: &Client, limit: i64) -> Result<serde_json::Value, D
 ///
 /// Partitions are excluded: matching "eng_interactions" would otherwise return
 /// 300 near-identical children and hide the parent the user actually wants.
-async fn search_objects(client: &Client, term: &str, limit: i64) -> Result<serde_json::Value, DriverError> {
-    let pat = format!("%{}%", term.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+async fn search_objects(
+    client: &Client,
+    term: &str,
+    limit: i64,
+) -> Result<serde_json::Value, DriverError> {
+    let pat = format!(
+        "%{}%",
+        term.replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    );
     let rows = client
         .query(
             "SELECT n.nspname, c.relname,
@@ -1231,7 +1259,10 @@ async fn partition_overview(
         .await
         .map_err(normalize_error)?;
     let (partkey, is_part) = match head {
-        Some(r) => (opt(r.get::<_, Option<String>>(0)), r.get::<_, String>(1) == "p"),
+        Some(r) => (
+            opt(r.get::<_, Option<String>>(0)),
+            r.get::<_, String>(1) == "p",
+        ),
         None => (String::new(), false),
     };
     if !is_part {
@@ -1317,13 +1348,25 @@ async fn object_details(
             sections.push(section(
                 "Sequence",
                 vec![
-                    ("Last value", r.get::<_, Option<i64>>(6).map(|v| v.to_string()).unwrap_or_else(|| "not yet called".into())),
+                    (
+                        "Last value",
+                        r.get::<_, Option<i64>>(6)
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| "not yet called".into()),
+                    ),
                     ("Start", r.get::<_, i64>(0).to_string()),
                     ("Increment", r.get::<_, i64>(3).to_string()),
                     ("Minimum", r.get::<_, i64>(1).to_string()),
                     ("Maximum", r.get::<_, i64>(2).to_string()),
                     ("Cache", r.get::<_, i64>(5).to_string()),
-                    ("Cycles", if r.get::<_, bool>(4) { "yes".into() } else { "no".into() }),
+                    (
+                        "Cycles",
+                        if r.get::<_, bool>(4) {
+                            "yes".into()
+                        } else {
+                            "no".into()
+                        },
+                    ),
                 ],
             ));
         }
@@ -1375,15 +1418,43 @@ async fn object_details(
                     ("On table", r.get::<_, String>(8)),
                     ("Method", r.get::<_, String>(9)),
                     ("Size", opt(r.get::<_, Option<String>>(1))),
-                    ("Unique", if r.get::<_, bool>(5) { "yes".into() } else { "no".into() }),
-                    ("Primary key", if r.get::<_, bool>(6) { "yes".into() } else { "no".into() }),
-                    ("Valid", if r.get::<_, bool>(7) { "yes".into() } else { "NO — rebuild it".into() }),
+                    (
+                        "Unique",
+                        if r.get::<_, bool>(5) {
+                            "yes".into()
+                        } else {
+                            "no".into()
+                        },
+                    ),
+                    (
+                        "Primary key",
+                        if r.get::<_, bool>(6) {
+                            "yes".into()
+                        } else {
+                            "no".into()
+                        },
+                    ),
+                    (
+                        "Valid",
+                        if r.get::<_, bool>(7) {
+                            "yes".into()
+                        } else {
+                            "NO — rebuild it".into()
+                        },
+                    ),
                 ],
             ));
             sections.push(section(
                 "Usage since stats reset",
                 vec![
-                    ("Scans", if scans == 0 { "0 — never used".into() } else { scans.to_string() }),
+                    (
+                        "Scans",
+                        if scans == 0 {
+                            "0 — never used".into()
+                        } else {
+                            scans.to_string()
+                        },
+                    ),
                     ("Tuples read", r.get::<_, i64>(3).to_string()),
                     ("Tuples fetched", r.get::<_, i64>(4).to_string()),
                 ],
@@ -1454,7 +1525,14 @@ async fn object_details(
                     ("Indexes", note(opt(r.get::<_, Option<String>>(2)))),
                     // Planner estimate, not a count — saying so avoids a
                     // number being trusted as exact.
-                    ("Rows (estimate)", if rows_est < 0 { "unknown — never analyzed".into() } else { rows_est.to_string() }),
+                    (
+                        "Rows (estimate)",
+                        if rows_est < 0 {
+                            "unknown — never analyzed".into()
+                        } else {
+                            rows_est.to_string()
+                        },
+                    ),
                     ("Columns", r.get::<_, i64>(13).to_string()),
                     ("Tablespace", r.get::<_, String>(12)),
                 ],
@@ -1467,12 +1545,23 @@ async fn object_details(
                     "Partitioning",
                     vec![
                         ("Partitioned by", partkey),
-                        ("Direct partitions", if children > 0 { children.to_string() } else { String::new() }),
+                        (
+                            "Direct partitions",
+                            if children > 0 {
+                                children.to_string()
+                            } else {
+                                String::new()
+                            },
+                        ),
                         // Only worth saying when the two differ — i.e. when the
                         // partitions are themselves partitioned.
                         (
                             "All levels",
-                            if leaves > children { leaves.to_string() } else { String::new() },
+                            if leaves > children {
+                                leaves.to_string()
+                            } else {
+                                String::new()
+                            },
                         ),
                         ("Parent", parent),
                         ("Bounds", opt(r.get::<_, Option<String>>(8))),
@@ -1625,7 +1714,10 @@ fn convert_cell(row: &Row, i: usize) -> CellValue {
                 Ok(Some(v)) => CellValue::Text(format!(
                     "{{{}}}",
                     v.iter()
-                        .map(|e| e.as_ref().map(|x| x.to_string()).unwrap_or_else(|| "NULL".into()))
+                        .map(|e| e
+                            .as_ref()
+                            .map(|x| x.to_string())
+                            .unwrap_or_else(|| "NULL".into()))
                         .collect::<Vec<_>>()
                         .join(",")
                 )),
@@ -1659,11 +1751,17 @@ fn convert_cell(row: &Row, i: usize) -> CellValue {
         Type::TIMESTAMP => take!(chrono::NaiveDateTime, |v: chrono::NaiveDateTime| {
             CellValue::Text(v.format("%Y-%m-%d %H:%M:%S%.f").to_string())
         }),
-        Type::TIMESTAMPTZ => take!(chrono::DateTime<chrono::Utc>, |v: chrono::DateTime<chrono::Utc>| {
+        Type::TIMESTAMPTZ => take!(chrono::DateTime<chrono::Utc>, |v: chrono::DateTime<
+            chrono::Utc,
+        >| {
             CellValue::Text(v.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true))
         }),
-        Type::DATE => take!(chrono::NaiveDate, |v: chrono::NaiveDate| CellValue::Text(v.to_string())),
-        Type::TIME => take!(chrono::NaiveTime, |v: chrono::NaiveTime| CellValue::Text(v.to_string())),
+        Type::DATE => take!(chrono::NaiveDate, |v: chrono::NaiveDate| CellValue::Text(
+            v.to_string()
+        )),
+        Type::TIME => take!(chrono::NaiveTime, |v: chrono::NaiveTime| CellValue::Text(
+            v.to_string()
+        )),
 
         Type::JSON | Type::JSONB => take!(serde_json::Value, CellValue::Json),
         Type::BYTEA => take!(Vec<u8>, CellValue::Bytes),
