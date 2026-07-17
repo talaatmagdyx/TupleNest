@@ -1,4 +1,40 @@
-# Releasing TupleNest (macOS)
+# Releasing TupleNest
+
+## How a release is built
+
+Push a `v*` tag. `.github/workflows/release.yml` builds every platform on its own
+runner and opens a draft GitHub release with the installers attached:
+
+| Runner | Produces |
+| --- | --- |
+| `macos-latest` → `aarch64-apple-darwin` | `.app`, `.dmg` (Apple Silicon) |
+| `macos-latest` → `x86_64-apple-darwin` | `.app`, `.dmg` (Intel) |
+| `ubuntu-22.04` | `.deb`, `.rpm`, `.AppImage` |
+| `windows-latest` | `.msi`, `.exe` (NSIS) |
+
+A Tauri app cannot be usefully cross-compiled — Windows needs MSVC and WebView2,
+Linux needs webkit2gtk, macOS needs the Apple toolchain — so there is no script
+that builds all four from one machine, and there is no point writing one. The
+matrix is the release process.
+
+Ubuntu **22.04**, not `latest`: the glibc on the build machine is the oldest one
+the binary will run on. Building on a newer Ubuntu silently drops support for
+older distros.
+
+### Secrets the workflow expects
+
+| Secret | Needed for | Without it |
+| --- | --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | updater artifacts, every platform | the build fails **after** producing the installers |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | as above | — |
+| `APPLE_*` (see below) | notarizing the macOS builds | mac builds are ad-hoc signed; Gatekeeper warns |
+
+Windows installers are unsigned unless you add an Authenticode certificate;
+SmartScreen will warn on first run. That needs a code-signing cert (an EV one to
+avoid the reputation wait) and is the Windows equivalent of the Apple account
+below — the same kind of problem, the same kind of money.
+
+---
 
 There are **two independent signatures** in play. They solve different problems
 and neither replaces the other:

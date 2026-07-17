@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 #
-# Build, sign, notarize and staple a macOS release of TupleNest.
+# Build, sign, notarize and staple a macOS release of TupleNest, by hand.
+#
+# This is the macOS half only. The actual release path is a tag push, which runs
+# .github/workflows/release.yml and builds macOS (arm64 + Intel), Windows and
+# Linux on their own runners — see docs/releasing.md. Keep this for a local
+# signed build, or for notarizing when CI cannot.
 #
 # Requires an Apple Developer account ($99/yr). Nothing here can be faked:
 # without a real Developer ID certificate, Gatekeeper will always warn.

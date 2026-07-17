@@ -32,13 +32,15 @@
       "active": true,
       "dialog": false,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMyMzE3MTQ5NkZFNDNCMjEKUldRaE8rUnZTWEV4d3B6Rk9GOUh0QzZrazllbTFIaFQrcTB6N2NMM1NZeUg3Q0RwazdUYXhFQ3cK",
-      "endpoints": ["https://releases.tuplenest.app/{{target}}/{{arch}}/{{current_version}}"]
+      "endpoints": [
+        "https://releases.tuplenest.app/{{target}}/{{arch}}/{{current_version}}"
+      ]
     }
   },
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["app", "dmg"],
+    "targets": "all",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

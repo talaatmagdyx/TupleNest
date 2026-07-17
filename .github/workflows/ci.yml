@@ -5,12 +5,27 @@ on:
 jobs:
   rust:
     strategy:
+      fail-fast: false
       matrix: { os: [ubuntu-latest, macos-latest, windows-latest] }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with: { components: "rustfmt, clippy" }
+
+      # `apps/desktop/src-tauri` is a workspace member, so `--workspace` builds
+      # the Tauri app — which on Linux links against webkit2gtk. Without these
+      # the ubuntu leg cannot compile the workspace at all.
+      - name: Linux system dependencies (Tauri)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            librsvg2-dev libxdo-dev libayatana-appindicator3-dev \
+            build-essential curl wget file libssl-dev patchelf
+
+      - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace

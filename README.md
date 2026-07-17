@@ -2,25 +2,41 @@
 
 **A modern, safety-first desktop IDE for PostgreSQL.**
 
-Rust + Tauri 2 + React + TypeScript · macOS · MIT licensed
+Rust + Tauri 2 + React + TypeScript · macOS, Windows, Linux · MIT licensed
 
 TupleNest is a fast, local-first workspace for exploring, developing, debugging, and operating PostgreSQL databases. This release ships a complete PostgreSQL adapter; other engines are on the roadmap.
 
-## Install (macOS, Apple Silicon)
+## Install
 
-1. Open **`TupleNest_0.1.0_aarch64.dmg`**.
-2. Drag **TupleNest** into your **Applications** folder.
-3. Launch it. The build is not notarized, so the first launch needs Gatekeeper approval: right-click the app → **Open** → **Open**, or run once:
+Every platform is built from the same source on its own CI runner. Credentials
+always go to the OS keychain — Keychain on macOS, Credential Manager on Windows,
+Secret Service on Linux — never to a config file.
 
-   ```sh
-   xattr -dr com.apple.quarantine /Applications/TupleNest.app
-   ```
+| Platform | Download | Notes |
+| --- | --- | --- |
+| **macOS** (Apple Silicon) | `TupleNest_0.1.0_aarch64.dmg` | macOS 10.15+ |
+| **macOS** (Intel) | the `.dmg` marked Intel | macOS 10.15+ |
+| **Windows** | the `.exe` installer, or the `.msi` | Windows 10+; WebView2 ships with Windows 11 and is installed automatically if missing |
+| **Linux** | the `.AppImage`, `.deb`, or `.rpm` | needs `webkit2gtk-4.1`; built on Ubuntu 22.04, so glibc 2.35+ |
 
-Requires macOS 10.15+ on an arm64 (M-series) Mac.
+**macOS** — drag TupleNest into Applications. The build is not notarized, so the
+first launch needs Gatekeeper approval: right-click the app → **Open** →
+**Open**, or run once:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/TupleNest.app
+```
+
+**Windows** — the installer is unsigned, so SmartScreen shows "Windows protected
+your PC" on first run: click **More info** → **Run anyway**.
+
+**Linux** — `chmod +x` the AppImage and run it, or install the `.deb` /`.rpm`.
+A keyring daemon (GNOME Keyring, KWallet) must be running, or saved passwords
+have nowhere to live.
 
 > Auto-update is built in but has nowhere to point yet: the release endpoint
 > does not exist, so the app never finds an update and never nags about it.
-> Upgrading means downloading the next `.dmg` by hand.
+> Upgrading means downloading the next build by hand.
 
 ## What's included (PostgreSQL)
 

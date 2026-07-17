@@ -1,0 +1,111 @@
+name: Release
+
+# Cross-compiling a Tauri app is not practical: Windows needs MSVC and WebView2,
+# Linux needs webkit2gtk, macOS needs the Apple toolchain. Each platform builds
+# on its own runner. That is why this exists as a matrix rather than a script
+# someone runs on a laptop.
+#
+# Triggered by a version tag, or by hand from the Actions tab.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      # One platform failing should not hide the others' results.
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            label: macOS (Apple Silicon)
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            label: macOS (Intel)
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            label: Linux (x86_64)
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: Windows (x86_64)
+
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # Built on 22.04 rather than latest: the glibc a distro ships is the
+      # oldest one the binary will run on, so building on the newest Ubuntu
+      # would quietly drop support for every older machine.
+      - name: Linux system dependencies
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            librsvg2-dev libxdo-dev libayatana-appindicator3-dev \
+            build-essential curl wget file libssl-dev patchelf
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      # The same gates CI runs, once per platform: a release should not be the
+      # first time these are checked on this OS.
+      - name: Check
+        working-directory: apps/desktop
+        run: |
+          npm run lint
+          npm run typecheck
+          npm test
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `bundle.createUpdaterArtifacts` is on, so every bundle is signed for
+          # the updater. Without this secret the build fails at the signing step
+          # *after* producing the installers — which looks like it worked.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS only, and only once an Apple Developer account exists. Absent,
+          # the mac builds are ad-hoc signed and Gatekeeper will warn on first
+          # launch — see docs/releasing.md.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: apps/desktop
+          args: --target ${{ matrix.target }}
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-dev', github.run_number) }}
+          releaseName: TupleNest ${{ github.ref_type == 'tag' && github.ref_name || 'dev build' }}
+          releaseBody: |
+            See the assets below. Every platform is built on its own runner.
+
+            The macOS builds are not notarized unless an Apple Developer
+            certificate is configured, so the first launch needs Gatekeeper
+            approval — the README explains how.
+          releaseDraft: true
+          prerelease: false
