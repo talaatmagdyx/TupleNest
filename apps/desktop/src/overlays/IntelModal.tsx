@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import {useMemo, useState} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { DbColumn, DbObject, MetadataOut } from "../ipc/types";
 import type { Catalog } from "../lib/complete";
@@ -102,10 +102,11 @@ export default function IntelModal(p: Props) {
       ? comparePlans(p.plans[p.plans.length - 2].summary, p.plans[p.plans.length - 1].summary)
       : null;
 
-  useEffect(() => {
-    if (schemas.length && !left) setLeft(schemas[0]);
-    if (schemas.length > 1 && !right) setRight(schemas[1]);
-  }, [schemas, left, right]);
+  // The catalog usually arrives after this mounts, so the pair starts empty and
+  // is filled here. Done during render, not in an effect: an effect paints the
+  // selects empty first, and both guards settle immediately.
+  if (schemas.length && !left) setLeft(schemas[0]);
+  if (schemas.length > 1 && !right) setRight(schemas[1]);
 
   const pct = (v: number | null) => (v === null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(1)}%`);
   const num = (v: number | null, unit = "") => (v === null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(2)}${unit}`);

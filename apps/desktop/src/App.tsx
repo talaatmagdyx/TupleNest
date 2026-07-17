@@ -245,6 +245,10 @@ export default function App() {
     invoke<boolean | null>("settings_get", { key: "telemetry" })
       .then((v) => setTelemetry(!!v))
       .catch(() => {});
+    /* `refreshSaved` awaits the IPC call before it sets anything, so nothing
+       here is synchronous — the rule follows the setState inside it but not the
+       await in front of it. Loading on mount is what an effect is for. */
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refreshSaved();
     void refreshSnippets();
   }, [refreshSaved, refreshSnippets]);
@@ -1046,7 +1050,17 @@ export default function App() {
     return () => document.removeEventListener("keydown", onKey);
   }, [doRun, newTab, overlay, running, doCancel, showToast, doFormat, applyTheme, theme, connected, search]);
 
-  const paletteItems = useCallback((): PaletteItem[] => {
+  /**
+   * Everything the palette can do.
+   *
+   * A `useMemo`, not a `useCallback` called from the JSX. It was the latter,
+   * which meant the memo did nothing: the list was rebuilt on every render of
+   * App — and App re-renders once a second while a transaction is open. The
+   * loop below walks every object in every loaded schema, twice, so on a
+   * database with thousands of relations that was thousands of allocations a
+   * second to draw a list nobody had opened.
+   */
+  const paletteItems = useMemo<PaletteItem[]>(() => {
     const items: PaletteItem[] = [
       { icon: "▶", label: "Run query", type: "Action", kbd: "⌘↵", exec: () => doRun() },
       { icon: "⧉", label: "Format SQL", type: "Action", kbd: "⌘⇧F", exec: doFormat },
@@ -1062,63 +1076,76 @@ export default function App() {
       { icon: "◫", label: "Compare EXPLAIN plans…", type: "Action", exec: () => setOverlay("intel") },
       { icon: "⚙", label: "Open settings", type: "Action", exec: () => setOverlay("settings") },
     ];
-    if (connected) {
-      items.push({ icon: "⌕", label: "Find anything (all schemas)…", type: "Action", kbd: "⌘P", exec: () => setOverlay("search") });
-      items.push({ icon: "◱", label: "Index health (unused & recoverable)…", type: "Action", exec: () => loadHealth("indexes") });
-      items.push({ icon: "☰", label: "Vacuum & bloat…", type: "Action", exec: () => loadHealth("tables") });
-      items.push({ icon: "⏱", label: "Top queries…", type: "Action", exec: () => loadHealth("queries") });
-      items.push({ icon: "📊", label: "Server monitor (sessions & locks)", type: "Action", exec: () => setOverlay("monitor") });
-      items.push({ icon: "◫", label: "ER diagram (relationships)", type: "Action", exec: () => setOverlay("diagram") });
-      if (connectedEnv === "prod")
-        items.push({ icon: "🛡", label: "Prod audit log", type: "Action", exec: () => setOverlay("audit") });
-      items.push({ icon: "⏻", label: "Disconnect current session", type: "Action", exec: doDisconnect });
-      if (!inTx) items.push({ icon: "▣", label: "Begin transaction", type: "Action", exec: doBegin });
-      else {
-        items.push({ icon: "✓", label: "Commit transaction", type: "Action", exec: doCommit });
-        items.push({ icon: "↩", label: "Rollback transaction", type: "Action", exec: doRollback });
-      }
-    }
-    for (const c of saved) {
-      items.push({ icon: "⇄", label: `Connect to ${c.name}`, type: "Connection", exec: () => selectProfile(c) });
-    }
-    for (const [schema, objs] of Object.entries(objects)) {
-      for (const o of objs) {
-        items.push({
+
+    /** Needs a live server: every one of these reads the catalog or the
+     *  session. Offline they would open and immediately fail. */
+    const live: PaletteItem[] = !connected
+      ? []
+      : [
+          { icon: "⌕", label: "Find anything (all schemas)…", type: "Action", kbd: "⌘P", exec: () => setOverlay("search") },
+          { icon: "◱", label: "Index health (unused & recoverable)…", type: "Action", exec: () => loadHealth("indexes") },
+          { icon: "☰", label: "Vacuum & bloat…", type: "Action", exec: () => loadHealth("tables") },
+          { icon: "⏱", label: "Top queries…", type: "Action", exec: () => loadHealth("queries") },
+          { icon: "📊", label: "Server monitor (sessions & locks)", type: "Action", exec: () => setOverlay("monitor") },
+          { icon: "◫", label: "ER diagram (relationships)", type: "Action", exec: () => setOverlay("diagram") },
+          // The log only records statements run against prod.
+          ...(connectedEnv === "prod"
+            ? [{ icon: "🛡", label: "Prod audit log", type: "Action", exec: () => setOverlay("audit") } as PaletteItem]
+            : []),
+          { icon: "⏻", label: "Disconnect current session", type: "Action", exec: doDisconnect },
+          ...(inTx
+            ? [
+                { icon: "✓", label: "Commit transaction", type: "Action", exec: doCommit } as PaletteItem,
+                { icon: "↩", label: "Rollback transaction", type: "Action", exec: doRollback } as PaletteItem,
+              ]
+            : [{ icon: "▣", label: "Begin transaction", type: "Action", exec: doBegin } as PaletteItem]),
+        ];
+
+    const connections: PaletteItem[] = saved.map((c) => ({
+      icon: "⇄",
+      label: `Connect to ${c.name}`,
+      type: "Connection",
+      exec: () => selectProfile(c),
+    }));
+
+    const catalogItems: PaletteItem[] = Object.entries(objects).flatMap(([schema, objs]) =>
+      objs.flatMap((o): PaletteItem[] => [
+        {
           icon: o.kind === "view" || o.kind === "matview" ? "V" : "T",
           label: `${schema}.${o.name}`,
           type: "Table",
           exec: () => insertSelect(schema, o.name),
-        });
-        items.push({
+        },
+        {
           icon: "▤",
           label: `Describe ${schema}.${o.name}`,
           type: "Table",
           exec: () => describeObject(schema, o.name),
-        });
-      }
-    }
-    for (const sn of snippets) {
-      items.push({
-        icon: "✎",
-        label: sn.name,
-        type: "Snippet",
-        exec: () => {
-          setActiveSql(sn.body);
-          showToast(`Inserted snippet "${sn.name}"`);
         },
-      });
-    }
-    for (const h of historyItems.slice(0, 6)) {
-      if (h.sqlText) {
-        items.push({
-          icon: "↺",
-          label: h.sqlText.slice(0, 70),
-          type: "Recent",
-          exec: () => setActiveSql(h.sqlText!),
-        });
-      }
-    }
-    return items;
+      ]),
+    );
+
+    const snippetItems: PaletteItem[] = snippets.map((sn) => ({
+      icon: "✎",
+      label: sn.name,
+      type: "Snippet",
+      exec: () => {
+        setActiveSql(sn.body);
+        showToast(`Inserted snippet "${sn.name}"`);
+      },
+    }));
+
+    const recent: PaletteItem[] = historyItems
+      .slice(0, 6)
+      .filter((h): h is typeof h & { sqlText: string } => !!h.sqlText)
+      .map((h) => ({
+        icon: "↺",
+        label: h.sqlText.slice(0, 70),
+        type: "Recent",
+        exec: () => setActiveSql(h.sqlText),
+      }));
+
+    return [...items, ...live, ...connections, ...catalogItems, ...snippetItems, ...recent];
   }, [doRun, doFormat, saveSnippet, newTab, applyTheme, theme, newProfile, runExplain, connected, connectedEnv, inTx, doDisconnect, doBegin, doCommit, doRollback, saved, selectProfile, objects, insertSelect, describeObject, snippets, historyItems, setActiveSql, showToast, loadHealth]);
 
   /* ---------------- render ---------------- */
@@ -1387,7 +1414,7 @@ export default function App() {
 
       {overlay === "palette" && (
         <Palette
-          items={paletteItems()}
+          items={paletteItems}
           q={paletteQ}
           idx={paletteIdx}
           onQ={setPaletteQ}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { QueryResult } from "../ipc/types";
 import { buildStatements, type CellEdit, type EditTarget } from "../lib/dml";
@@ -49,11 +49,25 @@ export function useRowEdits(epoch: number): RowEdits {
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
 
-  useEffect(() => {
+  /**
+   * Drop the staged set the moment the result changes.
+   *
+   * Adjusted during render rather than in an effect. An effect runs *after* the
+   * render commits, which left one painted frame where the new result was shown
+   * with the previous result's edits still staged against it — row keys that
+   * may address entirely different rows. React re-runs this component before
+   * committing anything, so nothing is ever drawn from the wrong epoch.
+   *
+   * This is the pattern React documents for adjusting state when a prop
+   * changes; the `prev` state is how it detects the change.
+   */
+  const [prevEpoch, setPrevEpoch] = useState(epoch);
+  if (epoch !== prevEpoch) {
+    setPrevEpoch(epoch);
     setEdits([]);
     setReviewOpen(false);
     setApplyError(null);
-  }, [epoch]);
+  }
 
   const stage = useCallback((e: CellEdit) => {
     setEdits((list) => {

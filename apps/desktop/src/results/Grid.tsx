@@ -78,9 +78,21 @@ export default function Grid(p: Props) {
     return m;
   }, [p.edits]);
 
-  useEffect(() => {
+  /**
+   * A new result is a new grid.
+   *
+   * Adjusted during render, not in an effect: an effect commits first, so the
+   * new result was painted once with the previous result's cached blocks, sort
+   * and selection still in place — rows from the last query under the new one's
+   * columns. React discards this render and re-runs before anything is shown.
+   *
+   * The DOM and the ref are touched in the effect below, where side effects
+   * belong; only the state is adjusted here.
+   */
+  const [prevEpoch, setPrevEpoch] = useState(p.epoch);
+  if (p.epoch !== prevEpoch) {
+    setPrevEpoch(p.epoch);
     setBlocks({});
-    pending.current.clear();
     setScrollTop(0);
     setSortCol(null);
     setSortDir(null);
@@ -88,6 +100,10 @@ export default function Grid(p: Props) {
     setSelCell(null);
     setSelRow(-1);
     setEditing(null);
+  }
+
+  useEffect(() => {
+    pending.current.clear();
     p.onCopyable(null);
     if (viewRef.current) viewRef.current.scrollTop = 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps

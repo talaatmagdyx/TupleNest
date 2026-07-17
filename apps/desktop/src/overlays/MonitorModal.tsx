@@ -54,6 +54,10 @@ export default function MonitorModal(p: { onToast: (t: string) => void; onClose:
   }, []);
 
   useEffect(() => {
+    /* `refresh` sets state only after awaiting `pg_activity`; the rule cannot
+       see past the await. Reading the server on open is the point of this
+       effect. */
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
   }, [refresh]);
 

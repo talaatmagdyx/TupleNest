@@ -35,8 +35,16 @@ export function useHistory(): History {
   // Read through a ref so `refresh` is stable: it is a dependency of the run
   // path and of every mutation below, and a new identity per keystroke would
   // re-fire all of them.
+  //
+  // The ref is written in an effect rather than during render. Rendering is
+  // meant to be repeatable and discardable — React may run it without
+  // committing — and a write there is a side effect sitting in the one place
+  // that should not have any. Effects run in declaration order, so this lands
+  // before the read below.
   const term = useRef(search);
-  term.current = search;
+  useEffect(() => {
+    term.current = search;
+  }, [search]);
 
   const refresh = useCallback(async () => {
     const mine = ++seq.current;

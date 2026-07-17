@@ -56,20 +56,21 @@ export default tseslint.config(
       "react-hooks/exhaustive-deps": "error",
 
       // The three below arrive with eslint-plugin-react-hooks v7, which bundles
-      // the React Compiler lints. This app is not built with the compiler, and
-      // what they flag is ordinary React 18: fetching on mount and calling
-      // setState with the answer, mirroring state into a ref to keep a callback
-      // stable. Making them pass means adopting compiler-safe patterns
-      // throughout — worth doing deliberately, not as a side effect of turning
-      // the linter on for the first time.
+      // the React Compiler lints. This app is not built with the compiler, but
+      // every one of them turned out to be pointing at something real:
       //
-      // Left as warnings rather than switched off: they are pointing at real
-      // cascading-render costs, and the list should stay visible and shrink.
-      // Anything genuinely wrong that they caught has already been fixed —
-      // `Date.now()` during StatusBar's render is gone.
-      "react-hooks/set-state-in-effect": "warn",
-      "react-hooks/refs": "warn",
-      "react-hooks/purity": "warn",
+      //   - StatusBar read `Date.now()` while rendering.
+      //   - Resetting state from an effect painted one frame of the previous
+      //     result's rows, selection and staged edits against the new one.
+      //   - The palette list was rebuilt on every render — thousands of
+      //     allocations a second on a large catalog, for a list nobody had open.
+      //
+      // Errors, because the two places the rule is simply wrong (it cannot see
+      // that a setState sits behind an `await`) are disabled inline with that
+      // reason, and there is nothing else left to excuse.
+      "react-hooks/set-state-in-effect": "error",
+      "react-hooks/refs": "error",
+      "react-hooks/purity": "error",
 
       // `invoke` returns a promise. An unawaited one swallows the rejection,
       // which is exactly how a failed write becomes a silent no-op.

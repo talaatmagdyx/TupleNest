@@ -29,7 +29,15 @@ export default function SearchModal(p: Props) {
   const items = p.results?.items ?? [];
 
   useEffect(() => box.current?.focus(), []);
-  useEffect(() => setSel(0), [p.results]);
+
+  /** New results, new highlight. Adjusted during render rather than in an
+   *  effect, which would paint one frame with the previous result's index —
+   *  pointing at a row that is no longer there, or past the end of the list. */
+  const [prevResults, setPrevResults] = useState(p.results);
+  if (p.results !== prevResults) {
+    setPrevResults(p.results);
+    setSel(0);
+  }
 
   const key = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
