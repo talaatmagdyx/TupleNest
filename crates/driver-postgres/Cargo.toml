@@ -18,7 +18,7 @@ tokio-postgres = { version = "0.7", features = [
 ] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 hex = "0.4"
-tokio-postgres-rustls = "0.13"
+tokio-postgres-rustls = "0.14"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-native-certs = "0.8"
 uuid = { workspace = true }
