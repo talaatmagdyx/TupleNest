@@ -79,16 +79,40 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           dbus-run-session -- bash -euo pipefail -c '
-            echo -n "" | gnome-keyring-daemon --unlock --components=secrets
-            # Prove the daemon is actually there before blaming the code: if
-            # this name is unowned the tests fail with the same DBus error as
-            # before, and the cause would be this step, not TupleNest.
-            # `dbus-send` rather than `busctl`, because dbus-x11 is installed
-            # above and busctl would be an unstated dependency on systemd.
+            # `--daemonize` so it forks and returns; without it the process
+            # exited and nothing ever owned the name (the first attempt failed
+            # exactly here). `eval` because the daemon prints the environment
+            # it wants exported — GNOME_KEYRING_CONTROL and friends — and
+            # dropping that output on the floor is how it half-works.
+            eval "$(echo -n "" | gnome-keyring-daemon --unlock --components=secrets --daemonize)"
+
+            # Claiming a bus name is not instant. Poll instead of sleeping a
+            # fixed guess: a race here would fail intermittently, which is the
+            # worst failure mode a CI check can have.
+            for _ in $(seq 1 20); do
+              if dbus-send --session --print-reply --dest=org.freedesktop.DBus \
+                   /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null \
+                   | grep -q org.freedesktop.secrets; then
+                echo "Secret Service is on the bus"; break
+              fi
+              sleep 1
+            done
+
+            # Prove it, and say why if not: without this the tests fail with a
+            # DBus error that reads like a TupleNest bug rather than a missing
+            # daemon. `dbus-send` not `busctl` — dbus-x11 is installed above,
+            # busctl would be an unstated dependency on systemd.
             dbus-send --session --print-reply --dest=org.freedesktop.DBus \
               /org/freedesktop/DBus org.freedesktop.DBus.ListNames \
-              | grep -q org.freedesktop.secrets \
-              || { echo "no Secret Service on the bus — the keyring daemon did not start"; exit 1; }
+              | grep -q org.freedesktop.secrets || {
+                echo "::error::no Secret Service on the bus — the keyring daemon did not start"
+                echo "--- names on the bus:"
+                dbus-send --session --print-reply --dest=org.freedesktop.DBus \
+                  /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>&1 | head -30
+                echo "--- daemon, in the foreground, to see what it says:"
+                echo -n "" | timeout 10 gnome-keyring-daemon --unlock --components=secrets --foreground 2>&1 | head -20 || true
+                exit 1
+              }
             cargo test --workspace
           '
 
@@ -124,6 +148,23 @@ jobs:
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: postgres
+          # `test_config()` builds a ConnectionConfig with `secret_ref: None`
+          # and the tests call `connect_concrete(test_config())`, which resolves
+          # no password — so the driver sends none. With POSTGRES_PASSWORD set
+          # and no auth method specified, the image demands scram-sha-256, and
+          # tokio-postgres answers with `Error::config("password missing")`,
+          # which surfaces as the wonderfully unhelpful "invalid configuration".
+          # 33 of 34 tests failed that way on the first run of this job.
+          #
+          # `trust` makes the container behave like the local Homebrew server
+          # these tests were written against, which is why they passed locally
+          # and only ever failed here. It is a throwaway container bound to
+          # localhost on an ephemeral runner.
+          #
+          # The `PGPASSWORD` that used to sit in this job's env was never read
+          # by the Rust tests — only by `psql` in the TLS step below. It looked
+          # like the password was configured. It was not.
+          POSTGRES_HOST_AUTH_METHOD: trust
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -242,14 +283,39 @@ jobs:
           Subsystem sftp internal-sftp
           LogLevel VERBOSE
           EOF
-          sudo /usr/sbin/sshd -f "$D/sshd_config" -E "$D/sshd.log"
+          # sshd refuses to start without its privilege separation directory,
+          # and a runner that has never started ssh via systemd does not have
+          # one. That is a fatal, exit-255, and the message only reaches the
+          # log file — which `set -e` then aborted before printing. The first
+          # run of this job failed with a bare "exit code 255" and an empty
+          # log, which is my fault twice: once for the missing directory, once
+          # for a diagnostic that could not diagnose.
+          sudo mkdir -p /run/sshd
+
+          # Validate the config before launching, so a syntax error says so
+          # instead of arriving as 255.
+          sudo /usr/sbin/sshd -t -f "$D/sshd_config" || {
+            echo "::error::sshd rejected the config"; exit 1; }
+
+          # `-e` sends errors to stderr as well, so whatever goes wrong is in
+          # the step output rather than in a file nobody reaches.
+          sudo /usr/sbin/sshd -f "$D/sshd_config" -E "$D/sshd.log" -e || {
+            echo "::error::sshd exited $? at startup"
+            echo "--- sshd.log:";        sudo cat "$D/sshd.log" 2>/dev/null || echo "(no log written)"
+            echo "--- effective config:"; sudo /usr/sbin/sshd -T -f "$D/sshd_config" 2>&1 | head -20
+            echo "--- /run/sshd:";        ls -ld /run/sshd 2>&1
+            exit 1
+          }
+
           # Fail here rather than inside a test, where "connection refused"
           # would read as a tunnel bug.
           for _ in $(seq 1 20); do
             if nc -z 127.0.0.1 2222; then echo "sshd up"; exit 0; fi
             sleep 1
           done
-          echo "sshd did not come up"; cat "$D/sshd.log" || true; exit 1
+          echo "::error::sshd started but nothing is listening on 2222"
+          sudo cat "$D/sshd.log" 2>/dev/null || true
+          exit 1
 
       - name: Tunnel contract tests
         run: cargo test -p tuplenest-ssh-core -- --include-ignored
