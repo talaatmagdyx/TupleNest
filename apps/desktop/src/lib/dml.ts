@@ -122,7 +122,7 @@ export function analyzeEditability(sql: string, cols: GridCol[], cat: Catalog | 
   if (!schema) return { editable: false, reason: `columns for ${ref.name} are not loaded yet` };
 
   const meta = cat.tables.find(
-    (t) => t.schema.toLowerCase() === schema!.toLowerCase() && t.name.toLowerCase() === ref.name.toLowerCase()
+    (t) => t.schema.toLowerCase() === schema.toLowerCase() && t.name.toLowerCase() === ref.name.toLowerCase()
   );
   if (meta && meta.kind !== "table") return { editable: false, reason: `${ref.name} is a ${meta.kind}, not a table` };
 

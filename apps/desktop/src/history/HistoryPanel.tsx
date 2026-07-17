@@ -1,11 +1,12 @@
 import type { HistoryEntry } from "../ipc/types";
 
-type Props = {
+export type HistoryPanelProps = {
   items: HistoryEntry[];
   search: string;
   onSearch: (s: string) => void;
-  onClear: () => void;
-  onToggleFavorite: (h: HistoryEntry) => void;
+  /** Clearing goes to the store and back; the panel does not wait. */
+  onClear: () => void | Promise<void>;
+  onToggleFavorite: (h: HistoryEntry) => void | Promise<void>;
   onLoad: (sql: string) => void;
 };
 
@@ -16,7 +17,7 @@ const GLYPH: Record<string, [string, string]> = {
 };
 
 /** History as a result-drawer tab (HUD design). */
-export default function HistoryPanel(p: Props) {
+export default function HistoryPanel(p: HistoryPanelProps) {
   return (
     <div className="hist-pane">
       <div className="hist-bar">

@@ -54,7 +54,7 @@ export default function MonitorModal(p: { onToast: (t: string) => void; onClose:
   }, []);
 
   useEffect(() => {
-    refresh();
+    void refresh();
   }, [refresh]);
 
   useEffect(() => {
@@ -67,7 +67,7 @@ export default function MonitorModal(p: { onToast: (t: string) => void; onClose:
     try {
       const ok = await invoke<boolean>("pg_admin_backend", { pid, terminate });
       p.onToast(ok ? `${terminate ? "Terminated" : "Cancelled"} pid ${pid}` : `pid ${pid} not affected`);
-      refresh();
+      void refresh();
     } catch (e) {
       p.onToast(String(e).slice(0, 70));
     }

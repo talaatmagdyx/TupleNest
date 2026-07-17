@@ -55,7 +55,8 @@ export default function IntelModal(p: Props) {
   };
 
   /* --------------------------------------------------------- schema diff */
-  const schemas = p.catalog?.schemas ?? [];
+  // A fresh array each render would re-run the effect below on every render.
+  const schemas = useMemo(() => p.catalog?.schemas ?? [], [p.catalog]);
   const [left, setLeft] = useState(schemas[0] ?? "");
   const [right, setRight] = useState(schemas[1] ?? schemas[0] ?? "");
   const [diff, setDiff] = useState<TableDiff[] | null>(null);

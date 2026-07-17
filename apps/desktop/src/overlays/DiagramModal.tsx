@@ -11,7 +11,7 @@ export default function DiagramModal(p: { schema: string; onClose: () => void })
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    (async () => {
+    void (async () => {
       try {
         setFks(await invoke<FK[]>("pg_relationships", { schema: p.schema }));
       } catch (e) {

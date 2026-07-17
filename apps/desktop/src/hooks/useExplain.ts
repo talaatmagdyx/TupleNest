@@ -116,7 +116,9 @@ export function useExplain(serverMajor?: number): Explain {
         }
 
         const cell = rows[0]?.[0];
-        const parsed = typeof cell === "string" ? JSON.parse(cell) : cell;
+        // `JSON.parse` hands back `any`, which spreads silently. FORMAT JSON
+        // is documented to be an array of plan documents.
+        const parsed: unknown = typeof cell === "string" ? (JSON.parse(cell) as unknown) : cell;
         const root = (Array.isArray(parsed) ? parsed[0] : parsed) as Record<string, unknown>;
         const { nodes, stats, suggestion } = parsePlan(parsed);
         setExplain({ title, sql, statement, nodes, stats, suggestion, error: null, raw, ranOpts: o });

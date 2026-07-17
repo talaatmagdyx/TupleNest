@@ -238,22 +238,23 @@ export default function SqlEditor(p: Props) {
   // Ask the host to load metadata this statement needs but the explorer hasn't
   // lazily opened: columns for referenced tables, and the object list for a
   // schema the user just qualified (`some_schema.`).
+  const { sql: pSql, catalog, onPrefetchTables, onPrefetchSchema } = p;
   useEffect(() => {
     const ta = taRef.current;
-    if (!ta || !p.catalog) return;
+    if (!ta || !catalog) return;
     const t = setTimeout(() => {
       const cursor = ta.selectionStart;
-      if (p.onPrefetchTables) {
-        const want = tablesToPrefetch(ta.value, cursor, p.catalog!.searchPath);
-        if (want.length) p.onPrefetchTables(want);
+      if (onPrefetchTables) {
+        const want = tablesToPrefetch(ta.value, cursor, catalog.searchPath);
+        if (want.length) onPrefetchTables(want);
       }
-      if (p.onPrefetchSchema) {
-        const s = schemaToPrefetch(ta.value, cursor, p.catalog!);
-        if (s) p.onPrefetchSchema(s);
+      if (onPrefetchSchema) {
+        const s = schemaToPrefetch(ta.value, cursor, catalog);
+        if (s) onPrefetchSchema(s);
       }
     }, 150);
     return () => clearTimeout(t);
-  }, [p.sql, p.catalog, p.onPrefetchTables, p.onPrefetchSchema]);
+  }, [pSql, catalog, onPrefetchTables, onPrefetchSchema]);
 
   // Metadata arrives asynchronously. If it lands while the caret is still
   // parked where we had nothing to offer, surface the popup now.

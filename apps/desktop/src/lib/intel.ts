@@ -173,8 +173,8 @@ export function summarizePlan(plan: RawPlan): PlanSummary {
   const root = (plan["Plan"] as RawPlan) ?? plan;
   walk(root);
 
-  const totalMs = typeof plan["Execution Time"] === "number" ? (plan["Execution Time"] as number) : null;
-  const totalCost = typeof root["Total Cost"] === "number" ? (root["Total Cost"] as number) : null;
+  const totalMs = typeof plan["Execution Time"] === "number" ? (plan["Execution Time"]) : null;
+  const totalCost = typeof root["Total Cost"] === "number" ? (root["Total Cost"]) : null;
 
   return { totalMs, totalCost, rows, nodes };
 }

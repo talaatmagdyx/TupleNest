@@ -119,7 +119,7 @@ export function wordAt(sql: string, cursor: number): { word: string; from: numbe
 
   let qualifier: string | null = null;
   if (from > 0 && sql[from - 1] === ".") {
-    let qEnd = from - 1;
+    const qEnd = from - 1;
     let qStart = qEnd;
     while (qStart > 0 && IDENT.test(sql[qStart - 1])) qStart--;
     if (qEnd > qStart) qualifier = sql.slice(qStart, qEnd);

@@ -49,7 +49,7 @@ export function parseNode(id: string): ParsedNode | null {
     const dot = rest.lastIndexOf(".");
     if (dot <= 0 || dot === rest.length - 1) return null;
     return {
-      tag: tag as Exclude<NodeTag, "s" | "g">,
+      tag: tag,
       schema: rest.slice(0, dot),
       table: rest.slice(dot + 1),
       key: rest,

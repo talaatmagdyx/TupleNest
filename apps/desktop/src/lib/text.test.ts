@@ -64,3 +64,20 @@ describe("errText", () => {
     expect(errText(500)).toBe("500");
   });
 });
+
+describe("text — values Postgres does not produce", () => {
+  // `unknown` allows a symbol or a function even though no cell is ever one.
+  // `String(aSymbol)` throws, so the fallback exists to keep a stray value from
+  // taking the grid down with it.
+  it("names a symbol instead of throwing on it", () => {
+    expect(cellText(Symbol("s"))).toBe("[object Symbol]");
+  });
+
+  it("names a function", () => {
+    expect(cellExport(() => null)).toBe("[object Function]");
+  });
+
+  it("names one thrown as an error, too", () => {
+    expect(errText(Symbol("boom"))).toBe("[object Symbol]");
+  });
+});

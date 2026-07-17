@@ -12,6 +12,7 @@
  */
 
 import { maskLiterals } from "./complete";
+import { cellText } from "./text";
 
 export type ExplainFormat = "json" | "text" | "yaml" | "xml";
 
@@ -138,6 +139,25 @@ export function explainLabel(o: ExplainOptions): string {
  *  is assumed to exist. */
 export type RawPlan = Record<string, unknown> & { Plans?: RawPlan[] };
 
+/**
+ * Reading a plan attribute.
+ *
+ * Every key here is `unknown` and version-dependent, and this file used to get
+ * at them with `as number` / `as string[]` — assertions, not checks. On a
+ * server that spells an attribute differently, or omits it, the cast is simply
+ * wrong: `(n["Actual Rows"] as number).toLocaleString()` throws on a value that
+ * was never there. These look instead, and say so when the answer is nothing.
+ */
+const attrNum = (n: RawPlan, key: string): number | null =>
+  typeof n[key] === "number" ? n[key] : null;
+
+const attrText = (n: RawPlan, key: string): string | null => {
+  const v = n[key];
+  if (v === null || v === undefined) return null;
+  if (Array.isArray(v)) return v.map((x) => cellText(x)).join(", ");
+  return cellText(v);
+};
+
 export type ParsedPlanNode = {
   kind: string;
   title: string;
@@ -166,24 +186,26 @@ export type ParsedPlan = {
  * returns the whole document in a single cell.
  */
 export function readPlanPayload(rows: unknown[][], format: ExplainFormat): string {
-  if (format === "text") return rows.map((r) => String(r[0] ?? "")).join("\n");
+  if (format === "text") return rows.map((r) => (r[0] === null || r[0] === undefined ? "" : cellText(r[0]))).join("\n");
   const cell = rows[0]?.[0];
   return typeof cell === "string" ? cell : JSON.stringify(cell);
 }
 
 /** Fold a node's interesting attributes into one line, skipping what's absent. */
 function nodeDetail(n: RawPlan): string {
+  const actual = attrNum(n, "Actual Rows");
+  const est = attrNum(n, "Plan Rows");
   const rows =
-    n["Actual Rows"] !== undefined
-      ? `rows ${(n["Actual Rows"] as number).toLocaleString()}`
-      : n["Plan Rows"] !== undefined
-        ? `est rows ${(n["Plan Rows"] as number).toLocaleString()}`
-        : null;
+    actual !== null ? `rows ${actual.toLocaleString()}` : est !== null ? `est rows ${est.toLocaleString()}` : null;
+  const idx = attrText(n, "Index Name");
+  const filter = attrText(n, "Filter");
+  const cond = attrText(n, "Hash Cond");
+  const sort = attrText(n, "Sort Key");
   return [
-    n["Index Name"] ? `index: ${n["Index Name"]}` : null,
-    n["Filter"] ? `filter: ${n["Filter"]}` : null,
-    n["Hash Cond"] ? `cond: ${n["Hash Cond"]}` : null,
-    n["Sort Key"] ? `sort key: ${(n["Sort Key"] as string[]).join(", ")}` : null,
+    idx ? `index: ${idx}` : null,
+    filter ? `filter: ${filter}` : null,
+    cond ? `cond: ${cond}` : null,
+    sort ? `sort key: ${sort}` : null,
     rows,
   ]
     .filter(Boolean)
@@ -218,13 +240,15 @@ export function parsePlan(parsed: unknown): ParsedPlan {
   let hotVal = -1;
 
   const walk = (n: RawPlan, depth: number) => {
-    const ms = (n["Actual Total Time"] as number) ?? null;
-    const metric = ms ?? ((n["Total Cost"] as number) ?? 0);
-    const rel = n["Relation Name"] ? ` on ${n["Relation Name"]}` : "";
+    const ms = attrNum(n, "Actual Total Time");
+    const metric = ms ?? attrNum(n, "Total Cost") ?? 0;
+    const relation = attrText(n, "Relation Name");
+    const rel = relation ? ` on ${relation}` : "";
+    const nodeType = attrText(n, "Node Type") ?? "node";
     const i = nodes.length;
     nodes.push({
-      kind: String(n["Node Type"] ?? "node"),
-      title: `${n["Node Type"] ?? "node"}${rel}`,
+      kind: nodeType,
+      title: `${nodeType}${rel}`,
       detail: nodeDetail(n),
       ms,
       pct: Math.min(100, (metric / total) * 100),

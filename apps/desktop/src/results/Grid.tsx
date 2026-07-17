@@ -138,7 +138,7 @@ export default function Grid(p: Props) {
       if (x === null || x === undefined) return 1;
       if (y === null || y === undefined) return -1;
       if (typeof x === "number" && typeof y === "number") return (x - y) * dir;
-      return String(x).localeCompare(String(y)) * dir;
+      return cellText(x).localeCompare(cellText(y)) * dir;
     });
   }, [allRows, sortCol, sortDir]);
 
@@ -173,14 +173,14 @@ export default function Grid(p: Props) {
     setSelRow(ri);
     p.onCopyable(cellText(v));
     if ((col.dbType === "jsonb" || col.dbType === "json") && v !== null && v !== undefined) {
-      p.onInspect(typeof v === "object" ? JSON.stringify(v) : String(v), col.name);
+      p.onInspect(cellText(v), col.name);
     }
   };
 
   const beginEdit = (ri: number, ci: number, v: unknown) => {
     if (!p.target || !p.onStage || !p.target.writable[ci]) return;
     setEditing({ r: ri, c: ci });
-    setDraft(v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
+    setDraft(v === null || v === undefined ? "" : cellText(v));
   };
 
   const commitEdit = (ri: number, ci: number, original: unknown) => {
@@ -190,10 +190,20 @@ export default function Grid(p: Props) {
     if (!row) return setEditing(null);
 
     const value = coerceValue(draft, p.columns[ci].dbType);
-    const same =
-      value === original ||
-      (original === null && value === null) ||
-      String(value ?? "") === String(original ?? "");
+
+    // Compare the way the editor filled the box.
+    //
+    // This used to be `String(value) === String(original)`, which for a jsonb
+    // cell compared the typed JSON against "[object Object]" — never equal. So
+    // opening a jsonb cell and pressing Enter, changing nothing, staged an
+    // UPDATE for it. `cellText` is what `beginEdit` puts in the box, so it is
+    // what "unchanged" has to mean.
+    //
+    // Null is settled first: `cellText` renders it "null", and a text cell
+    // holding the word "null" is not the same fact as an empty one.
+    const vNull = value === null || value === undefined;
+    const oNull = original === null || original === undefined;
+    const same = value === original || (vNull && oNull) || (!vNull && !oNull && cellText(value) === cellText(original));
     if (!same) {
       const pkValues = t.pk.map((k) => row[k.index]);
       p.onStage({

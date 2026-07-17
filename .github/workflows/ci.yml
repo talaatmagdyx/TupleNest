@@ -16,8 +16,21 @@ jobs:
       - run: cargo test --workspace
   frontend:
     runs-on: ubuntu-latest
+    # This job used to `echo` the commands below instead of running them — a
+    # placeholder from the scaffold, left in long after the frontend existed.
+    # Nothing here had ever run in CI: not the lint, not the types, not the
+    # 1,500 tests.
+    defaults:
+      run:
+        working-directory: apps/desktop
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - run: echo "npm ci && npm run lint && npm test (enable once frontend is initialized)"
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test

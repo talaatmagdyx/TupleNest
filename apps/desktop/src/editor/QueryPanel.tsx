@@ -1,8 +1,8 @@
-import type { HistoryEntry, QueryResult } from "../ipc/types";
+import type { QueryResult } from "../ipc/types";
 import type { Catalog } from "../lib/complete";
 import type { CellEdit, EditTarget } from "../lib/dml";
 import Grid from "../results/Grid";
-import HistoryPanel from "../history/HistoryPanel";
+import HistoryPanel, { type HistoryPanelProps } from "../history/HistoryPanel";
 import SqlEditor from "./SqlEditor";
 import { PlayIcon } from "../lib/icons";
 
@@ -48,14 +48,9 @@ type Props = {
   onStageEdit?: (e: CellEdit) => void;
   onReviewEdits?: () => void;
   onDiscardEdits?: () => void;
-  history: {
-    items: HistoryEntry[];
-    search: string;
-    onSearch: (s: string) => void;
-    onClear: () => void;
-    onToggleFavorite: (h: HistoryEntry) => void;
-    onLoad: (sql: string) => void;
-  };
+  // Taken from the panel rather than restated: the two copies had already
+  // drifted, and this one still claimed the actions were synchronous.
+  history: HistoryPanelProps;
 };
 
 export default function QueryPanel(p: Props) {

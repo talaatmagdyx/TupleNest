@@ -10,6 +10,8 @@ const base = {
   explorerSource: "live" as const,
   rowsInfo: "200 rows · 12 ms",
   txOpenSince: null,
+  // No transaction open in the base case, so the clock is never consulted.
+  now: 0,
   serverVersion: "18.0",
   osLabel: "macos",
 };
@@ -95,24 +97,24 @@ describe("StatusBar — open transaction warning", () => {
   });
 
   it("counts seconds under a minute", () => {
-    render(<StatusBar {...base} txOpenSince={at(42)} />);
+    render(<StatusBar {...base} txOpenSince={at(42)} now={Date.now()} />);
     expect(screen.getByText("⚠ tx open 42s")).toBeInTheDocument();
   });
 
   it("switches to minutes and pads the seconds", () => {
     // "1m 5s" not "1m 5s" — zero-padding keeps the bar from jittering as the
     // number of glyphs changes.
-    render(<StatusBar {...base} txOpenSince={at(65)} />);
+    render(<StatusBar {...base} txOpenSince={at(65)} now={Date.now()} />);
     expect(screen.getByText("⚠ tx open 1m 05s")).toBeInTheDocument();
   });
 
   it("shows a long-running transaction in minutes", () => {
-    render(<StatusBar {...base} txOpenSince={at(3600)} />);
+    render(<StatusBar {...base} txOpenSince={at(3600)} now={Date.now()} />);
     expect(screen.getByText("⚠ tx open 60m 00s")).toBeInTheDocument();
   });
 
   it("handles the exact minute boundary", () => {
-    render(<StatusBar {...base} txOpenSince={at(60)} />);
+    render(<StatusBar {...base} txOpenSince={at(60)} now={Date.now()} />);
     expect(screen.getByText("⚠ tx open 1m 00s")).toBeInTheDocument();
   });
 });

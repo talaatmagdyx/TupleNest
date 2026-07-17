@@ -31,7 +31,10 @@ const VERDICT_CLASS: Record<IndexVerdict, string> = {
 
 function IndexTab({ data, onOpenScript }: { data: IndexHealth | null; onOpenScript: (s: string) => void }) {
   const [only, setOnly] = useState<IndexVerdict | "all">("all");
-  const items = data?.items ?? [];
+  // `data?.items ?? []` inline is a new array on every render, which made both
+  // memos below recompute every time — including sorting every index in the
+  // database.
+  const items = useMemo(() => data?.items ?? [], [data]);
   const shown = useMemo(
     () =>
       (only === "all" ? items : items.filter((i) => i.verdict === only))

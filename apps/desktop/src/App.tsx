@@ -33,7 +33,6 @@ import {
   planToMarkdown,
   planToText,
   rawExtension,
-  type ExplainOptions,
   type ExportablePlan,
 } from "./lib/explain";
 import { FILTERS, baseName, saveText } from "./lib/save";
@@ -149,7 +148,9 @@ export default function App() {
   const tx = useTransaction();
   const { inTx } = tx;
   const txOpenSince = tx.openSince;
-  const [, setTick] = useState(0); // re-render for tx timer
+  /** Now, refreshed once a second while a transaction is open. The status
+   *  bar reads the clock from here so that it stays a pure function of props. */
+  const [now, setNow] = useState(() => Date.now());
 
   // Workspace / UI
   // Tabs live in a hook so their invariants (valid active index, dirty means
@@ -244,8 +245,8 @@ export default function App() {
     invoke<boolean | null>("settings_get", { key: "telemetry" })
       .then((v) => setTelemetry(!!v))
       .catch(() => {});
-    refreshSaved();
-    refreshSnippets();
+    void refreshSaved();
+    void refreshSnippets();
   }, [refreshSaved, refreshSnippets]);
 
   useEffect(() => {
@@ -254,7 +255,7 @@ export default function App() {
 
   useEffect(() => {
     if (!txOpenSince) return;
-    const id = setInterval(() => setTick((n) => n + 1), 1000);
+    const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [txOpenSince]);
 
@@ -277,7 +278,7 @@ export default function App() {
     form.set("password", "");
     form.set("secretRef", ref);
     return ref;
-  }, [password]);
+  }, [password, form]);
 
   /** Params for the backend, saving the password to the keychain first if the
    *  user typed a new one. The shape itself is the hook's business. */
@@ -373,7 +374,7 @@ export default function App() {
         })
         .catch(() => {});
     },
-    [form, connected, resetExplorer]
+    [form, connected, resetExplorer, setMetaCached]
   );
 
   /** Titlebar switcher: load profile AND connect (HUD behavior). */
@@ -400,7 +401,7 @@ export default function App() {
           tlsCaPath: c.tlsCaPath,
           environment: c.environment,
           ssh,
-        } as PgParams,
+        },
         c.environment ?? "dev",
       );
       if (!out.ok) {
@@ -449,7 +450,7 @@ export default function App() {
       setStatus(`Save error: ${errText(e)}`);
       return null;
     }
-  }, [profileId, profileName, environment, host, port, database, username, password, tlsMode, tlsCaPath, form, refreshSaved]);
+  }, [profileId, profileName, environment, host, port, database, username, password, tlsMode, tlsCaPath, form, refreshSaved, setStatus]);
 
   const saveAndConnect = useCallback(async () => {
     const rec = await doSaveProfile();
@@ -472,7 +473,7 @@ export default function App() {
     setStatus("");
     setOverlay("connEditor");
     setConnMenu(false);
-  }, []);
+  }, [form, session, setStatus]);
 
   const editProfile = useCallback(
     (c: ConnectionRecord) => {
@@ -508,7 +509,7 @@ export default function App() {
         setStatus(`Delete error: ${errText(e)}`);
       }
     },
-    [profileId, refreshSaved, showToast]
+    [profileId, refreshSaved, showToast, form, setStatus]
   );
 
   /* ---------------- explorer ---------------- */
@@ -591,7 +592,7 @@ export default function App() {
 
   // Warm the default schema's object list so `from <tab>` works immediately.
   useEffect(() => {
-    if (connected && schemas) prefetchSchemaObjects(searchPath[0]);
+    if (connected && schemas) void prefetchSchemaObjects(searchPath[0]);
   }, [connected, schemas, searchPath, prefetchSchemaObjects]);
 
 
@@ -641,7 +642,6 @@ export default function App() {
     if (!sql.trim()) return;
     setActiveSql(formatSQL(sql));
     showToast("Formatted");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabs, activeTab, setActiveSql, showToast]);
 
   /** Open the name prompt for the current query. `window.prompt` cannot be
@@ -708,9 +708,9 @@ export default function App() {
         setConnLostDetail(out.message);
         setOverlay("connLost");
       }
-      refreshHistory();
+      void refreshHistory();
     },
-    [tabs, activeTab, connected, connectedEnv, query, tx, setTabs, refreshHistory, historySearch]
+    [tabs, activeTab, connected, connectedEnv, query, tx, setTabs, refreshHistory, session]
   );
 
   /* ---------------- safe row editing ---------------- */
@@ -738,7 +738,7 @@ export default function App() {
   const applyEdits = useCallback(async () => {
     const out = await applyRowEdits({ target: editTarget, inTx });
     if (out.kind === "noop" || out.kind === "error") return;
-    refreshHistory();
+    void refreshHistory();
     if (out.kind === "staged") {
       showToast(`${out.count} statement(s) staged in your transaction`);
       return; // their transaction, their commit — and no re-read, see below
@@ -747,8 +747,8 @@ export default function App() {
     // Re-read so the grid shows what is actually stored. Only safe once the
     // commit has landed: re-reading inside the user's open transaction would
     // show uncommitted rows as though they were.
-    doRun(true);
-  }, [applyRowEdits, editTarget, inTx, doRun, refreshHistory, historySearch, showToast]);
+    void doRun(true);
+  }, [applyRowEdits, editTarget, inTx, doRun, refreshHistory, showToast]);
 
   const doCancel = useCallback(async () => {
     try {
@@ -805,7 +805,7 @@ export default function App() {
    * the backend row store, which EXPLAIN has just overwritten with its output.
    */
   const runExplain = useCallback(
-    async (override?: ExplainOptions | unknown) => {
+    async (override?: unknown) => {
       const title = tabs[activeTab]?.name ?? "query";
       const out = await runExplainRaw({
         sql: tabs[activeTab]?.sql ?? "",
@@ -926,7 +926,7 @@ export default function App() {
   const pickResultTab = useCallback(
     (t: ResultTab) => {
       setResultTab(t);
-      if (t === "chart" && !chart) buildChart();
+      if (t === "chart" && !chart) void buildChart();
     },
     [chart, buildChart]
   );
@@ -996,13 +996,13 @@ export default function App() {
       const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
       if (mod && e.key === "Enter") {
         e.preventDefault();
-        doRun();
+        void doRun();
       } else if (mod && e.shiftKey && (e.key === "f" || e.key === "F")) {
         e.preventDefault();
         doFormat();
       } else if (mod && e.shiftKey && (e.key === "l" || e.key === "L")) {
         e.preventDefault();
-        applyTheme(theme === "dark" ? "light" : "dark");
+        void applyTheme(theme === "dark" ? "light" : "dark");
       } else if (mod && (e.key === "o" || e.key === "O")) {
         e.preventDefault();
         setOverlay("connEditor");
@@ -1035,7 +1035,7 @@ export default function App() {
         setOverlay("cheatsheet");
       } else if (e.key === "Escape") {
         if (overlay) setOverlay(null);
-        else if (running) doCancel();
+        else if (running) void doCancel();
         else {
           setConnMenu(false);
           setExportMenu(false);
@@ -1044,7 +1044,7 @@ export default function App() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [doRun, newTab, overlay, running, doCancel, showToast, doFormat, applyTheme, theme]);
+  }, [doRun, newTab, overlay, running, doCancel, showToast, doFormat, applyTheme, theme, connected, search]);
 
   const paletteItems = useCallback((): PaletteItem[] => {
     const items: PaletteItem[] = [
@@ -1119,7 +1119,7 @@ export default function App() {
       }
     }
     return items;
-  }, [doRun, doFormat, saveSnippet, newTab, applyTheme, theme, newProfile, runExplain, connected, connectedEnv, inTx, doDisconnect, doBegin, doCommit, doRollback, saved, selectProfile, objects, insertSelect, describeObject, snippets, historyItems, setActiveSql, showToast]);
+  }, [doRun, doFormat, saveSnippet, newTab, applyTheme, theme, newProfile, runExplain, connected, connectedEnv, inTx, doDisconnect, doBegin, doCommit, doRollback, saved, selectProfile, objects, insertSelect, describeObject, snippets, historyItems, setActiveSql, showToast, loadHealth]);
 
   /* ---------------- render ---------------- */
 
@@ -1138,7 +1138,7 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const up = await check();
         if (!up || cancelled) return;
@@ -1378,6 +1378,7 @@ export default function App() {
         explorerSource={explorerSource}
         rowsInfo={result && result.columns.length > 0 ? rowsInfo : ""}
         txOpenSince={txOpenSince}
+        now={now}
         serverVersion={serverVersion}
         osLabel={info?.os ?? ""}
       />
@@ -1393,7 +1394,7 @@ export default function App() {
           onIdx={setPaletteIdx}
           onPick={(it) => {
             setOverlay(null);
-            it.exec();
+            void it.exec();
           }}
           onClose={() => setOverlay(null)}
         />
@@ -1454,7 +1455,7 @@ export default function App() {
           onDone={(m) => {
             showToast(m);
             resetExplorer();
-            refreshHistory();
+            void refreshHistory();
           }}
           onClose={() => setOverlay(null)}
         />
@@ -1500,7 +1501,7 @@ export default function App() {
           onSearch={search.run}
           onPick={(h: SearchHit) => {
             setOverlay(null);
-            showDetails(h.schema, h.name, h.kind === "column" ? "table" : h.kind);
+            void showDetails(h.schema, h.name, h.kind === "column" ? "table" : h.kind);
           }}
           onClose={() => setOverlay(null)}
         />
@@ -1543,7 +1544,7 @@ export default function App() {
           onRun={() => {
             setGuardSql(null);
             setOverlay(null);
-            doRun(true);
+            void doRun(true);
           }}
         />
       )}
@@ -1573,7 +1574,7 @@ export default function App() {
           onChange={(i, v) => setParamValues((vs) => vs.map((x, j) => (j === i ? v : x)))}
           onRun={() => {
             setOverlay(null);
-            doRun(true, paramValues.map(coerceParam));
+            void doRun(true, paramValues.map(coerceParam));
           }}
           onCancel={() => setOverlay(null)}
         />

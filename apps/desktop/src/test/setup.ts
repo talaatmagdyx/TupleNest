@@ -67,7 +67,7 @@ if (!File.prototype.text) {
   File.prototype.text = function (this: File) {
     return new Promise<string>((resolve, reject) => {
       const r = new FileReader();
-      r.onload = () => resolve(String(r.result));
+      r.onload = () => resolve(typeof r.result === "string" ? r.result : "");
       r.onerror = () => reject(r.error);
       r.readAsText(this);
     });

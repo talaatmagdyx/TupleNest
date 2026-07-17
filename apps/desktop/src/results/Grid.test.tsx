@@ -248,3 +248,38 @@ describe("Grid — editing", () => {
     expect(onStage).not.toHaveBeenCalled();
   });
 });
+
+describe("Grid — editing a json cell", () => {
+  /** Open the payload cell for editing and return the input. */
+  const openPayload = async (onStage: () => void) => {
+    const user = userEvent.setup();
+    render(<Grid {...base} target={target} onStage={onStage} />);
+    await screen.findByText('{"a":1}');
+    await user.dblClick(screen.getByText('{"a":1}'));
+    return { user, input: document.querySelector("input.g-edit") as HTMLInputElement };
+  };
+
+  it("puts the json in the box, not [object Object]", async () => {
+    const { input } = await openPayload(vi.fn());
+    expect(input.value).toBe('{"a":1}');
+  });
+
+  it("stages nothing when the json is opened and closed unchanged", async () => {
+    // The comparison used to be `String(value) === String(original)`, and for
+    // an object the right-hand side is "[object Object]" — never equal to the
+    // json in the box. So looking at a jsonb cell staged an UPDATE for it.
+    const onStage = vi.fn();
+    const { user } = await openPayload(onStage);
+    await user.keyboard("{Enter}");
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
+  it("still stages a real change to the json", async () => {
+    const onStage = vi.fn();
+    const { user, input } = await openPayload(onStage);
+    await user.clear(input);
+    await user.type(input, '{{"a":2}');
+    await user.keyboard("{Enter}");
+    expect(onStage).toHaveBeenCalledTimes(1);
+  });
+});

@@ -39,7 +39,11 @@ export type PaletteItem = {
   label: string;
   type: string;
   kbd?: string;
-  exec: () => void;
+  /** Most of what the palette runs is async — connecting, running a query,
+   *  committing. The palette does not wait for any of it: each one reports its
+   *  own outcome through a toast or the status line. Saying `() => void` here
+   *  was a lie the callers had to be cast around. */
+  exec: () => void | Promise<void>;
 };
 
 export function Palette(p: {

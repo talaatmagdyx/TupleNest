@@ -24,6 +24,9 @@ export default tseslint.config(
       // Vite writes these next to its config while resolving it, and they can
       // outlive the run that made them.
       "*.timestamp-*.mjs",
+      // This file. The plugins' own rule objects are loosely typed, so
+      // type-aware linting reports the config for importing them.
+      "eslint.config.js",
     ],
   },
 
@@ -37,7 +40,10 @@ export default tseslint.config(
         // `projectService` rather than a fixed `project`: tsconfig.json only
         // includes `src`, so the config files at the root (vite, vitest, this
         // one) are in no project and a fixed list makes them parse errors.
-        projectService: true,
+        projectService: {
+          // Those root config files still need somewhere to be parsed from.
+          allowDefaultProject: ["*.config.ts", "*.config.js"],
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -49,9 +55,31 @@ export default tseslint.config(
       // handler is what froze the completion list while ArrowDown was held.
       "react-hooks/exhaustive-deps": "error",
 
+      // The three below arrive with eslint-plugin-react-hooks v7, which bundles
+      // the React Compiler lints. This app is not built with the compiler, and
+      // what they flag is ordinary React 18: fetching on mount and calling
+      // setState with the answer, mirroring state into a ref to keep a callback
+      // stable. Making them pass means adopting compiler-safe patterns
+      // throughout — worth doing deliberately, not as a side effect of turning
+      // the linter on for the first time.
+      //
+      // Left as warnings rather than switched off: they are pointing at real
+      // cascading-render costs, and the list should stay visible and shrink.
+      // Anything genuinely wrong that they caught has already been fixed —
+      // `Date.now()` during StatusBar's render is gone.
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/refs": "warn",
+      "react-hooks/purity": "warn",
+
       // `invoke` returns a promise. An unawaited one swallows the rejection,
       // which is exactly how a failed write becomes a silent no-op.
       "@typescript-eslint/no-floating-promises": "error",
+
+      // `onClick={async () => …}` is how React is written: the DOM ignores the
+      // handler's return value, and each of these reports its own outcome. The
+      // rest of the rule — a promise where a value was wanted, a promise in a
+      // condition — still applies.
+      "@typescript-eslint/no-misused-promises": ["error", { checksVoidReturn: { attributes: false } }],
 
       // Underscore-prefixed args are deliberate signatures, not oversights.
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
