@@ -4,16 +4,107 @@ import { BrandMark } from "../lib/icons";
 
 /* ---------- shared ---------- */
 
+/** Everything focusable inside a container, in tab order. */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * The shared modal shell.
+ *
+ * Every overlay in the app goes through here, so the dialog semantics live here
+ * once rather than 28 times. Before, this was a `div` with a click handler:
+ *
+ *  - Screen readers were told nothing. No `role="dialog"`, no `aria-modal`, so
+ *    it was announced as a group of buttons floating in the page, with the
+ *    background still readable as though nothing had happened.
+ *  - Tab walked straight out of the modal into the page behind it, and there
+ *    was no way to tell you had left.
+ *  - Focus was never returned to whatever opened the modal, so dismissing one
+ *    dropped you at the top of the document.
+ *  - Escape worked only in the components that happened to implement it.
+ */
 export function Overlay(p: {
   children: React.ReactNode;
   onClose: () => void;
   center?: boolean;
+  /** Accessible name. Modals with a `ModalHead` get one from its title; the
+   *  bare dialogs pass their own. */
+  label?: string;
 }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const restoreTo = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    // Remember where focus came from, and give it back on the way out —
+    // otherwise dismissing a dialog strands a keyboard user at the top of the
+    // document with no idea where they were.
+    restoreTo.current = document.activeElement as HTMLElement | null;
+    const node = ref.current;
+    if (node && !node.contains(document.activeElement)) {
+      const first = node.querySelector<HTMLElement>(FOCUSABLE);
+      // Components that autofocus a specific field have already done so; this
+      // only catches the ones that would otherwise leave focus outside.
+      first?.focus();
+    }
+    return () => restoreTo.current?.focus?.();
+  }, []);
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      p.onClose();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const node = ref.current;
+    if (!node) return;
+    // No visibility filter. The obvious one — `offsetParent !== null` — is a
+    // layout question, and the selector already excludes the things that
+    // actually matter (disabled, tabindex="-1"). A modal rendering focusable
+    // but invisible controls is a bug in that modal, not something to paper
+    // over here.
+    const items = [...node.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    if (items.length === 0) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    // Wrap at the ends. Without this, Tab leaves for the page behind, which is
+    // inert to the eye and very much not inert to the keyboard.
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
   return (
-    <div className={`overlay ${p.center ? "center" : ""}`} onClick={p.onClose}>
-      <div onClick={(e) => e.stopPropagation()} style={{ display: "contents" }}>
-        {p.children}
-      </div>
+    /*
+     * The role sits on the backdrop, and the children are its direct
+     * descendants. The previous shape wrapped them in a `display: contents`
+     * div, which was needed to keep the flex layout — but an element with
+     * `display: contents` generates no box, and browsers have a long history
+     * of dropping such elements out of the accessibility tree entirely.
+     * WebKitGTK, which is what Linux runs, kept that behaviour longest. A
+     * `role="dialog"` nobody can hear is not worth the risk when the backdrop
+     * will carry it just as well.
+     *
+     * Closing on backdrop click is then a target check rather than
+     * `stopPropagation` on a wrapper: only a click that landed on the backdrop
+     * itself, not one that bubbled up from the modal, dismisses it.
+     */
+    <div
+      ref={ref}
+      className={`overlay ${p.center ? "center" : ""}`}
+      role="dialog"
+      aria-modal="true"
+      aria-label={p.label}
+      onKeyDown={onKeyDown}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) p.onClose();
+      }}
+    >
+      {p.children}
     </div>
   );
 }

@@ -58,6 +58,15 @@ use tuplenest_driver_api::*;
 /// between `deliver` calls.
 pub const BATCH_SIZE: usize = 1_000;
 
+/// Oldest PostgreSQL this build serves.
+///
+/// The binding constraint is `pg_partition_tree` / `pg_partition_root`, which
+/// arrived in PostgreSQL 12 and the explorer leans on. 13 rather than 12
+/// because 13 is what CI actually tests against — claiming a version nobody
+/// runs the suite on is how the last version claim became untrue.
+pub const MIN_SERVER_MAJOR: i32 = 13;
+const MIN_SERVER_VERSION_NUM: i32 = MIN_SERVER_MAJOR * 10_000;
+
 pub struct PostgresDriver;
 
 impl PostgresDriver {
@@ -277,6 +286,41 @@ impl PostgresDriver {
             .map_err(normalize_error)?;
 
         /*
+         * Refuse a server too old to serve, rather than half-working.
+         *
+         * `supported_server_versions` advertised 13+ and was read by nothing:
+         * connecting to PG 11 succeeded, the tree and queries worked, and only
+         * the partition panels failed — at some later moment, with a raw
+         * "function pg_partition_tree does not exist". A version check on
+         * connect turns that into one sentence at the only point where it is
+         * still actionable.
+         *
+         * `server_version_num` rather than parsing `server_version`: it is an
+         * integer the server computes, and it does not have to be parsed out of
+         * strings like "16.2 (Ubuntu 16.2-1.pgdg22.04+1)".
+         */
+        let ver: i32 = client
+            .query_one("SHOW server_version_num", &[])
+            .await
+            .map_err(normalize_error)?
+            .get::<_, String>(0)
+            .parse()
+            .unwrap_or(0);
+        if ver > 0 && ver < MIN_SERVER_VERSION_NUM {
+            return Err(DriverError::new(
+                ErrorCategory::Configuration,
+                format!(
+                    "PostgreSQL {}.{} is older than the minimum this build supports ({}). \
+                     Parts of the schema explorer rely on catalog functions added in {}.",
+                    ver / 10_000,
+                    (ver % 10_000) / 100,
+                    MIN_SERVER_MAJOR,
+                    MIN_SERVER_MAJOR,
+                ),
+            ));
+        }
+
+        /*
          * Read-only is the server's job, not ours.
          *
          * We could refuse writes in the client, but that is a promise we cannot
@@ -292,6 +336,29 @@ impl PostgresDriver {
         if config.read_only {
             client
                 .batch_execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
+                .await
+                .map_err(normalize_error)?;
+        }
+
+        /*
+         * A ceiling on how long one statement may run.
+         *
+         * `default_statement_timeout_ms` existed on the config and was read by
+         * nothing, so a runaway query had no limit but the user noticing. This
+         * is the server's own timer: it fires even if the app is wedged, the
+         * webview is busy, or the user has walked away — which a client-side
+         * timeout does not.
+         *
+         * 0 means no timeout, matching PostgreSQL's own meaning, and is the
+         * default: a query that is *supposed* to take an hour is a normal thing
+         * to run from an IDE.
+         */
+        if config.default_statement_timeout_ms > 0 {
+            client
+                .batch_execute(&format!(
+                    "SET statement_timeout = {}",
+                    config.default_statement_timeout_ms
+                ))
                 .await
                 .map_err(normalize_error)?;
         }
@@ -1902,6 +1969,15 @@ pub fn normalize_error(e: tokio_postgres::Error) -> DriverError {
             | SqlState::CHECK_VIOLATION => {
                 (ErrorCategory::ConstraintViolation, "Constraint violation")
             }
+            // 25P02. Everything after a failed statement inside a transaction
+            // returns this, and it used to fall through to a bare "Database
+            // error" — leaving the user in a state the app could not name,
+            // where every subsequent query failed for no visible reason. The
+            // cure is one ROLLBACK, so the message says so.
+            SqlState::IN_FAILED_SQL_TRANSACTION => (
+                ErrorCategory::DriverFailure,
+                "Transaction aborted — roll back to continue",
+            ),
             SqlState::T_R_DEADLOCK_DETECTED => (ErrorCategory::Deadlock, "Deadlock detected"),
             SqlState::LOCK_NOT_AVAILABLE => (ErrorCategory::LockTimeout, "Lock timeout"),
             SqlState::T_R_SERIALIZATION_FAILURE => (

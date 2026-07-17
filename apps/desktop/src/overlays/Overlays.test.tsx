@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   ABOUT_LINKS,
@@ -49,6 +49,93 @@ describe("Overlay", () => {
       </Overlay>,
     );
     expect(container.querySelector(".overlay")).toHaveClass("center");
+  });
+});
+
+describe("Overlay — dialog semantics", () => {
+  /*
+   * This was a plain div with a click handler. A screen reader was told
+   * nothing: no role, no aria-modal, so the modal was announced as some
+   * buttons in the page and the background stayed readable as though nothing
+   * had opened. Tab walked straight out of it into the page behind, and
+   * dismissing it dropped focus at the top of the document.
+   *
+   * Fixing it once here fixes all 28 overlays.
+   */
+  it("announces itself as a modal dialog", () => {
+    render(
+      <Overlay onClose={vi.fn()} label="Settings">
+        <button>inside</button>
+      </Overlay>,
+    );
+    const dlg = screen.getByRole("dialog");
+    expect(dlg).toHaveAttribute("aria-modal", "true");
+    expect(dlg).toHaveAccessibleName("Settings");
+  });
+
+  it("closes on Escape, whatever the modal inside does", () => {
+    // Escape used to be implemented per-component, so a modal that forgot it
+    // simply had no Escape.
+    const onClose = vi.fn();
+    render(
+      <Overlay onClose={onClose}>
+        <button>inside</button>
+      </Overlay>,
+    );
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("keeps Tab inside the dialog", () => {
+    render(
+      <Overlay onClose={vi.fn()}>
+        <button>first</button>
+        <button>last</button>
+      </Overlay>,
+    );
+    const last = screen.getByText("last");
+    last.focus();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Tab" });
+    expect(screen.getByText("first")).toHaveFocus();
+  });
+
+  it("wraps backwards too", () => {
+    render(
+      <Overlay onClose={vi.fn()}>
+        <button>first</button>
+        <button>last</button>
+      </Overlay>,
+    );
+    screen.getByText("first").focus();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Tab", shiftKey: true });
+    expect(screen.getByText("last")).toHaveFocus();
+  });
+
+  it("gives focus back to whatever opened it", () => {
+    const opener = document.createElement("button");
+    document.body.appendChild(opener);
+    opener.focus();
+    const { unmount } = render(
+      <Overlay onClose={vi.fn()}>
+        <button>inside</button>
+      </Overlay>,
+    );
+    unmount();
+    expect(opener).toHaveFocus();
+    opener.remove();
+  });
+
+  it("puts focus in the dialog rather than leaving it outside", () => {
+    const opener = document.createElement("button");
+    document.body.appendChild(opener);
+    opener.focus();
+    render(
+      <Overlay onClose={vi.fn()}>
+        <button>inside</button>
+      </Overlay>,
+    );
+    expect(screen.getByText("inside")).toHaveFocus();
+    opener.remove();
   });
 });
 

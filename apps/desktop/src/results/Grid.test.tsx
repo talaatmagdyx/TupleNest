@@ -283,3 +283,94 @@ describe("Grid — editing a json cell", () => {
     expect(onStage).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Grid — keyboard and screen readers", () => {
+  /*
+   * The grid was `div`s with onClick and nothing else. A keyboard user could
+   * not select a cell, let alone edit one, and a screen reader got an
+   * unlabelled pile of divs with no idea it was tabular. For a database IDE
+   * the grid is the product, so this was the largest gap in the app.
+   */
+  const gridRows = async () => {
+    render(<Grid {...base} />);
+    await waitFor(() => expect(screen.getAllByRole("gridcell").length).toBeGreaterThan(0));
+  };
+
+  it("is a grid, and says how big it is", async () => {
+    await gridRows();
+    const g = screen.getByRole("grid");
+    expect(g).toHaveAttribute("aria-rowcount", "2");
+    expect(g).toHaveAttribute("aria-colcount", "4");
+    expect(g).toHaveAccessibleName("Query results");
+  });
+
+  it("gives the columns header semantics and reports the sort", async () => {
+    await gridRows();
+    const heads = screen.getAllByRole("columnheader");
+    // Row-number gutter, then one per column.
+    expect(heads).toHaveLength(columns.length + 1);
+    expect(heads[1]).toHaveAttribute("aria-sort", "none");
+    await userEvent.click(heads[1]);
+    expect(screen.getAllByRole("columnheader")[1]).toHaveAttribute("aria-sort", "ascending");
+  });
+
+  it("has exactly one tab stop, not one per cell", async () => {
+    // A 100,000-row result would otherwise be 100,000 tab stops.
+    await gridRows();
+    await userEvent.click(screen.getAllByRole("gridcell")[0]);
+    const tabbable = screen.getAllByRole("gridcell").filter((c) => c.getAttribute("tabindex") === "0");
+    expect(tabbable).toHaveLength(1);
+  });
+
+  it("moves the selection with the arrow keys", async () => {
+    await gridRows();
+    await userEvent.click(screen.getAllByRole("gridcell")[0]);
+    await userEvent.keyboard("{ArrowRight}");
+    const sel = screen.getAllByRole("gridcell").filter((c) => c.getAttribute("aria-selected") === "true");
+    expect(sel).toHaveLength(1);
+    expect(sel[0]).toHaveTextContent("ada@x.com");
+  });
+
+  it("moves down a row", async () => {
+    await gridRows();
+    await userEvent.click(screen.getAllByRole("gridcell")[0]);
+    await userEvent.keyboard("{ArrowDown}");
+    const sel = screen.getAllByRole("gridcell").filter((c) => c.getAttribute("aria-selected") === "true");
+    expect(sel[0]).toHaveTextContent("2");
+  });
+
+  it("stops at the edges rather than falling off", async () => {
+    await gridRows();
+    await userEvent.click(screen.getAllByRole("gridcell")[0]);
+    await userEvent.keyboard("{ArrowUp}{ArrowLeft}");
+    const sel = screen.getAllByRole("gridcell").filter((c) => c.getAttribute("aria-selected") === "true");
+    expect(sel[0]).toHaveTextContent("1");
+  });
+
+  it("opens the editor on Enter, so editing is reachable without a mouse", async () => {
+    // Double-click was the only way in.
+    render(<Grid {...base} target={target} onStage={vi.fn()} />);
+    await waitFor(() => expect(screen.getAllByRole("gridcell").length).toBeGreaterThan(0));
+    await userEvent.click(screen.getAllByRole("gridcell")[1]);
+    await userEvent.keyboard("{Enter}");
+    expect(screen.getByDisplayValue("ada@x.com")).toBeInTheDocument();
+  });
+
+  it("marks read-only cells as such", async () => {
+    render(<Grid {...base} target={target} onStage={vi.fn()} />);
+    await waitFor(() => expect(screen.getAllByRole("gridcell").length).toBeGreaterThan(0));
+    const cells = screen.getAllByRole("gridcell");
+    // `id` is the primary key: not writable.
+    expect(cells[0]).toHaveAttribute("aria-readonly", "true");
+    expect(cells[1]).toHaveAttribute("aria-readonly", "false");
+  });
+
+  it("leaves the arrows alone while a cell editor is open", async () => {
+    // They belong to the text field at that point.
+    render(<Grid {...base} target={target} onStage={vi.fn()} />);
+    await waitFor(() => expect(screen.getAllByRole("gridcell").length).toBeGreaterThan(0));
+    await userEvent.dblClick(screen.getAllByRole("gridcell")[1]);
+    await userEvent.keyboard("{ArrowRight}");
+    expect(screen.getByDisplayValue("ada@x.com")).toBeInTheDocument();
+  });
+});

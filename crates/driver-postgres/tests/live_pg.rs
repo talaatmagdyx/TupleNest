@@ -975,3 +975,73 @@ async fn describe_object_flags_generated_and_identity_columns() {
         .await
         .unwrap();
 }
+
+/// 25P02: after a failed statement inside a transaction, every subsequent
+/// statement fails with this. It used to fall through to a bare "Database
+/// error", leaving the user in a state the app could not name and could not
+/// tell them how to leave.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn aborted_transaction_is_named_and_says_how_to_recover() {
+    let mut s = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+
+    s.begin(TransactionOptions::default()).await.unwrap();
+    // Poison the transaction.
+    let _ = s
+        .execute(req("SELECT * FROM tn_does_not_exist"), &NullSink)
+        .await;
+
+    let err = s
+        .execute(req("SELECT 1"), &NullSink)
+        .await
+        .expect_err("everything after a failure in a transaction must fail");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("aborted") && msg.to_lowercase().contains("roll back"),
+        "the error must name the state and the way out, got: {msg}"
+    );
+
+    // And the way out actually works.
+    s.rollback().await.expect("rollback");
+    s.execute(req("SELECT 1"), &NullSink)
+        .await
+        .expect("the session is usable again after a rollback");
+}
+
+/// A statement timeout is the server's timer, so it fires whatever the client
+/// is doing. The field existed on the config and was wired to nothing.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn statement_timeout_is_enforced_by_the_server() {
+    let mut cfg = test_config();
+    cfg.default_statement_timeout_ms = 250;
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(cfg, None)
+        .await
+        .expect("connect");
+
+    let err = s
+        .execute(req("SELECT pg_sleep(5)"), &NullSink)
+        .await
+        .expect_err("a 5s sleep must not survive a 250ms timeout");
+    // Postgres reports a timeout as query_canceled, same as a user cancel.
+    assert!(
+        matches!(err.category, ErrorCategory::Cancelled),
+        "expected a cancellation, got {:?}",
+        err.category
+    );
+}
+
+/// Zero means no limit, which is PostgreSQL's own meaning and the default: a
+/// query that is supposed to take a long time is a normal thing to run here.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn no_timeout_is_configured_by_default() {
+    // `first_row` opens its own session with the default config, which is
+    // exactly the question being asked.
+    let row = first_row("SHOW statement_timeout").await;
+    assert_eq!(text_of(&row[0]), "0");
+}

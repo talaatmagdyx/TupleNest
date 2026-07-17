@@ -3,6 +3,7 @@ name = "tuplenest-workspace-store"
 description = "Local SQLite application store: settings, workspaces, layouts, tabs"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 

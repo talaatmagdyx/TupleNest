@@ -198,34 +198,162 @@ const NOT_ALIAS = new Set([
   "union", "intersect", "except", "as", "and", "or",
 ]);
 
+/**
+ * Like `maskLiterals`, but leaves double-quoted identifiers intact.
+ *
+ * The two masks exist for two different readers and must not be merged.
+ * `maskLiterals` blanks `"…"` because a keyword scanner has to: a table named
+ * `"where"` would otherwise look like a WHERE clause and tell the
+ * destructive-statement guard there is one. But an *identifier* parser needs to
+ * see `"users"` — masking it is why any quoted or mixed-case table was silently
+ * uneditable, since no table reference could be found at all.
+ *
+ * In PostgreSQL `"…"` is always an identifier and never a string, so keeping it
+ * is safe here.
+ */
+export function maskStrings(sql: string): string {
+  const out = sql.split("");
+  let i = 0;
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to && k < out.length; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  while (i < sql.length) {
+    const two = sql.slice(i, i + 2);
+    const tag = dollarTagAt(sql, i);
+    if (two === "--") {
+      let j = sql.indexOf("\n", i);
+      if (j === -1) j = sql.length;
+      blank(i, j);
+      i = j;
+    } else if (two === "/*") {
+      let depth = 1;
+      let j = i + 2;
+      while (j < sql.length && depth > 0) {
+        if (sql.slice(j, j + 2) === "/*") {
+          depth++;
+          j += 2;
+        } else if (sql.slice(j, j + 2) === "*/") {
+          depth--;
+          j += 2;
+        } else j++;
+      }
+      blank(i, j);
+      i = j;
+    } else if (tag) {
+      const close = sql.indexOf(tag, i + tag.length);
+      const j = close === -1 ? sql.length : close + tag.length;
+      blank(i + tag.length, close === -1 ? sql.length : close);
+      i = j;
+    } else if (sql[i] === "'") {
+      const escaped = i > 0 && /[Ee]/.test(sql[i - 1]) && !IDENT.test(sql[i - 2] ?? " ");
+      let j = i + 1;
+      while (j < sql.length) {
+        if (escaped && sql[j] === "\\") j += 2;
+        else if (sql[j] === "'" && sql[j + 1] === "'") j += 2;
+        else if (sql[j] === "'") {
+          j++;
+          break;
+        } else j++;
+      }
+      blank(i + 1, j - 1);
+      i = j;
+    } else if (sql[i] === '"') {
+      // Skip over it without blanking — this is the whole point.
+      let j = i + 1;
+      while (j < sql.length) {
+        if (sql[j] === '"' && sql[j + 1] === '"') j += 2;
+        else if (sql[j] === '"') {
+          j++;
+          break;
+        } else j++;
+      }
+      i = j;
+    } else i++;
+  }
+  return out.join("");
+}
+
+/** `foo` or `"foo bar"`, as a regex source fragment. */
+const IDENT_RE = String.raw`(?:[A-Za-z_][\w$]*|"(?:[^"]|"")*")`;
+
+/** Strip the quotes from an identifier, undoubling any embedded quote. */
+export function unquoteIdent(raw: string): string {
+  if (!raw.startsWith('"')) return raw;
+  return raw.slice(1, -1).replace(/""/g, '"');
+}
+
 /** Tables referenced by FROM / JOIN / UPDATE / INSERT INTO, with aliases.
  *
  *  The alias group carries a negative lookahead for reserved words. Without it
  *  a query like `from users join orders` would swallow `join` as the alias of
  *  `users`, leaving nothing for the next iteration to match — so `orders`
  *  would silently go missing.
+ *
+ *  Quoted identifiers are understood: `from "my table" t` is a real reference,
+ *  and treating it as no reference at all made every mixed-case table
+ *  permanently uneditable.
  */
 export function parseTableRefs(sql: string): TableRef[] {
-  const masked = maskLiterals(sql);
+  const masked = maskStrings(sql);
   const reserved = [...NOT_ALIAS].join("|");
   const re = new RegExp(
-    String.raw`\b(?:from|join|update|insert\s+into|delete\s+from)\s+([A-Za-z_][\w$]*)` +
-      String.raw`(?:\s*\.\s*([A-Za-z_][\w$]*))?` +
-      String.raw`(?:\s+(?:as\s+)?(?!(?:${reserved})\b)([A-Za-z_][\w$]*))?`,
+    String.raw`\b(?:from|join|update|insert\s+into|delete\s+from)\s+(${IDENT_RE})` +
+      String.raw`(?:\s*\.\s*(${IDENT_RE}))?` +
+      String.raw`(?:\s+(?:as\s+)?(?!(?:${reserved})\b)(${IDENT_RE}))?`,
     "gi"
   );
   const refs: TableRef[] = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(masked)) !== null) {
     const [, a, b, aliasRaw] = m;
-    const schema = b ? a : null;
-    const name = b ? b : a;
-    const alias = aliasRaw ?? null;
+    const schema = b ? unquoteIdent(a) : null;
+    const name = unquoteIdent(b ? b : a);
+    const alias = aliasRaw ? unquoteIdent(aliasRaw) : null;
     if (!refs.some((r) => r.schema === schema && r.name === name && r.alias === alias)) {
       refs.push({ schema, name, alias });
     }
   }
   return refs;
+}
+
+/**
+ * Does the FROM clause list more than one relation, or a subquery?
+ *
+ * `parseTableRefs` only sees what follows a `from`/`join` keyword, so the
+ * second table of an old-style comma join — `from users u, logs l` — was
+ * invisible to it, and `\bjoin\b` never fired. The result: a cross join
+ * reported exactly one table and the grid offered it for editing. A derived
+ * table (`from (select …) x`) was likewise reported as its inner table.
+ *
+ * Scans the FROM clause at paren depth zero, so a comma inside `coalesce(a, b)`
+ * or a subquery's own FROM does not count.
+ */
+export function fromClauseShape(sql: string): { commaJoin: boolean; derived: boolean } {
+  const masked = maskStrings(sql);
+  const m = /\bfrom\b/i.exec(masked);
+  if (!m) return { commaJoin: false, derived: false };
+  let i = m.index + m[0].length;
+  let depth = 0;
+  let commaJoin = false;
+  let derived = false;
+  // Skip whitespace to see whether the very first thing is a subquery.
+  const firstNonSpace = masked.slice(i).search(/\S/);
+  if (firstNonSpace >= 0 && masked[i + firstNonSpace] === "(") derived = true;
+  const ENDS = /^(where|group|having|order|limit|offset|window|union|intersect|except|returning|for)$/i;
+  while (i < masked.length) {
+    const ch = masked[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (ch === "," && depth === 0) commaJoin = true;
+    else if (depth === 0 && /[A-Za-z_]/.test(ch)) {
+      const w = /^[A-Za-z_][\w$]*/.exec(masked.slice(i))![0];
+      if (ENDS.test(w)) break;
+      i += w.length;
+      continue;
+    }
+    i++;
+  }
+  return { commaJoin, derived };
 }
 
 function columnsFor(ref: TableRef, cat: Catalog): { cols: DbColumn[]; table: string } {

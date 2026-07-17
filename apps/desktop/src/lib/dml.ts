@@ -9,7 +9,7 @@ import { cellText } from "./text";
  */
 
 import type { Catalog } from "./complete";
-import { maskLiterals, parseTableRefs, statementAt } from "./complete";
+import { fromClauseShape, maskLiterals, parseTableRefs, statementAt } from "./complete";
 
 export type GridCol = { name: string; dbType: string };
 
@@ -78,13 +78,24 @@ export function coerceValue(raw: string, dbType: string): unknown {
   return raw; // text, timestamps, json, uuid, … bind as text
 }
 
+/*
+ * Shapes that break the one-row-to-one-table-row mapping the write depends on.
+ *
+ * This is a blocklist over masked text, not a parser, and the honest reading is
+ * "conservative heuristics + a reviewed diff", not proof. It only has to be
+ * wrong in one direction: refusing something editable is an inconvenience,
+ * offering something that is not is a wrong write.
+ */
 const BLOCKERS: [RegExp, string][] = [
   [/\bgroup\s+by\b/i, "the query groups rows"],
   [/\bdistinct\b/i, "the query uses DISTINCT"],
   [/\bunion\b|\bintersect\b|\bexcept\b/i, "the query combines result sets"],
   [/\bhaving\b/i, "the query uses HAVING"],
-  [/^\s*with\b/i, "the query uses a CTE"],
+  // Anywhere, not just at the start: `select * from (with c as (…) select …)`
+  // is still a CTE, and `^\s*with` never saw it.
+  [/\bwith\b[\s\S]*\bas\s*\(/i, "the query uses a CTE"],
   [/\bjoin\b/i, "the query joins more than one table"],
+  [/\blateral\b/i, "the query uses LATERAL"],
 ];
 
 /** Can rows of this result be traced back to single rows of one table? */
@@ -99,6 +110,20 @@ export function analyzeEditability(sql: string, cols: GridCol[], cat: Catalog | 
   // reported as "not a SELECT", which is true but unhelpful).
   for (const [re, why] of BLOCKERS) if (re.test(masked)) return { editable: false, reason: why };
   if (!/^\s*select\b/i.test(masked)) return { editable: false, reason: "only SELECT results are editable" };
+
+  /*
+   * The FROM clause has to be looked at directly, because `parseTableRefs`
+   * only sees what follows a `from`/`join` keyword:
+   *
+   *   from users u, logs l        → one ref (`users`), no `join` keyword
+   *   from (select * from users) x → one ref (`users`), which is not the
+   *                                  relation the result's rows came from
+   *
+   * Both used to report a single table and be offered for editing.
+   */
+  const shape = fromClauseShape(stmt);
+  if (shape.derived) return { editable: false, reason: "the query selects from a subquery" };
+  if (shape.commaJoin) return { editable: false, reason: "the query reads from more than one table" };
 
   const refs = parseTableRefs(stmt);
   if (refs.length !== 1) {

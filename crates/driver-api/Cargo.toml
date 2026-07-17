@@ -3,6 +3,7 @@ name = "tuplenest-driver-api"
 description = "Driver contract: traits, capabilities, config, and normalized errors"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 

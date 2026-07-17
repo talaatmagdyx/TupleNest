@@ -410,3 +410,73 @@ describe("analyzeEditability — columns the server computes", () => {
     expect(r.target.writable).toEqual([false, true, true]);
   });
 });
+
+describe("analyzeEditability — the bypasses found in the pre-launch review", () => {
+  /*
+   * Each of these was verified editable by executing the old code. They share a
+   * cause: `parseTableRefs` only sees what follows a `from`/`join` keyword, so
+   * anything that introduces a second relation another way was invisible, and
+   * `\bjoin\b` never fired.
+   *
+   * All are false *positives* — the app offered editing on a result whose rows
+   * it could not map to one table row. That is the only direction that matters.
+   */
+  const mustRefuse: [string, string, RegExp][] = [
+    ["comma join", "select u.id, u.email from users u, logs l where u.id = l.uid", /more than one table/],
+    ["cross join by comma, no where", "select id, email from users, logs", /more than one table/],
+    ["derived table", "select id, email from (select * from users) x", /subquery/],
+    ["CTE not at the start", "select * from (with c as (select 1) select id, email from users) t", /CTE|subquery/],
+    ["LATERAL", "select u.id, u.email from users u, lateral (select 1) z", /LATERAL|more than one table/],
+  ];
+  for (const [name, sql, why] of mustRefuse) {
+    it(`refuses: ${name}`, () => {
+      const r = analyzeEditability(sql, gcols("id", "email"), cat);
+      expect(r.editable, `${name} must not be editable`).toBe(false);
+      if (!r.editable) expect(r.reason).toMatch(why);
+    });
+  }
+
+  it("does not mistake a comma inside a function call for a second table", () => {
+    // `coalesce(a, b)` has a comma; it does not make this two tables. Scanning
+    // at paren depth zero is what keeps the refusal honest rather than blanket.
+    const r = analyzeEditability("select id, coalesce(email, 'none') from users", gcols("id", "email"), cat);
+    expect(r.editable).toBe(true);
+  });
+
+  it("still edits an ordinary aliased single-table select", () => {
+    const r = analyzeEditability("select u.id, u.email from users u where u.id = 1", gcols("id", "email"), cat);
+    expect(r.editable).toBe(true);
+  });
+
+  it("allows a window function — every row still maps to one row of the table", () => {
+    // Deliberately allowed. It was allowed before too, but by accident: no
+    // blocker existed and nothing had decided it was safe.
+    const cols = [...gcols("id", "email"), { name: "rn", dbType: "int8" }];
+    const r = analyzeEditability("select id, email, row_number() over (order by id) rn from users", cols, cat);
+    expect(r.editable).toBe(true);
+    if (!r.editable) return;
+    // The computed column is not a column of the table, so it is not writable.
+    expect(r.target.writable).toEqual([false, true, false]);
+  });
+});
+
+describe("analyzeEditability — quoted identifiers", () => {
+  it("edits a quoted table name", () => {
+    // `maskLiterals` blanks double-quoted text so a keyword scanner cannot
+    // trip on a table named "where". That mask was also feeding the identifier
+    // parser, so a quoted table produced no refs at all and every mixed-case
+    // or reserved-word table was silently uneditable.
+    const r = analyzeEditability('select id, email from "users"', gcols("id", "email"), cat);
+    expect(r.editable).toBe(true);
+    if (r.editable) expect(r.target.table).toBe("users");
+  });
+
+  it("edits a quoted schema-qualified name", () => {
+    const r = analyzeEditability('select id, email from "public"."users"', gcols("id", "email"), cat);
+    expect(r.editable).toBe(true);
+    if (r.editable) {
+      expect(r.target.schema).toBe("public");
+      expect(r.target.table).toBe("users");
+    }
+  });
+});

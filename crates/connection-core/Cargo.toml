@@ -2,6 +2,7 @@
 name = "tuplenest-connection-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 description = "Connection lifecycle: staged reachability probe (DNS, TCP), later SSH/TLS"

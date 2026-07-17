@@ -38,6 +38,14 @@ have nowhere to live.
 > does not exist, so the app never finds an update and never nags about it.
 > Upgrading means downloading the next build by hand.
 
+## Supported PostgreSQL versions
+
+**PostgreSQL 13 and newer.** Connecting to anything older is refused with a
+reason rather than half-working: the schema explorer relies on catalog
+functions (`pg_partition_tree`) that arrived in PostgreSQL 12, and 13 is the
+oldest version the contract tests actually run against. CI exercises the full
+suite against 13, 15 and 17 on every push.
+
 ## What's included (PostgreSQL)
 
 - **Connections** — saved profiles, credentials stored only in the OS keychain (Keychain / Credential Manager / Secret Service), never in state, logs, or SQLite. Optional read-only profiles, enforced by the server.
@@ -84,7 +92,10 @@ cargo test                 # Rust unit tests
 cd apps/desktop && npm test # TypeScript (vitest): completion engine, DML generation
 ```
 
-Live PostgreSQL / SSH contract tests are marked `#[ignore]` and require a local Postgres on `:5432` and the dev sshd from `docs/dev-sshd.md`:
+Live PostgreSQL / SSH contract tests are marked `#[ignore]` so a plain `cargo test`
+does not need a server. CI runs the PostgreSQL ones against real 13/15/17 with
+`--include-ignored`; the SSH ones still need the dev sshd from `docs/dev-sshd.md`
+and are the one suite CI cannot yet run. Locally they want a Postgres on `:5432`:
 
 ```sh
 cargo test -- --ignored

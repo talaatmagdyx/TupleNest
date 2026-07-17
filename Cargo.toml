@@ -26,6 +26,12 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+# The oldest Rust that compiles this. Cargo turns "too old" into one clear
+# line instead of a page of errors from a dependency nobody has heard of.
+# `rust-toolchain.toml` still says `channel = "stable"`: pinning an exact
+# version there would also pin CI, and a floating stable is what catches a
+# new clippy lint on the day it lands rather than months later.
+rust-version = "1.82"
 license = "MIT"
 # These crates are the internals of one desktop app, not libraries anyone is
 # meant to depend on. Saying so stops `cargo publish` from ever sending them to

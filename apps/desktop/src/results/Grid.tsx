@@ -236,12 +236,81 @@ export default function Grid(p: Props) {
   for (let i = first; i < last; i++) indices.push(i);
   const totalW = 56 + p.columns.reduce((a, c) => a + colWidth(c), 0);
 
+  /*
+   * Keyboard navigation.
+   *
+   * The grid was `div`s with onClick and nothing else: a keyboard user could
+   * not select a cell, let alone edit one, and a screen reader was handed an
+   * unlabelled pile of divs. For a database IDE the grid *is* the product, so
+   * this was the largest gap in the app.
+   *
+   * Roving tabindex rather than making every cell tabbable: a 100,000-row
+   * result would otherwise be 100,000 tab stops. One cell is in the tab order;
+   * the arrows move within.
+   */
+  const move = (dr: number, dc: number) => {
+    const cur = selCell ?? { r: first, c: 0 };
+    const r = Math.max(0, Math.min(cur.r + dr, p.storedRows - 1));
+    const c = Math.max(0, Math.min(cur.c + dc, p.columns.length - 1));
+    const row = rowAt(r);
+    setSelCell({ r, c });
+    setSelRow(r);
+    if (row) p.onCopyable(cellText(row[c]));
+    // Follow the selection with the viewport, or arrowing past the fold moves
+    // a selection nobody can see.
+    const view = viewRef.current;
+    if (view) {
+      const top = r * ROW_H;
+      const bottom = top + ROW_H;
+      if (top < view.scrollTop) view.scrollTop = top;
+      else if (bottom > view.scrollTop + view.clientHeight) {
+        view.scrollTop = bottom - view.clientHeight;
+      }
+    }
+  };
+
+  const onGridKey = (e: React.KeyboardEvent) => {
+    // While a cell editor is open the keys are its business.
+    if (editing) return;
+    const k = e.key;
+    if (k === "ArrowDown") move(1, 0);
+    else if (k === "ArrowUp") move(-1, 0);
+    else if (k === "ArrowRight") move(0, 1);
+    else if (k === "ArrowLeft") move(0, -1);
+    // A page is what the viewport actually shows, not a fixed guess.
+    else if (k === "PageDown") move(Math.max(1, Math.floor(viewH / ROW_H) - 1), 0);
+    else if (k === "PageUp") move(-Math.max(1, Math.floor(viewH / ROW_H) - 1), 0);
+    else if (k === "Home") move(0, -p.columns.length);
+    else if (k === "End") move(0, p.columns.length);
+    else if ((k === "Enter" || k === "F2") && selCell) {
+      const row = rowAt(selCell.r);
+      if (row) beginEdit(selCell.r, selCell.c, row[selCell.c]);
+    } else return;
+    e.preventDefault();
+  };
+
   return (
-    <div className="vgrid" ref={viewRef} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
-      <div className="g-head" style={{ minWidth: totalW }}>
-        <div className="g-rownum" style={{ width: 56 }} />
+    <div
+      className="vgrid"
+      ref={viewRef}
+      role="grid"
+      aria-rowcount={p.storedRows}
+      aria-colcount={p.columns.length}
+      aria-label="Query results"
+      onKeyDown={onGridKey}
+      onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+    >
+      <div className="g-head" role="row" style={{ minWidth: totalW }}>
+        <div className="g-rownum" role="columnheader" aria-label="Row number" style={{ width: 56 }} />
         {p.columns.map((c, ci) => (
-          <div key={ci} className="g-hcell" style={{ width: colWidth(c) }} onClick={() => sortBy(ci)}>
+          <div
+            key={ci}
+            className="g-hcell"
+            role="columnheader"
+            aria-sort={sortCol === ci && sortDir ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+            style={{ width: colWidth(c) }}
+            onClick={() => sortBy(ci)}
+          >
             <span className={`cn ${sortCol === ci && sortDir ? "sorted" : ""}`}>{c.name}</span>
             <span className="ct">{c.dbType}</span>
             {sortCol === ci && sortDir && <span className="arrow">{sortDir === "asc" ? "▲" : "▼"}</span>}
@@ -255,10 +324,14 @@ export default function Grid(p: Props) {
           <div
             key={i}
             className={`g-row ${i === selRow ? "sel" : ""}`}
+            role="row"
+            // 1-based, and the header is row 1 — this is the number a screen
+            // reader reads out, so it has to match what the eye sees.
+            aria-rowindex={i + 2}
             style={{ minWidth: totalW }}
             onClick={() => setSelRow(i)}
           >
-            <div className="g-rownum" style={{ width: 56 }}>
+            <div className="g-rownum" role="rowheader" style={{ width: 56 }}>
               {i + 1}
             </div>
             {row === null ? (
@@ -274,7 +347,9 @@ export default function Grid(p: Props) {
                 const key = `${rk}:${c.name}`;
                 const isStaged = !!p.target && staged.has(key);
                 const v = isStaged ? staged.get(key) : original;
-                const isSel = selCell && selCell.r === i && selCell.c === ci;
+                // Boolean, not `selCell && …`: that yields null when nothing is
+                // selected, and `aria-selected` must be a real true/false.
+                const isSel = !!selCell && selCell.r === i && selCell.c === ci;
                 const isEditing = editing && editing.r === i && editing.c === ci;
                 const canEdit = !!p.target?.writable[ci];
 
@@ -306,6 +381,20 @@ export default function Grid(p: Props) {
                     className={`g-cell ${cellClass(c, v)} ${isSel ? "selcell" : ""} ${
                       isStaged ? "staged" : ""
                     } ${canEdit ? "editable" : ""}`}
+                    role="gridcell"
+                    aria-colindex={ci + 2}
+                    aria-selected={isSel}
+                    aria-readonly={!canEdit}
+                    // The roving stop: exactly one cell is tabbable, so Tab
+                    // reaches the grid and the arrows move inside it.
+                    tabIndex={isSel ? 0 : -1}
+                    ref={(el) => {
+                      // Focus follows selection, but only once it is really the
+                      // selected cell — otherwise every render steals focus.
+                      if (isSel && el && document.activeElement !== el && viewRef.current?.contains(document.activeElement)) {
+                        el.focus();
+                      }
+                    }}
                     style={{ width: colWidth(c) }}
                     title={
                       isStaged

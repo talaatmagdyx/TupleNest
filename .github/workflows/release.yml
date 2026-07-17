@@ -118,4 +118,65 @@ jobs:
           # bug: the release goes public and existing copies see it at the same
           # moment.
           releaseDraft: true
-          prerelease: false
+          # A manual dispatch build is not a release. Left as `false`, publishing
+          # a `v47-dev` draft by hand would make it "latest" and the updater
+          # would ship a scratch build to every install.
+          prerelease: ${{ github.ref_type != 'tag' }}
+
+  # Checksums and an SBOM, attached to the same release.
+  #
+  # These matter more here than they would elsewhere: the Windows installer is
+  # unsigned and the macOS builds are not notarized, so a published SHA-256 is
+  # the *only* integrity signal a downloader has. Nothing verified the bytes.
+  provenance:
+    name: checksums, SBOM and attestation
+    needs: build
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # For actions/attest-build-provenance: signs a statement that these
+      # artifacts came out of this workflow, from this commit.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Collect the release artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-dev', github.run_number) }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # The release is a draft, so `gh release download` needs the tag.
+          gh release download "$TAG" --dir dist --pattern '*' || true
+          ls -la dist
+
+      - name: SHA-256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          # latest.json is generated from the .sig files and changes if anyone
+          # re-uploads; checksumming the installers is the point.
+          rm -f SHA256SUMS latest.json
+          shasum -a 256 * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: SBOM
+        run: |
+          set -euo pipefail
+          cargo install --locked cargo-cyclonedx || true
+          cargo cyclonedx --format json --all || true
+          find . -name '*.cdx.json' -maxdepth 3 -exec cp {} dist/ \; || true
+          cd apps/desktop && npm ci --ignore-scripts && npm sbom --sbom-format cyclonedx > ../../dist/frontend-sbom.cdx.json
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/*"
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-dev', github.run_number) }}
+        run: gh release upload "$TAG" dist/SHA256SUMS dist/*.cdx.json --clobber

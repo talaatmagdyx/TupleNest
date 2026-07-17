@@ -1690,3 +1690,38 @@ select.intel-input { font-family: var(--tn-sans); }
 }
 .edit-bar.readonly { background: transparent; border-top: 1px solid var(--tn-bs); }
 .edit-bar.readonly .muted { font-size: 11.5px; }
+
+/* ===== Reduced motion =====
+   Vestibular disorders make sliding and scaling genuinely unpleasant, not
+   merely a preference — and this is a tool people sit in front of all day. The
+   stylesheet had no @media query of any kind, so the OS setting had nothing to
+   switch off.
+
+   Not `animation: none`: a spinner that stops spinning reads as a hang. The
+   pulse and spin stay (they carry state), everything decorative stops moving,
+   and transitions collapse to a duration short enough not to be motion while
+   still repainting. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+  /* These two say "working" and "live". Freezing them would remove the
+     information, which is not what the setting asks for. */
+  .pulse,
+  .spin,
+  [class*="spin"] {
+    animation-duration: 1.2s !important;
+    animation-iteration-count: infinite !important;
+  }
+  /* Entrance animations are pure decoration: land, do not fly in. */
+  .modal,
+  .overlay,
+  .toast {
+    animation: none !important;
+  }
+}
