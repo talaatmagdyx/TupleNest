@@ -121,7 +121,17 @@ jobs:
           # A manual dispatch build is not a release. Left as `false`, publishing
           # a `v47-dev` draft by hand would make it "latest" and the updater
           # would ship a scratch build to every install.
-          prerelease: ${{ github.ref_type != 'tag' }}
+          # A tag containing a hyphen (v0.1.0-beta.1) is a prerelease channel
+          # and must be labeled as one: GitHub does not treat a prerelease as
+          # `latest`, so beta installs never become the updater target for
+          # people on stable — and betas can be published without committing
+          # every existing install to them.
+          #
+          # Deliberate: the beta lives in the TAG, not in tauri.conf's version,
+          # which stays numeric (0.1.0). WiX rejects semver prerelease suffixes
+          # in MSI versions, so `0.1.0-beta.1` as the app version would kill
+          # the Windows leg at bundling.
+          prerelease: ${{ github.ref_type != 'tag' || contains(github.ref_name, '-') }}
 
   # Checksums and an SBOM, attached to the same release.
   #

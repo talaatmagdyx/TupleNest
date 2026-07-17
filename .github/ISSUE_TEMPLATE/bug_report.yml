@@ -1,0 +1,56 @@
+name: Bug report
+description: Something broke, misbehaved, or lied to you.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks — bug reports are exactly what this beta is for. Rough edges
+        included: if something merely *felt* wrong, that counts.
+  - type: input
+    id: version
+    attributes:
+      label: TupleNest version
+      description: Menu bar → TupleNest → About TupleNest
+      placeholder: 0.1.0 (beta 1)
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows
+        - Linux — which distro? (say below)
+    validations:
+      required: true
+  - type: input
+    id: pg
+    attributes:
+      label: PostgreSQL version
+      placeholder: "16.3, RDS, via SSH tunnel…"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Connect to …
+        2. Run …
+        3. Click …
+  - type: textarea
+    id: logs
+    attributes:
+      label: Anything from the logs?
+      description: >-
+        Crash/panic logs are written locally and never uploaded — find them
+        under the app's log directory. Paste anything relevant, but skim it
+        first; redaction is applied to panic payloads, not to your SQL.

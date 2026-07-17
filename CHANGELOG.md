@@ -3,7 +3,35 @@
 Notable changes to TupleNest. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.1.0-beta.1] — 2026-07-18
+
+First public release. The goal is not to prove the product is finished — it is
+to put it in front of real users, because "is the UX intuitive" and "does it
+work on your machine" are questions no test suite can answer. Please file
+what you find: bugs and *feelings* alike (there is an issue template for each).
+
+### Added since the review rounds
+
+- Real `verify-ca` TLS mode: chain verified, hostname knowingly skipped — the
+  mode SSH tunnels actually need. Previously it silently behaved as
+  `verify-full`.
+- Unknown column types are decoded from what the type *is*, never guessed from
+  the bytes: enums render as labels, `money` as money or visibly-raw hex —
+  never as a plausible wrong number.
+- Explorer node ids are reversible: tables and schemas with dots, pipes or
+  colons in their names no longer confuse the tree.
+- Markdown export escapes cells completely (backslash before pipe), including
+  headers, and survives multi-line values.
+- The toast dismiss timer is cleared on unmount (was a setState-after-unmount).
+
+### Known limitations, stated up front
+
+- macOS builds are not notarized; Windows installers are unsigned. First launch
+  needs one extra click. Funding problem, not a trust problem — see the README
+  for the stronger check (`gh attestation verify`).
+- CSV import reads the whole file into memory.
+- The row cap counts rows and bytes, but 100k wide rows is still a lot of RAM.
+- Nobody has lived with this yet. That is what you are for.
 
 ### Fixed — from the pre-launch review
 

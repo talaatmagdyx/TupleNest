@@ -1,0 +1,45 @@
+name: UX feedback
+description: Nothing broke — it just felt wrong, slow, confusing, or undiscoverable.
+labels: [ux-feedback]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the feedback no test suite can produce, and it is the entire
+        reason this beta exists. "I couldn't find X", "Y took too many clicks",
+        "I expected Z to happen" — all of it is valuable. No rigor required.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part?
+      options:
+        - SQL editor / autocomplete
+        - Results grid / editing rows
+        - Connection dialog / first-run experience
+        - Schema explorer / search
+        - Keyboard shortcuts / discoverability
+        - Monitoring / health panels
+        - Import / export
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: story
+    attributes:
+      label: What were you trying to do, and how did it go?
+      description: The story matters more than the conclusion.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What would have felt right?
+      description: Optional — "like &lt;other tool&gt; does it" is a fine answer.
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
