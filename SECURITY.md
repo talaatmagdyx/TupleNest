@@ -64,9 +64,31 @@ Reporting these is not useful; they are documented decisions.
   them.**
 - **macOS builds are not notarized and Windows builds are unsigned.** Stated in
   the README. This is a funding problem, not an oversight.
-- **Crash reports are written to local disk unredacted** and never uploaded. A
-  panic message from a third-party crate could in principle contain something
-  sensitive.
+- **Crash reports are written to local disk** and never uploaded. Key–value
+  pairs, `key: value` and URL credentials are redacted from panic payloads, but
+  a message from a third-party crate could in principle carry something
+  sensitive in a shape the redactor does not recognise.
+- **`SHA256SUMS` is unsigned and served beside the artifacts it describes.** It
+  catches a corrupted download, not a compromised release host — anyone who
+  could replace an installer could replace the sums file next to it. The
+  control that actually binds a file to its build is the provenance
+  attestation (`gh attestation verify`, see the README), which is signed by
+  GitHub's OIDC identity and not by anything in the release. Reporting "the
+  checksums file could be swapped" is reporting its design.
+- **The updater trusts one minisign public key, compiled into each binary.**
+  That is the point: the release host serves bytes and never holds the private
+  key, so it cannot make the app accept an update. The consequence is that
+  **key rotation does not reach installs that already exist** — their public
+  key is baked in. If the private key were ever compromised, existing installs
+  could only be fixed by telling their owners to download a new build by hand.
+  The private key is passphrase-protected and held offline.
+- **The keychain is the control protecting passwords in memory, not `Secret`.**
+  `Secret` redacts `Debug`, cannot cross IPC, and wipes its own buffer on drop
+  — but a brief unwiped copy passes through freed heap inside
+  `tokio_postgres`'s connection config on every connect, and the OS may page
+  any of it to disk. This is documented in `crates/credential-store/src/secret.rs`.
+  An attacker who can read this process's memory is out of scope; see the last
+  bullet.
 - **One PostgreSQL session is shared by all query tabs.** `SET search_path` and
   temp tables are shared between tabs by design. The open transaction records
   which tab opened it and refuses to be committed from another.

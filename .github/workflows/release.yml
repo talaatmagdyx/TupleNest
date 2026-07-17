@@ -163,13 +163,26 @@ jobs:
           shasum -a 256 * > SHA256SUMS
           cat SHA256SUMS
 
+      # `set -euo pipefail` was here doing nothing: every line that could fail
+      # ended in `|| true`, so a broken cargo-cyclonedx produced no SBOM, no
+      # error, and a green job — while the README told people a release ships
+      # one. An SBOM that silently might not exist is not a supply-chain
+      # control, it is a claim. Only the install keeps its `|| true`, because
+      # the binary may already be cached; the generate and the copy must work.
       - name: SBOM
         run: |
           set -euo pipefail
           cargo install --locked cargo-cyclonedx || true
-          cargo cyclonedx --format json --all || true
-          find . -name '*.cdx.json' -maxdepth 3 -exec cp {} dist/ \; || true
+          command -v cargo-cyclonedx >/dev/null || { echo "cargo-cyclonedx did not install"; exit 1; }
+          # One .cdx.json per crate, written next to each Cargo.toml.
+          cargo cyclonedx --format json --all
+          find . -maxdepth 3 -name '*.cdx.json' -exec cp {} dist/ \;
           cd apps/desktop && npm ci --ignore-scripts && npm sbom --sbom-format cyclonedx > ../../dist/frontend-sbom.cdx.json
+          cd ../..
+          # Prove it rather than hope: one per workspace crate, plus the frontend.
+          count=$(ls dist/*.cdx.json | wc -l)
+          echo "SBOMs collected: $count"; ls -1 dist/*.cdx.json
+          [ "$count" -ge 2 ] || { echo "expected at least a Rust and a frontend SBOM"; exit 1; }
 
       - uses: actions/attest-build-provenance@v2
         with:

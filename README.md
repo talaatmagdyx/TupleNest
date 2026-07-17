@@ -34,9 +34,46 @@ your PC" on first run: click **More info** → **Run anyway**.
 A keyring daemon (GNOME Keyring, KWallet) must be running, or saved passwords
 have nowhere to live.
 
-> Auto-update is built in but has nowhere to point yet: the release endpoint
-> does not exist, so the app never finds an update and never nags about it.
-> Upgrading means downloading the next build by hand.
+> Auto-update points at this repository's releases. A **draft** release is not
+> `latest`, so the endpoint 404s and the app finds nothing until a release is
+> actually published — the check fails silently by design and never nags. Until
+> then, upgrading means downloading the next build by hand.
+
+## Verifying a download
+
+Every release carries a `SHA256SUMS` file. Check the installer you downloaded
+is the one that was built:
+
+```sh
+shasum -a 256 -c SHA256SUMS --ignore-missing
+```
+
+**Be clear about what that proves.** `SHA256SUMS` is served from the same place
+as the installer and is not signed, so it catches a truncated or corrupted
+download — not a release host that has been tampered with. Anyone who could
+swap the installer could swap the sums file beside it.
+
+What does bind a file to the build that produced it is the **provenance
+attestation**, which is signed by GitHub's OIDC identity rather than by
+anything in the release:
+
+```sh
+gh attestation verify TupleNest_0.1.0_aarch64.dmg --repo talaatmagdyx/TupleNest
+```
+
+That says: this exact file came out of this repository's release workflow, at
+this commit. It is the check worth running if you care.
+
+CycloneDX SBOMs are attached to each release for anyone auditing dependencies:
+`*.cdx.json`, one per Rust crate plus `frontend-sbom.cdx.json` for the npm
+tree.
+
+**Auto-updates are a separate mechanism and need nothing from you.** They are
+signed offline with a minisign key and verified against a public key compiled
+into the binary you already trust, so the release host only ever serves bytes —
+it never holds the private key and cannot make the app accept an update. That
+signature is checked by the app on every update, whether or not you ever run
+any of the commands above.
 
 ## Supported PostgreSQL versions
 
