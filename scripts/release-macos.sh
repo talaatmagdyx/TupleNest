@@ -14,9 +14,16 @@
 #                           NOT your Apple ID password.
 #   APPLE_TEAM_ID           10-character team id
 #
-# Optional, for signing auto-updates (see docs/releasing.md):
-#   TAURI_SIGNING_PRIVATE_KEY           contents of ~/.tauri/tuplenest.key
-#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password
+# Required, because bundle.createUpdaterArtifacts is on: without these the
+# build fails at the signing step *after* producing the .app, which looks like
+# it worked (see docs/releasing.md). The key path here said ~/.tauri/ and the
+# docs said ~/.tuplenest-keys/; the docs were right.
+#
+#   TAURI_SIGNING_PRIVATE_KEY           contents of ~/.tuplenest-keys/tuplenest.key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password (empty unless you set one)
+#
+# To build without the key at all — which is what a contributor has — use
+# `npm run build:app`, which turns the updater artifacts off.
 #
 # Usage:  ./scripts/release-macos.sh
 #

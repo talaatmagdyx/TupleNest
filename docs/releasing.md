@@ -81,6 +81,24 @@ export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""   # if you set one, put it here
 `bundle.createUpdaterArtifacts` is on, so the build emits a `.app.tar.gz` plus a
 `.sig` next to the `.dmg`.
 
+### Building without the key
+
+Because those artifacts must be signed, a plain `npm run tauri build` **exits 1**
+without `TAURI_SIGNING_PRIVATE_KEY` — which is everyone who is not doing a
+release. The failure is easy to misread: the `.app` and `.dmg` are produced
+first and only the signing step fails, so the bundles are sitting there looking
+finished while the command reports failure.
+
+For a local build, skip the updater artifacts:
+
+```sh
+cd apps/desktop && npm run build:app
+```
+
+That produces the same `.app` and `.dmg`, exits 0, and needs no key. Use the
+key, or `scripts/release-macos.sh`, only when you are actually publishing an
+update.
+
 ## 3. The update endpoint
 
 `plugins.updater.endpoints` currently points at:

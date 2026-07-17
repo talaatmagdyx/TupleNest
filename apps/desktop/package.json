@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "tauri": "tauri",
+    "build:app": "tauri build --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },
