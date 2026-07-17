@@ -1,4 +1,5 @@
 import { cellText } from "./text";
+import { tableKey } from "./nodes";
 /** Safe result-grid editing: decide whether a result is editable, and build
  *  parameterised DML for staged changes.
  *
@@ -150,7 +151,7 @@ export function analyzeEditability(sql: string, cols: GridCol[], cat: Catalog | 
   const candidates = ref.schema ? [ref.schema] : [...cat.searchPath, ...cat.schemas];
   let schema: string | null = null;
   for (const s of candidates) {
-    if (cat.columns[`${s}.${ref.name}`]) {
+    if (cat.columns[tableKey(s, ref.name)]) {
       schema = s;
       break;
     }
@@ -162,7 +163,7 @@ export function analyzeEditability(sql: string, cols: GridCol[], cat: Catalog | 
   );
   if (meta && meta.kind !== "table") return { editable: false, reason: `${ref.name} is a ${meta.kind}, not a table` };
 
-  const tableCols = cat.columns[`${schema}.${ref.name}`];
+  const tableCols = cat.columns[tableKey(schema, ref.name)];
   const pkCols = tableCols.filter((c) => c.primaryKey);
   if (pkCols.length === 0) return { editable: false, reason: `${ref.name} has no primary key` };
 

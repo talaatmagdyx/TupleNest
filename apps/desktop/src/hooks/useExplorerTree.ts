@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { errText } from "../lib/text";
 import type { DbColumn, DbConstraint, DbIndex, DbObject, DbPartition, DbRoutine, DbType } from "../ipc/types";
-import { nodeRequest, parseNode } from "../lib/nodes";
+import { nodeRequest, parseNode, tableKey } from "../lib/nodes";
 
 /** What a metadata fetch comes back as. `cached` means it was served from the
  *  local metadata cache rather than the server. */
@@ -182,7 +182,7 @@ export function useExplorerTree(metaFetch: MetaFetch, onError?: (message: string
   const prefetchTables = useCallback(
     (want: { schema: string; name: string }[]) => {
       for (const { schema, name } of want) {
-        const key = `${schema}.${name}`;
+        const key = tableKey(schema, name);
         if (key in columns || inFlight.current.has(key)) continue;
         inFlight.current.add(key);
         metaFetch({ kind: "describe_object", schema, name })

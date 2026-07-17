@@ -9,6 +9,7 @@ import type {
   DbType,
 } from "../ipc/types";
 import { DbIcon, SearchIcon } from "../lib/icons";
+import { groupId, schemaId, tableKey } from "../lib/nodes";
 
 /**
  * Schema tree.
@@ -112,7 +113,7 @@ export default function ExplorerTree(p: Props) {
 
   /** A table — or a partition, which is also a table — and its children. */
   const renderTable = (schema: string, o: DbObject, depth: number) => {
-    const key = `${schema}.${o.name}`;
+    const key = tableKey(schema, o.name);
     const meta = KINDS.find((k) => k.kind === o.kind) ?? KINDS[0];
     const cols = p.columns[key];
     const idx = p.indexes[key];
@@ -327,7 +328,7 @@ export default function ExplorerTree(p: Props) {
     const objs = p.objects[schema];
     const types = p.types[schema];
     const routines = p.routines[schema];
-    const open = isOpen(`s:${schema}`);
+    const open = isOpen(schemaId(schema));
 
     return (
       <div key={schema}>
@@ -342,7 +343,7 @@ export default function ExplorerTree(p: Props) {
           }
           label={<span style={{ fontWeight: 600, color: "var(--tn-tp)" }}>{schema}</span>}
           badge={objs ? <span className="count">{objs.length}</span> : undefined}
-          onClick={() => p.onToggle(`s:${schema}`)}
+          onClick={() => p.onToggle(schemaId(schema))}
         />
         {open && objs === undefined && <div className="note" style={{ paddingLeft: 21 }}>loading…</div>}
         {open &&
@@ -351,7 +352,7 @@ export default function ExplorerTree(p: Props) {
             const all = objs.filter((o) => o.kind === kind);
             if (all.length === 0) return null;
             const items = all.filter((o) => match(o.name));
-            const gk = `g:${schema}:${kind}`;
+            const gk = groupId(schema, kind);
             return (
               <div key={kind}>
                 <Row
@@ -379,12 +380,12 @@ export default function ExplorerTree(p: Props) {
             <Row
               depth={1}
               arrow
-              open={isOpen(`g:${schema}:types`)}
+              open={isOpen(groupId(schema, "types"))}
               label={<span className="grp">Types &amp; enums</span>}
               badge={<span className="count">{types.length}</span>}
-              onClick={() => p.onToggle(`g:${schema}:types`)}
+              onClick={() => p.onToggle(groupId(schema, "types"))}
             />
-            {isOpen(`g:${schema}:types`) &&
+            {isOpen(groupId(schema, "types")) &&
               types
                 .filter((t) => match(t.name))
                 .map((t) => (
@@ -402,12 +403,12 @@ export default function ExplorerTree(p: Props) {
             <Row
               depth={1}
               arrow
-              open={isOpen(`g:${schema}:routines`)}
+              open={isOpen(groupId(schema, "routines"))}
               label={<span className="grp">Functions</span>}
               badge={<span className="count">{routines.length}</span>}
-              onClick={() => p.onToggle(`g:${schema}:routines`)}
+              onClick={() => p.onToggle(groupId(schema, "routines"))}
             />
-            {isOpen(`g:${schema}:routines`) &&
+            {isOpen(groupId(schema, "routines")) &&
               routines
                 .filter((r) => match(r.name))
                 .map((r) => (

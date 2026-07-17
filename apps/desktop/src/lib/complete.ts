@@ -6,6 +6,7 @@
  */
 
 import type { DbColumn } from "../ipc/types";
+import { tableKey } from "./nodes";
 
 export type CatalogTable = { schema: string; name: string; kind: string };
 
@@ -359,7 +360,7 @@ export function fromClauseShape(sql: string): { commaJoin: boolean; derived: boo
 function columnsFor(ref: TableRef, cat: Catalog): { cols: DbColumn[]; table: string } {
   const candidates = ref.schema ? [ref.schema] : [...cat.searchPath, ...cat.schemas];
   for (const s of candidates) {
-    const key = `${s}.${ref.name}`;
+    const key = tableKey(s, ref.name);
     if (cat.columns[key]) return { cols: cat.columns[key], table: ref.name };
   }
   return { cols: [], table: ref.name };

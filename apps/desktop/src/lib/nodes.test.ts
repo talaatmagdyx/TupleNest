@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultSearchPath, nodeRequest, parseNode } from "./nodes";
+import { defaultSearchPath, groupId, nodeId, nodeRequest, parseNode, schemaId, tableKey } from "./nodes";
 
 const none = () => false;
 const all = () => true;
@@ -29,27 +29,67 @@ describe("parseNode", () => {
     });
   });
 
-  // The previous version of this test claimed to prove the split was on the
-  // LAST dot, using a fixture whose table name contained no dots at all. With
-  // a single dot in the id, first-dot and last-dot agree — so it passed
-  // against either implementation and pinned nothing. These two do disagree.
-  it("splits a dotted SCHEMA correctly (why it is lastIndexOf)", () => {
-    expect(parseNode('t:my.sch.users')).toMatchObject({
-      schema: "my.sch",
-      table: "users",
-    });
+  // The two cases that used to be the same string. An earlier test claimed to
+  // prove the split rule using a fixture whose table name contained no dots —
+  // with one dot in the id, first and last agree, so it passed against either
+  // rule and pinned nothing. These two disagree, which is the whole point of
+  // them: if the escaping is ever dropped, exactly one of them must fail.
+  it("round-trips a dotted TABLE name", () => {
+    // `CREATE TABLE "q3.totals"` is legal PostgreSQL.
+    const id = nodeId("t", "public", "q3.totals");
+    expect(parseNode(id)).toMatchObject({ schema: "public", table: "q3.totals" });
   });
 
-  it("splits a dotted TABLE wrongly — a known, bounded limitation", () => {
-    // `CREATE TABLE "q3.totals"` is legal PostgreSQL. The id format joins
-    // schema and table with a dot and cannot tell this apart from the case
-    // above, so the split lands in the wrong place. Asserted rather than
-    // wished away: it addresses a nonexistent object, the metadata fetch
-    // fails, and the node stays empty. See the note on parseNode.
-    expect(parseNode("t:public.q3.totals")).toMatchObject({
-      schema: "public.q3",
-      table: "totals",
+  it("round-trips a dotted SCHEMA name", () => {
+    const id = nodeId("t", "my.sch", "users");
+    expect(parseNode(id)).toMatchObject({ schema: "my.sch", table: "users" });
+  });
+
+  it("tells those two apart — they used to be the same string", () => {
+    expect(nodeId("t", "public", "q3.totals")).not.toBe(nodeId("t", "public.q3", "totals"));
+  });
+
+  it("round-trips a colon in a schema, which g:schema:kind also relied on", () => {
+    expect(parseNode(groupId("we:rd", "table"))).toEqual({
+      tag: "g",
+      schema: "we:rd",
+      kind: "table",
     });
+    expect(parseNode(schemaId("we:rd"))).toEqual({ tag: "s", schema: "we:rd" });
+  });
+
+  it("round-trips a percent, including one that looks like an escape", () => {
+    // `%2E` as a literal name must come back as `%2E`, not as `.` — which is
+    // why decoding is one pass rather than three sequential replaces.
+    for (const name of ["100%", "%2E", "%25", "a%2Eb.c"]) {
+      expect(parseNode(nodeId("c", "public", name))).toMatchObject({
+        schema: "public",
+        table: name,
+      });
+    }
+  });
+
+  it("refuses an id with a stray separator rather than guessing", () => {
+    // Only reachable by hand or from an older format. Returning null leaves
+    // the node empty; interpreting it is how the original bug behaved.
+    expect(parseNode("t:public.q3.totals")).toBeNull();
+  });
+
+  it("leaves ordinary names byte-identical, so ids did not change", () => {
+    expect(nodeId("c", "public", "users")).toBe("c:public.users");
+    expect(schemaId("public")).toBe("s:public");
+    expect(groupId("public", "table")).toBe("g:public:table");
+    expect(tableKey("public", "users")).toBe("public.users");
+  });
+
+  it("parseNode's key is exactly what tableKey builds, for both writers", () => {
+    // These index the same `columns` map from opposite ends: parseNode derives
+    // the key from an id, prefetchTables builds it from raw names. If they ever
+    // disagree, columns are stored under one key and read under another and the
+    // fetch silently repeats forever.
+    const n = parseNode(nodeId("c", "my.sch", "q3.totals"));
+    expect(n).not.toBeNull();
+    expect(n && "key" in n && n.key).toBe(tableKey("my.sch", "q3.totals"));
   });
 
   it("reads a partition node under a dotted name", () => {
