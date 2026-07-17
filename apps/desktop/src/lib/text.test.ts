@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cellExport, cellText, errText } from "./text";
+import { cellExport, cellText, errText, mdCell } from "./text";
 
 describe("cellText — a cell on screen", () => {
   it("shows a null rather than hiding it", () => {
@@ -79,5 +79,49 @@ describe("text — values Postgres does not produce", () => {
 
   it("names one thrown as an error, too", () => {
     expect(errText(Symbol("boom"))).toBe("[object Symbol]");
+  });
+});
+
+describe("mdCell — one Markdown table cell", () => {
+  it("escapes a pipe", () => {
+    expect(mdCell("a|b")).toBe("a\\|b");
+  });
+
+  it("escapes EVERY pipe, not just the first", () => {
+    expect(mdCell("a|b|c")).toBe("a\\|b\\|c");
+  });
+
+  it("escapes the backslash itself — the CodeQL case", () => {
+    // Before the fix, a value ending in a backslash turned the pipe escape
+    // into `\\|`: an escaped backslash followed by a LIVE pipe. The cell
+    // split anyway; the sanitizer sanitized itself.
+    expect(mdCell("a\\|b")).toBe("a\\\\\\|b");
+    expect(mdCell("trailing\\")).toBe("trailing\\\\");
+  });
+
+  it("no input can produce a live (unescaped) pipe in the output", () => {
+    // The property the alert is actually about, stated as a property. A pipe
+    // is LIVE — still a cell separator — when the run of backslashes directly
+    // before it has even length (zero included): pairs collapse to literal
+    // backslashes and leave the pipe bare. This regex matches exactly that:
+    // start-or-non-backslash, then zero or more backslash PAIRS, then `|`.
+    const livePipe = /(?:^|[^\\])(?:\\\\)*\|/;
+    for (const input of ["\\", "\\|", "|\\", "\\\\|", "a\\|b\\", "|", "||", "\\\\", "a\\\\|"]) {
+      expect(mdCell(input)).not.toMatch(livePipe);
+    }
+    // And the regex itself can detect what it claims to — otherwise the loop
+    // above proves nothing. (A live pipe, and an escaped one it must ignore.)
+    expect("a|b").toMatch(livePipe);
+    expect("a\\\\|b").toMatch(livePipe);
+    expect("a\\|b").not.toMatch(livePipe);
+  });
+
+  it("turns newlines into <br> — no escape can save a raw newline in a row", () => {
+    expect(mdCell("two\nlines")).toBe("two<br>lines");
+    expect(mdCell("crlf\r\nline")).toBe("crlf<br>line");
+  });
+
+  it("leaves ordinary text alone", () => {
+    expect(mdCell("plain text 123")).toBe("plain text 123");
   });
 });

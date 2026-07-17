@@ -47,7 +47,14 @@ if (!window.matchMedia) {
   })) as unknown as typeof window.matchMedia;
 }
 if (!window.ResizeObserver) {
+  // The constructor must DECLARE the callback parameter even though this stub
+  // never fires it. CodeQL resolves `new ResizeObserver(cb)` in Grid.tsx to
+  // this class — the only definition it can see — and a zero-parameter
+  // constructor made it report the app's perfectly correct call as passing a
+  // "superfluous trailing argument". The stub was lying about the shape of
+  // the thing it stubs; the alert was the lie being noticed.
   window.ResizeObserver = class {
+    constructor(_callback: ResizeObserverCallback) {}
     observe() {}
     unobserve() {}
     disconnect() {}

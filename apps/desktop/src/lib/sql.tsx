@@ -1,5 +1,5 @@
 import React from "react";
-import { cellExport as cellText } from "./text";
+import { cellExport as cellText, mdCell } from "./text";
 import { maskLiterals } from "./complete";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -69,11 +69,16 @@ export function toJSONExport(cols: { name: string }[], rows: unknown[][]): strin
 }
 
 export function toMarkdown(cols: { name: string }[], rows: unknown[][]): string {
-  const head = `| ${cols.map((c) => c.name).join(" | ")} |`;
+  // mdCell everywhere a value lands in the table — including the header:
+  // PostgreSQL allows `SELECT 1 AS "a|b"`, and a quoted column name with a
+  // pipe (or backslash, or newline) breaks the table exactly like a cell
+  // value does. The old code escaped only cell pipes, and only halfway —
+  // see mdCell for the backslash trap CodeQL caught.
+  const head = `| ${cols.map((c) => mdCell(c.name)).join(" | ")} |`;
   const sep = `| ${cols.map(() => "---").join(" | ")} |`;
   const body = rows
     .slice(0, 1000)
-    .map((r) => `| ${r.map((v) => cellText(v).replace(/\|/g, "\\|")).join(" | ")} |`);
+    .map((r) => `| ${r.map((v) => mdCell(cellText(v))).join(" | ")} |`);
   return [head, sep, ...body].join("\n");
 }
 

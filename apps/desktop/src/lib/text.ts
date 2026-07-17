@@ -35,6 +35,30 @@ export function cellExport(v: unknown): string {
 }
 
 /**
+ * A value made safe to sit inside one Markdown table cell.
+ *
+ * Order matters and each step exists for a reason:
+ *
+ * 1. Backslash FIRST. Escaping `|` as `\|` while leaving `\` alone means a
+ *    value ending in `\` turns the escape into `\\|` — a literal backslash
+ *    followed by a *live* pipe, which splits the cell after all. This is
+ *    CodeQL js/incomplete-sanitization, and it was right: escaping a
+ *    meta-character with a character you did not escape is not escaping.
+ * 2. Then `|`, the cell separator itself.
+ * 3. Then newlines, which no escape can save — a raw newline ends the table
+ *    row no matter what precedes it. `<br>` keeps multi-line values readable
+ *    in rendered Markdown and harmless in raw text; `\r` is dropped so CRLF
+ *    data does not leave a stray CR in the cell.
+ */
+export function mdCell(s: string): string {
+  return s
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(/\r/g, "")
+    .replace(/\n/g, "<br>");
+}
+
+/**
  * An error as one line of text.
  *
  * Tauri rejects with the command's `Err(String)` — a bare string, not an Error

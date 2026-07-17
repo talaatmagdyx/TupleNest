@@ -12,7 +12,7 @@
  */
 
 import { maskLiterals } from "./complete";
-import { cellText } from "./text";
+import { cellText, mdCell } from "./text";
 
 export type ExplainFormat = "json" | "text" | "yaml" | "xml";
 
@@ -344,14 +344,14 @@ export function planToMarkdown(p: ExportablePlan): string {
     "",
     "| Stat | Value |",
     "| --- | --- |",
-    ...p.stats.map((s) => `| ${s.label} | ${s.value} |`),
+    ...p.stats.map((s) => `| ${mdCell(s.label)} | ${mdCell(s.value)} |`),
     "",
     "| Node | Time | Share | Detail |",
     "| --- | --- | --- | --- |",
     ...p.nodes.map((n) => {
-      const name = `${"&nbsp;".repeat(n.indent * 4)}${n.title}`;
+      const name = `${"&nbsp;".repeat(n.indent * 4)}${mdCell(n.title)}`;
       const ms = n.ms !== null ? `${n.ms.toFixed(1)} ms` : "—";
-      const detail = n.detail.replace(/\|/g, "\\|") || "—";
+      const detail = mdCell(n.detail) || "—";
       return `| ${name} | ${ms} | ${n.pct.toFixed(0)}% | ${detail} |`;
     }),
   ];
