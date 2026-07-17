@@ -118,6 +118,10 @@ a { color: var(--tn-accent); text-decoration: none; }
 .env-pill {
   font-size: 9px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase;
   padding: 2px 7px; border-radius: 5px;
+  /* Never let flex squeeze the badge: it is short, fixed, and the thing that
+     tells you whether you are about to write to production. It reserves its
+     width and the name gives way instead. */
+  flex: none;
 }
 .conn-menu {
   position: absolute; top: 34px; left: 0; z-index: 60; width: 300px;
@@ -209,8 +213,24 @@ a { color: var(--tn-accent); text-decoration: none; }
   background: var(--tn-as); border: 1px solid var(--tn-bh);
 }
 .conn-card .meta { flex: 1; min-width: 0; }
-.conn-card .nm { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 650; color: var(--tn-tp); }
+.conn-card .nm {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 650; color: var(--tn-tp);
+  /* Without this the row cannot shrink below its content and overflows the
+     card — flex items default to min-width:auto. */
+  min-width: 0;
+}
+/* The name gives way before the badge does. `.full` below already had this;
+   the name line was simply missed, so a long one ran under the pill. */
+.conn-card .nm-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conn-card .full {
+  /* `overflow` and `text-overflow` do nothing on an inline box, and this is a
+     <span> whose parent (.meta) is not a flex container — so it was the one
+     ellipsis rule in the file with no effect. It rendered at its full width,
+     ran past the card and straight under the environment badge. Every other
+     truncating element in this file sits in a flex parent and gets blockified
+     for free; this one had to say so. */
+  display: block;
   font-family: "JetBrains Mono", monospace; font-size: 9.5px; color: var(--tn-tm);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }

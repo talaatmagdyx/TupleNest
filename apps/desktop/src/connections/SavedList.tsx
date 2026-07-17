@@ -41,7 +41,12 @@ export default function SavedList(p: Props) {
                 <span className="pg-avatar">PG</span>
                 <span className="meta">
                   <span className="nm">
-                    {c.name}
+                    {/* In its own element so it can be told to ellipsize. As a
+                        bare text node it was an anonymous flex item, which
+                        cannot shrink below its longest word — a name like
+                        `engagement_database` then pushed out of the card and
+                        the environment pill painted on top of it. */}
+                    <span className="nm-text">{c.name}</span>
                     {active && p.connected && (
                       <span
                         className="dot"
