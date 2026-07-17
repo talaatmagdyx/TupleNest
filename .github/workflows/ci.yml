@@ -84,7 +84,16 @@ jobs:
             # exactly here). `eval` because the daemon prints the environment
             # it wants exported — GNOME_KEYRING_CONTROL and friends — and
             # dropping that output on the floor is how it half-works.
-            eval "$(echo -n "" | gnome-keyring-daemon --unlock --components=secrets --daemonize)"
+            #
+            # The password must be NON-EMPTY. Attempt two used `echo -n ""`,
+            # the daemon came up, owned the bus name — and every set() failed
+            # with "Secret Service: no result found", because an empty unlock
+            # password does not create the login keyring, so the daemon had no
+            # default collection to store into. A daemon on the bus with no
+            # collection is one more thing that looks alive and is not. The
+            # keyring crate's own CI unlocks with a throwaway non-empty
+            # password for exactly this reason; this is its recipe.
+            eval "$(echo -n "ci-throwaway" | gnome-keyring-daemon --unlock --components=secrets --daemonize)"
 
             # Claiming a bus name is not instant. Poll instead of sleeping a
             # fixed guess: a race here would fail intermittently, which is the
