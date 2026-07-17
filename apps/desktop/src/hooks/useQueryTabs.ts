@@ -22,7 +22,12 @@ export type QueryTabs = {
   setTabs: React.Dispatch<React.SetStateAction<QueryTab[]>>;
 };
 
+let seq = 0;
+/** Monotonic, process-local. Not persisted: tabs do not outlive the window. */
+export const tabId = (): string => `tab-${++seq}`;
+
 export const FIRST_TAB: QueryTab = {
+  id: "tab-0",
   name: "untitled-1.sql",
   sql: "select now(), version()",
   dirty: false,
@@ -62,6 +67,7 @@ export function useQueryTabs(initial: QueryTab[] = [FIRST_TAB]): QueryTabs {
       const next = [
         ...ts,
         {
+          id: tabId(),
           name: init?.name ?? `untitled-${untitledSeq.current++}.sql`,
           sql: init?.sql ?? "",
           dirty: init?.dirty ?? false,

@@ -10,6 +10,8 @@ import {
   formatSQL,
   looksLikeSelect,
   needsGuard,
+  guardReason,
+  firstKeyword,
   paramCount,
   toCSV,
   toJSONExport,
@@ -174,8 +176,12 @@ describe("needsGuard", () => {
     expect(needsGuard("update t set a=1 where id=2", "prod")).toBe(false);
   });
 
-  it("stays quiet outside prod", () => {
-    for (const env of ["dev", "staging", "test", null]) {
+  it("guards staging as well as prod — that is where prod restores get rehearsed", () => {
+    expect(needsGuard("delete from t", "staging")).toBe(true);
+  });
+
+  it("stays quiet where nothing is at stake", () => {
+    for (const env of ["dev", "test", null]) {
       expect(needsGuard("delete from t", env)).toBe(false);
     }
   });
@@ -186,6 +192,73 @@ describe("needsGuard", () => {
 
   it("does not fire on a SELECT", () => {
     expect(needsGuard("select * from t", "prod")).toBe(false);
+  });
+
+  /*
+   * Every case below defeated the previous implementation, which tested the raw
+   * text: `\bwhere\b` matched inside a comment or a string, and `^\s*` did not
+   * skip a leading comment. Each one is a false *negative* — the dangerous
+   * statement ran with no warning — which is the only direction that matters.
+   */
+  describe("adversarial corpus — each of these once slipped through", () => {
+    const mustGuard: [string, string][] = [
+      ["commented-out WHERE", "DELETE FROM users -- where"],
+      ["block-commented WHERE", "DELETE FROM users /* where */"],
+      ["WHERE inside a string literal", "UPDATE t SET a='where'"],
+      ["WHERE inside a dollar-quoted string", "UPDATE t SET a=$$where$$"],
+      ["WHERE inside a tagged dollar-quote", "UPDATE t SET a=$x$where$x$"],
+      ["leading line comment hiding the verb", "-- audit\nDELETE FROM users"],
+      ["leading block comment hiding the verb", "/*x*/DELETE FROM users"],
+      ["CTE-led DELETE", "WITH x AS (SELECT 1) DELETE FROM users"],
+      ["CTE-led UPDATE", "WITH x AS (SELECT 1) UPDATE users SET a=1"],
+      ["TRUNCATE", "TRUNCATE users"],
+      ["DROP TABLE", "DROP TABLE users"],
+      ["ALTER TABLE", "ALTER TABLE users DROP COLUMN a"],
+      ["GRANT", "GRANT ALL ON users TO public"],
+    ];
+    for (const [name, sql] of mustGuard) {
+      it(`guards: ${name}`, () => {
+        expect(needsGuard(sql, "prod")).toBe(true);
+      });
+    }
+
+    // The mirror image: a real WHERE must still be recognised through the same
+    // masking, or the guard cries wolf and gets clicked through on reflex.
+    const mustNotGuard: [string, string][] = [
+      ["real WHERE after a comment", "UPDATE t SET a=1 -- note\nWHERE id=1"],
+      ["real WHERE with a string containing 'where'", "UPDATE t SET a='where' WHERE id=1"],
+      ["real WHERE after a block comment", "DELETE FROM t /* note */ WHERE id=1"],
+      ["SELECT with no WHERE", "SELECT * FROM t"],
+      ["INSERT", "INSERT INTO t VALUES (1)"],
+      ["CTE-led SELECT", "WITH x AS (SELECT 1) SELECT * FROM x"],
+    ];
+    for (const [name, sql] of mustNotGuard) {
+      it(`allows: ${name}`, () => {
+        expect(needsGuard(sql, "prod")).toBe(false);
+      });
+    }
+  });
+
+  it("explains itself, so the dialog can say why", () => {
+    expect(guardReason("delete from t", "prod")).toEqual({
+      verb: "DELETE",
+      why: expect.stringContaining("every row"),
+    });
+    expect(guardReason("drop table t", "prod")).toEqual({
+      verb: "DROP",
+      why: expect.stringContaining("database objects"),
+    });
+    expect(guardReason("select 1", "prod")).toBeNull();
+  });
+});
+
+describe("firstKeyword", () => {
+  it("sees past comments to the real verb", () => {
+    expect(firstKeyword("-- x\n/* y */ delete from t")).toBe("delete");
+  });
+
+  it("is null for a statement with no keyword", () => {
+    expect(firstKeyword("   -- just a comment")).toBeNull();
   });
 });
 

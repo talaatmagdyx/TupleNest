@@ -66,8 +66,37 @@ const FUNCTIONS = [
 
 const IDENT = /[A-Za-z0-9_$]/;
 
-/** Blank out comments and string/identifier literals so keyword scanning
- *  never trips over their contents. Length is preserved. */
+/** Opening dollar-quote tag at `i` — `$$` or `$tag$` — or null. */
+function dollarTagAt(sql: string, i: number): string | null {
+  if (sql[i] !== "$") return null;
+  // A tag is $$ or $ident$. Anything else starting with $ is a parameter
+  // ($1) or part of an identifier, and must not be treated as a quote.
+  let j = i + 1;
+  while (j < sql.length && /[A-Za-z0-9_]/.test(sql[j])) j++;
+  if (sql[j] !== "$") return null;
+  const tag = sql.slice(i, j + 1);
+  // $1$ would be a parameter followed by junk, not a tag: PostgreSQL tags
+  // cannot start with a digit.
+  if (/^\$\d/.test(tag)) return null;
+  return tag;
+}
+
+/**
+ * Blank out comments and string/identifier literals so keyword scanning never
+ * trips over their contents. Length is preserved so offsets stay valid.
+ *
+ * Handles the four things PostgreSQL actually has and a naive masker misses:
+ *
+ *  - **Dollar-quoting** (`$$ … $$`, `$tag$ … $tag$`). Function bodies are
+ *    written this way, so without it a `;` inside a body split statements and a
+ *    lone apostrophe in a comment inside a body opened a phantom string that
+ *    swallowed the rest of the query.
+ *  - **Nested block comments.** PostgreSQL nests them; C does not. Stopping at
+ *    the first close marker leaks the tail of the comment back into the "code"
+ *    stream.
+ *  - **E-prefixed escape strings**, where a backslash escapes the closing quote.
+ *  - Doubled quotes as escapes, which it already did.
+ */
 export function maskLiterals(sql: string): string {
   const out = sql.split("");
   let i = 0;
@@ -76,23 +105,46 @@ export function maskLiterals(sql: string): string {
   };
   while (i < sql.length) {
     const two = sql.slice(i, i + 2);
+    const tag = dollarTagAt(sql, i);
     if (two === "--") {
       let j = sql.indexOf("\n", i);
       if (j === -1) j = sql.length;
       blank(i, j);
       i = j;
     } else if (two === "/*") {
-      let j = sql.indexOf("*/", i + 2);
-      j = j === -1 ? sql.length : j + 2;
+      // Nested: count depth rather than taking the first `*/`.
+      let depth = 1;
+      let j = i + 2;
+      while (j < sql.length && depth > 0) {
+        if (sql.slice(j, j + 2) === "/*") {
+          depth++;
+          j += 2;
+        } else if (sql.slice(j, j + 2) === "*/") {
+          depth--;
+          j += 2;
+        } else j++;
+      }
       blank(i, j);
+      i = j;
+    } else if (tag) {
+      const close = sql.indexOf(tag, i + tag.length);
+      const j = close === -1 ? sql.length : close + tag.length;
+      // Blank the body but leave the tags themselves: they are not identifiers
+      // and cannot be mistaken for keywords.
+      blank(i + tag.length, close === -1 ? sql.length : close);
       i = j;
     } else if (sql[i] === "'" || sql[i] === '"') {
       const q = sql[i];
+      // E'…' / e'…' honour backslash escapes; plain '…' does not.
+      const escaped = q === "'" && i > 0 && /[Ee]/.test(sql[i - 1]) && !IDENT.test(sql[i - 2] ?? " ");
       let j = i + 1;
       while (j < sql.length) {
-        if (sql[j] === q && sql[j + 1] === q) j += 2;
-        else if (sql[j] === q) { j++; break; }
-        else j++;
+        if (escaped && sql[j] === "\\") j += 2;
+        else if (sql[j] === q && sql[j + 1] === q) j += 2;
+        else if (sql[j] === q) {
+          j++;
+          break;
+        } else j++;
       }
       blank(i + 1, j - 1);
       i = j;

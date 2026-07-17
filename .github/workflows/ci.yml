@@ -54,6 +54,87 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+
+  # The contract tests: everything that can only be answered by a real server.
+  # Cancellation, the 100k streaming checksum, TLS fails-closed, read-only
+  # enforcement, generated columns, terminate-backend.
+  #
+  # These existed and never ran. 24 of the 72 Rust tests are `#[ignore]`d, the
+  # plain `cargo test` above skips them, and there was no Postgres in CI — so
+  # "query cancellation is a tested feature" was true of the file and of no
+  # actual run. They are the tests most worth having and were the only ones
+  # never executed.
+  #
+  # Linux only: the point is the database, not the client OS, and one runner
+  # says everything three would.
+  live-postgres:
+    name: contract tests (PostgreSQL ${{ matrix.pg }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest version the code can actually serve, through to current.
+        # pg_partition_tree (PG 12) is the real floor; 13 is what the driver
+        # advertises. Both are tested so the claim and the code stay in step.
+        pg: [13, 15, 17]
+    services:
+      postgres:
+        image: postgres:${{ matrix.pg }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports: ["5432:5432"]
+    env:
+      TUPLENEST_TEST_PG_HOST: localhost
+      TUPLENEST_TEST_PG_PORT: "5432"
+      TUPLENEST_TEST_PG_DB: postgres
+      TUPLENEST_TEST_PG_USER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux system dependencies (Tauri)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            librsvg2-dev libxdo-dev libayatana-appindicator3-dev \
+            build-essential curl wget file libssl-dev patchelf
+      # The TLS tests need a server with ssl=on and a cert whose SAN covers
+      # localhost; without one they cannot prove fails-closed behaviour.
+      - name: Enable TLS on the test server
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y postgresql-client openssl
+          dir="$RUNNER_TEMP/pgtls"; mkdir -p "$dir"
+          openssl req -new -x509 -days 1 -nodes -text \
+            -out "$dir/server.crt" -keyout "$dir/server.key" \
+            -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+          chmod 600 "$dir/server.key"
+          cid=$(docker ps --filter "ancestor=postgres:${{ matrix.pg }}" --format '{{.ID}}' | head -1)
+          docker cp "$dir/server.crt" "$cid:/var/lib/postgresql/server.crt"
+          docker cp "$dir/server.key" "$cid:/var/lib/postgresql/server.key"
+          docker exec -u root "$cid" chown postgres:postgres \
+            /var/lib/postgresql/server.crt /var/lib/postgresql/server.key
+          docker exec -u postgres "$cid" psql -c "ALTER SYSTEM SET ssl = on"
+          docker exec -u postgres "$cid" psql -c "ALTER SYSTEM SET ssl_cert_file = '/var/lib/postgresql/server.crt'"
+          docker exec -u postgres "$cid" psql -c "ALTER SYSTEM SET ssl_key_file = '/var/lib/postgresql/server.key'"
+          docker restart "$cid"
+          for _ in $(seq 1 30); do pg_isready -h localhost -p 5432 && break; sleep 1; done
+          cp "$dir/server.crt" "$RUNNER_TEMP/ca.crt"
+      - name: Contract tests against a real server
+        env:
+          TUPLENEST_TEST_PG_SSL_CA: ${{ runner.temp }}/ca.crt
+        # `--include-ignored`, or this job re-runs exactly the tests the job
+        # above already ran and proves nothing.
+        run: cargo test -p tuplenest-driver-postgres -- --include-ignored
   frontend:
     runs-on: ubuntu-latest
     # This job used to `echo` the commands below instead of running them — a

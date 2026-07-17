@@ -101,8 +101,12 @@ describe("App — exporting the result", () => {
     await run(user);
     const menu = await exportMenu(user);
     await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
-    expect(await screen.findByText(/2 of 4,213,662 rows \(truncated\)/)).toBeInTheDocument();
+    // Two places say it now, and both should: the toast at export time, and
+    // the footer, which is the number someone reads to decide whether they
+    // have seen everything. `findAllBy` rather than `findBy` for that reason.
+    expect(await screen.findAllByText(/2 of 4,213,662 rows \(truncated\)/)).not.toHaveLength(0);
   });
+
 
   it("does not cry truncation on a complete export", async () => {
     vi.mocked(saveDialog).mockResolvedValue("/tmp/out.csv");

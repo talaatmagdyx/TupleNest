@@ -4,6 +4,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { useTransaction } from "./useTransaction";
 
 const invokeMock = vi.mocked(invoke);
+
+/** Tabs share one session, so a transaction records which one opened it. */
+const OWNER = { tabId: "t1", tabName: "a.sql" };
 beforeEach(() => {
   invokeMock.mockReset();
   invokeMock.mockResolvedValue(undefined);
@@ -18,7 +21,7 @@ const failOnce = (msg: string) => {
 
 /** Open a transaction and assert it took, so later steps start from truth. */
 const open = async (result: { current: ReturnType<typeof useTransaction> }) => {
-  await act(async () => void (await result.current.begin()));
+  await act(async () => void (await result.current.begin(OWNER)));
   expect(result.current.inTx).toBe(true);
 };
 
@@ -32,7 +35,7 @@ describe("useTransaction — begin", () => {
   it("opens one and stamps the time", async () => {
     vi.useFakeTimers().setSystemTime(new Date("2026-07-16T00:00:00Z"));
     const { result } = renderHook(() => useTransaction());
-    await act(async () => void (await result.current.begin()));
+    await act(async () => void (await result.current.begin(OWNER)));
     expect(invokeMock).toHaveBeenCalledWith("pg_begin");
     expect(result.current.inTx).toBe(true);
     expect(result.current.openSince).toBe(Date.parse("2026-07-16T00:00:00Z"));
@@ -44,7 +47,7 @@ describe("useTransaction — begin", () => {
     failOnce("cannot begin: already in transaction");
     const { result } = renderHook(() => useTransaction());
     let out;
-    await act(async () => void (out = await result.current.begin()));
+    await act(async () => void (out = await result.current.begin(OWNER)));
     expect(out).toMatchObject({ ok: false });
     expect(result.current.inTx).toBe(false);
     expect(result.current.openSince).toBeNull();
@@ -137,5 +140,55 @@ describe("useTransaction — forget", () => {
     invokeMock.mockClear();
     act(() => result.current.forget());
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("useTransaction — ownership", () => {
+  /*
+   * One session serves every tab, so a transaction opened in tab A is joined
+   * by tab B's statements whether B knows it or not. That is the model; the
+   * bug was that it was invisible. The owner is recorded so the UI can refuse
+   * to commit from a tab that did not open it, and can say which one did.
+   */
+  it("has no owner before a transaction is opened", () => {
+    const { result } = renderHook(() => useTransaction());
+    expect(result.current.owner).toBeNull();
+  });
+
+  it("remembers the tab that opened it", async () => {
+    const { result } = renderHook(() => useTransaction());
+    await act(async () => void (await result.current.begin({ tabId: "t7", tabName: "report.sql" })));
+    expect(result.current.owner).toEqual({ tabId: "t7", tabName: "report.sql" });
+  });
+
+  it("claims no owner when BEGIN failed", async () => {
+    // Same rule as `inTx`: no BEGIN, no transaction, so nothing to own.
+    invokeMock.mockRejectedValueOnce("nope");
+    const { result } = renderHook(() => useTransaction());
+    await act(async () => void (await result.current.begin(OWNER)));
+    expect(result.current.owner).toBeNull();
+  });
+
+  it("releases ownership on commit", async () => {
+    const { result } = renderHook(() => useTransaction());
+    await act(async () => void (await result.current.begin(OWNER)));
+    await act(async () => void (await result.current.commit()));
+    expect(result.current.owner).toBeNull();
+  });
+
+  it("keeps the owner when a commit fails — the transaction is still open", async () => {
+    const { result } = renderHook(() => useTransaction());
+    await act(async () => void (await result.current.begin(OWNER)));
+    invokeMock.mockRejectedValueOnce("deadlock detected");
+    await act(async () => void (await result.current.commit()));
+    expect(result.current.inTx).toBe(true);
+    expect(result.current.owner).toEqual(OWNER);
+  });
+
+  it("drops ownership with the session", async () => {
+    const { result } = renderHook(() => useTransaction());
+    await act(async () => void (await result.current.begin(OWNER)));
+    act(() => result.current.forget());
+    expect(result.current.owner).toBeNull();
   });
 });

@@ -82,6 +82,14 @@ describe("MonitorModal — stats", () => {
   });
 });
 
+
+/** Kill is a two-step action now: the button arms a confirmation naming the
+ *  backend, and the terminate happens when that is accepted. */
+const killAndConfirm = async () => {
+  await userEvent.click(await screen.findByRole("button", { name: "Kill" }));
+  await userEvent.click(await screen.findByRole("button", { name: /Terminate pid/ }));
+};
+
 describe("MonitorModal — sessions", () => {
   it("lists a session with its pid, state and age", async () => {
     render(<MonitorModal {...base} />);
@@ -118,11 +126,57 @@ describe("MonitorModal — sessions", () => {
     expect(invokeMock).toHaveBeenCalledWith("pg_admin_backend", { pid: 4242, terminate: false });
   });
 
-  it("kills a backend only when Kill is chosen", async () => {
+  it("kills a backend only when Kill is chosen and confirmed", async () => {
+    serve(activity(), true);
+    render(<MonitorModal {...base} />);
+    await killAndConfirm();
+    expect(invokeMock).toHaveBeenCalledWith("pg_admin_backend", { pid: 4242, terminate: true });
+  });
+
+  it("does not kill anything on the Kill click alone", async () => {
+    // Terminate ends someone's session and rolls back their uncommitted work,
+    // without asking them. It was a single click on any pid in the list.
     serve(activity(), true);
     render(<MonitorModal {...base} />);
     await userEvent.click(await screen.findByRole("button", { name: "Kill" }));
-    expect(invokeMock).toHaveBeenCalledWith("pg_admin_backend", { pid: 4242, terminate: true });
+    expect(invokeMock).not.toHaveBeenCalledWith("pg_admin_backend", expect.anything());
+  });
+
+  it("names the backend it is about to kill, not just the pid", async () => {
+    // "Are you sure?" about a bare number is not something anyone can check.
+    serve(activity(), true);
+    render(<MonitorModal {...base} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Kill" }));
+    expect(await screen.findByText(/uncommitted work in it is lost/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/4242/).length).toBeGreaterThan(0);
+  });
+
+  it("backs out without killing", async () => {
+    serve(activity(), true);
+    render(<MonitorModal {...base} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Kill" }));
+    await userEvent.click(screen.getByRole("button", { name: /Don't terminate/ }));
+    expect(invokeMock).not.toHaveBeenCalledWith("pg_admin_backend", expect.anything());
+  });
+
+  it("on prod, makes you type the pid", async () => {
+    // The app already knows this is production — it hides query text from
+    // history here — and applied no more friction than on a local database.
+    serve(activity(), true);
+    render(<MonitorModal {...base} env="prod" />);
+    await userEvent.click(await screen.findByRole("button", { name: "Kill" }));
+    const go = screen.getByRole("button", { name: /Terminate pid/ });
+    expect(go).toBeDisabled();
+    await userEvent.type(screen.getByLabelText(/type the process id/i), "4242");
+    expect(go).toBeEnabled();
+  });
+
+  it("on prod, the wrong pid does not arm it", async () => {
+    serve(activity(), true);
+    render(<MonitorModal {...base} env="prod" />);
+    await userEvent.click(await screen.findByRole("button", { name: "Kill" }));
+    await userEvent.type(screen.getByLabelText(/type the process id/i), "4243");
+    expect(screen.getByRole("button", { name: /Terminate pid/ })).toBeDisabled();
   });
 
   it("reports what actually happened, not what was asked", async () => {
@@ -141,8 +195,9 @@ describe("MonitorModal — sessions", () => {
     render(<MonitorModal {...base} onToast={onToast} />);
     const p = Promise.reject("must be a member of the role whose process is being terminated");
     p.catch(() => {});
-    invokeMock.mockReturnValueOnce(p);
     await userEvent.click(await screen.findByRole("button", { name: "Kill" }));
+    invokeMock.mockReturnValueOnce(p);
+    await userEvent.click(await screen.findByRole("button", { name: /Terminate pid/ }));
     await waitFor(() => expect(onToast).toHaveBeenCalledWith(expect.stringContaining("must be a member")));
   });
 
@@ -150,7 +205,7 @@ describe("MonitorModal — sessions", () => {
     const onToast = vi.fn();
     serve(activity(), true);
     render(<MonitorModal {...base} onToast={onToast} />);
-    await userEvent.click(await screen.findByRole("button", { name: "Kill" }));
+    await killAndConfirm();
     await waitFor(() => expect(onToast).toHaveBeenCalledWith("Terminated pid 4242"));
   });
 });

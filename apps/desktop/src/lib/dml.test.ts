@@ -28,12 +28,19 @@ const cat: Catalog = {
     { schema: "public", name: "logs", kind: "table" },
     { schema: "public", name: "combo", kind: "table" },
     { schema: "analytics", name: "daily_rollup", kind: "view" },
+    { schema: "public", name: "gen", kind: "table" },
   ],
   columns: {
     "public.users": [col("id", "int8", true), col("email", "text"), col("age", "int4"), col("active", "bool")],
     "public.logs": [col("message", "text"), col("at", "timestamptz")], // no PK
     "public.combo": [col("a", "int4", true), col("b", "int4", true), col("note", "text")], // composite PK
     "analytics.daily_rollup": [col("day", "date", true), col("revenue", "numeric")],
+    // `total` is GENERATED ALWAYS AS ... STORED: the server computes it.
+    "public.gen": [
+      col("id", "int8", true),
+      col("qty", "int4"),
+      { ...col("total", "int4"), generated: true },
+    ],
   },
   searchPath: ["public"],
 };
@@ -359,5 +366,47 @@ describe("analyzeEditability — table detection", () => {
 
   it("declines a join rather than guessing which table to write to", () => {
     expect(reasonFor("select * from users join logs on true")).toContain("more than one table");
+  });
+});
+
+describe("analyzeEditability — columns the server computes", () => {
+  const gen = [
+    { name: "id", dbType: "int8" },
+    { name: "qty", dbType: "int4" },
+    { name: "total", dbType: "int4" },
+  ];
+
+  it("does not offer a generated column for editing", () => {
+    // It is a real column of the table, so the name check alone called it
+    // writable — and the UPDATE it built was one PostgreSQL always rejects
+    // ("column can only be updated to DEFAULT"). The user got a raw database
+    // error for a cell the app had told them was editable.
+    const r = analyzeEditability("select id, qty, total from gen", gen, cat);
+    if (!r.editable) throw new Error(r.reason);
+    expect(r.target.writable).toEqual([false, true, false]);
+  });
+
+  it("still edits the ordinary columns beside it", () => {
+    const r = analyzeEditability("select id, qty, total from gen", gen, cat);
+    if (!r.editable) throw new Error(r.reason);
+    expect(r.target.writable[1]).toBe(true);
+  });
+
+  it("treats an older cached catalog without the flag as not generated", () => {
+    // `generated` is optional: a catalog cached before the field existed has
+    // no opinion, and refusing every column on that basis would be worse.
+    const stale: Catalog = {
+      ...cat,
+      columns: {
+        ...cat.columns,
+        "public.gen": cat.columns["public.gen"].map(({ ...c }) => {
+          delete (c as { generated?: boolean }).generated;
+          return c;
+        }),
+      },
+    };
+    const r = analyzeEditability("select id, qty, total from gen", gen, stale);
+    if (!r.editable) throw new Error(r.reason);
+    expect(r.target.writable).toEqual([false, true, true]);
   });
 });

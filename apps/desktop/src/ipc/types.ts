@@ -21,6 +21,9 @@ export type PgParams = {
   tlsMode: string;
   tlsCaPath: string | null;
   environment?: string | null;
+  /** Ask the server to refuse writes on this session. Enforced by PostgreSQL,
+   *  not by us — see `pg_connect`. */
+  readOnly?: boolean | null;
   ssh?: SshParams | null;
 };
 
@@ -128,6 +131,10 @@ export type DbColumn = {
   nullable: boolean;
   primaryKey: boolean;
   comment: string | null;
+  /** GENERATED ALWAYS AS ... STORED, or GENERATED ... AS IDENTITY. The server
+   *  computes it, so it is not ours to write. Optional: a cached catalog
+   *  written before this field existed will not have it. */
+  generated?: boolean;
 };
 
 export type HistoryEntry = {

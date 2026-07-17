@@ -115,10 +115,15 @@ export function Palette(p: {
 /* ---------- transaction close prompt ---------- */
 
 export function TxPrompt(p: {
+  /** Reached by closing the window rather than by disconnecting. Same
+   *  decision, different door — but "Stay connected" is the wrong words for
+   *  someone who just pressed Quit. */
+  closing?: boolean;
   onCommit: () => void;
   onRollback: () => void;
   onStay: () => void;
 }) {
+  const verb = p.closing ? "quit" : "disconnect";
   return (
     <Overlay onClose={p.onStay} center>
       <div className="modal dialog">
@@ -129,18 +134,19 @@ export function TxPrompt(p: {
           You have an open transaction
         </div>
         <p>
-          Disconnecting now will not automatically commit or roll back. Choose how to close the
-          session.
+          {p.closing
+            ? "Quitting now will not automatically commit or roll back — the server decides, and it will roll back. Choose what happens to your work."
+            : "Disconnecting now will not automatically commit or roll back. Choose how to close the session."}
         </p>
         <div className="d-actions">
           <button className="btn commit" onClick={p.onCommit}>
-            Commit &amp; disconnect
+            Commit &amp; {verb}
           </button>
           <button className="btn rollback" onClick={p.onRollback}>
-            Rollback &amp; disconnect
+            Rollback &amp; {verb}
           </button>
           <button className="btn" onClick={p.onStay}>
-            Stay connected
+            {p.closing ? "Don't quit" : "Stay connected"}
           </button>
         </div>
       </div>

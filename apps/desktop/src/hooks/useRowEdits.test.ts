@@ -22,6 +22,22 @@ const edit = (over: Partial<CellEdit> = {}): CellEdit => ({
 });
 
 const cmds = () => invokeMock.mock.calls.map((c) => c[0]);
+/** Every SQL string sent through pg_query, in order. */
+const sqls = () =>
+  invokeMock.mock.calls
+    .filter((c) => c[0] === "pg_query")
+    .map((c) => (c[1] as { sql: string }).sql);
+/** The server reporting how many rows each statement actually touched. */
+const affects = (...counts: (number | null)[]) => {
+  let i = 0;
+  invokeMock.mockImplementation(async (c: string, a?: unknown) => {
+    if (c !== "pg_query") return undefined as never;
+    const sql = (a as { sql: string }).sql;
+    // Savepoint bookkeeping is not a row-affecting statement.
+    if (/^(SAVEPOINT|RELEASE|ROLLBACK TO)/i.test(sql)) return { rowsAffected: null } as never;
+    return { rowsAffected: counts[i++] ?? 1 } as never;
+  });
+};
 
 /** Reject only the Nth invoke, leaving the rest to succeed. */
 const failOn = (cmd: string, msg: string) => {
@@ -188,13 +204,108 @@ describe("useRowEdits — applying on its own", () => {
   });
 });
 
+describe("useRowEdits — checking what the server actually did", () => {
+  /*
+   * Every statement is keyed by a full primary key, so it must touch exactly
+   * one row. This used to be unchecked: `invoke` was awaited and its result
+   * thrown away, so an UPDATE matching zero rows — because another session had
+   * deleted it — committed and reported "Applied 1 statement". The user
+   * believed their edit landed; the row simply vanished on the next read.
+   */
+  it("refuses to call a zero-row UPDATE a success", async () => {
+    const { result } = renderHook(() => useRowEdits(0));
+    stage(result, edit());
+    affects(0);
+    const out = await apply(result);
+    expect(out.kind).toBe("error");
+    expect(out).toMatchObject({ message: expect.stringContaining("no longer exists") });
+  });
+
+  it("rolls back rather than committing a write that hit nothing", async () => {
+    const { result } = renderHook(() => useRowEdits(0));
+    stage(result, edit());
+    affects(0);
+    await apply(result);
+    expect(cmds()).toContain("pg_rollback");
+    expect(cmds()).not.toContain("pg_commit");
+  });
+
+  it("keeps the edits staged so the work is not lost", async () => {
+    const { result } = renderHook(() => useRowEdits(0));
+    stage(result, edit());
+    affects(0);
+    await apply(result);
+    expect(result.current.edits).toHaveLength(1);
+  });
+
+  it("stops if a primary-key-keyed statement somehow matches more than one row", async () => {
+    // Should be impossible. If it happens the key is not unique, and carrying
+    // on would write to rows the user never saw.
+    const { result } = renderHook(() => useRowEdits(0));
+    stage(result, edit());
+    affects(2);
+    const out = await apply(result);
+    expect(out).toMatchObject({ kind: "error", message: expect.stringContaining("matched 2") });
+    expect(cmds()).toContain("pg_rollback");
+  });
+
+  it("commits when every statement touched exactly its row", async () => {
+    const { result } = renderHook(() => useRowEdits(0));
+    stage(result, edit(), edit({ rowKey: "[2]", pkValues: [2] }));
+    affects(1, 1);
+    const out = await apply(result);
+    expect(out).toEqual({ kind: "applied", count: 2 });
+    expect(cmds()).toContain("pg_commit");
+  });
+
+  it("does not fail when the backend reports no count at all", async () => {
+    // rowsAffected is `number | null`; null means the server said nothing, not
+    // that it changed nothing. Treating null as zero would break every write.
+    const { result } = renderHook(() => useRowEdits(0));
+    stage(result, edit());
+    affects(null);
+    expect((await apply(result)).kind).toBe("applied");
+  });
+});
+
 describe("useRowEdits — joining the user's transaction", () => {
   it("does not open one of its own", async () => {
     const { result } = renderHook(() => useRowEdits(0));
     stage(result, edit());
     const out = await apply(result, true);
     expect(out).toEqual({ kind: "staged", count: 1 });
-    expect(cmds()).toEqual(["pg_query"]);
+    expect(cmds()).not.toContain("pg_begin");
+  });
+
+  it("brackets its writes in a savepoint so a failure cannot half-apply", async () => {
+    // We cannot BEGIN inside their transaction and must not COMMIT it, so a
+    // savepoint is the only way to undo our statements and nothing else.
+    const { result } = renderHook(() => useRowEdits(0));
+    stage(result, edit());
+    affects(1);
+    await apply(result, true);
+    expect(sqls()[0]).toBe("SAVEPOINT tuplenest_edit");
+    const sent = sqls();
+    expect(sent[sent.length - 1]).toBe("RELEASE SAVEPOINT tuplenest_edit");
+  });
+
+  it("rolls back to the savepoint — not the user's transaction — on failure", async () => {
+    const { result } = renderHook(() => useRowEdits(0));
+    stage(result, edit(), edit({ rowKey: "[2]", pkValues: [2] }));
+    // First write lands, second finds the row gone.
+    let n = 0;
+    invokeMock.mockImplementation(async (c: string, a?: unknown) => {
+      if (c !== "pg_query") return undefined as never;
+      const sql = (a as { sql: string }).sql;
+      if (/^(SAVEPOINT|RELEASE|ROLLBACK TO)/i.test(sql)) return { rowsAffected: null } as never;
+      return { rowsAffected: n++ === 0 ? 1 : 0 } as never;
+    });
+    const out = await apply(result, true);
+    expect(out.kind).toBe("error");
+    expect(sqls()).toContain("ROLLBACK TO SAVEPOINT tuplenest_edit");
+    // Their transaction is theirs; we never decide it.
+    expect(cmds()).not.toContain("pg_rollback");
+    expect(cmds()).not.toContain("pg_commit");
   });
 
   it("never commits a transaction it did not open", async () => {

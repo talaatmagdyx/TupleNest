@@ -1,5 +1,6 @@
 import React from "react";
 import { cellExport as cellText } from "./text";
+import { maskLiterals } from "./complete";
 import { invoke } from "@tauri-apps/api/core";
 
 /** SQL syntax highlighting (from the HUD design's tokenizer). */
@@ -76,9 +77,65 @@ export function toMarkdown(cols: { name: string }[], rows: unknown[][]): string 
   return [head, sep, ...body].join("\n");
 }
 
-/** Destructive-statement guard: UPDATE/DELETE without WHERE on prod. */
+/**
+ * Why a statement is being guarded, or null if it is not.
+ *
+ * This is best-effort, and the direction of its errors is the whole design: it
+ * may warn about something harmless, but it must not stay quiet about something
+ * destructive. The previous version tested the *raw* text, which meant a
+ * trailing `-- where` satisfied its `\bwhere\b` check and disarmed it — the
+ * exact shape of the near-miss it exists to catch. Everything here runs on
+ * masked text for that reason.
+ *
+ * It is not a parser and it is not a security boundary: `pg_query` will execute
+ * whatever it is given. Treat it as the seatbelt light, not the seatbelt.
+ */
+export type GuardReason = { verb: string; why: string };
+
+const DDL_VERBS = /^(drop|truncate|alter|create|grant|revoke|reindex|vacuum|cluster)$/i;
+
+/** First real keyword of a statement, skipping comments and whitespace. */
+export function firstKeyword(sql: string): string | null {
+  // Masked, so a leading `-- audit` or `/* x */` cannot hide the verb —
+  // `^\s*` alone never skipped those.
+  const m = /[A-Za-z_][A-Za-z0-9_]*/.exec(maskLiterals(sql));
+  return m ? m[0].toLowerCase() : null;
+}
+
+/**
+ * Statements worth stopping for on a guarded connection.
+ *
+ * Guarded environments are prod *and* staging: staging is where people rehearse
+ * the destructive thing, and it is usually a restore of prod.
+ */
+export function guardReason(sql: string, env: string | null): GuardReason | null {
+  if (env !== "prod" && env !== "staging") return null;
+
+  const masked = maskLiterals(sql);
+  const verb = firstKeyword(sql);
+  if (!verb) return null;
+
+  // A CTE can front a DELETE: `WITH x AS (…) DELETE FROM t`. The leading
+  // keyword is `with`, so look for the real verb after it.
+  const effective =
+    verb === "with" ? (/\b(insert|update|delete|merge)\b/i.exec(masked)?.[1]?.toLowerCase() ?? verb) : verb;
+
+  if (DDL_VERBS.test(effective)) {
+    return { verb: effective.toUpperCase(), why: "This changes or removes database objects, not just rows." };
+  }
+  if (effective === "update" || effective === "delete") {
+    // `\bwhere\b` on masked text: a commented-out or quoted WHERE no longer
+    // counts as one.
+    if (!/\bwhere\b/i.test(masked)) {
+      return { verb: effective.toUpperCase(), why: "It has no WHERE clause, so it affects every row in the table." };
+    }
+  }
+  return null;
+}
+
+/** Destructive-statement guard for prod/staging. See `guardReason`. */
 export function needsGuard(sql: string, env: string | null): boolean {
-  return env === "prod" && /^\s*(update|delete)\b/i.test(sql) && !/\bwhere\b/i.test(sql);
+  return guardReason(sql, env) !== null;
 }
 
 /** Lightweight SQL formatter: uppercases keywords, breaks major clauses. */

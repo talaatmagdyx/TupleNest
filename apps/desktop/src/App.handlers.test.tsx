@@ -362,3 +362,45 @@ describe("App — the macOS menu bar's About", () => {
     expect(screen.getByText("github.com/talaatmagdyx")).toBeInTheDocument();
   });
 });
+
+describe("App — one session, many tabs: the transaction has an owner", () => {
+  /*
+   * Tabs are editors over a single PostgreSQL session, so a transaction opened
+   * in one tab is joined by every other tab's statements. Pressing Commit in a
+   * different tab used to commit the first tab's uncommitted work — a DELETE
+   * you could not see from where you clicked.
+   */
+  const openTxInFirstTab = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(await screen.findByRole("button", { name: /Begin transaction/ }));
+    await waitFor(() => expect(be.sent("pg_begin")).toHaveLength(1));
+  };
+
+  it("refuses to commit from a tab that did not open the transaction, and says which did", async () => {
+    const user = await connected();
+    await openTxInFirstTab(user);
+
+    // A second tab, which knows nothing about the transaction.
+    await user.keyboard("{Meta>}t{/Meta}");
+    await user.click(screen.getByRole("button", { name: "Commit" }));
+
+    expect(be.sent("pg_commit")).toHaveLength(0);
+    expect(await screen.findByText(/belongs to untitled-1\.sql/)).toBeInTheDocument();
+  });
+
+  it("commits from the owning tab", async () => {
+    const user = await connected();
+    await openTxInFirstTab(user);
+    await user.click(screen.getByRole("button", { name: "Commit" }));
+    await waitFor(() => expect(be.sent("pg_commit")).toHaveLength(1));
+  });
+
+  it("lets the owning tab be returned to after a detour", async () => {
+    const user = await connected();
+    await openTxInFirstTab(user);
+    await user.keyboard("{Meta>}t{/Meta}");
+    // Back to tab 1 — the owner is the tab, not the index.
+    await user.click(screen.getByText("untitled-1.sql"));
+    await user.click(screen.getByRole("button", { name: "Commit" }));
+    await waitFor(() => expect(be.sent("pg_commit")).toHaveLength(1));
+  });
+});

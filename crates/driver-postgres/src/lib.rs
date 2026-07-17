@@ -275,6 +275,27 @@ impl PostgresDriver {
         let (client, conn_task) = connect_client(&Self::pg_config(&config, password), &setup)
             .await
             .map_err(normalize_error)?;
+
+        /*
+         * Read-only is the server's job, not ours.
+         *
+         * We could refuse writes in the client, but that is a promise we cannot
+         * keep: any statement we failed to classify would sail through. Asking
+         * PostgreSQL to set the session read-only moves enforcement to the only
+         * place that sees every statement and cannot be talked around. A write
+         * then fails with `25006: cannot execute … in a read-only transaction`,
+         * from the database, whatever the app thought it was sending.
+         *
+         * This fails the connection rather than warning: a profile marked
+         * read-only that quietly allows writes is worse than no profile at all.
+         */
+        if config.read_only {
+            client
+                .batch_execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
+                .await
+                .map_err(normalize_error)?;
+        }
+
         let cancel_token = client.cancel_token();
         Ok(PostgresSession {
             client,
@@ -674,7 +695,13 @@ impl DatabaseSession for PostgresSession {
                                   WHERE i.indrelid = a.attrelid AND i.indisprimary
                                     AND a.attnum = ANY (i.indkey)
                                 ), FALSE) AS primary_key,
-                                col_description(a.attrelid, a.attnum) AS comment
+                                col_description(a.attrelid, a.attnum) AS comment,
+                                -- The server computes these; a client that
+                                -- offers them for editing is offering a write
+                                -- PostgreSQL will refuse. attgenerated is 's'
+                                -- for STORED, attidentity 'a'/'d' for GENERATED
+                                -- ... AS IDENTITY.
+                                (a.attgenerated <> '' OR a.attidentity <> '') AS generated
                          FROM pg_attribute a
                          JOIN pg_class c ON c.oid = a.attrelid
                          JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -726,6 +753,7 @@ impl DatabaseSession for PostgresSession {
                                 "nullable": r.get::<_, bool>(2),
                                 "primaryKey": r.get::<_, bool>(3),
                                 "comment": r.get::<_, Option<String>>(4),
+                                "generated": r.get::<_, bool>(5),
                             })
                         })
                         .collect::<Vec<_>>(),

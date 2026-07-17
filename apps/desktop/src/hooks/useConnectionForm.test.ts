@@ -48,6 +48,27 @@ describe("parseSsh", () => {
   });
 });
 
+describe("useConnectionForm — read-only", () => {
+  it("is off unless asked for", () => {
+    const { result } = renderHook(() => useConnectionForm());
+    expect(result.current.readOnly).toBe(false);
+  });
+
+  it("carries the flag to the backend, where the server enforces it", () => {
+    // It was collected and then dropped on the floor for a while: the field
+    // existed all the way down to ConnectionConfig and was hard-coded false.
+    const { result } = renderHook(() => useConnectionForm());
+    act(() => result.current.set("readOnly", true));
+    expect(result.current.toParams(null).readOnly).toBe(true);
+  });
+
+  it("restores the flag when a saved profile is loaded", () => {
+    const { result } = renderHook(() => useConnectionForm());
+    act(() => result.current.load(rec({ readOnly: true })));
+    expect(result.current.readOnly).toBe(true);
+  });
+});
+
 describe("useConnectionForm — defaults", () => {
   it("starts blank, with TLS verifying", () => {
     // Fails closed: a fresh profile must not silently accept any certificate.
@@ -196,6 +217,7 @@ describe("useConnectionForm — toParams", () => {
       tlsMode: "verify-ca",
       tlsCaPath: "/etc/ssl/ca.pem",
       environment: "prod",
+      readOnly: false,
       ssh: null,
     });
   });

@@ -118,10 +118,15 @@ describe("App — applying staged edits", () => {
     await user.click(await screen.findByRole("button", { name: /review/i }));
     await user.click(await screen.findByRole("button", { name: /^Apply/i }));
     expect(await screen.findByText(/staged in your transaction/i)).toBeInTheDocument();
-    // The UPDATE goes out — inside their transaction, uncommitted. What must
-    // not happen is the re-read after it, which would show them their own
-    // uncommitted row as though it were stored.
-    expect(be.sent("pg_query")).toHaveLength(before + 1);
+    // The UPDATE goes out — inside their transaction, uncommitted, bracketed
+    // by a savepoint so a failure cannot half-apply. What must not happen is
+    // the re-read after it, which would show them their own uncommitted row as
+    // though it were stored. Assert that directly rather than counting calls:
+    // the count is a proxy that moves whenever the write path gains a
+    // statement, and it is the SELECT specifically that would be the bug.
+    const after = be.sent("pg_query").slice(before).map((c) => String(c.sql));
+    expect(after.some((sql) => /^\s*select/i.test(sql))).toBe(false);
+    expect(after.filter((sql) => /^\s*update/i.test(sql))).toHaveLength(1);
   });
 
   it("keeps the edits when the write fails", async () => {

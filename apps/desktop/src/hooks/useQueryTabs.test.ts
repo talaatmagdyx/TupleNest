@@ -3,9 +3,9 @@ import { act, renderHook } from "@testing-library/react";
 import { FIRST_TAB, useQueryTabs } from "./useQueryTabs";
 
 const three = [
-  { name: "a.sql", sql: "select 1", dirty: false },
-  { name: "b.sql", sql: "select 2", dirty: false },
-  { name: "c.sql", sql: "select 3", dirty: false },
+  { id: "t-a", name: "a.sql", sql: "select 1", dirty: false },
+  { id: "t-b", name: "b.sql", sql: "select 2", dirty: false },
+  { id: "t-c", name: "c.sql", sql: "select 3", dirty: false },
 ];
 
 describe("useQueryTabs — defaults", () => {
@@ -75,7 +75,7 @@ describe("useQueryTabs — opening", () => {
   it("opens a named script tab, pre-filled and dirty", () => {
     const { result } = renderHook(() => useQueryTabs(three));
     act(() => result.current.newTab({ name: "drop.sql", sql: "DROP INDEX x;", dirty: true }));
-    expect(result.current.tabs[3]).toEqual({ name: "drop.sql", sql: "DROP INDEX x;", dirty: true });
+    expect(result.current.tabs[3]).toMatchObject({ name: "drop.sql", sql: "DROP INDEX x;", dirty: true });
     expect(result.current.activeTab).toBe(3);
   });
 

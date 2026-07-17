@@ -139,9 +139,19 @@ export function analyzeEditability(sql: string, cols: GridCol[], cat: Catalog | 
 
   const pkNames = new Set(pkCols.map((c) => c.name.toLowerCase()));
   const real = new Set(tableCols.map((c) => c.name.toLowerCase()));
-  // A column is writable when it is a real column of the table and is not part
-  // of the primary key — editing a PK changes row identity, so we refuse it.
-  const writable = cols.map((c) => real.has(c.name.toLowerCase()) && !pkNames.has(c.name.toLowerCase()));
+  // Columns the *server* computes. Offering these for editing builds an UPDATE
+  // PostgreSQL will reject — the user gets a raw error from the database for a
+  // cell the app told them was editable.
+  const generated = new Set(
+    tableCols.filter((c) => c.generated).map((c) => c.name.toLowerCase()),
+  );
+  // A column is writable when it is a real column of the table, is not part of
+  // the primary key — editing a PK changes row identity, so we refuse it — and
+  // is not computed by the server.
+  const writable = cols.map((c) => {
+    const n = c.name.toLowerCase();
+    return real.has(n) && !pkNames.has(n) && !generated.has(n);
+  });
 
   return { editable: true, target: { schema, table: ref.name, pk, writable } };
 }

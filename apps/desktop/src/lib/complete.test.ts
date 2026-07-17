@@ -55,6 +55,52 @@ describe("maskLiterals", () => {
     const m = maskLiterals("select 'from users' , x");
     expect(m).not.toContain("from users");
   });
+
+  /* PostgreSQL has three things a C-style masker gets wrong. Each of these was
+     a real misparse before, and each one misfed the destructive-statement
+     guard and the editability check downstream. */
+  describe("PostgreSQL literal forms", () => {
+    it("masks a dollar-quoted body — function bodies are written this way", () => {
+      const m = maskLiterals("select $$ from users $$, x");
+      expect(m).not.toContain("from users");
+      expect(m).toHaveLength("select $$ from users $$, x".length);
+    });
+
+    it("masks a tagged dollar-quote", () => {
+      expect(maskLiterals("select $tag$ from users $tag$, x")).not.toContain("from users");
+    });
+
+    it("does not treat a $1 parameter as a dollar-quote", () => {
+      // `$1 … $2` must not be read as a quote spanning the middle of the query,
+      // or every parameterised statement masks its own body.
+      const m = maskLiterals("update t set a=$1 where id=$2");
+      expect(m).toContain("where");
+    });
+
+    it("survives an apostrophe inside a dollar-quoted body", () => {
+      // The lone quote used to open a phantom string that swallowed the rest.
+      const m = maskLiterals("select $$ it's here $$, keyword_after");
+      expect(m).toContain("keyword_after");
+    });
+
+    it("does not split statements on a semicolon inside a dollar-quote", () => {
+      expect(statementAt("select $$a;b$$ from t", 21).text).toBe("select $$a;b$$ from t");
+    });
+
+    it("nests block comments the way PostgreSQL does", () => {
+      // C stops at the first close marker; PostgreSQL counts depth. Stopping
+      // early leaks the comment's tail back into the scanned text.
+      const m = maskLiterals("/* a /* b */ still_comment */ select 1");
+      expect(m).not.toContain("still_comment");
+      expect(m).toContain("select 1");
+    });
+
+    it("honours backslash escapes in an E'' string", () => {
+      const m = maskLiterals("select e'\\' from users' , keyword_after");
+      expect(m).not.toContain("from users");
+      expect(m).toContain("keyword_after");
+    });
+  });
 });
 
 describe("wordAt", () => {

@@ -8,6 +8,8 @@ const base = {
   isEdit: false,
   profileName: "customer_analytics",
   environment: "dev",
+  readOnly: false,
+  onReadOnly: vi.fn(),
   host: "localhost",
   port: 5432,
   database: "appdb",

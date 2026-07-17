@@ -869,3 +869,109 @@ async fn live_typed_parameters_bind_correctly() {
         .await
         .unwrap();
 }
+
+// --- read-only sessions -----------------------------------------------------
+
+/// A read-only profile must be enforced by the *server*, not by us guessing
+/// which statements write. This is the test that the flag is not decorative:
+/// before it, `read_only` was collected from the profile, carried all the way
+/// into `ConnectionConfig`, and then hard-coded to `false` on the way to the
+/// session — so the whole feature was a no-op.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn read_only_session_refuses_writes_at_the_server() {
+    let mut cfg = test_config();
+    cfg.read_only = true;
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(cfg, None)
+        .await
+        .expect("connect");
+
+    // Reads still work — read-only must not mean useless.
+    s.execute(req("SELECT 1"), &NullSink)
+        .await
+        .expect("a read-only session must still read");
+
+    let err = s
+        .execute(req("CREATE TEMP TABLE tn_ro_probe (id int)"), &NullSink)
+        .await
+        .expect_err("a write must be refused on a read-only session");
+
+    // 25006 read_only_sql_transaction. The message comes from PostgreSQL,
+    // which is the point: no statement can talk its way past it.
+    let msg = format!("{err:?}").to_lowercase();
+    assert!(
+        msg.contains("read-only") || msg.contains("read only"),
+        "expected a read-only refusal from the server, got: {msg}"
+    );
+}
+
+/// The same connection without the flag must be unaffected — otherwise the
+/// test above would pass for the wrong reason.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn a_normal_session_still_writes() {
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    s.execute(req("CREATE TEMP TABLE tn_rw_probe (id int)"), &NullSink)
+        .await
+        .expect("a normal session must still write");
+}
+
+/// A generated column must be reported as such, so the grid can refuse to
+/// offer it for editing. Without the flag the app builds an UPDATE PostgreSQL
+/// always rejects, and the user sees a raw database error for a cell the app
+/// told them was writable.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn describe_object_flags_generated_and_identity_columns() {
+    let mut session = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+
+    session
+        .execute(req("DROP TABLE IF EXISTS public.tn_gen"), &NullSink)
+        .await
+        .unwrap();
+    session
+        .execute(
+            req("CREATE TABLE public.tn_gen (
+                   id   bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                   qty  int,
+                   unit int,
+                   total int GENERATED ALWAYS AS (qty * unit) STORED
+                 )"),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+
+    let out = session
+        .metadata(MetadataRequest::DescribeObject {
+            schema: "public".into(),
+            name: "tn_gen".into(),
+        })
+        .await
+        .expect("describe");
+
+    let cols = out.payload["columns"].as_array().expect("columns");
+    let flag = |name: &str| -> bool {
+        cols.iter()
+            .find(|c| c["name"] == name)
+            .unwrap_or_else(|| panic!("column {name} missing"))["generated"]
+            .as_bool()
+            .expect("generated flag")
+    };
+
+    assert!(flag("total"), "STORED generated column must be flagged");
+    assert!(flag("id"), "GENERATED AS IDENTITY column must be flagged");
+    assert!(!flag("qty"), "an ordinary column must not be flagged");
+
+    session
+        .execute(req("DROP TABLE public.tn_gen"), &NullSink)
+        .await
+        .unwrap();
+}

@@ -33,6 +33,8 @@ pub struct PgParams {
     pub tls_ca_path: Option<String>,
     /// dev/test/staging/prod — prod suppresses query text in history.
     pub environment: Option<String>,
+    /// Ask the server to refuse writes for the whole session.
+    pub read_only: Option<bool>,
     /// Optional SSH tunnel; DB traffic then flows through the tunnel.
     pub ssh: Option<SshParams>,
 }
@@ -100,7 +102,7 @@ impl PgParams {
             driver_id: "postgres".into(),
             name: format!("{}@{}/{}", self.username, self.host, self.database),
             environment: Environment::Dev,
-            read_only: false,
+            read_only: self.read_only.unwrap_or(false),
             host: host.to_string(),
             port,
             database: self.database.clone(),

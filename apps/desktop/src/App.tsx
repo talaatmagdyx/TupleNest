@@ -3,6 +3,7 @@ import { kbd } from "./lib/platform";
 import { errText } from "./lib/text";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -418,6 +419,7 @@ export default function App() {
           tlsMode: c.tlsMode || "verify-full",
           tlsCaPath: c.tlsCaPath,
           environment: c.environment,
+          readOnly: c.readOnly,
           ssh,
         },
         c.environment ?? "dev",
@@ -446,7 +448,7 @@ export default function App() {
           name: profileName || `${username || "user"}@${host}/${database}`,
           environment,
           color: null,
-          readOnly: false,
+          readOnly: form.readOnly,
           host,
           port,
           database,
@@ -777,20 +779,81 @@ export default function App() {
     }
   }, [showToast]);
 
+  /**
+   * Refuse to end a transaction from a tab that did not start it.
+   *
+   * One session serves every tab, so a COMMIT here would commit whatever the
+   * owning tab has pending — work that is not on screen. Naming the owner is
+   * the point: "you are about to commit something you cannot see" is only
+   * useful if it says where to look.
+   */
+  const notOwner = useCallback((): string | null => {
+    const cur = tabs[activeTab];
+    if (!tx.owner || !cur || tx.owner.tabId === cur.id) return null;
+    return `The open transaction belongs to ${tx.owner.tabName}. Switch to that tab to commit or roll it back.`;
+  }, [tx.owner, tabs, activeTab]);
+
   const doBegin = useCallback(async () => {
-    const r = await tx.begin();
-    showToast(r.ok ? "Transaction started" : String(r.message).slice(0, 80));
-  }, [tx, showToast]);
+    const cur = tabs[activeTab];
+    if (!cur) return;
+    const r = await tx.begin({ tabId: cur.id, tabName: cur.name });
+    showToast(r.ok ? `Transaction started in ${cur.name}` : String(r.message).slice(0, 80));
+  }, [tx, showToast, tabs, activeTab]);
 
   const doCommit = useCallback(async () => {
+    const wrong = notOwner();
+    if (wrong) return showToast(wrong.slice(0, 90));
     const r = await tx.commit();
     showToast(r.ok ? "COMMIT" : `Commit error: ${String(r.message).slice(0, 70)}`);
-  }, [tx, showToast]);
+  }, [tx, showToast, notOwner]);
 
   const doRollback = useCallback(async () => {
+    const wrong = notOwner();
+    if (wrong) return showToast(wrong.slice(0, 90));
     const r = await tx.rollback();
     showToast(r.ok ? "ROLLBACK" : `Rollback error: ${String(r.message).slice(0, 70)}`);
-  }, [tx, showToast]);
+  }, [tx, showToast, notOwner]);
+
+  /**
+   * Closing the window with a transaction open.
+   *
+   * Disconnect and profile-switch both prompted; closing the window did not,
+   * so ⌘Q or the red button dropped the session and threw away uncommitted
+   * work without a word. It is the same decision, reached by a different door,
+   * and it deserves the same three-way prompt.
+   *
+   * `inTx` is read through a ref so the listener is registered once. Re-running
+   * this effect on every transaction change would leave a window with no
+   * handler for the moment between unlisten and re-listen.
+   */
+  const inTxRef = useRef(inTx);
+  // In an effect, not during render: writing a ref while rendering is the
+  // thing that makes a component not re-render when you expect it to, and the
+  // compiler lint is right to refuse it.
+  useEffect(() => {
+    inTxRef.current = inTx;
+  }, [inTx]);
+  const [closing, setClosing] = useState(false);
+
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const stop = win.onCloseRequested((e) => {
+      if (!inTxRef.current) return;
+      e.preventDefault();
+      setClosing(true);
+      setOverlay("txPrompt");
+    });
+    return () => {
+      void stop.then((off) => off());
+    };
+  }, []);
+
+  /** Close for real. `destroy` rather than `close`: `close` would fire
+   *  onCloseRequested again and we would prompt about a transaction the user
+   *  has just finished deciding. */
+  const finishClose = useCallback(async () => {
+    await getCurrentWindow().destroy();
+  }, []);
 
   const commitAndDisconnect = useCallback(async () => {
     const r = await tx.commit();
@@ -1383,7 +1446,12 @@ export default function App() {
               }}
               onToast={showToast}
               onVisibleRows={(a, b) =>
-                setRowsInfo(result ? `rows ${a.toLocaleString()}–${b.toLocaleString()} of ${result.storedRows.toLocaleString()}` : "")
+                // `totalRows`, not `storedRows`. The grid keeps the first
+                // 100,000; the query may have matched five million. Counting
+                // "of 100,000" turns the cap into the answer and hides that
+                // there is anything else — the one number a person reads to
+                // decide whether they have seen it all.
+                setRowsInfo(result ? `rows ${a.toLocaleString()}–${b.toLocaleString()} of ${rowCountNote(result.storedRows, result)}` : "")
               }
               catalog={catalog}
               onPrefetchTables={prefetchTables}
@@ -1446,6 +1514,7 @@ export default function App() {
           isEdit={profileId !== null}
           profileName={profileName}
           environment={environment}
+          readOnly={form.readOnly}
           host={host}
           port={port}
           database={database}
@@ -1473,6 +1542,7 @@ export default function App() {
           onSshFingerprint={(v) => form.set("sshFingerprint", v)}
           onProfileName={(v) => form.set("profileName", v)}
           onEnvironment={(v) => form.set("environment", v)}
+          onReadOnly={(v) => form.set("readOnly", v)}
           onHost={(v) => form.set("host", v)}
           onPort={(v) => form.set("port", v)}
           onDatabase={(v) => form.set("database", v)}
@@ -1487,7 +1557,21 @@ export default function App() {
         />
       )}
       {overlay === "txPrompt" && (
-        <TxPrompt onCommit={commitAndDisconnect} onRollback={rollbackAndDisconnect} onStay={() => setOverlay(null)} />
+        <TxPrompt
+          closing={closing}
+          onCommit={async () => {
+            await commitAndDisconnect();
+            if (closing) await finishClose();
+          }}
+          onRollback={async () => {
+            await rollbackAndDisconnect();
+            if (closing) await finishClose();
+          }}
+          onStay={() => {
+            setClosing(false);
+            setOverlay(null);
+          }}
+        />
       )}
       {overlay === "import" && (
         <ImportModal
@@ -1622,7 +1706,11 @@ export default function App() {
           onCancel={() => setOverlay(null)}
         />
       )}
-      {overlay === "monitor" && <MonitorModal onToast={showToast} onClose={() => setOverlay(null)} />}
+      {overlay === "monitor" && (
+        // `connectedEnv` and not the form's `environment`: the form may have
+        // been edited since, and a kill is aimed at the live session.
+        <MonitorModal env={connectedEnv} onToast={showToast} onClose={() => setOverlay(null)} />
+      )}
       {overlay === "diagram" && (
         <DiagramModal
           schema={(schemas ?? []).includes("public") ? "public" : schemas?.[0] ?? "public"}

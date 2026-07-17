@@ -1,5 +1,8 @@
 import { kbd } from "../lib/platform";
-export type QueryTab = { name: string; sql: string; dirty: boolean };
+/** `id` is stable for the life of the tab. Index is not: closing a tab to
+ *  the left renumbers every tab after it, so anything that has to remember
+ *  *which* tab (the open transaction's owner) must hold the id. */
+export type QueryTab = { id: string; name: string; sql: string; dirty: boolean };
 
 type Props = {
   tabs: QueryTab[];

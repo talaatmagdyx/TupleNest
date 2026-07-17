@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import { CONNECTION, PROD, PLAN, backend, type Backend } from "./test/backend";
@@ -240,5 +240,49 @@ describe("App — the EXPLAIN plan", () => {
   it("closes", async () => {
     const user = await explained();
     await close(user);
+  });
+});
+
+describe("App — closing the window with an open transaction", () => {
+  /*
+   * Disconnect and profile-switch both prompted; closing the window did not.
+   * The `onCloseRequested` mock existed in test/setup.ts and nothing in the app
+   * ever registered on it — so this suite had a listener with no listener.
+   */
+  const closeRequest = async () => {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const w = getCurrentWindow() as unknown as {
+      onCloseRequested: { mock: { calls: [(e: { preventDefault: () => void }) => void][] } };
+    };
+    const handler = w.onCloseRequested.mock.calls[0]?.[0];
+    expect(handler, "App never registered an onCloseRequested handler").toBeDefined();
+    const e = { preventDefault: vi.fn() };
+    await act(async () => void handler(e));
+    return e;
+  };
+
+  it("stops the close and asks, rather than dropping the work", async () => {
+    const user = await connected();
+    await user.click(await screen.findByRole("button", { name: /Begin transaction/ }));
+    await waitFor(() => expect(be.sent("pg_begin")).toHaveLength(1));
+
+    const e = await closeRequest();
+    expect(e.preventDefault).toHaveBeenCalled();
+    expect(await screen.findByText(/open transaction/i)).toBeInTheDocument();
+  });
+
+  it("says quit, not disconnect — the user pressed Quit", async () => {
+    const user = await connected();
+    await user.click(await screen.findByRole("button", { name: /Begin transaction/ }));
+    await waitFor(() => expect(be.sent("pg_begin")).toHaveLength(1));
+    await closeRequest();
+    expect(screen.getByRole("button", { name: /Commit & quit/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Don't quit/ })).toBeInTheDocument();
+  });
+
+  it("lets the close through when there is nothing to lose", async () => {
+    await connected();
+    const e = await closeRequest();
+    expect(e.preventDefault).not.toHaveBeenCalled();
   });
 });

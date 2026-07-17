@@ -38,8 +38,15 @@ type Activity = {
 
 /** Server monitoring dashboard (Phase 6): live sessions, blocking locks,
  *  and database stats with auto-refresh and cancel/terminate actions. */
-export default function MonitorModal(p: { onToast: (t: string) => void; onClose: () => void }) {
+export default function MonitorModal(p: {
+  onToast: (t: string) => void;
+  onClose: () => void;
+  /** Environment of the live connection: a kill on prod earns more friction. */
+  env?: string | null;
+}) {
   const [data, setData] = useState<Activity | null>(null);
+  /** The backend a Kill is waiting on confirmation for. */
+  const [confirmKill, setConfirmKill] = useState<Session | null>(null);
   const [auto, setAuto] = useState(true);
   const [tab, setTab] = useState<"sessions" | "locks">("sessions");
   const [err, setErr] = useState<string | null>(null);
@@ -163,7 +170,14 @@ export default function MonitorModal(p: { onToast: (t: string) => void; onClose:
                     <button className="btn" style={{ height: 22, padding: "0 8px", fontSize: 11 }} onClick={() => act(s.pid, false)}>
                       Cancel
                     </button>
-                    <button className="btn rollback" style={{ height: 22, padding: "0 8px", fontSize: 11 }} onClick={() => act(s.pid, true)}>
+                    {/* Cancel stops a query; Kill drops someone's whole
+                        session, uncommitted work and all. Only one of those
+                        deserves to be a single click. */}
+                    <button
+                      className="btn rollback"
+                      style={{ height: 22, padding: "0 8px", fontSize: 11 }}
+                      onClick={() => setConfirmKill(s)}
+                    >
                       Kill
                     </button>
                   </span>
@@ -193,6 +207,95 @@ export default function MonitorModal(p: { onToast: (t: string) => void; onClose:
               ))}
             </div>
           )}
+        </div>
+      </div>
+      {confirmKill && (
+        <KillPrompt
+          session={confirmKill}
+          env={p.env ?? null}
+          onCancel={() => setConfirmKill(null)}
+          onConfirm={() => {
+            const pid = confirmKill.pid;
+            setConfirmKill(null);
+            void act(pid, true);
+          }}
+        />
+      )}
+    </Overlay>
+  );
+}
+
+/**
+ * Confirmation for `pg_terminate_backend`.
+ *
+ * Terminate was a single unguarded click on any pid in the list. The app knows
+ * perfectly well when it is talking to production — it already hides query text
+ * from history there — and it applied no more friction to killing a production
+ * backend than to killing a local one.
+ *
+ * The dialog names the victim rather than asking an abstract "are you sure?":
+ * the pid alone is not a thing anyone recognises, and the row is what makes
+ * "wait, that's not the one I meant" possible.
+ */
+function KillPrompt(p: {
+  session: Session;
+  env: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const prod = p.env === "prod";
+  const [typed, setTyped] = useState("");
+  // On prod, a click is too cheap. Typing the pid forces the eye onto the
+  // number that is actually about to be killed.
+  const armed = !prod || typed.trim() === String(p.session.pid);
+  return (
+    <Overlay onClose={p.onCancel} center>
+      <div className="modal" style={{ width: 460 }}>
+        <ModalHead title={prod ? "Terminate a PRODUCTION backend" : "Terminate backend"} onClose={p.onCancel} />
+        <div className="modal-body">
+          <p style={{ fontSize: 12.5, marginBottom: 10 }}>
+            This ends the session immediately and rolls back whatever it had open. Any uncommitted
+            work in it is lost, and the person running it is not asked.
+          </p>
+          <div className="kv-row">
+            <span className="kl">Process</span>
+            <span className="mono">{p.session.pid}</span>
+          </div>
+          <div className="kv-row">
+            <span className="kl">User</span>
+            <span className="mono">{p.session.user ?? "—"}</span>
+          </div>
+          <div className="kv-row">
+            <span className="kl">Application</span>
+            <span className="mono">{p.session.application || "—"}</span>
+          </div>
+          <div className="kv-row">
+            <span className="kl">Running</span>
+            <span className="mono" style={{ maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis" }}>
+              {p.session.query || "idle"}
+            </span>
+          </div>
+          {prod && (
+            <div className="field" style={{ marginTop: 12 }}>
+              <label htmlFor="kill-confirm">Type the process id to confirm</label>
+              <input
+                id="kill-confirm"
+                className="mono"
+                autoFocus
+                value={typed}
+                placeholder={String(p.session.pid)}
+                onChange={(e) => setTyped(e.target.value)}
+              />
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+            <button className="btn rollback" disabled={!armed} onClick={p.onConfirm}>
+              Terminate pid {p.session.pid}
+            </button>
+            <button className="btn" onClick={p.onCancel}>
+              Don&apos;t terminate
+            </button>
+          </div>
         </div>
       </div>
     </Overlay>

@@ -6,6 +6,7 @@ type Props = {
   isEdit: boolean;
   profileName: string;
   environment: string;
+  readOnly: boolean;
   host: string;
   port: number;
   database: string;
@@ -33,6 +34,7 @@ type Props = {
   onSshFingerprint: (v: string) => void;
   onProfileName: (v: string) => void;
   onEnvironment: (v: string) => void;
+  onReadOnly: (v: boolean) => void;
   onHost: (v: string) => void;
   onPort: (v: number) => void;
   onDatabase: (v: string) => void;
@@ -79,6 +81,26 @@ export default function ConnectionForm(p: Props) {
                 ))}
               </div>
             </div>
+          </div>
+          <div className="section-row">
+            <div>
+              <div className="st">Read-only connection</div>
+              <div className="sd">
+                Asks PostgreSQL to refuse writes for the whole session. Enforced by the server, not
+                by TupleNest — a write fails at the database, not in the app.
+              </div>
+            </div>
+            {/* Without these it is announced as an unlabelled button, and its
+                state — the only thing it conveys — is invisible. */}
+            <button
+              className={`toggle ${p.readOnly ? "on" : ""}`}
+              role="switch"
+              aria-checked={p.readOnly}
+              aria-label="Read-only connection"
+              onClick={() => p.onReadOnly(!p.readOnly)}
+            >
+              <span className="knob" />
+            </button>
           </div>
           <div className="frow">
             <div className="field">

@@ -17,12 +17,15 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async () => () => {}),
   emit: vi.fn(async () => {}),
 }));
-vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({
-    setTitle: vi.fn(async () => {}),
-    onCloseRequested: vi.fn(async () => () => {}),
-  }),
-}));
+/* One window object across the whole test, so a test can reach the same
+   `onCloseRequested` mock the component registered on and fire it. A fresh
+   object per call would hand the test a listener nobody is holding. */
+const win = {
+  setTitle: vi.fn(async () => {}),
+  onCloseRequested: vi.fn(async () => () => {}),
+  destroy: vi.fn(async () => {}),
+};
+vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => win }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: vi.fn(), ask: vi.fn() }));
 vi.mock("@tauri-apps/plugin-fs", () => ({ writeTextFile: vi.fn(), readTextFile: vi.fn() }));
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn(async () => null) }));

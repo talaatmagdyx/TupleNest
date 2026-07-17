@@ -6,6 +6,9 @@ export const BLANK = {
   profileId: null as string | null,
   profileName: "",
   environment: "dev",
+  // Off by default: a profile that silently refused writes would be a
+  // worse surprise than one that allows them.
+  readOnly: false,
   host: "localhost",
   port: 5432,
   database: "postgres",
@@ -67,6 +70,7 @@ export function useConnectionForm(initial: Partial<ConnectionFormState> = {}): C
       profileId: c.id,
       profileName: c.name,
       environment: c.environment ?? "dev",
+      readOnly: c.readOnly ?? false,
       host: c.host,
       port: c.port,
       database: c.database,
@@ -110,6 +114,7 @@ export function useConnectionForm(initial: Partial<ConnectionFormState> = {}): C
       // "" means "not set", and the backend distinguishes null from empty.
       tlsCaPath: state.tlsCaPath || null,
       environment: state.environment,
+      readOnly: state.readOnly,
       ssh: ssh(),
     }),
     [state, ssh],

@@ -7,8 +7,8 @@ import TabsBar from "./TabsBar";
 import { kbd } from "../lib/platform";
 
 const tabs = [
-  { name: "a.sql", sql: "select 1", dirty: false },
-  { name: "b.sql", sql: "select 2", dirty: true },
+  { id: "t1", name: "a.sql", sql: "select 1", dirty: false },
+  { id: "t2", name: "b.sql", sql: "select 2", dirty: true },
 ];
 
 const base = { tabs, active: 0, onSelect: vi.fn(), onClose: vi.fn(), onNew: vi.fn() };
