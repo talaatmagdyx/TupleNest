@@ -1,0 +1,35 @@
+# Spellchecker config for `typos`.
+#
+# Every entry below is a word the checker flags that is correct here. They are
+# listed one by one, with the reason, rather than switched off wholesale: the
+# point of the check is prose and comments, and a blanket exclusion would take
+# those with it.
+
+[files]
+# Binaries and generated lockfiles: nothing here is prose, and Cargo.lock alone
+# is thousands of package names that look like misspellings of English words.
+extend-exclude = [
+  "*.woff2",
+  "Cargo.lock",
+  "package-lock.json",
+  "apps/desktop/src/assets/fonts/OFL.txt",
+]
+
+[default.extend-words]
+# `.pn-head`, `.pn-cost` … — the CSS prefix for plan-node, read as "on".
+pn = "pn"
+
+# Both spellings are current; PostgreSQL's own docs use "unparseable".
+unparseable = "unparseable"
+
+# Deliberately broken SQL. These are fixtures for the error paths — a test that
+# a syntax error surfaces intact is not much of a test if the SQL parses.
+#   useQuery.test.ts       run("selct 1")
+#   live_pg.rs             execute(req("SELEC 1"))
+selct = "selct"
+SELEC = "SELEC"
+
+# dml.test.ts: coerceValue("ture", "bool") must return "ture" untouched. The
+# whole assertion is that a typo is *not* guessed into `false` and silently
+# written to someone's database, so the typo is the subject of the test.
+ture = "ture"

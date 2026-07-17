@@ -33,7 +33,7 @@
       "dialog": false,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMyMzE3MTQ5NkZFNDNCMjEKUldRaE8rUnZTWEV4d3B6Rk9GOUh0QzZrazllbTFIaFQrcTB6N2NMM1NZeUg3Q0RwazdUYXhFQ3cK",
       "endpoints": [
-        "https://releases.tuplenest.app/{{target}}/{{arch}}/{{current_version}}"
+        "https://github.com/talaatmagdyx/TupleNest/releases/latest/download/latest.json"
       ]
     }
   },

@@ -3,6 +3,7 @@ name = "tuplenest-sql-language-service"
 version = "0.0.1"
 edition = "2021"
 license = "MIT"
+publish = false
 description = "TupleNest sql-language-service crate"
 
 [dependencies]

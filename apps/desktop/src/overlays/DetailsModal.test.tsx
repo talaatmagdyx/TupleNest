@@ -14,7 +14,7 @@ const details: ObjectDetails = {
         { k: "Rows (estimate)", v: "3000242" },
       ],
     },
-    { label: "About", rows: [{ k: "Owner", v: "omniserve" }] },
+    { label: "About", rows: [{ k: "Owner", v: "appuser" }] },
   ],
 };
 
@@ -47,7 +47,7 @@ describe("DetailsModal", () => {
     render(<DetailsModal {...base} />);
     expect(screen.getByText("Storage")).toBeInTheDocument();
     expect(screen.getByText("Owner")).toBeInTheDocument();
-    expect(screen.getByText("omniserve")).toBeInTheDocument();
+    expect(screen.getByText("appuser")).toBeInTheDocument();
   });
 
   it("says so when the server had nothing to report", () => {
@@ -77,7 +77,7 @@ describe("DetailsModal", () => {
 
   it("leaves an ordinary value unstyled", () => {
     render(<DetailsModal {...base} />);
-    expect(screen.getByText("omniserve")).not.toHaveStyle({ color: "var(--tn-danger)" });
+    expect(screen.getByText("appuser")).not.toHaveStyle({ color: "var(--tn-danger)" });
   });
 
   it.each(["sequence", "index", "view", "matview", "wat"])("titles a %s", (kind) => {

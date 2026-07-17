@@ -3,6 +3,7 @@ name = "tuplenest-result-stream"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "Bounded in-memory row store backing the virtualized result grid"
 
 [dependencies]

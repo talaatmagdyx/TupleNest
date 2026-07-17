@@ -1,0 +1,55 @@
+name: CodeQL
+
+# Semantic analysis: taint tracking and the OWASP categories, which is a
+# different question from the one clippy and eslint answer. It matters here
+# because the app takes SQL from a person, credentials from a keychain, and a
+# CA path from a text field, then puts them on a socket.
+#
+# Rust and TypeScript both, since a database IDE's interesting bugs live on the
+# Rust side. Rust support left preview in October 2025.
+#
+# Scheduled as well as on push: an alert can appear because CodeQL learned a new
+# query, not because anyone changed a line.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Mondays, 07:00 UTC. Off the hour: everyone schedules on the hour and
+    # GitHub drops jobs that pile up there.
+    - cron: "17 7 * * 1"
+
+# Least privilege. `security-events: write` is the one that matters — it is how
+# results reach the Security tab.
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: javascript-typescript
+          - language: rust
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # No compile step. CodeQL reads Rust without a build now, which keeps
+          # this job from needing the webkit2gtk stack the real build needs.
+          build-mode: none
+          queries: security-and-quality
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

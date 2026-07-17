@@ -3,6 +3,7 @@ name = "tuplenest-query-engine"
 version = "0.0.1"
 edition = "2021"
 license = "MIT"
+publish = false
 description = "TupleNest query-engine crate"
 
 [dependencies]

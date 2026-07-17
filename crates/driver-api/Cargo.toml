@@ -4,6 +4,7 @@ description = "Driver contract: traits, capabilities, config, and normalized err
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [dependencies]
 async-trait = { workspace = true }

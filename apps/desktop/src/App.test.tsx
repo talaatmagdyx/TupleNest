@@ -80,7 +80,7 @@ describe("App — connecting", () => {
   it("opens a session from a saved profile", async () => {
     await connected();
     expect(be.sent("pg_connect")[0]).toMatchObject({
-      params: expect.objectContaining({ host: "localhost", database: "omniserve" }),
+      params: expect.objectContaining({ host: "localhost", database: "appdb" }),
     });
   });
 

@@ -14,11 +14,11 @@ const ssh: SshParams = {
 const rec = (over: Partial<ConnectionRecord> = {}): ConnectionRecord =>
   ({
     id: "c1",
-    name: "engagement_database",
+    name: "customer_analytics",
     host: "db.internal",
     port: 5433,
-    database: "omniserve",
-    username: "omniserve",
+    database: "appdb",
+    username: "appuser",
     secretRef: "keychain-ref",
     environment: "prod",
     tlsMode: "verify-ca",
@@ -65,8 +65,8 @@ describe("useConnectionForm — defaults", () => {
 
   it("sets a field", () => {
     const { result } = renderHook(() => useConnectionForm());
-    act(() => result.current.set("database", "omniserve"));
-    expect(result.current.database).toBe("omniserve");
+    act(() => result.current.set("database", "appdb"));
+    expect(result.current.database).toBe("appdb");
   });
 });
 
@@ -76,12 +76,12 @@ describe("useConnectionForm — loading a profile", () => {
     act(() => result.current.load(rec()));
     expect(result.current).toMatchObject({
       profileId: "c1",
-      profileName: "engagement_database",
+      profileName: "customer_analytics",
       environment: "prod",
       host: "db.internal",
       port: 5433,
-      database: "omniserve",
-      username: "omniserve",
+      database: "appdb",
+      username: "appuser",
       secretRef: "keychain-ref",
       tlsMode: "verify-ca",
       tlsCaPath: "/etc/ssl/ca.pem",
@@ -190,8 +190,8 @@ describe("useConnectionForm — toParams", () => {
     expect(result.current.toParams("ref")).toEqual({
       host: "db.internal",
       port: 5433,
-      database: "omniserve",
-      username: "omniserve",
+      database: "appdb",
+      username: "appuser",
       secretRef: "ref",
       tlsMode: "verify-ca",
       tlsCaPath: "/etc/ssl/ca.pem",

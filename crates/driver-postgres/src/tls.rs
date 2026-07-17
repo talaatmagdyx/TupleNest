@@ -12,7 +12,11 @@
 
 use std::sync::Arc;
 
-use rustls::pki_types::CertificateDer;
+// `PemObject` is what replaced the rustls-pemfile crate: rustls-pki-types, which
+// is already here under rustls, absorbed the PEM parsing and rustls-pemfile was
+// left unmaintained (flagged by `cargo deny check advisories`). Same parser,
+// one fewer dependency, and one that is still looked after.
+use rustls::pki_types::{pem::PemObject, CertificateDer};
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tuplenest_driver_api::{ConnectionConfig, DriverError, ErrorCategory, TlsMode};
 
@@ -71,7 +75,7 @@ pub fn build(config: &ConnectionConfig) -> Result<TlsSetup, DriverError> {
                         format!("Cannot read CA file {path}: {e}"),
                     )
                 })?;
-                let certs: Vec<CertificateDer<'_>> = rustls_pemfile::certs(&mut pem.as_slice())
+                let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(&pem)
                     .collect::<Result<_, _>>()
                     .map_err(|e| {
                         DriverError::new(ErrorCategory::Tls, format!("Invalid CA file {path}: {e}"))

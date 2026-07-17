@@ -27,6 +27,11 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+# These crates are the internals of one desktop app, not libraries anyone is
+# meant to depend on. Saying so stops `cargo publish` from ever sending them to
+# crates.io by accident, and lets them go on referring to each other by path
+# without a version — which is exactly what a workspace is for.
+publish = false
 
 [workspace.dependencies]
 async-trait = "0.1"

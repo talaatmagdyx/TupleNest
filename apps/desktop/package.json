@@ -12,7 +12,8 @@
     "tauri": "tauri",
     "build:app": "tauri build --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

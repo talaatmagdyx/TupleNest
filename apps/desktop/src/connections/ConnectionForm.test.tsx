@@ -6,12 +6,12 @@ import type { TestStage } from "../ipc/types";
 
 const base = {
   isEdit: false,
-  profileName: "engagement_database",
+  profileName: "customer_analytics",
   environment: "dev",
   host: "localhost",
   port: 5432,
-  database: "omniserve",
-  username: "omniserve",
+  database: "appdb",
+  username: "appuser",
   password: "",
   hasSecret: false,
   tlsMode: "prefer",
@@ -68,7 +68,7 @@ describe("ConnectionForm — shape", () => {
 
   it("shows the values it was given", () => {
     render(<ConnectionForm {...base} />);
-    expect(screen.getByDisplayValue("engagement_database")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("customer_analytics")).toBeInTheDocument();
     expect(screen.getByDisplayValue("localhost")).toBeInTheDocument();
     expect(screen.getByDisplayValue("5432")).toBeInTheDocument();
   });

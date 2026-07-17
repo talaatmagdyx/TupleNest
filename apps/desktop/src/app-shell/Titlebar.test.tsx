@@ -9,11 +9,11 @@ import { kbd } from "../lib/platform";
 const conn = (over: Partial<ConnectionRecord> = {}): ConnectionRecord =>
   ({
     id: "c1",
-    name: "engagement_database",
+    name: "customer_analytics",
     host: "localhost",
     port: 5432,
-    database: "omniserve",
-    username: "omniserve",
+    database: "appdb",
+    username: "appuser",
     environment: "dev",
     ...over,
   }) as ConnectionRecord;
@@ -21,8 +21,8 @@ const conn = (over: Partial<ConnectionRecord> = {}): ConnectionRecord =>
 const base = {
   theme: "dark" as const,
   connected: true,
-  activeName: "engagement_database",
-  activeUserHost: "omniserve@localhost:5432",
+  activeName: "customer_analytics",
+  activeUserHost: "appuser@localhost:5432",
   activeEnv: "dev",
   saved: [conn()],
   activeId: "c1",
@@ -44,14 +44,14 @@ describe("Titlebar", () => {
 
   it("names the live connection and its target", () => {
     render(<Titlebar {...base} />);
-    expect(screen.getByText("engagement_database")).toBeInTheDocument();
-    expect(screen.getByText("omniserve@localhost:5432")).toBeInTheDocument();
+    expect(screen.getByText("customer_analytics")).toBeInTheDocument();
+    expect(screen.getByText("appuser@localhost:5432")).toBeInTheDocument();
   });
 
   it("says Not connected rather than showing a stale name", () => {
     render(<Titlebar {...base} connected={false} />);
     expect(screen.getByText("Not connected")).toBeInTheDocument();
-    expect(screen.queryByText("omniserve@localhost:5432")).not.toBeInTheDocument();
+    expect(screen.queryByText("appuser@localhost:5432")).not.toBeInTheDocument();
   });
 
   it("hides the env pill when there is no session to describe", () => {
@@ -82,14 +82,14 @@ describe("Titlebar", () => {
   it("opens the menu", async () => {
     const onToggleConnMenu = vi.fn();
     render(<Titlebar {...base} onToggleConnMenu={onToggleConnMenu} />);
-    await userEvent.click(screen.getByText("engagement_database"));
+    await userEvent.click(screen.getByText("customer_analytics"));
     expect(onToggleConnMenu).toHaveBeenCalled();
   });
 
   it("lists profiles in the open menu", () => {
     render(<Titlebar {...base} connMenu />);
     expect(screen.getByText("Switch connection")).toBeInTheDocument();
-    expect(screen.getByText("omniserve@localhost:5432/omniserve")).toBeInTheDocument();
+    expect(screen.getByText("appuser@localhost:5432/appdb")).toBeInTheDocument();
   });
 
   it("marks the active profile in the menu", () => {
@@ -110,7 +110,7 @@ describe("Titlebar", () => {
   it("switches profile from the menu", async () => {
     const onSelectProfile = vi.fn();
     render(<Titlebar {...base} connMenu onSelectProfile={onSelectProfile} />);
-    await userEvent.click(screen.getByText("omniserve@localhost:5432/omniserve"));
+    await userEvent.click(screen.getByText("appuser@localhost:5432/appdb"));
     expect(onSelectProfile).toHaveBeenCalledWith(base.saved[0]);
   });
 

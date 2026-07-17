@@ -4,6 +4,7 @@ description = "TupleNest desktop application (Tauri 2 shell)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

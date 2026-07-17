@@ -2,7 +2,32 @@ name: CI
 on:
   push: { branches: [main] }
   pull_request:
+  # Advisories are published against code that has not changed. Without a
+  # schedule, a new RUSTSEC entry is only noticed by whoever happens to push
+  # next — which on a quiet week is nobody.
+  schedule:
+    - cron: "23 6 * * 1"
 jobs:
+  # Supply chain: is anything we link known-vulnerable, may we ship its licence,
+  # and did it come from crates.io. Config and reasoning in deny.toml.
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  # Prose, comments and identifiers. Config and the list of deliberate
+  # exceptions in _typos.toml.
+  typos:
+    name: typos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crate-ci/typos@master
+
   rust:
     strategy:
       fail-fast: false
@@ -48,4 +73,7 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm test
+      # Coverage rather than a bare `vitest run`: same tests, but it also
+      # enforces the thresholds in vitest.config.ts. Left as `npm test`, the
+      # thresholds would sit in the config being decorative.
+      - run: npm run test:coverage

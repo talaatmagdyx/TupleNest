@@ -8,8 +8,8 @@ const invokeMock = vi.mocked(invoke);
 
 const session = (over: Record<string, unknown> = {}) => ({
   pid: 4242,
-  user: "omniserve",
-  database: "omniserve",
+  user: "appuser",
+  database: "appdb",
   application: "psql",
   clientAddr: "127.0.0.1",
   state: "active",

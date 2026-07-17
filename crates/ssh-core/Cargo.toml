@@ -3,6 +3,7 @@ name = "tuplenest-ssh-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "SSH tunnels for database connections: local listener over direct-tcpip channels"
 
 [dependencies]

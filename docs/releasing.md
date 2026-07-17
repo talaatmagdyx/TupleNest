@@ -137,15 +137,16 @@ update.
 
 ## 3. The update endpoint
 
-`plugins.updater.endpoints` currently points at:
+`plugins.updater.endpoints` points at the release itself:
 
 ```
-https://releases.tuplenest.app/{{target}}/{{arch}}/{{current_version}}
+https://github.com/talaatmagdyx/TupleNest/releases/latest/download/latest.json
 ```
 
-**That host does not exist yet** — until it does, the in-app check fails
-silently by design (the user is never nagged about a failed check). Point it at
-whatever you actually host; a GitHub Releases `latest.json` is the usual choice:
+There is no server to run and no domain to keep alive. `tauri-action` builds
+that `latest.json` from the per-platform `.sig` files and uploads it beside the
+installers (`includeUpdaterJson: true` in the release workflow), so it looks
+like this without anyone writing it:
 
 ```json
 {
@@ -155,14 +156,22 @@ whatever you actually host; a GitHub Releases `latest.json` is the usual choice:
   "platforms": {
     "darwin-aarch64": {
       "signature": "<contents of the .sig file>",
-      "url": "https://github.com/you/tuplenest/releases/download/v1.3.0/TupleNest_1.3.0_aarch64.app.tar.gz"
+      "url": "https://github.com/talaatmagdyx/TupleNest/releases/download/v1.3.0/TupleNest_1.3.0_aarch64.app.tar.gz"
     }
   }
 }
 ```
 
+**Releases are created as drafts, and a draft is not `latest`.** So the URL
+above 404s — and every installed copy sees no update — until you press Publish.
+That is the intended sequence rather than a bug: the release becomes public and
+becomes visible to the updater at the same moment. It does mean a draft release
+is never a live test of the updater; the first real test is the first publish.
+
 The app verifies that signature against the public key baked into the binary, so
-a compromised release host still cannot push code to your users.
+a compromised release host still cannot push code to your users. This is what
+makes hosting on someone else's domain acceptable: GitHub can serve the bytes,
+but only the holder of the private key can make the app accept them.
 
 ## Safety behaviour
 

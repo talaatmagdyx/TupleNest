@@ -4,6 +4,7 @@ description = "Structured logging with secret redaction"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [dependencies]
 tracing = { workspace = true }

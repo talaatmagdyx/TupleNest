@@ -5,7 +5,7 @@ import StatusBar from "./StatusBar";
 const base = {
   connected: true,
   isProd: false,
-  connName: "engagement_database",
+  connName: "customer_analytics",
   tlsMode: "verify-full",
   explorerSource: "live" as const,
   rowsInfo: "200 rows · 12 ms",
@@ -19,13 +19,13 @@ const base = {
 describe("StatusBar", () => {
   it("names the connection when connected", () => {
     render(<StatusBar {...base} />);
-    expect(screen.getByText("engagement_database")).toBeInTheDocument();
+    expect(screen.getByText("customer_analytics")).toBeInTheDocument();
   });
 
   it("says disconnected rather than showing a stale name", () => {
     render(<StatusBar {...base} connected={false} />);
     expect(screen.getByText("disconnected")).toBeInTheDocument();
-    expect(screen.queryByText("engagement_database")).not.toBeInTheDocument();
+    expect(screen.queryByText("customer_analytics")).not.toBeInTheDocument();
   });
 
   it("greys the dot when disconnected", () => {

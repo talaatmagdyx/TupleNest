@@ -3,6 +3,7 @@ name = "tuplenest-credential-store"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 description = "TupleNest credential store: secrets live only in the OS keychain, referenced by opaque IDs"
 
 [dependencies]

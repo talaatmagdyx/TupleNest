@@ -9,8 +9,8 @@ const invokeMock = vi.mocked(invoke);
 const PARAMS = {
   host: "localhost",
   port: 5432,
-  database: "omniserve",
-  username: "omniserve",
+  database: "appdb",
+  username: "appuser",
   secretRef: null,
   tlsMode: "verify-full",
   tlsCaPath: null,

@@ -148,7 +148,7 @@ describe("App — connecting", () => {
     // A silent failure leaves the titlebar saying "Not connected" with no
     // reason, and the user re-clicking a button that will never work.
     be.on("pg_connect", () => {
-      throw new Error('password authentication failed for user "omniserve"');
+      throw new Error('password authentication failed for user "appuser"');
     });
     const user = await mount();
     await palette(user, "Connect to local dev");

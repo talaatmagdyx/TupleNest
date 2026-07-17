@@ -3,6 +3,7 @@ name = "tuplenest-metadata-core"
 version = "0.0.1"
 edition = "2021"
 license = "MIT"
+publish = false
 description = "TupleNest metadata-core crate"
 
 [dependencies]

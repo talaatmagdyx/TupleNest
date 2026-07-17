@@ -7,11 +7,11 @@ import type { ConnectionRecord } from "../ipc/types";
 const conn = (over: Partial<ConnectionRecord> = {}): ConnectionRecord =>
   ({
     id: "c1",
-    name: "engagement_database",
+    name: "customer_analytics",
     host: "localhost",
     port: 5432,
-    database: "omniserve",
-    username: "omniserve",
+    database: "appdb",
+    username: "appuser",
     environment: "dev",
     secretRef: null,
     tlsMode: "prefer",
@@ -51,8 +51,8 @@ describe("SavedList", () => {
 
   it("shows the name and the full target", () => {
     render(<SavedList {...base} />);
-    expect(screen.getByText("engagement_database")).toBeInTheDocument();
-    expect(screen.getByText("omniserve@localhost:5432/omniserve")).toBeInTheDocument();
+    expect(screen.getByText("customer_analytics")).toBeInTheDocument();
+    expect(screen.getByText("appuser@localhost:5432/appdb")).toBeInTheDocument();
   });
 
   it("shows the environment pill", () => {
@@ -86,7 +86,7 @@ describe("SavedList", () => {
   it("loads a profile when its card is clicked", async () => {
     const onLoad = vi.fn();
     render(<SavedList {...base} onLoad={onLoad} />);
-    await userEvent.click(screen.getByText("engagement_database"));
+    await userEvent.click(screen.getByText("customer_analytics"));
     expect(onLoad).toHaveBeenCalledWith(base.saved[0]);
   });
 
@@ -110,7 +110,7 @@ describe("SavedList", () => {
 
   it("lists every saved profile", () => {
     render(<SavedList {...base} saved={[conn(), { ...conn(), id: "c2", name: "second" }]} />);
-    expect(screen.getByText("engagement_database")).toBeInTheDocument();
+    expect(screen.getByText("customer_analytics")).toBeInTheDocument();
     expect(screen.getByText("second")).toBeInTheDocument();
   });
 });

@@ -1,0 +1,64 @@
+version: 2
+
+# An unmaintained dependency is a security finding waiting to happen, and
+# `cargo deny check advisories` will fail the build the day one lands. This is
+# what keeps that from being a surprise.
+#
+# Grouped and monthly on purpose: a database IDE does not need thirty PRs a
+# week, and a wall of noise is how the one PR that mattered gets closed
+# unread. Security updates are the exception — those come through immediately
+# and ungrouped.
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      # Tauri's crates move together; separate PRs for each would not build.
+      tauri:
+        patterns:
+          - "tauri"
+          - "tauri-*"
+      rust-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: "/apps/desktop"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      tauri-js:
+        patterns:
+          - "@tauri-apps/*"
+      # These move in lockstep and are only ever exercised together.
+      testing:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+          - "@testing-library/*"
+          - "jsdom"
+      lint:
+        patterns:
+          - "eslint"
+          - "eslint-*"
+          - "@eslint/*"
+          - "typescript-eslint"
+      js-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # The actions in these workflows hold the signing key and publish releases,
+  # so a stale, compromised action tag is a direct route to shipping code.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - "*"

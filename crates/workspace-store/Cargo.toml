@@ -4,6 +4,7 @@ description = "Local SQLite application store: settings, workspaces, layouts, ta
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [dependencies]
 rusqlite = { workspace = true }

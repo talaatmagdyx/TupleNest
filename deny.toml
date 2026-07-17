@@ -1,0 +1,80 @@
+# cargo-deny: supply-chain checks over the Rust dependency graph.
+#
+# This app holds database credentials and opens network connections, so what it
+# links against matters. Four questions, each a section below: is anything
+# known-vulnerable, may we ship it, are we pulling the same thing twice, and did
+# it come from somewhere we trust.
+#
+#     cargo deny check
+
+[advisories]
+# RustSec. Anything unpatched fails the build rather than filing a note nobody
+# reads.
+yanked = "deny"
+
+# Unmaintained crates we *chose* are a problem we can act on. Unmaintained
+# crates that arrive under Tauri — the ten gtk-rs GTK3 bindings, unic-*,
+# proc-macro-error, rustls-pemfile — are not: there is no version of this app
+# that does not have them, and failing the build daily over someone else's
+# dependency tree only teaches people to ignore the check.
+unmaintained = "workspace"
+
+ignore = [
+  # RUSTSEC-2023-0071 — Marvin Attack: RSA private-key recovery through a
+  # timing sidechannel. No patched version exists; the RustCrypto rewrite to
+  # constant-time is still in progress. Reachable here as
+  #   rsa <- ssh-key/russh <- tuplenest-ssh-core <- the SSH tunnel feature.
+  #
+  # Kept rather than papered over, because it is a real exposure with real
+  # limits worth stating:
+  #  - It only applies when tunnelling with an *RSA* key. Ed25519 keys do not
+  #    touch this code path at all, which is the mitigation to prefer.
+  #  - Exploiting it means timing our private-key operations over the network,
+  #    so the attacker is the SSH host itself or someone sitting on that hop.
+  #  - The alternative today is dropping SSH tunnels entirely, which would push
+  #    people onto exposing Postgres directly — the worse trade.
+  #
+  # Revisit when RustCrypto/RSA#626 lands: this line should then be deleted,
+  # not renewed.
+  "RUSTSEC-2023-0071",
+]
+
+[licenses]
+# Permissive only, plus the copyleft-for-the-file licences that are fine to link.
+# A licence not on this list stops the build on purpose: it should be a decision,
+# not something that arrives in a lockfile.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "CDLA-Permissive-2.0",
+  "BSL-1.0",
+  "OpenSSL",
+  "CC0-1.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+# Duplicate versions of a crate are normal in a graph this size and are not
+# worth failing over; they are worth seeing.
+multiple-versions = "warn"
+# A wildcard on a crates.io dependency means "ship whatever turns up", which is
+# how a bad release becomes your problem automatically.
+wildcards = "deny"
+# The workspace's own crates refer to each other by path with no version. Cargo
+# records that as a wildcard, but nothing is being pulled from a registry and
+# these are never published — the version is whatever is in this commit.
+allow-wildcard-paths = true
+
+[sources]
+# Only crates.io. An unknown registry or a git dependency is how a supply-chain
+# problem walks in wearing a familiar name.
+unknown-registry = "deny"
+unknown-git = "deny"

@@ -4,6 +4,7 @@ description = "PostgreSQL driver: connect, stream, cancel, full type rendering"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
@@ -20,7 +21,6 @@ hex = "0.4"
 tokio-postgres-rustls = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-native-certs = "0.8"
-rustls-pemfile = "2"
 uuid = { workspace = true }
 tuplenest-driver-api = { path = "../driver-api" }
 
