@@ -7,6 +7,11 @@ dist
 # frontend build output
 apps/desktop/dist
 apps/desktop/src-tauri/gen
+coverage
+
+# Vite writes these next to the config while loading it and does not always
+# clean them up. eslint already ignores them; git should too.
+*.timestamp-*.mjs
 
 # Signing keys — never commit
 *.key

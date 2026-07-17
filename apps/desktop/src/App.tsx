@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { kbd } from "./lib/platform";
 import { errText } from "./lib/text";
 import { invoke } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
@@ -1062,12 +1063,12 @@ export default function App() {
    */
   const paletteItems = useMemo<PaletteItem[]>(() => {
     const items: PaletteItem[] = [
-      { icon: "▶", label: "Run query", type: "Action", kbd: "⌘↵", exec: () => doRun() },
-      { icon: "⧉", label: "Format SQL", type: "Action", kbd: "⌘⇧F", exec: doFormat },
+      { icon: "▶", label: "Run query", type: "Action", kbd: kbd("mod", "enter"), exec: () => doRun() },
+      { icon: "⧉", label: "Format SQL", type: "Action", kbd: kbd("mod", "shift", "F"), exec: doFormat },
       { icon: "✎", label: "Save current query as snippet", type: "Action", exec: saveSnippet },
-      { icon: "＋", label: "New query tab", type: "Action", kbd: "⌘T", exec: newTab },
-      { icon: "◐", label: "Toggle theme", type: "Action", kbd: "⌘⇧L", exec: () => applyTheme(theme === "dark" ? "light" : "dark") },
-      { icon: "⛁", label: "Open connection…", type: "Action", kbd: "⌘O", exec: () => setOverlay("connEditor") },
+      { icon: "＋", label: "New query tab", type: "Action", kbd: kbd("mod", "T"), exec: newTab },
+      { icon: "◐", label: "Toggle theme", type: "Action", kbd: kbd("mod", "shift", "L"), exec: () => applyTheme(theme === "dark" ? "light" : "dark") },
+      { icon: "⛁", label: "Open connection…", type: "Action", kbd: kbd("mod", "O"), exec: () => setOverlay("connEditor") },
       { icon: "＋", label: "New connection…", type: "Action", exec: newProfile },
       { icon: "⌥", label: "Show EXPLAIN plan", type: "Action", exec: () => runExplain() },
       { icon: "⤓", label: "Import CSV…", type: "Action", exec: () => setOverlay("import") },
@@ -1082,7 +1083,7 @@ export default function App() {
     const live: PaletteItem[] = !connected
       ? []
       : [
-          { icon: "⌕", label: "Find anything (all schemas)…", type: "Action", kbd: "⌘P", exec: () => setOverlay("search") },
+          { icon: "⌕", label: "Find anything (all schemas)…", type: "Action", kbd: kbd("mod", "P"), exec: () => setOverlay("search") },
           { icon: "◱", label: "Index health (unused & recoverable)…", type: "Action", exec: () => loadHealth("indexes") },
           { icon: "☰", label: "Vacuum & bloat…", type: "Action", exec: () => loadHealth("tables") },
           { icon: "⏱", label: "Top queries…", type: "Action", exec: () => loadHealth("queries") },
@@ -1323,10 +1324,10 @@ export default function App() {
                   {/* Not `onClick={newTab}` — that hands the MouseEvent to
                       newTab as its init options. */}
                   <button className="btn primary" onClick={() => newTab()}>
-                    New query <span className="kbd">⌘T</span>
+                    New query <span className="kbd">{kbd("mod", "T")}</span>
                   </button>
                   <button className="btn" onClick={() => setOverlay("palette")}>
-                    Command palette <span className="kbd">⌘K</span>
+                    Command palette <span className="kbd">{kbd("mod", "K")}</span>
                   </button>
                 </div>
               </div>

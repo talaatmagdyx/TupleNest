@@ -1,4 +1,5 @@
 import type { ConnectionRecord } from "../ipc/types";
+import { kbd } from "../lib/platform";
 import { envMeta } from "../lib/sql";
 import { GearIcon, SidebarIcon, BrandMark } from "../lib/icons";
 
@@ -87,7 +88,7 @@ export default function Titlebar(p: Props) {
       <div style={{ flex: 1 }} />
       <button className="palette-btn" onClick={p.onOpenPalette}>
         <span>Search &amp; commands</span>
-        <span className="kbd">⌘K</span>
+        <span className="kbd">{kbd("mod", "K")}</span>
       </button>
       <button className="icon-btn" title="Toggle theme" onClick={p.onToggleTheme}>
         {p.theme === "dark" ? "☾" : "☀"}

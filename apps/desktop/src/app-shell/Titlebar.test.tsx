@@ -3,6 +3,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Titlebar from "./Titlebar";
 import type { ConnectionRecord } from "../ipc/types";
+// Tracks the keyboard; Overlays.test.tsx pins the labels per platform.
+import { kbd } from "../lib/platform";
 
 const conn = (over: Partial<ConnectionRecord> = {}): ConnectionRecord =>
   ({
@@ -121,7 +123,7 @@ describe("Titlebar", () => {
 
   it("shows the palette shortcut", () => {
     render(<Titlebar {...base} />);
-    expect(screen.getByText("⌘K")).toBeInTheDocument();
+    expect(screen.getByText(kbd("mod", "K"))).toBeInTheDocument();
   });
 
   it("opens the palette, settings and the sidebar toggle", async () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
@@ -398,11 +398,32 @@ describe("Settings", () => {
 });
 
 describe("Cheatsheet", () => {
+  /** Say which keyboard we mean rather than inheriting jsdom's. */
+  const platform = (value: string) => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue(value);
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("");
+  };
+
+  // Nothing else in this file restores mocks, and a stubbed navigator that
+  // outlives its test is a leak into whatever runs next.
+  afterEach(() => vi.restoreAllMocks());
+
   it("lists the shortcuts with their keys", () => {
+    platform("MacIntel");
     render(<Cheatsheet onClose={vi.fn()} />);
     expect(screen.getByText("Run query")).toBeInTheDocument();
-    expect(screen.getByText("⌘ ↵")).toBeInTheDocument();
+    expect(screen.getByText("⌘↵")).toBeInTheDocument();
     expect(screen.getByText("Command palette")).toBeInTheDocument();
+  });
+
+  it("names keys a Windows keyboard actually has", () => {
+    // The cheatsheet is the one screen whose entire job is telling you what to
+    // press. Printing ⌘ to someone without a ⌘ key is the whole bug.
+    platform("Win32");
+    render(<Cheatsheet onClose={vi.fn()} />);
+    expect(screen.getByText("Ctrl+Enter")).toBeInTheDocument();
+    expect(screen.getByText("Ctrl+Shift+F")).toBeInTheDocument();
+    expect(screen.queryByText(/⌘/)).not.toBeInTheDocument();
   });
 
   it("closes", async () => {

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from "react";
+import { enterKey, kbd } from "../lib/platform";
 
 /* ---------- shared ---------- */
 
@@ -100,7 +101,9 @@ export function Palette(p: {
         </div>
         <div className="pal-foot">
           <span>↑↓ navigate</span>
-          <span>↵ select</span>
+          {/* ↑↓ and esc are on every keyboard; ↵ is Apple's way of writing a
+              key that says "Enter" on a PC. */}
+          <span>{enterKey()} select</span>
           <span>esc dismiss</span>
         </div>
       </div>
@@ -364,12 +367,15 @@ export function Settings(p: {
 
 /* ---------- keyboard cheatsheet ---------- */
 
-const SHORTCUTS: [string, string][] = [
-  ["Run query", "⌘ ↵"],
-  ["Command palette", "⌘ K"],
-  ["New query tab", "⌘ T"],
-  ["Format SQL", "⌘ ⇧ F"],
-  ["Copy selected cell", "⌘ C"],
+/** Built per-platform: this is the screen whose whole job is telling people
+ *  which keys to press, so it is the last place that should name a key the
+ *  keyboard does not have. */
+const shortcuts = (): [string, string][] => [
+  ["Run query", kbd("mod", "enter")],
+  ["Command palette", kbd("mod", "K")],
+  ["New query tab", kbd("mod", "T")],
+  ["Format SQL", kbd("mod", "shift", "F")],
+  ["Copy selected cell", kbd("mod", "C")],
   ["Cancel running query", "Esc"],
   ["Close overlay", "Esc"],
   ["This cheatsheet", "?"],
@@ -381,7 +387,7 @@ export function Cheatsheet(p: { onClose: () => void }) {
       <div className="modal" style={{ width: 420 }}>
         <ModalHead title="Keyboard shortcuts" onClose={p.onClose} />
         <div className="modal-body">
-          {SHORTCUTS.map(([label, keys]) => (
+          {shortcuts().map(([label, keys]) => (
             <div key={label} className="kv-row">
               <span className="kl">{label}</span>
               <span className="kbd">{keys}</span>

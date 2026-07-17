@@ -88,7 +88,11 @@ a { color: var(--tn-accent); text-decoration: none; }
 /* ===== Title bar ===== */
 .titlebar {
   flex: none; height: 42px; display: flex; align-items: center; gap: 10px;
-  padding: 0 12px 0 84px; /* leave room for native traffic lights */
+  /* No inset by default. The 84px on the left was room for the macOS traffic
+     lights, which only macOS has — on Windows and Linux the window controls are
+     on the *right*, so this was a wide empty gap on one side and a cramped edge
+     on the other. `data-tn-os` is set in main.tsx before the first render. */
+  padding: 0 12px;
   border-bottom: 1px solid var(--tn-bs); background: var(--tn-s1);
   -webkit-app-region: drag; user-select: none;
 }
@@ -1043,7 +1047,7 @@ body { background: var(--tn-desk); background-image: none; }
 
 /* macOS traffic-light room: shift titlebar content right of the controls.
    The rail sits below the titlebar, so only the titlebar needs the inset. */
-.titlebar { padding-left: 78px; }
+[data-tn-os="macos"] .titlebar { padding-left: 78px; }
 /* The far-left activity rail aligns under the traffic lights cleanly */
 .activity-rail { padding-top: 8px; }
 

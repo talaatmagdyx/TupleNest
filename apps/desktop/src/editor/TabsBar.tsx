@@ -1,3 +1,4 @@
+import { kbd } from "../lib/platform";
 export type QueryTab = { name: string; sql: string; dirty: boolean };
 
 type Props = {
@@ -37,7 +38,7 @@ export default function TabsBar(p: Props) {
           </span>
         </button>
       ))}
-      <button className="qtab-new" title="New tab (⌘T)" onClick={p.onNew}>
+      <button className="qtab-new" title={`New tab (${kbd("mod", "T")})`} onClick={p.onNew}>
         ＋
       </button>
     </div>

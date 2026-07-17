@@ -1,4 +1,5 @@
 import type { QueryResult } from "../ipc/types";
+import { kbd } from "../lib/platform";
 import type { Catalog } from "../lib/complete";
 import type { CellEdit, EditTarget } from "../lib/dml";
 import Grid from "../results/Grid";
@@ -78,7 +79,7 @@ export default function QueryPanel(p: Props) {
         <button className="btn primary" onClick={p.onRun} disabled={!p.connected || p.running}>
           {p.running ? <span className="spin" /> : <PlayIcon />} {p.running ? "Running" : "Run"}{" "}
           <span className="kbd" style={{ background: "rgba(0,0,0,.2)", color: "inherit", borderColor: "transparent" }}>
-            ⌘↵
+            {kbd("mod", "enter")}
           </span>
         </button>
         <button className="btn" onClick={p.onCancel} disabled={!p.running}>
@@ -108,7 +109,7 @@ export default function QueryPanel(p: Props) {
         <button className="btn" onClick={() => p.onExplain()} disabled={!p.connected}>
           Explain
         </button>
-        <button className="btn" onClick={p.onFormat} title="Format SQL (⌘⇧F)">
+        <button className="btn" onClick={p.onFormat} title={`Format SQL (${kbd("mod", "shift", "F")})`}>
           Format
         </button>
         <div className="menu-wrap">
@@ -218,11 +219,11 @@ export default function QueryPanel(p: Props) {
             {!p.lastError && !r && !p.connected && (
               <div className="center-note">
                 <div className="big">Not connected</div>
-                <div>Connect to a database to run queries — ⌘K or the connection menu.</div>
+                <div>Connect to a database to run queries — {kbd("mod", "K")} or the connection menu.</div>
               </div>
             )}
             {!p.lastError && !r && p.connected && (
-              <div className="center-note">Run the query (⌘↵) to see results</div>
+              <div className="center-note">Run the query ({kbd("mod", "enter")}) to see results</div>
             )}
             {!p.lastError && r && r.columns.length === 0 && (
               <div className="center-note">

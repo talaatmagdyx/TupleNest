@@ -5,6 +5,7 @@ import {
   HistoryRailIcon,
   MonitorRailIcon,
 } from "../lib/icons";
+import { kbd } from "../lib/platform";
 
 export type RailView = "explorer" | "history";
 
@@ -55,7 +56,7 @@ export default function ActivityRail(p: Props) {
     <nav className="activity-rail">
       <div className="rail-group">
         <Item
-          title="Explorer (⌘B)"
+          title={`Explorer (${kbd("mod", "B")})`}
           active={p.view === "explorer" && !p.collapsed}
           onClick={() => p.onView("explorer")}
         >

@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import TabsBar from "./TabsBar";
+// The hint tracks the keyboard; this test is about the button, not the glyph.
+// Overlays.test.tsx is where the labels themselves are pinned per platform.
+import { kbd } from "../lib/platform";
 
 const tabs = [
   { name: "a.sql", sql: "select 1", dirty: false },
@@ -55,13 +58,13 @@ describe("TabsBar", () => {
   it("opens a new tab", async () => {
     const onNew = vi.fn();
     render(<TabsBar {...base} onNew={onNew} />);
-    await userEvent.click(screen.getByTitle("New tab (⌘T)"));
+    await userEvent.click(screen.getByTitle(`New tab (${kbd("mod", "T")})`));
     expect(onNew).toHaveBeenCalled();
   });
 
   it("renders nothing but the plus when there are no tabs", () => {
     const { container } = render(<TabsBar {...base} tabs={[]} />);
     expect(container.querySelectorAll(".qtab")).toHaveLength(0);
-    expect(screen.getByTitle("New tab (⌘T)")).toBeInTheDocument();
+    expect(screen.getByTitle(`New tab (${kbd("mod", "T")})`)).toBeInTheDocument();
   });
 });
