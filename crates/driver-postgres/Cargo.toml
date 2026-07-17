@@ -28,3 +28,9 @@ tuplenest-driver-api = { path = "../driver-api" }
 [dev-dependencies]
 hex = "0.4"
 tokio = { workspace = true }
+# Synthesises a CA and leaf certificates in-process so the VerifyCa verifier
+# can be tested for what it actually does. The live server's cert names both
+# `localhost` and `127.0.0.1`, so no address that reaches it is a name
+# mismatch — the one case that distinguishes verify-ca from verify-full cannot
+# be produced against it. Dev-only; it is not linked into the app.
+rcgen = "0.13"

@@ -1347,3 +1347,53 @@ async fn array_elements_are_quoted_like_postgres_does() {
         assert_eq!(text_of(&first_row(sql).await[0]), want, "for {sql}");
     }
 }
+
+/// `render_raw` decides text-vs-hex from `Type::kind()`. The unit tests build
+/// `Kind::Enum` by hand, which proves the branch but not that tokio-postgres
+/// ever *reports* `Kind::Enum` for a real column — and if it reported
+/// `Kind::Simple` instead, every enum in the product would silently become hex.
+/// Only a real server can answer that, so it is asked here.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn unknown_types_render_from_the_type_not_from_a_guess() {
+    let mut s = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+
+    s.execute(req("DROP TYPE IF EXISTS tn_mood CASCADE"), &NullSink)
+        .await
+        .unwrap();
+    s.execute(
+        req("CREATE TYPE tn_mood AS ENUM ('happy', 'sad')"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+
+    // An enum must survive as its label.
+    let sink = CollectSink::default();
+    s.execute(req("SELECT 'happy'::tn_mood"), &sink)
+        .await
+        .unwrap();
+    let cell = sink.rows.lock().unwrap()[0][0].clone();
+    assert_eq!(
+        cell,
+        CellValue::Text("happy".to_string()),
+        "an enum must render as its label — if this is hex, Kind::Enum is not \
+         reported and binary_is_text needs another way to recognise enums"
+    );
+
+    // ...and money must never be mistaken for text, whatever its bytes.
+    let sink = CollectSink::default();
+    s.execute(req("SELECT 1.00::money"), &sink).await.unwrap();
+    let cell = sink.rows.lock().unwrap()[0][0].clone();
+    assert!(
+        matches!(cell, CellValue::Other { .. }),
+        "money must not be rendered as text, got {cell:?}"
+    );
+
+    s.execute(req("DROP TYPE IF EXISTS tn_mood CASCADE"), &NullSink)
+        .await
+        .unwrap();
+}

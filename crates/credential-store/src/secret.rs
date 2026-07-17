@@ -10,8 +10,15 @@
 //! the value, copies exist that it will never see:
 //!
 //! - **`tokio_postgres::Config`** takes the password as `&str` and copies it
-//!   into its own storage (see `pg.rs`, which calls `expose()`). That copy
-//!   lives as long as the connection and is not wiped when it drops.
+//!   into its own `Vec<u8>`. That copy is **short-lived** — `pg_config` builds
+//!   the `Config` as a local, `connect` borrows it, and it drops when the call
+//!   returns. Nothing retains it: `tokio_postgres::Client` holds
+//!   `socket_config`, `ssl_mode`, `process_id` and `secret_key`, and no
+//!   password; within the crate the word appears only in `config.rs` and
+//!   `connect_raw.rs`, which uses it to authenticate and does not keep it. But
+//!   `Config` has no `Drop` that wipes, so the bytes are left in freed heap.
+//! - **`connect_raw`'s authentication buffers** (SCRAM/md5 intermediates) are
+//!   likewise not wiped, and are not reachable from here.
 //! - **The `keyring` crate** builds a `String` from an OS buffer in
 //!   `get_password()`. `Secret::new` moves that `String` rather than copying
 //!   it, so the final allocation is covered — but keyring's intermediate
@@ -19,11 +26,16 @@
 //! - **The OS.** A page holding any of the above can be swapped to disk or
 //!   captured in a core dump before any wipe runs. Nothing at this layer helps.
 //!
-//! So the honest threat model is narrow: this reduces the *window* in which a
-//! password sits in freed heap memory, and it makes an accidental `{:?}` safe.
-//! It is not a defence against an attacker who can read this process's memory —
-//! against that, the keychain is the control that matters, and once a password
-//! is in a `tokio_postgres::Config` it is readable regardless.
+//! So the honest threat model is narrow: this shortens the *window* in which a
+//! password sits in freed heap, and it makes an accidental `{:?}` safe. It is
+//! not a defence against an attacker who can read this process's memory. The
+//! keychain is the control that matters.
+//!
+//! An earlier version of this note claimed the `Config` copy "lives as long as
+//! the connection". That was written without reading `tokio_postgres`, and it
+//! is wrong — the copy dies with the `connect` call. The residue is real but
+//! brief, and overstating it was its own kind of inaccuracy: a threat model
+//! that exaggerates is as hard to act on as one that reassures.
 //!
 //! ### Why not the `zeroize` crate
 //!

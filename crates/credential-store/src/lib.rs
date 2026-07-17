@@ -6,8 +6,8 @@
 //! - `get` is never exposed over IPC; only backend crates resolve references.
 //! - [`Secret`] redacts its Debug output and zeroes its own buffer on drop.
 //!   That last part is narrower than it sounds — the driver's connection config
-//!   keeps a copy `Secret` cannot reach. See the `secret` module docs for what
-//!   is and is not covered before relying on it.
+//!   makes a brief copy `Secret` cannot reach. See the `secret` module docs for
+//!   what is and is not covered before relying on it.
 
 use tuplenest_driver_api::SecretRef;
 use uuid::Uuid;

@@ -15,7 +15,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio_postgres::error::SqlState;
-use tokio_postgres::types::{FromSql, Type};
+use tokio_postgres::types::{FromSql, Kind, Type};
 use tokio_postgres::{CancelToken, Client, NoTls, Row};
 
 mod tls;
@@ -1865,16 +1865,54 @@ impl<'a> FromSql<'a> for RawValue {
     }
 }
 
-fn render_raw(v: RawValue, ty: &Type) -> CellValue {
-    match std::str::from_utf8(&v.0) {
-        // Printable UTF-8 is the value itself (enums, and friends).
-        Ok(s) if !s.is_empty() && !s.chars().any(|c| c.is_control() && c != '\t' && c != '\n') => {
-            CellValue::Text(s.to_owned())
+/// Does this type's **binary** wire encoding happen to be its text?
+///
+/// True for very few things, and that is the point. An enum is sent as its
+/// label; `xml` as the document; a domain is sent exactly as its base type.
+/// Everything else — `money`, `interval`, `point`, ranges, `macaddr`, `bit` —
+/// has a packed binary layout that is not text and must not be read as text.
+fn binary_is_text(ty: &Type) -> bool {
+    match ty.kind() {
+        // The wire value of an enum is the variant label itself.
+        Kind::Enum(_) => true,
+        // A domain transmits exactly as whatever it wraps, so ask that.
+        Kind::Domain(inner) => binary_is_text(inner),
+        _ => {
+            *ty == Type::XML
+                || *ty == Type::TEXT
+                || *ty == Type::VARCHAR
+                || *ty == Type::BPCHAR
+                || *ty == Type::NAME
+                || *ty == Type::UNKNOWN
         }
-        _ => CellValue::Other {
-            rendered: format!("\\x{}", hex::encode(&v.0)),
-            db_type: ty.name().to_string(),
-        },
+    }
+}
+
+/// Render a value of a type we have no dedicated mapping for.
+///
+/// This used to guess: if the bytes parsed as UTF-8 and looked printable, it
+/// called them text. That is not a decode, it is a coincidence detector, and
+/// it was wrong in a way that could not be seen. `money` is an int64 of cents
+/// in binary; the eight bytes `12345678` are perfectly printable ASCII, so
+/// `$35,449,521,560,180,631.60` rendered as the string `"12345678"` — no
+/// error, no hex, just a plausible wrong answer in a cell. The same trap is
+/// open for `interval`, `point`, and anything else whose packed layout can
+/// land in printable range.
+///
+/// So: ask the type whether its binary form is text (`binary_is_text`), and
+/// otherwise show hex. Hex is ugly, but it is *visibly* raw — nobody mistakes
+/// `\x0000000000000064` for a value, whereas everyone would trust `12345678`.
+/// A wrong answer that looks right is worse than an unfriendly one that looks
+/// unfriendly.
+fn render_raw(v: RawValue, ty: &Type) -> CellValue {
+    if binary_is_text(ty) {
+        if let Ok(s) = std::str::from_utf8(&v.0) {
+            return CellValue::Text(s.to_owned());
+        }
+    }
+    CellValue::Other {
+        rendered: format!("\\x{}", hex::encode(&v.0)),
+        db_type: ty.name().to_string(),
     }
 }
 
@@ -2214,5 +2252,115 @@ mod array_element_tests {
         // actual NULL, which is a different fact about the data.
         assert_eq!(quote_array_element("NULL"), r#""NULL""#);
         assert_eq!(quote_array_element("null"), r#""null""#);
+    }
+}
+
+#[cfg(test)]
+mod render_raw_tests {
+    use super::*;
+
+    fn enum_type() -> Type {
+        Type::new(
+            "mood".to_string(),
+            100_000,
+            Kind::Enum(vec!["happy".to_string(), "sad".to_string()]),
+            "public".to_string(),
+        )
+    }
+
+    fn domain_over(inner: Type) -> Type {
+        Type::new(
+            "a_domain".to_string(),
+            100_001,
+            Kind::Domain(inner),
+            "public".to_string(),
+        )
+    }
+
+    #[test]
+    fn an_enum_renders_as_its_label() {
+        // Not a guess: an enum's binary wire value *is* the label.
+        assert_eq!(
+            render_raw(RawValue(b"happy".to_vec()), &enum_type()),
+            CellValue::Text("happy".to_string())
+        );
+    }
+
+    #[test]
+    fn printable_binary_of_a_non_text_type_is_not_read_as_text() {
+        // The regression this whole function was rewritten for. `money` is an
+        // int64 of cents in binary. These eight bytes are printable ASCII, so
+        // the old "does it look like text?" check returned Text("12345678")
+        // for a value that is actually $35,449,521,560,180,631.60. This test
+        // fails against that implementation, which is the point of it.
+        let v = render_raw(RawValue(b"12345678".to_vec()), &Type::MONEY);
+        assert!(
+            matches!(v, CellValue::Other { .. }),
+            "money must never be rendered as text, got {v:?}"
+        );
+        match v {
+            CellValue::Other { rendered, db_type } => {
+                assert_eq!(rendered, "\\x3132333435363738");
+                assert_eq!(db_type, "money");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn interval_with_printable_bytes_is_also_hex() {
+        // Same trap, different type — 16 bytes that happen to be readable.
+        assert!(matches!(
+            render_raw(RawValue(b"0123456789abcdef".to_vec()), &Type::INTERVAL),
+            CellValue::Other { .. }
+        ));
+    }
+
+    #[test]
+    fn xml_is_text_because_its_binary_form_is_the_document() {
+        assert_eq!(
+            render_raw(RawValue(b"<a>1</a>".to_vec()), &Type::XML),
+            CellValue::Text("<a>1</a>".to_string())
+        );
+    }
+
+    #[test]
+    fn a_domain_follows_the_type_it_wraps() {
+        // Domain over text transmits as text...
+        assert_eq!(
+            render_raw(RawValue(b"hello".to_vec()), &domain_over(Type::TEXT)),
+            CellValue::Text("hello".to_string())
+        );
+        // ...and a domain over money is still money, printable bytes or not.
+        assert!(matches!(
+            render_raw(RawValue(b"12345678".to_vec()), &domain_over(Type::MONEY)),
+            CellValue::Other { .. }
+        ));
+    }
+
+    #[test]
+    fn a_domain_over_an_enum_is_text() {
+        assert_eq!(
+            render_raw(RawValue(b"sad".to_vec()), &domain_over(enum_type())),
+            CellValue::Text("sad".to_string())
+        );
+    }
+
+    #[test]
+    fn invalid_utf8_in_a_text_type_falls_back_to_hex_rather_than_panicking() {
+        assert!(matches!(
+            render_raw(RawValue(vec![0xff, 0xfe]), &Type::TEXT),
+            CellValue::Other { .. }
+        ));
+    }
+
+    #[test]
+    fn an_empty_enum_value_is_empty_text_not_hex() {
+        // The old guard rejected empty strings (`!s.is_empty()`) and hexed
+        // them. An empty label is a legal value and '' is the right answer.
+        assert_eq!(
+            render_raw(RawValue(Vec::new()), &enum_type()),
+            CellValue::Text(String::new())
+        );
     }
 }
