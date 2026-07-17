@@ -116,18 +116,35 @@ nothing. The first keypair had that header and no password. Test it instead:
 
 ```sh
 cd apps/desktop
+echo probe > /tmp/probe.txt          # ← the file must exist; see below
 npx tauri signer sign -f ~/.tuplenest-keys/tuplenest.key -p "" /tmp/probe.txt
+rm -f /tmp/probe.txt /tmp/probe.txt.sig
 ```
 
-This must **fail** with `Wrong password for that key`. If it succeeds, the key
-is unprotected regardless of what the header says. (Delete the probe and any
-`.sig` afterwards.)
+Read the **error**, not the exit code. It must say:
 
-Two flags to avoid when generating: `-p <PASSWORD>` puts the passphrase in your
-shell history and in `ps`, and `--ci` skips the prompt — which yields an empty
-passphrase and a file that still claims to be encrypted. `--ci` also triggers
-off a `CI` environment variable, so check `echo $CI` is empty first. That is the
-likeliest way the first key ended up unprotected.
+```
+incorrect updater private key password: Wrong password for that key
+```
+
+**Create the file first, and check which error you got.** Skip the `echo` and
+the command still fails — with `failed to open data file /tmp/probe.txt` — and
+a failure is what you were hoping for, so it reads as a pass. It is not. That
+error means the key was unlocked and *then* the file was missing, which is what
+an unprotected key does. Verified against a throwaway `--ci` key: no file →
+"No such file or directory"; file present → signs happily. A check that reports
+success when the thing it guards against is present is worse than no check.
+
+If you see `Your file was signed successfully`, the key is unprotected
+regardless of what its header says.
+
+Two flags to avoid when generating. `-p <PASSWORD>` puts the passphrase in your
+shell history and in `ps`. `--ci` skips the prompt and generates an unprotected
+key — it does print `Warn Generating new private key without password`, but it
+is one line in a wall of output and the resulting file still says
+`rsign encrypted secret key`. **`--ci` also triggers off a `CI` environment
+variable**, so it can happen without you typing it: check `echo $CI` is empty
+first. That is the likeliest way the first key ended up unprotected.
 
 To sign update artifacts during a build:
 
