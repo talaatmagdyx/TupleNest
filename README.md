@@ -4,11 +4,11 @@
 
 Rust + Tauri 2 + React + TypeScript · macOS · MIT licensed
 
-TupleNest is a fast, local-first workspace for exploring, developing, debugging, and operating PostgreSQL databases. Version 1.0 ships a complete PostgreSQL adapter; other engines are on the roadmap.
+TupleNest is a fast, local-first workspace for exploring, developing, debugging, and operating PostgreSQL databases. This release ships a complete PostgreSQL adapter; other engines are on the roadmap.
 
 ## Install (macOS, Apple Silicon)
 
-1. Open **`TupleNest-1.0.0-macOS-arm64.dmg`**.
+1. Open **`TupleNest_0.1.0_aarch64.dmg`**.
 2. Drag **TupleNest** into your **Applications** folder.
 3. Launch it. The build is not notarized, so the first launch needs Gatekeeper approval: right-click the app → **Open** → **Open**, or run once:
 
@@ -18,7 +18,11 @@ TupleNest is a fast, local-first workspace for exploring, developing, debugging,
 
 Requires macOS 10.15+ on an arm64 (M-series) Mac.
 
-## What's included (PostgreSQL, v1.0)
+> Auto-update is built in but has nowhere to point yet: the release endpoint
+> does not exist, so the app never finds an update and never nags about it.
+> Upgrading means downloading the next `.dmg` by hand.
+
+## What's included (PostgreSQL)
 
 - **Connections** — saved profiles, credentials stored only in the macOS Keychain, never in state/logs/SQLite.
 - **TLS** — disabled / prefer / verify-ca / verify-full, fails closed on cert problems.
