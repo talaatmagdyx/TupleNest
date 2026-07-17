@@ -116,23 +116,37 @@ export function useRowEdits(epoch: number): RowEdits {
            * Check what the server actually did, rather than inferring success
            * from "pg_query did not throw".
            *
-           * Every statement here is keyed by a full primary key, so it must
-           * touch exactly one row. Zero means the row is gone — someone else
-           * deleted it, or changed its key, between the grid loading it and
-           * this apply. That is not success, and it used to be reported as
-           * success: the transaction committed, the toast said "Applied", and
-           * the row simply vanished on the next read with no explanation.
+           * Each statement is keyed by the full primary key *and* by the values
+           * the cells held when they were staged, so it must touch exactly one
+           * row. Zero means the row moved under us: deleted, re-keyed, or the
+           * cell was changed by someone else after the grid drew it. All three
+           * mean the same thing to the user — what you are looking at is not
+           * what is there — and none of them is success.
+           *
+           * This used to commit and report "Applied 1 statement".
            *
            * More than one would mean the primary key is not unique, which
            * should be impossible; if it ever happens, stopping is the only
            * defensible response.
            */
+          /*
+           * A null count means the server reported none. For an UPDATE it
+           * always does report one — and this branch is the only way to skip
+           * the check, so it is worth being precise about.
+           *
+           * It mattered: the driver hard-coded `rows_affected: None`, so this
+           * was null for every write and the guard below never ran once. It
+           * looked implemented, its unit tests passed against mocks that
+           * returned numbers, and it could not have fired against a real
+           * server. A live test asserting a value is what found it.
+           */
           const n = res?.rowsAffected ?? null;
           if (n !== null && n !== 1) {
             throw new Error(
               n === 0
-                ? "This row no longer exists — another session deleted it or changed its primary key. " +
-                  "Nothing was written; your edits are still here. Re-run the query to see the current rows."
+                ? "This row changed since you loaded it — another session edited or deleted it. " +
+                  "Nothing was written and your edits are still here. Re-run the query to see " +
+                  "the current values, then decide."
                 : `Expected to change 1 row but matched ${n}. Nothing was written.`,
             );
           }

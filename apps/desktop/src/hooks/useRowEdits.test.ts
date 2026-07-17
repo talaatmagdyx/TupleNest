@@ -18,6 +18,7 @@ const edit = (over: Partial<CellEdit> = {}): CellEdit => ({
   pkValues: [1],
   column: "name",
   value: "new",
+  oldValue: "old",
   ...over,
 });
 
@@ -218,7 +219,9 @@ describe("useRowEdits — checking what the server actually did", () => {
     affects(0);
     const out = await apply(result);
     expect(out.kind).toBe("error");
-    expect(out).toMatchObject({ message: expect.stringContaining("no longer exists") });
+    // The message covers both causes, because a zero-row result cannot tell
+    // them apart: the row was deleted, re-keyed, or the cell was changed.
+    expect(out).toMatchObject({ message: expect.stringContaining("changed since you loaded it") });
   });
 
   it("rolls back rather than committing a write that hit nothing", async () => {

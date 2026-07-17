@@ -1045,3 +1045,197 @@ async fn no_timeout_is_configured_by_default() {
     let row = first_row("SHOW statement_timeout").await;
     assert_eq!(text_of(&row[0]), "0");
 }
+
+/// Optimistic concurrency, proved against a real server.
+///
+/// The frontend builds `UPDATE ... WHERE pk = $n AND col IS NOT DISTINCT FROM
+/// $m`. This is the shape that matters: if another session changed the cell
+/// after the grid drew it, the statement must match zero rows so the app can
+/// refuse rather than overwrite. Before, the WHERE was the key alone and the
+/// other session's change was silently clobbered.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn optimistic_where_clause_catches_a_concurrent_change() {
+    let mut s = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    s.execute(req("DROP TABLE IF EXISTS public.tn_occ"), &NullSink)
+        .await
+        .unwrap();
+    s.execute(
+        req("CREATE TABLE public.tn_occ (id int primary key, email text)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    s.execute(
+        req("INSERT INTO public.tn_occ VALUES (1, 'ada@x.com')"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+
+    // Another session gets there first.
+    let mut other = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    other
+        .execute(
+            req("UPDATE public.tn_occ SET email = 'someone-else@x.com' WHERE id = 1"),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+
+    // Our edit, staged when the cell still read 'ada@x.com'.
+    let mut r =
+        req("UPDATE public.tn_occ SET email = $1 WHERE id = $2 AND email IS NOT DISTINCT FROM $3");
+    r.params = vec![
+        ParamValue::Text("mine@x.com".into()),
+        ParamValue::Int(1),
+        ParamValue::Text("ada@x.com".into()),
+    ];
+    let summary = s.execute(r, &NullSink).await.expect("statement runs");
+    assert_eq!(
+        summary.rows_affected,
+        Some(0),
+        "a stale old value must match no rows — this is what makes the app able to refuse"
+    );
+
+    // The other session's write stands.
+    let row = first_row("SELECT email FROM public.tn_occ WHERE id = 1").await;
+    assert_eq!(text_of(&row[0]), "someone-else@x.com");
+
+    // And the same statement with the current value does land.
+    let mut ok =
+        req("UPDATE public.tn_occ SET email = $1 WHERE id = $2 AND email IS NOT DISTINCT FROM $3");
+    ok.params = vec![
+        ParamValue::Text("mine@x.com".into()),
+        ParamValue::Int(1),
+        ParamValue::Text("someone-else@x.com".into()),
+    ];
+    assert_eq!(
+        s.execute(ok, &NullSink).await.unwrap().rows_affected,
+        Some(1)
+    );
+
+    s.execute(req("DROP TABLE public.tn_occ"), &NullSink)
+        .await
+        .unwrap();
+}
+
+/// `IS NOT DISTINCT FROM` and not `=`: a cell that was NULL must still be
+/// editable. With `=` every such edit would match zero rows and be reported as
+/// a conflict.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn a_null_old_value_still_matches() {
+    let mut s = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    s.execute(req("DROP TABLE IF EXISTS public.tn_occ_null"), &NullSink)
+        .await
+        .unwrap();
+    s.execute(
+        req("CREATE TABLE public.tn_occ_null (id int primary key, note text)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    s.execute(
+        req("INSERT INTO public.tn_occ_null VALUES (1, NULL)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+
+    let mut r = req(
+        "UPDATE public.tn_occ_null SET note = $1 WHERE id = $2 AND note IS NOT DISTINCT FROM $3",
+    );
+    r.params = vec![
+        ParamValue::Text("filled".into()),
+        ParamValue::Int(1),
+        ParamValue::Null,
+    ];
+    assert_eq!(
+        s.execute(r, &NullSink).await.unwrap().rows_affected,
+        Some(1),
+        "a NULL old value must match; `= NULL` never would"
+    );
+
+    s.execute(req("DROP TABLE public.tn_occ_null"), &NullSink)
+        .await
+        .unwrap();
+}
+
+/// `rows_affected` must be a real count, not None.
+///
+/// It was hard-coded `None` in the driver, and everything above it read that
+/// as "the server did not say" rather than "we never asked". The row-edit
+/// guard skips its check on a null count, so the zero-row and concurrency
+/// refusals were both inert — they looked implemented, were tested with mocks
+/// that returned numbers, and could never have fired against a real server.
+///
+/// The lesson this encodes: a mock that returns the shape you hoped for will
+/// not tell you the shape you actually get.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn rows_affected_is_reported_for_writes() {
+    let mut s = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    s.execute(req("DROP TABLE IF EXISTS public.tn_affected"), &NullSink)
+        .await
+        .unwrap();
+    s.execute(
+        req("CREATE TABLE public.tn_affected (id int primary key)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+
+    let ins = s
+        .execute(
+            req("INSERT INTO public.tn_affected VALUES (1), (2), (3)"),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+    assert_eq!(ins.rows_affected, Some(3), "INSERT must report its count");
+
+    let upd = s
+        .execute(
+            req("UPDATE public.tn_affected SET id = id + 10 WHERE id > 1"),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+    assert_eq!(upd.rows_affected, Some(2), "UPDATE must report its count");
+
+    let miss = s
+        .execute(
+            req("UPDATE public.tn_affected SET id = 99 WHERE id = 4242"),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        miss.rows_affected,
+        Some(0),
+        "a write that hit nothing must report 0 — this is the value the edit guard turns into a refusal"
+    );
+
+    let del = s
+        .execute(req("DELETE FROM public.tn_affected"), &NullSink)
+        .await
+        .unwrap();
+    assert_eq!(del.rows_affected, Some(3), "DELETE must report its count");
+
+    s.execute(req("DROP TABLE public.tn_affected"), &NullSink)
+        .await
+        .unwrap();
+}

@@ -186,6 +186,7 @@ describe("Grid — sorting", () => {
 describe("Grid — editing", () => {
   const edit = (over: Partial<CellEdit> = {}): CellEdit => ({
     rowKey: "[1]",
+    oldValue: "before",
     pkValues: [1],
     column: "email",
     value: "new@x.com",

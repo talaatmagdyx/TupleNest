@@ -194,18 +194,24 @@ describe("analyzeEditability — refused", () => {
 
 describe("buildUpdate", () => {
   it("builds a parameterised update", () => {
-    const st = buildUpdate(target, [7], [{ column: "email", value: "a@b.c" }]);
-    expect(st.sql).toBe('UPDATE "public"."users" SET "email" = $1 WHERE "id" = $2');
-    expect(st.params).toEqual(["a@b.c", 7]);
+    const st = buildUpdate(target, [7], [{ column: "email", value: "a@b.c", oldValue: "before" }]);
+    // The key says which row; the old value says which version of it.
+    expect(st.sql).toBe(
+      'UPDATE "public"."users" SET "email" = $1 WHERE "id" = $2 AND "email" IS NOT DISTINCT FROM $3',
+    );
+    expect(st.params).toEqual(["a@b.c", 7, "before"]);
   });
 
   it("sets several columns in one statement", () => {
     const st = buildUpdate(target, [7], [
-      { column: "email", value: "a@b.c" },
-      { column: "age", value: 30 },
+      { column: "email", value: "a@b.c", oldValue: "before" },
+      { column: "age", value: 30, oldValue: "before" },
     ]);
-    expect(st.sql).toBe('UPDATE "public"."users" SET "email" = $1, "age" = $2 WHERE "id" = $3');
-    expect(st.params).toEqual(["a@b.c", 30, 7]);
+    expect(st.sql).toBe(
+      'UPDATE "public"."users" SET "email" = $1, "age" = $2 WHERE "id" = $3' +
+        ' AND "email" IS NOT DISTINCT FROM $4 AND "age" IS NOT DISTINCT FROM $5',
+    );
+    expect(st.params).toEqual(["a@b.c", 30, 7, "before", "before"]);
   });
 
   it("ANDs a composite key", () => {
@@ -215,26 +221,29 @@ describe("buildUpdate", () => {
       pk: [{ name: "a", index: 0 }, { name: "b", index: 1 }],
       writable: [false, false, true],
     };
-    const st = buildUpdate(t, [1, 2], [{ column: "note", value: "hi" }]);
-    expect(st.sql).toBe('UPDATE "public"."combo" SET "note" = $1 WHERE "a" = $2 AND "b" = $3');
-    expect(st.params).toEqual(["hi", 1, 2]);
+    const st = buildUpdate(t, [1, 2], [{ column: "note", value: "hi", oldValue: "before" }]);
+    expect(st.sql).toBe(
+      'UPDATE "public"."combo" SET "note" = $1 WHERE "a" = $2 AND "b" = $3' +
+        ' AND "note" IS NOT DISTINCT FROM $4',
+    );
+    expect(st.params).toEqual(["hi", 1, 2, "before"]);
   });
 
   it("always emits a WHERE clause", () => {
-    const st = buildUpdate(target, [1], [{ column: "email", value: "x" }]);
+    const st = buildUpdate(target, [1], [{ column: "email", value: "x", oldValue: "before" }]);
     expect(st.sql).toMatch(/\bWHERE\b/);
   });
 
   it("never interpolates values into the SQL text", () => {
-    const st = buildUpdate(target, [1], [{ column: "email", value: "'; drop table users; --" }]);
+    const st = buildUpdate(target, [1], [{ column: "email", value: "'; drop table users; --", oldValue: "before" }]);
     expect(st.sql).not.toContain("drop table");
     expect(st.params[0]).toBe("'; drop table users; --");
   });
 
   it("passes NULL through as a bound param", () => {
-    const st = buildUpdate(target, [1], [{ column: "email", value: null }]);
-    expect(st.sql).toBe('UPDATE "public"."users" SET "email" = $1 WHERE "id" = $2');
-    expect(st.params).toEqual([null, 1]);
+    const st = buildUpdate(target, [1], [{ column: "email", value: null, oldValue: "before" }]);
+    expect(st.sql).toContain('SET "email" = $1');
+    expect(st.params).toEqual([null, 1, "before"]);
   });
 
   it("throws rather than emit an unbounded update", () => {
@@ -242,7 +251,7 @@ describe("buildUpdate", () => {
   });
 
   it("throws on a key arity mismatch", () => {
-    expect(() => buildUpdate(target, [1, 2], [{ column: "email", value: "x" }])).toThrow(/mismatch/i);
+    expect(() => buildUpdate(target, [1, 2], [{ column: "email", value: "x", oldValue: "before" }])).toThrow(/mismatch/i);
   });
 });
 
@@ -266,14 +275,15 @@ describe("rowKey", () => {
 describe("buildStatements", () => {
   it("emits one UPDATE per row, merging that row's cells", () => {
     const sts = buildStatements(target, [
-      { rowKey: rowKey([10]), pkValues: [10], column: "email", value: "a" },
-      { rowKey: rowKey([10]), pkValues: [10], column: "age", value: 5 },
-      { rowKey: rowKey([11]), pkValues: [11], column: "email", value: "b" },
+      { rowKey: rowKey([10]), pkValues: [10], column: "email", value: "a", oldValue: "before" },
+      { rowKey: rowKey([10]), pkValues: [10], column: "age", value: 5, oldValue: "before" },
+      { rowKey: rowKey([11]), pkValues: [11], column: "email", value: "b", oldValue: "before" },
     ]);
     expect(sts).toHaveLength(2);
-    expect(sts[0].sql).toBe('UPDATE "public"."users" SET "email" = $1, "age" = $2 WHERE "id" = $3');
-    expect(sts[0].params).toEqual(["a", 5, 10]);
-    expect(sts[1].params).toEqual(["b", 11]);
+    expect(sts[0].sql).toContain('SET "email" = $1, "age" = $2');
+    expect(sts[0].sql).toContain('WHERE "id" = $3');
+    expect(sts[0].params.slice(0, 3)).toEqual(["a", 5, 10]);
+    expect(sts[1].params.slice(0, 2)).toEqual(["b", 11]);
   });
 
   // Regression: edits were once keyed by row index. Re-sorting the grid then
@@ -282,22 +292,22 @@ describe("buildStatements", () => {
   // the wrong one.
   it("keys rows by primary key, not by position", () => {
     const sts = buildStatements(target, [
-      { rowKey: rowKey([1]), pkValues: [1], column: "age", value: 37 },
-      { rowKey: rowKey([2]), pkValues: [2], column: "age", value: 99 },
+      { rowKey: rowKey([1]), pkValues: [1], column: "age", value: 37, oldValue: "before" },
+      { rowKey: rowKey([2]), pkValues: [2], column: "age", value: 99, oldValue: "before" },
     ]);
     expect(sts).toHaveLength(2);
     const forAda = sts.find((s) => s.params[1] === 1);
-    expect(forAda?.params).toEqual([37, 1]); // ada's 37 stays with ada
+    expect(forAda?.params.slice(0, 2)).toEqual([37, 1]); // ada's 37 stays with ada
   });
 
   it("merges two edits to the same row even when staged far apart", () => {
     const sts = buildStatements(target, [
-      { rowKey: rowKey([5]), pkValues: [5], column: "email", value: "x" },
-      { rowKey: rowKey([9]), pkValues: [9], column: "email", value: "y" },
-      { rowKey: rowKey([5]), pkValues: [5], column: "age", value: 1 },
+      { rowKey: rowKey([5]), pkValues: [5], column: "email", value: "x", oldValue: "before" },
+      { rowKey: rowKey([9]), pkValues: [9], column: "email", value: "y", oldValue: "before" },
+      { rowKey: rowKey([5]), pkValues: [5], column: "age", value: 1, oldValue: "before" },
     ]);
     expect(sts).toHaveLength(2);
-    expect(sts[0].params).toEqual(["x", 1, 5]);
+    expect(sts[0].params.slice(0, 3)).toEqual(["x", 1, 5]);
   });
 
   it("returns nothing for no edits", () => expect(buildStatements(target, [])).toEqual([]));
@@ -305,21 +315,23 @@ describe("buildStatements", () => {
 
 describe("previewSql", () => {
   it("substitutes literals for display", () => {
-    const st = buildUpdate(target, [7], [{ column: "email", value: "a@b.c" }]);
-    expect(previewSql(st)).toBe(`UPDATE "public"."users" SET "email" = 'a@b.c' WHERE "id" = 7`);
+    const st = buildUpdate(target, [7], [{ column: "email", value: "a@b.c", oldValue: "before" }]);
+    expect(previewSql(st)).toBe(
+      `UPDATE "public"."users" SET "email" = 'a@b.c' WHERE "id" = 7 AND "email" IS NOT DISTINCT FROM 'before'`,
+    );
   });
 
   it("renders NULL and booleans unquoted", () => {
     const st = buildUpdate(target, [1], [
-      { column: "email", value: null },
-      { column: "active", value: true },
+      { column: "email", value: null, oldValue: "before" },
+      { column: "active", value: true, oldValue: "before" },
     ]);
     expect(previewSql(st)).toContain(`"email" = NULL`);
     expect(previewSql(st)).toContain(`"active" = true`);
   });
 
   it("escapes quotes in the preview", () => {
-    const st = buildUpdate(target, [1], [{ column: "email", value: "o'brien" }]);
+    const st = buildUpdate(target, [1], [{ column: "email", value: "o'brien", oldValue: "before" }]);
     expect(previewSql(st)).toContain(`'o''brien'`);
   });
 });
@@ -478,5 +490,54 @@ describe("analyzeEditability — quoted identifiers", () => {
       expect(r.target.schema).toBe("public");
       expect(r.target.table).toBe("users");
     }
+  });
+});
+
+describe("buildUpdate — optimistic concurrency", () => {
+  /*
+   * Before this, the WHERE was the primary key alone. The edit therefore
+   * applied to whatever was in the row *now*, not to the row the user had been
+   * looking at: another session's change was overwritten with no warning and
+   * nothing to detect it. Under READ COMMITTED there is no serialization error
+   * to fall back on either.
+   */
+  it("requires the cell to still hold what the grid showed", () => {
+    const st = buildUpdate(target, [7], [{ column: "email", value: "new@b.c", oldValue: "old@b.c" }]);
+    expect(st.sql).toContain('"email" IS NOT DISTINCT FROM $3');
+    expect(st.params).toEqual(["new@b.c", 7, "old@b.c"]);
+  });
+
+  it("uses IS NOT DISTINCT FROM so a NULL old value still matches", () => {
+    // `= NULL` is never true. With `=`, editing any cell that was NULL would
+    // match zero rows and be reported as a conflict every single time.
+    const st = buildUpdate(target, [7], [{ column: "email", value: "x", oldValue: null }]);
+    expect(st.sql).toContain("IS NOT DISTINCT FROM");
+    expect(st.sql).not.toMatch(/"email" = \$3/);
+    expect(st.params[2]).toBeNull();
+  });
+
+  it("checks every edited column of the row", () => {
+    const st = buildUpdate(target, [7], [
+      { column: "email", value: "a", oldValue: "was-a" },
+      { column: "age", value: 1, oldValue: 99 },
+    ]);
+    expect(st.sql).toContain('"email" IS NOT DISTINCT FROM');
+    expect(st.sql).toContain('"age" IS NOT DISTINCT FROM');
+    expect(st.params).toEqual(["a", 1, 7, "was-a", 99]);
+  });
+
+  it("still binds the old values rather than writing them into the SQL", () => {
+    const st = buildUpdate(target, [1], [
+      { column: "email", value: "x", oldValue: "'; drop table users; --" },
+    ]);
+    expect(st.sql).not.toContain("drop table");
+    expect(st.params).toContain("'; drop table users; --");
+  });
+
+  it("does not put the check on primary-key columns", () => {
+    // The key is the identity, not a value being changed; it is already an
+    // equality in the WHERE and cannot be edited at all.
+    const st = buildUpdate(target, [7], [{ column: "email", value: "x", oldValue: "y" }]);
+    expect(st.sql.match(/IS NOT DISTINCT FROM/g)).toHaveLength(1);
   });
 });

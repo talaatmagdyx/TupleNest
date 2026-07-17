@@ -441,10 +441,25 @@ impl DatabaseSession for PostgresSession {
         })
         .await?;
 
+        /*
+         * How many rows the statement actually changed.
+         *
+         * This was hard-coded `None`, and the whole chain above it believed
+         * that meant "the server said nothing" rather than "we never asked":
+         * the row-edit path treats a null count as "no opinion" and skips its
+         * check, so the concurrency and zero-row guards were inert, and the
+         * editor's "N rows affected" was never shown for a write.
+         *
+         * `rows_affected` is only meaningful once the stream is exhausted —
+         * the count arrives in the CommandComplete message at the end — so it
+         * has to be read here and not before the loop.
+         */
+        let rows_affected = stream.rows_affected();
+
         Ok(ExecutionSummary {
             execution_id: request.execution_id,
             status: ExecutionStatus::Success,
-            rows_affected: None,
+            rows_affected,
             rows_returned,
             duration_ms: started.elapsed().as_millis() as u64,
             messages: Vec::new(),

@@ -227,6 +227,11 @@ export default function Grid(p: Props) {
         pkValues,
         column: p.columns[ci].name,
         value,
+        // What was on screen when the user decided to change it. This goes
+        // into the UPDATE's WHERE, so the write only lands if the cell still
+        // holds it — the difference between changing the row you looked at and
+        // overwriting whatever happens to be there now.
+        oldValue: original,
       });
     }
     setEditing(null);

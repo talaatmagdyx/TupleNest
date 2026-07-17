@@ -13,6 +13,7 @@ const target: EditTarget = {
 
 const edit = (rowKey: string, column: string, value: unknown): CellEdit => ({
   rowKey,
+  oldValue: "before",
   pkValues: [Number(rowKey.replace(/\D/g, "")) || 1],
   column,
   value,

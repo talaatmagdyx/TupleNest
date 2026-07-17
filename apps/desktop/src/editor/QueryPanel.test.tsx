@@ -193,7 +193,7 @@ describe("QueryPanel — export", () => {
 });
 
 describe("QueryPanel — pending edits", () => {
-  const edits = [{ rowKey: "[1]", pkValues: [1], column: "email", value: "x" }];
+  const edits = [{ rowKey: "[1]", pkValues: [1], column: "email", value: "x", oldValue: "before" }];
   const target = { schema: "public", table: "users", pk: [{ name: "id", index: 0 }], writable: [true] };
 
   it("stays out of the way when nothing is staged", () => {

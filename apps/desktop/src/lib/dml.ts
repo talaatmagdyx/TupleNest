@@ -37,6 +37,17 @@ export type CellEdit = {
   pkValues: unknown[];
   column: string;
   value: unknown;
+  /**
+   * What the cell held when the grid loaded it.
+   *
+   * This is the whole of the optimistic-concurrency check: it goes into the
+   * WHERE, so the write only lands if the value is still what the user was
+   * looking at when they decided to change it. Without it the edit was blind
+   * last-write-wins — another session's change was overwritten with no
+   * warning, no diff, and nothing to detect it, because under READ COMMITTED
+   * there is no serialization error either.
+   */
+  oldValue: unknown;
 };
 
 /** Stable identity for a row, derived from its primary-key values. */
@@ -181,11 +192,24 @@ export function analyzeEditability(sql: string, cols: GridCol[], cat: Catalog | 
   return { editable: true, target: { schema, table: ref.name, pk, writable } };
 }
 
-/** `UPDATE t SET a=$1, b=$2 WHERE pk1=$3 AND pk2=$4` for one row's staged cells. */
+/**
+ * `UPDATE t SET a=$1 WHERE pk=$2 AND a IS NOT DISTINCT FROM $3` for one row's
+ * staged cells.
+ *
+ * The primary key says *which* row. The old values say *which version* of it:
+ * the write lands only if every cell being changed still holds what the grid
+ * showed when the edit was staged. If someone else got there first, the
+ * statement matches zero rows, and `useRowEdits` turns that into a refusal
+ * rather than a silent overwrite.
+ *
+ * `IS NOT DISTINCT FROM` and not `=`, because `= NULL` is never true: with `=`,
+ * editing any cell that was NULL would match nothing and every such edit would
+ * be reported as a conflict.
+ */
 export function buildUpdate(
   target: Pick<EditTarget, "schema" | "table" | "pk">,
   pkValues: unknown[],
-  sets: { column: string; value: unknown }[]
+  sets: { column: string; value: unknown; oldValue: unknown }[]
 ): Statement {
   if (sets.length === 0) throw new Error("buildUpdate: no columns to set");
   if (pkValues.length !== target.pk.length) throw new Error("buildUpdate: primary key value count mismatch");
@@ -197,12 +221,15 @@ export function buildUpdate(
       return `${quoteIdent(s.column)} = $${params.length}`;
     })
     .join(", ");
-  const whereSql = target.pk
-    .map((k, i) => {
-      params.push(pkValues[i]);
-      return `${quoteIdent(k.name)} = $${params.length}`;
-    })
-    .join(" AND ");
+  const keyed = target.pk.map((k, i) => {
+    params.push(pkValues[i]);
+    return `${quoteIdent(k.name)} = $${params.length}`;
+  });
+  const unchanged = sets.map((s) => {
+    params.push(s.oldValue);
+    return `${quoteIdent(s.column)} IS NOT DISTINCT FROM $${params.length}`;
+  });
+  const whereSql = [...keyed, ...unchanged].join(" AND ");
 
   return { sql: `UPDATE ${qualifiedName(target.schema, target.table)} SET ${setSql} WHERE ${whereSql}`, params };
 }
@@ -236,7 +263,7 @@ export function buildStatements(target: EditTarget, edits: CellEdit[]): Statemen
       buildUpdate(
         target,
         list[0].pkValues,
-        list.map((e) => ({ column: e.column, value: e.value }))
+        list.map((e) => ({ column: e.column, value: e.value, oldValue: e.oldValue }))
       )
     );
   }
