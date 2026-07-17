@@ -231,6 +231,18 @@ export default function App() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 2100);
   }, []);
+  // The dismiss timer must die with the component. It was the one timer in
+  // the codebase with no unmount cleanup — every other setTimeout/setInterval
+  // here clears itself — and CI caught it: a toast shown in the last 2.1s of
+  // a test file fired setToast(null) after jsdom was torn down, and React
+  // walked into `window is not defined`. In the app it is the classic
+  // setState-after-unmount; in tests it failed the suite. Same bug, one line.
+  useEffect(
+    () => () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    },
+    []
+  );
 
   /* ---------------- bootstrap ---------------- */
 
