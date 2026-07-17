@@ -51,19 +51,43 @@
 }
 
 /* ===== Type =====
-   Neither JetBrains Mono nor Inter ships with any OS and neither is bundled
-   here, so on most machines the first name in each stack simply misses. What
-   follows it therefore isn't decoration — it's what the app actually renders.
+   JetBrains Mono ships with no OS, so relying on the machine to have it meant
+   most users silently got generic `monospace` — Courier in WebKit — while this
+   looked right only on developer machines that happen to have it installed.
+   It is bundled now, so the grid, the editor and every identifier render the
+   same face everywhere. Two variable files, ~230KB total, embedded in the app
+   binary: there is no network fetch and no per-weight download, and the wght
+   axis covers the 100–800 the design uses.
 
-   Most of the monospace rules used to read `"JetBrains Mono", monospace` with
-   nothing in between, and a bare generic `monospace` is Courier in WebKit: a
-   thin, serifed, wrong-width face sitting next to the UI font. It looked right
-   on this machine only because JetBrains Mono happens to be installed on it.
+   Licensed OFL-1.1 — see assets/fonts/OFL.txt, which clause 2 requires to
+   travel with the binary.
 
-   The chains below name a real face per platform before conceding to the
-   generic: SF Mono / Menlo on macOS, Consolas on Windows, Liberation or DejaVu
-   on Linux; and the system UI font for sans, which is what -apple-system and
-   Segoe UI resolve to. */
+   The fallbacks after it still matter: a glyph the font lacks (a database can
+   return any codepoint) falls through per-platform rather than to Courier.
+
+   Inter is deliberately NOT bundled. It is the first name in --tn-sans, but
+   what follows resolves to the system UI font — San Francisco, Segoe UI,
+   Roboto — which is the right face for a native desktop shell anyway, and
+   worth neither the bytes nor a UI that looks foreign on every platform. */
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./assets/fonts/JetBrainsMono-var.woff2") format("woff2");
+  font-weight: 100 800;
+  font-style: normal;
+  /* The file is on local disk inside the app, so the block period is over in
+     milliseconds. `swap` would trade that for a visible flash of Courier. */
+  font-display: block;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./assets/fonts/JetBrainsMono-Italic-var.woff2") format("woff2");
+  font-weight: 100 800;
+  /* Real italics, not a synthetic slant: SQL comments, null cells and redacted
+     history rows are all italic mono, and this font redraws letters for it. */
+  font-style: italic;
+  font-display: block;
+}
+
 :root {
   --tn-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo,
     Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
