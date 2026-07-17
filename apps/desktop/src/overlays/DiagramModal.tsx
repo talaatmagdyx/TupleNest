@@ -11,9 +11,13 @@ export default function DiagramModal(p: { schema: string; onClose: () => void })
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    invoke<FK[]>("pg_relationships", { schema: p.schema })
-      .then(setFks)
-      .catch((e) => setErr(String(e)));
+    (async () => {
+      try {
+        setFks(await invoke<FK[]>("pg_relationships", { schema: p.schema }));
+      } catch (e) {
+        setErr(String(e));
+      }
+    })();
   }, [p.schema]);
 
   const layout = useMemo(() => {

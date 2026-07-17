@@ -39,6 +39,10 @@ type Props = {
 
   onInsertSelect: (schema: string, name: string) => void;
   onDescribe: (schema: string, name: string) => void;
+  /** Show everything the server knows about one object. */
+  onDetails: (schema: string, name: string, kind: string) => void;
+  /** Bounds, sizes and gaps for a partitioned table. */
+  onPartitions: (schema: string, table: string) => void;
   onConnect?: () => void;
 };
 
@@ -71,12 +75,13 @@ function Row(p: {
   badge?: React.ReactNode;
   title?: string;
   act?: React.ReactNode;
+  className?: string;
   onClick?: () => void;
   onDoubleClick?: () => void;
 }) {
   return (
     <div
-      className="tree-row"
+      className={`tree-row ${p.className ?? ""}`}
       style={{ paddingLeft: 8 + p.depth * 13 }}
       title={p.title}
       onClick={p.onClick}
@@ -114,6 +119,23 @@ export default function ExplorerTree(p: Props) {
     const cons = p.constraints[key];
     const parts = p.partitions[key];
 
+    /* A sequence has no columns, no indexes and no constraints — giving it the
+       expandable table shape would only promise three empty groups. It has
+       exactly one interesting thing to say, so clicking it says it. */
+    if (o.kind === "sequence") {
+      return (
+        <Row
+          key={`t:${key}`}
+          depth={depth}
+          icon={<Chip ch="S" color="var(--tn-success)" />}
+          label={o.name}
+          title={`${o.comment ?? o.name}\n\nClick for last value, range, increment and owning column.`}
+          className="clickable"
+          onClick={() => p.onDetails(schema, o.name, "sequence")}
+        />
+      );
+    }
+
     return (
       <div key={`t:${key}`}>
         <Row
@@ -125,22 +147,31 @@ export default function ExplorerTree(p: Props) {
           title={o.comment ?? o.name}
           badge={
             o.isPartitioned ? (
-              <span className="part-badge" title={`Partitioned — ${o.partitionCount} direct partitions`}>
+              <span
+                className="part-badge act"
+                title={`${o.partitionCount} direct partitions — click for bounds, sizes and gaps`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  p.onPartitions(schema, o.name);
+                }}
+              >
                 {o.partitionCount}
               </span>
             ) : undefined
           }
           act={
             <span className="hover-act">
-              <span
-                title="Describe"
+              <button
+                type="button"
+                className="det-btn"
+                title="Details — size, rows, partitioning, owner"
                 onClick={(e) => {
                   e.stopPropagation();
-                  p.onDescribe(schema, o.name);
+                  p.onDetails(schema, o.name, o.kind);
                 }}
               >
                 ⓘ
-              </span>
+              </button>
             </span>
           }
           onClick={() => p.onToggle(`t:${key}`)}
@@ -197,9 +228,10 @@ export default function ExplorerTree(p: Props) {
                 idx.map((ix) => (
                   <div
                     key={ix.name}
-                    className="tree-row leaf"
+                    className="tree-row leaf clickable"
                     style={{ paddingLeft: 8 + (depth + 2) * 13 }}
-                    title={ix.definition}
+                    title={`${ix.definition}\n\nClick for size, scans and tuples read.`}
+                    onClick={() => p.onDetails(schema, ix.name, "index")}
                   >
                     <span className="cn">{ix.name}</span>
                     {ix.isPrimary && <span className="pk">PK</span>}

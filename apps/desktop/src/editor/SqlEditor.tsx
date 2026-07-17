@@ -134,6 +134,20 @@ export default function SqlEditor(p: Props) {
 
   const close = useCallback(() => setPop(null), []);
 
+  /**
+   * The blur close is deferred so that clicking an item in the popup lands
+   * before the popup goes away. That timer has to be cancelled on unmount:
+   * left running, it calls `setPop` on a component that no longer exists —
+   * closing a tab or a modal while the editor has focus is enough to hit it.
+   */
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (blurTimer.current) clearTimeout(blurTimer.current);
+    },
+    []
+  );
+
   const openAt = useCallback(
     (force: boolean) => {
       const ta = taRef.current;
@@ -197,10 +211,14 @@ export default function SqlEditor(p: Props) {
     if (!pop) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setPop({ ...pop, sel: (pop.sel + 1) % pop.items.length });
+      // Move from the *current* selection, not the one this handler closed
+      // over: holding the key fires faster than React re-renders, and two
+      // presses against the same stale `pop` compute the same index — the
+      // list stops moving until you let go.
+      setPop((s) => (s ? { ...s, sel: (s.sel + 1) % s.items.length } : s));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setPop({ ...pop, sel: (pop.sel - 1 + pop.items.length) % pop.items.length });
+      setPop((s) => (s ? { ...s, sel: (s.sel - 1 + s.items.length) % s.items.length } : s));
     } else if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
       accept(pop.items[pop.sel]);
@@ -259,6 +277,11 @@ export default function SqlEditor(p: Props) {
         <textarea
           ref={taRef}
           className="editor-ta"
+          /* The highlight layer below is decorative and aria-hidden, so this
+             is the only thing a screen reader can announce. Unlabelled, it is
+             "text box" — in an app whose whole point is the thing you type
+             here. */
+          aria-label="SQL editor"
           value={p.sql}
           spellCheck={false}
           disabled={p.disabled}
@@ -268,7 +291,9 @@ export default function SqlEditor(p: Props) {
           }}
           onKeyDown={onKeyDown}
           onMouseDown={onMouseDown}
-          onBlur={() => setTimeout(close, 120)}
+          onBlur={() => {
+            blurTimer.current = setTimeout(close, 120);
+          }}
           onScroll={() => {
             syncScroll();
             close();

@@ -36,6 +36,10 @@ const S = (props: { size?: number }) => ({
   strokeWidth: 1.7,
   strokeLinecap: "round" as const,
   strokeLinejoin: "round" as const,
+  // Decorative without exception: every icon in this file sits beside a text
+  // label or inside a button with its own title. Announcing them would read
+  // the same control twice.
+  "aria-hidden": true,
 });
 
 export const SidebarIcon = ({ size }: { size?: number }) => (
@@ -46,7 +50,8 @@ export const SidebarIcon = ({ size }: { size?: number }) => (
 );
 
 export const PlayIcon = ({ size }: { size?: number }) => (
-  <svg width={size ?? 13} height={size ?? 13} viewBox="0 0 24 24" fill="currentColor">
+  // Filled rather than stroked, so it doesn't use S().
+  <svg width={size ?? 13} height={size ?? 13} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
     <path d="M8 5v14l11-7z" />
   </svg>
 );

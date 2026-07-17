@@ -141,6 +141,18 @@ pub enum MetadataRequest {
         schema: String,
         table: String,
     },
+    /// Everything worth knowing about one object, as labelled sections of
+    /// key/value rows. Generic on purpose: a table, sequence, index, view and
+    /// enum all want different facts, and the UI should not need to know which.
+    ObjectDetails {
+        schema: String,
+        name: String,
+        /// table | view | matview | sequence | index | type | routine.
+        /// Not `kind`: that name is taken by this enum's serde tag. The wire
+        /// name stays camelCase to match every other payload the UI sees.
+        #[serde(rename = "objectKind")]
+        object_kind: String,
+    },
     /// User-defined types: enums, composites, domains.
     ListTypes {
         schema: String,
@@ -148,6 +160,33 @@ pub enum MetadataRequest {
     /// Functions and procedures.
     ListRoutines {
         schema: String,
+    },
+    /// Index usage across the database, folded so that one logical index
+    /// spanning N partitions is one row rather than N. `schema: None` means
+    /// every schema the user can see.
+    IndexHealth {
+        schema: Option<String>,
+    },
+    /// Dead tuples, vacuum/analyze recency and estimated bloat per table.
+    TableHealth {
+        schema: Option<String>,
+    },
+    /// Top statements from pg_stat_statements. Returns an `available: false`
+    /// payload rather than an error when the extension is absent — a missing
+    /// extension is a state to explain, not a failure.
+    TopQueries {
+        limit: i64,
+    },
+    /// Name search across every schema, for databases too large to browse.
+    SearchObjects {
+        term: String,
+        limit: i64,
+    },
+    /// Partitions of one table with bounds, size and row estimates, plus any
+    /// gaps detected in a RANGE-partitioned series.
+    PartitionOverview {
+        schema: String,
+        table: String,
     },
 }
 

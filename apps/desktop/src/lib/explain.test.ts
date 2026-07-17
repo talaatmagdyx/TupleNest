@@ -5,13 +5,16 @@ import {
   explainLabel,
   isMutating,
   optionIssues,
+  parsePlan,
   planFilename,
   planToJson,
   planToMarkdown,
   planToText,
   rawExtension,
+  readPlanPayload,
   type ExplainOptions,
   type ExportablePlan,
+  type RawPlan,
 } from "./explain";
 
 const opts = (o: Partial<ExplainOptions> = {}): ExplainOptions => ({ ...DEFAULT_EXPLAIN, ...o });
@@ -254,4 +257,178 @@ describe("planFilename", () => {
   it("falls back when the title is unusable", () => {
     expect(planFilename("!!!", "md")).toMatch(/^plan-plan-/);
   });
+});
+
+describe("readPlanPayload", () => {
+  it("rejoins FORMAT TEXT, which arrives one row per line", () => {
+    // A real plan here is 295 rows. Taking rows[0] would keep one line of it.
+    const rows = [["Seq Scan on t"], ["  Filter: (x = 1)"], ["Planning Time: 0.1 ms"]];
+    expect(readPlanPayload(rows, "text")).toBe("Seq Scan on t\n  Filter: (x = 1)\nPlanning Time: 0.1 ms");
+  });
+
+  it("keeps a null line rather than printing 'null' or dropping it", () => {
+    expect(readPlanPayload([["a"], [null], ["b"]], "text")).toBe("a\n\nb");
+  });
+
+  it("takes the single cell for the document formats", () => {
+    expect(readPlanPayload([["<explain/>"]], "xml")).toBe("<explain/>");
+    expect(readPlanPayload([["- Plan: x"]], "yaml")).toBe("- Plan: x");
+  });
+
+  it("serialises a JSON cell the driver already parsed", () => {
+    // pg can hand back json as a value, not a string, depending on the column.
+    expect(readPlanPayload([[{ Plan: { "Node Type": "Seq Scan" } }]], "json")).toBe(
+      '{"Plan":{"Node Type":"Seq Scan"}}',
+    );
+  });
+});
+
+describe("parsePlan", () => {
+  const leaf = (over: Partial<RawPlan> = {}): RawPlan => ({
+    "Node Type": "Seq Scan",
+    "Relation Name": "users",
+    "Total Cost": 100,
+    ...over,
+  });
+  const root = (plan: RawPlan, over: Record<string, unknown> = {}) => ({ Plan: plan, ...over });
+
+  it("walks a single node", () => {
+    const p = parsePlan([root(leaf())]);
+    expect(p.nodes).toHaveLength(1);
+    expect(p.nodes[0]).toMatchObject({ kind: "Seq Scan", title: "Seq Scan on users", indent: 0 });
+  });
+
+  it("accepts the root bare as well as wrapped in an array", () => {
+    // FORMAT JSON gives [{...}]; a driver that unwrapped it should still work.
+    expect(parsePlan(root(leaf())).nodes).toHaveLength(1);
+  });
+
+  it("indents children by depth", () => {
+    const tree = root({
+      "Node Type": "Hash Join",
+      "Total Cost": 200,
+      Plans: [leaf(), { "Node Type": "Hash", "Total Cost": 50, Plans: [leaf({ "Relation Name": "orders" })] }],
+    });
+    const p = parsePlan([tree]);
+    expect(p.nodes.map((n) => [n.title, n.indent])).toEqual([
+      ["Hash Join", 0],
+      ["Seq Scan on users", 1],
+      ["Hash", 1],
+      ["Seq Scan on orders", 2],
+    ]);
+  });
+
+  it("reports real timings as ms and leaves estimates null", () => {
+    // The distinction is the point: a cost is not a millisecond, and drawing
+    // one as the other invents a measurement that was never taken.
+    const analyzed = parsePlan([root(leaf({ "Actual Total Time": 12.5 }))]);
+    expect(analyzed.nodes[0].ms).toBe(12.5);
+    expect(parsePlan([root(leaf())]).nodes[0].ms).toBeNull();
+  });
+
+  it("shares are a percentage of the root's total", () => {
+    const tree = root({
+      "Node Type": "Hash Join",
+      "Actual Total Time": 100,
+      Plans: [leaf({ "Actual Total Time": 25 })],
+    });
+    const p = parsePlan([tree]);
+    expect(p.nodes[0].pct).toBe(100);
+    expect(p.nodes[1].pct).toBe(25);
+  });
+
+  it("caps a share at 100 rather than drawing a bar past the edge", () => {
+    // Parallel workers can report a child time above the parent's wall clock.
+    const tree = root({ "Node Type": "Gather", "Actual Total Time": 10, Plans: [leaf({ "Actual Total Time": 40 })] });
+    expect(parsePlan([tree]).nodes[1].pct).toBe(100);
+  });
+
+  it("survives a zero total without producing NaN", () => {
+    // COSTS OFF with no ANALYZE leaves nothing to divide by.
+    const p = parsePlan([root({ "Node Type": "Result" })]);
+    expect(p.nodes[0].pct).toBe(0);
+    expect(Number.isNaN(p.nodes[0].pct)).toBe(false);
+  });
+
+  it("marks the costliest Seq Scan as the hot spot", () => {
+    const tree = root({
+      "Node Type": "Hash Join",
+      "Actual Total Time": 100,
+      Plans: [leaf({ "Actual Total Time": 5 }), leaf({ "Relation Name": "big", "Actual Total Time": 80 })],
+    });
+    const p = parsePlan([tree]);
+    expect(p.nodes.filter((n) => n.hot).map((n) => n.title)).toEqual(["Seq Scan on big"]);
+    expect(p.suggestion).toContain("Seq Scan on big");
+  });
+
+  it("does not blame an index scan", () => {
+    const tree = root({
+      "Node Type": "Limit",
+      "Actual Total Time": 100,
+      Plans: [{ "Node Type": "Index Scan", "Relation Name": "users", "Actual Total Time": 99 }],
+    });
+    const p = parsePlan([tree]);
+    expect(p.nodes.some((n) => n.hot)).toBe(false);
+    expect(p.suggestion).toBeNull();
+  });
+
+  it("says nothing about a plan that is only a Seq Scan", () => {
+    // "An index could avoid the full scan" is not advice on `select * from t`
+    // — the user asked to read the table end to end.
+    const p = parsePlan([root(leaf({ "Actual Total Time": 9 }))]);
+    expect(p.nodes[0].hot).toBe(false);
+    expect(p.suggestion).toBeNull();
+  });
+
+  it("collects the node's attributes into the detail line", () => {
+    const p = parsePlan([
+      root(
+        leaf({
+          "Node Type": "Index Scan",
+          "Index Name": "users_pkey",
+          Filter: "(id = 1)",
+          "Sort Key": ["created_at"],
+          "Actual Rows": 1234,
+        }),
+      ),
+    ]);
+    expect(p.nodes[0].detail).toBe("index: users_pkey · filter: (id = 1) · sort key: created_at · rows 1,234");
+  });
+
+  it("labels estimated rows as estimated", () => {
+    expect(parsePlan([root(leaf({ "Plan Rows": 5000 }))]).nodes[0].detail).toBe("est rows 5,000");
+  });
+
+  it("prefers actual rows over the estimate when both are there", () => {
+    expect(parsePlan([root(leaf({ "Plan Rows": 1, "Actual Rows": 900 }))]).nodes[0].detail).toBe("rows 900");
+  });
+
+  it("omits what the server didn't send", () => {
+    expect(parsePlan([root(leaf())]).nodes[0].detail).toBe("");
+  });
+
+  it("reports the times the server gave and always the node count", () => {
+    const p = parsePlan([root(leaf(), { "Planning Time": 0.123, "Execution Time": 45.67 })]);
+    expect(p.stats).toEqual([
+      { label: "Planning time", value: "0.12 ms" },
+      { label: "Execution time", value: "45.7 ms" },
+      { label: "Plan nodes", value: "1" },
+    ]);
+  });
+
+  it("omits timings that weren't measured", () => {
+    // Without ANALYZE there is no execution time; a "0.0 ms" would be a lie.
+    expect(parsePlan([root(leaf())]).stats).toEqual([{ label: "Plan nodes", value: "1" }]);
+  });
+
+  it.each([[null], [undefined], [{}], [{ Plan: null }], [[]], ["not a plan"]])(
+    "returns empty for %s rather than throwing away the raw payload",
+    (input) => {
+      // The modal still shows `raw`. A shape we can't walk is a drawing
+      // problem, not a reason to lose what the server actually said.
+      const p = parsePlan(input);
+      expect(p.nodes).toEqual([]);
+      expect(p.suggestion).toBeNull();
+    },
+  );
 });

@@ -187,6 +187,17 @@ export default function QueryPanel(p: Props) {
         </div>
       </div>
 
+      {/* `editReason` was declared, passed in by App, and never rendered — so
+          the specific explanation analyzeEditability works to produce ("no
+          primary key", "more than one table is referenced") was computed and
+          thrown away, leaving cells that just silently refuse to edit. Only
+          shown when there is a result to explain and nothing staged. */}
+      {p.editReason && r && r.columns.length > 0 && (p.edits?.length ?? 0) === 0 && (
+        <div className="edit-bar readonly">
+          <span className="muted">Read-only — {p.editReason}.</span>
+        </div>
+      )}
+
       {(p.edits?.length ?? 0) > 0 && (
         <div className="edit-bar">
           <span className="dot-pulse" />

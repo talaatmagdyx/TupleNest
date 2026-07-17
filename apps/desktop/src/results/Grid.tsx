@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { cellText } from "../lib/text";
 import { invoke } from "@tauri-apps/api/core";
 import { fetchAllRows } from "../lib/sql";
 import { coerceValue, rowKey, type CellEdit, type EditTarget } from "../lib/dml";
@@ -52,12 +53,6 @@ function cellClass(c: GridColumn, v: unknown): string {
   if (/int|numeric|float|double|real|money/.test(t)) return "t-num";
   if (t.startsWith("timestamp") || t === "date" || t.startsWith("time")) return "t-time";
   return "";
-}
-
-function cellText(v: unknown): string {
-  if (v === null || v === undefined) return "null";
-  if (typeof v === "object") return JSON.stringify(v);
-  return String(v);
 }
 
 export default function Grid(p: Props) {

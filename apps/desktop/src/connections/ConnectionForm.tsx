@@ -1,3 +1,4 @@
+import { useId } from "react";
 import type { TestStage } from "../ipc/types";
 import { ModalHead, Overlay } from "../overlays/Overlays";
 
@@ -47,6 +48,13 @@ type Props = {
 
 /** Connection editor modal (HUD design, screen "Connection editor"). */
 export default function ConnectionForm(p: Props) {
+  // A <label> that only sits next to its input is a caption, not a label: a
+  // screen reader announces these fields as unlabelled "edit text", and
+  // clicking the word does not focus the box. `useId` keeps the pairing unique
+  // even if two of these are ever on screen at once.
+  const uid = useId();
+  const f = (name: string) => `${uid}-${name}`;
+
   return (
     <Overlay onClose={p.onClose}>
       <div className="modal" style={{ width: 620 }}>
@@ -54,12 +62,12 @@ export default function ConnectionForm(p: Props) {
         <div className="modal-body">
           <div className="frow">
             <div className="field">
-              <label>Name</label>
-              <input value={p.profileName} onChange={(e) => p.onProfileName(e.target.value)} />
+              <label htmlFor={f("name")}>Name</label>
+              <input id={f("name")} value={p.profileName} onChange={(e) => p.onProfileName(e.target.value)} />
             </div>
             <div className="field" style={{ flex: "0 0 240px" }}>
-              <label>Environment</label>
-              <div className="seg">
+              <label id={f("env")}>Environment</label>
+              <div className="seg" role="group" aria-labelledby={f("env")}>
                 {["dev", "test", "staging", "prod"].map((env) => (
                   <button
                     key={env}
@@ -74,12 +82,12 @@ export default function ConnectionForm(p: Props) {
           </div>
           <div className="frow">
             <div className="field">
-              <label>Host</label>
-              <input className="mono" value={p.host} onChange={(e) => p.onHost(e.target.value)} />
+              <label htmlFor={f("host")}>Host</label>
+              <input id={f("host")} className="mono" value={p.host} onChange={(e) => p.onHost(e.target.value)} />
             </div>
             <div className="field w90">
-              <label>Port</label>
-              <input
+              <label htmlFor={f("port")}>Port</label>
+              <input id={f("port")}
                 className="mono"
                 type="number"
                 value={p.port}
@@ -89,17 +97,17 @@ export default function ConnectionForm(p: Props) {
           </div>
           <div className="frow">
             <div className="field">
-              <label>Database</label>
-              <input className="mono" value={p.database} onChange={(e) => p.onDatabase(e.target.value)} />
+              <label htmlFor={f("database")}>Database</label>
+              <input id={f("database")} className="mono" value={p.database} onChange={(e) => p.onDatabase(e.target.value)} />
             </div>
             <div className="field">
-              <label>Username</label>
-              <input className="mono" value={p.username} onChange={(e) => p.onUsername(e.target.value)} />
+              <label htmlFor={f("username")}>Username</label>
+              <input id={f("username")} className="mono" value={p.username} onChange={(e) => p.onUsername(e.target.value)} />
             </div>
           </div>
           <div className="field">
-            <label>Password</label>
-            <input
+            <label htmlFor={f("password")}>Password</label>
+            <input id={f("password")}
               type="password"
               placeholder={p.hasSecret ? "password saved in keychain" : "password (optional)"}
               value={p.password}
@@ -109,8 +117,8 @@ export default function ConnectionForm(p: Props) {
           </div>
           <div className="frow">
             <div className="field" style={{ flex: "0 0 170px" }}>
-              <label>TLS mode</label>
-              <select value={p.tlsMode} onChange={(e) => p.onTlsMode(e.target.value)}>
+              <label htmlFor={f("tls")}>TLS mode</label>
+              <select id={f("tls")} value={p.tlsMode} onChange={(e) => p.onTlsMode(e.target.value)}>
                 <option value="verify-full">verify-full</option>
                 <option value="verify-ca">verify-ca</option>
                 <option value="prefer">prefer</option>
@@ -119,8 +127,8 @@ export default function ConnectionForm(p: Props) {
             </div>
             {(p.tlsMode === "verify-full" || p.tlsMode === "verify-ca") && (
               <div className="field">
-                <label>CA file (optional)</label>
-                <input
+                <label htmlFor={f("ca")}>CA file (optional)</label>
+                <input id={f("ca")}
                   className="mono"
                   placeholder="/etc/ssl/ca.pem"
                   value={p.tlsCaPath}
@@ -131,7 +139,15 @@ export default function ConnectionForm(p: Props) {
           </div>
           <div className="section-row">
             <span className="st">SSH tunnel</span>
-            <button className={`toggle ${p.sshEnabled ? "on" : ""}`} onClick={() => p.onSshEnabled(!p.sshEnabled)}>
+            {/* Without these it is announced as an unlabelled button, and its
+                state — the only thing it conveys — is invisible. */}
+            <button
+              className={`toggle ${p.sshEnabled ? "on" : ""}`}
+              role="switch"
+              aria-checked={p.sshEnabled}
+              aria-label="SSH tunnel"
+              onClick={() => p.onSshEnabled(!p.sshEnabled)}
+            >
               <span className="knob" />
             </button>
           </div>
@@ -139,27 +155,27 @@ export default function ConnectionForm(p: Props) {
             <>
               <div className="frow">
                 <div className="field">
-                  <label>SSH host</label>
-                  <input className="mono" placeholder="bastion.internal" value={p.sshHost} onChange={(e) => p.onSshHost(e.target.value)} />
+                  <label htmlFor={f("sshhost")}>SSH host</label>
+                  <input id={f("sshhost")} className="mono" placeholder="bastion.internal" value={p.sshHost} onChange={(e) => p.onSshHost(e.target.value)} />
                 </div>
                 <div className="field w90">
-                  <label>Port</label>
-                  <input className="mono" type="number" value={p.sshPort} onChange={(e) => p.onSshPort(Number(e.target.value) || 22)} />
+                  <label htmlFor={f("sshport")}>Port</label>
+                  <input id={f("sshport")} className="mono" type="number" value={p.sshPort} onChange={(e) => p.onSshPort(Number(e.target.value) || 22)} />
                 </div>
               </div>
               <div className="frow">
                 <div className="field">
-                  <label>SSH user</label>
-                  <input className="mono" placeholder="deploy" value={p.sshUser} onChange={(e) => p.onSshUser(e.target.value)} />
+                  <label htmlFor={f("sshuser")}>SSH user</label>
+                  <input id={f("sshuser")} className="mono" placeholder="deploy" value={p.sshUser} onChange={(e) => p.onSshUser(e.target.value)} />
                 </div>
                 <div className="field">
-                  <label>Private key path</label>
-                  <input className="mono" placeholder="~/.ssh/id_ed25519" value={p.sshKeyPath} onChange={(e) => p.onSshKeyPath(e.target.value)} />
+                  <label htmlFor={f("sshkey")}>Private key path</label>
+                  <input id={f("sshkey")} className="mono" placeholder="~/.ssh/id_ed25519" value={p.sshKeyPath} onChange={(e) => p.onSshKeyPath(e.target.value)} />
                 </div>
               </div>
               <div className="field">
-                <label>Host-key SHA256 fingerprint</label>
-                <input className="mono" placeholder="empty → known_hosts" value={p.sshFingerprint} onChange={(e) => p.onSshFingerprint(e.target.value)} />
+                <label htmlFor={f("sshfp")}>Host-key SHA256 fingerprint</label>
+                <input id={f("sshfp")} className="mono" placeholder="empty → known_hosts" value={p.sshFingerprint} onChange={(e) => p.onSshFingerprint(e.target.value)} />
               </div>
             </>
           )}

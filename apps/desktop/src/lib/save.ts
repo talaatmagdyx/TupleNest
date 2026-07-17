@@ -29,7 +29,13 @@ export async function saveText(defaultName: string, contents: string, filter?: S
   return path;
 }
 
-/** Just the file name, for a confirmation toast. */
+/** Just the file name, for a confirmation toast.
+ *
+ *  `split().pop()` alone returns "" for a trailing separator — and `?? path`
+ *  never catches it, because pop() on a non-empty array returns "" rather than
+ *  undefined. Dropping empty segments first is what actually makes the
+ *  fallback reachable. */
 export function baseName(path: string): string {
-  return path.split(/[\\/]/).pop() ?? path;
+  const segments = path.split(/[\\/]/).filter((s) => s.length > 0);
+  return segments.pop() ?? path;
 }

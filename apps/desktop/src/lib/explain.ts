@@ -131,6 +131,138 @@ export function explainLabel(o: ExplainOptions): string {
   return on.length ? `EXPLAIN ${on.join(", ")}` : "EXPLAIN";
 }
 
+/* ------------------------------------------------------------------- parse */
+
+/** A node of the server's FORMAT JSON plan. Postgres nests children under
+ *  `Plans`; every other key is optional and version-dependent, so nothing here
+ *  is assumed to exist. */
+export type RawPlan = Record<string, unknown> & { Plans?: RawPlan[] };
+
+export type ParsedPlanNode = {
+  kind: string;
+  title: string;
+  detail: string;
+  /** Real measured time. Null unless ANALYZE ran — an estimate is not a timing
+   *  and must not be drawn as one. */
+  ms: number | null;
+  /** Share of the plan's total, for the bar. */
+  pct: number;
+  indent: number;
+  /** The costliest sequential scan, when there is one worth pointing at. */
+  hot: boolean;
+};
+
+export type ParsedPlan = {
+  nodes: ParsedPlanNode[];
+  stats: { label: string; value: string }[];
+  suggestion: string | null;
+};
+
+/**
+ * Assemble the server's payload from the rows it came back in.
+ *
+ * FORMAT TEXT returns one row *per line* of the plan — 295 rows for a real
+ * query against this database — so it has to be rejoined. Every other format
+ * returns the whole document in a single cell.
+ */
+export function readPlanPayload(rows: unknown[][], format: ExplainFormat): string {
+  if (format === "text") return rows.map((r) => String(r[0] ?? "")).join("\n");
+  const cell = rows[0]?.[0];
+  return typeof cell === "string" ? cell : JSON.stringify(cell);
+}
+
+/** Fold a node's interesting attributes into one line, skipping what's absent. */
+function nodeDetail(n: RawPlan): string {
+  const rows =
+    n["Actual Rows"] !== undefined
+      ? `rows ${(n["Actual Rows"] as number).toLocaleString()}`
+      : n["Plan Rows"] !== undefined
+        ? `est rows ${(n["Plan Rows"] as number).toLocaleString()}`
+        : null;
+  return [
+    n["Index Name"] ? `index: ${n["Index Name"]}` : null,
+    n["Filter"] ? `filter: ${n["Filter"]}` : null,
+    n["Hash Cond"] ? `cond: ${n["Hash Cond"]}` : null,
+    n["Sort Key"] ? `sort key: ${(n["Sort Key"] as string[]).join(", ")}` : null,
+    rows,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/**
+ * Flatten a FORMAT JSON plan into drawable rows.
+ *
+ * `Actual Total Time` is preferred over `Total Cost` throughout: with ANALYZE
+ * the former is measured and the latter is a guess, and a bar drawn from a
+ * guess next to one drawn from a measurement invites a false comparison. When
+ * ANALYZE did not run there are no timings at all, so cost is the only metric
+ * left and `ms` stays null so the UI can say so.
+ *
+ * Returns empty rather than throwing on a shape it doesn't recognise — a plan
+ * we can't walk is a display problem, not a reason to lose the raw payload the
+ * user can still read.
+ */
+export function parsePlan(parsed: unknown): ParsedPlan {
+  const root = (Array.isArray(parsed) ? parsed[0] : parsed) as Record<string, unknown> | null;
+  const plan = root?.["Plan"] as RawPlan | undefined;
+  if (!plan || typeof plan !== "object") return { nodes: [], stats: [], suggestion: null };
+
+  // Guard the divisor: a plan with a zero total (a trivial statement, or COSTS
+  // OFF with no ANALYZE) would otherwise make every pct NaN or Infinity.
+  const rawTotal = (plan["Actual Total Time"] as number) ?? (plan["Total Cost"] as number) ?? 1;
+  const total = rawTotal > 0 ? rawTotal : 1;
+
+  const nodes: ParsedPlanNode[] = [];
+  let hotIdx = 0;
+  let hotVal = -1;
+
+  const walk = (n: RawPlan, depth: number) => {
+    const ms = (n["Actual Total Time"] as number) ?? null;
+    const metric = ms ?? ((n["Total Cost"] as number) ?? 0);
+    const rel = n["Relation Name"] ? ` on ${n["Relation Name"]}` : "";
+    const i = nodes.length;
+    nodes.push({
+      kind: String(n["Node Type"] ?? "node"),
+      title: `${n["Node Type"] ?? "node"}${rel}`,
+      detail: nodeDetail(n),
+      ms,
+      pct: Math.min(100, (metric / total) * 100),
+      indent: depth,
+      hot: false,
+    });
+    if ((n["Node Type"] as string)?.includes("Seq Scan") && metric > hotVal) {
+      hotVal = metric;
+      hotIdx = i;
+    }
+    (n.Plans ?? []).forEach((c) => walk(c, depth + 1));
+  };
+  walk(plan, 0);
+
+  // A lone Seq Scan is the whole plan — calling it the hot spot says nothing
+  // and the suggestion that follows ("an index could avoid the full scan")
+  // would be advice to index a table the user asked to read end to end.
+  if (hotVal > 0 && nodes.length > 1) nodes[hotIdx].hot = true;
+
+  const stats: ParsedPlan["stats"] = [];
+  if (root?.["Planning Time"] !== undefined) {
+    stats.push({ label: "Planning time", value: `${(root["Planning Time"] as number).toFixed(2)} ms` });
+  }
+  if (root?.["Execution Time"] !== undefined) {
+    stats.push({ label: "Execution time", value: `${(root["Execution Time"] as number).toFixed(1)} ms` });
+  }
+  stats.push({ label: "Plan nodes", value: String(nodes.length) });
+
+  const hot = nodes.find((n) => n.hot);
+  return {
+    nodes,
+    stats,
+    suggestion: hot
+      ? `${hot.title} dominates this plan. An index matching its filter could avoid the full scan.`
+      : null,
+  };
+}
+
 /* ------------------------------------------------------------------ export */
 
 export type ExportablePlan = {

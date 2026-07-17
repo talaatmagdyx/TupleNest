@@ -316,3 +316,45 @@ describe("tablesToPrefetch", () => {
     ]);
   });
 });
+
+describe("qualifier resolution edge cases", () => {
+  it("offers a schema's tables after `schema.`", () => {
+    const sql = "select * from analytics.";
+    const out = getCompletions(sql, sql.length, cat).items;
+    expect(out.map((o) => o.label)).toContain("daily_rollup");
+  });
+
+  it("matches a schema qualifier case-insensitively", () => {
+    const sql = "select * from ANALYTICS.";
+    const out = getCompletions(sql, sql.length, cat).items;
+    expect(out.map((o) => o.label)).toContain("daily_rollup");
+  });
+
+  it("offers nothing for an unknown qualifier rather than guessing", () => {
+    const sql = "select nonsense. from users";
+    const out = getCompletions(sql, 16, cat).items;
+    expect(out).toEqual([]);
+  });
+
+  // columnsFor's fallback: the table parses fine but has no catalog entry, so
+  // there are no columns to offer. It must return empty, not throw.
+  it("survives a qualifier for a table the catalog has never heard of", () => {
+    const sql = "select u. from unknown_table u";
+    expect(() => getCompletions(sql, 9, cat)).not.toThrow();
+    expect(getCompletions(sql, 9, cat).items).toEqual([]);
+  });
+
+  it("resolves an unqualified table through the search path", () => {
+    const sql = "select u. from users u";
+    const out = getCompletions(sql, 9, cat).items;
+    expect(out.map((o) => o.label)).toContain("email");
+  });
+
+  it("finds a table outside the search path by scanning the other schemas", () => {
+    // daily_rollup lives in analytics, which is not in searchPath — the
+    // candidate list falls through to cat.schemas.
+    const sql = "select d. from daily_rollup d";
+    const out = getCompletions(sql, 9, cat).items;
+    expect(out.map((o) => o.label)).toContain("revenue");
+  });
+});

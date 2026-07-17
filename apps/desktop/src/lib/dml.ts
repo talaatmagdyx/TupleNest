@@ -1,3 +1,4 @@
+import { cellText } from "./text";
 /** Safe result-grid editing: decide whether a result is editable, and build
  *  parameterised DML for staged changes.
  *
@@ -214,6 +215,8 @@ export function previewSql(st: Statement): string {
     const v = st.params[Number(n) - 1];
     if (v === null || v === undefined) return "NULL";
     if (typeof v === "number" || typeof v === "boolean") return String(v);
-    return `'${String(v).replace(/'/g, "''")}'`;
+    // `String(aJsonbValue)` is "[object Object]" — and this preview is the
+    // whole point of the review step.
+    return `'${cellText(v).replace(/'/g, "''")}'`;
   });
 }

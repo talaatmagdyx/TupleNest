@@ -16,12 +16,17 @@ export function Overlay(p: {
   );
 }
 
-export function ModalHead(p: { title: React.ReactNode; onClose: () => void }) {
+export function ModalHead(p: { title: React.ReactNode; actions?: React.ReactNode; onClose: () => void }) {
   return (
     <div className="modal-head">
       <span className="t">{p.title}</span>
-      <button className="x" onClick={p.onClose}>
-        ×
+      {/* Commands belong here rather than among a modal's controls: this row
+          cannot wrap, so they stay put however many options sit below. */}
+      {p.actions && <span className="head-acts">{p.actions}</span>}
+      {/* The glyph is decorative — without a label a screen reader announces
+          this button as "times". */}
+      <button className="x" onClick={p.onClose} aria-label="Close" title="Close">
+        <span aria-hidden>×</span>
       </button>
     </div>
   );
@@ -181,6 +186,56 @@ export function ParamPrompt(p: {
   );
 }
 
+/* ---------- name prompt ---------- */
+
+/**
+ * Ask for a single line of text.
+ *
+ * This exists because `window.prompt` does nothing in the webview: it returns
+ * null without drawing anything, so the caller reads it as "cancelled" and the
+ * feature silently never works. The dialog plugin has `ask` and `message` but
+ * nothing that takes text, so the prompt has to be in-app.
+ */
+export function NamePrompt(p: {
+  title: string;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const empty = p.value.trim().length === 0;
+  return (
+    <Overlay onClose={p.onCancel} center>
+      <div className="modal dialog" style={{ width: 460 }}>
+        <div className="d-title">{p.title}</div>
+        <div className="field">
+          <label htmlFor="name-prompt">{p.label}</label>
+          <input
+            id="name-prompt"
+            autoFocus
+            value={p.value}
+            onChange={(e) => p.onChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !empty) p.onSave();
+              if (e.key === "Escape") p.onCancel();
+            }}
+          />
+        </div>
+        <div className="d-actions" style={{ marginTop: 6 }}>
+          {/* A nameless snippet cannot be found again — it is not worth saving. */}
+          <button className="btn primary" onClick={p.onSave} disabled={empty}>
+            Save
+          </button>
+          <button className="btn" onClick={p.onCancel}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </Overlay>
+  );
+}
+
 /* ---------- destructive statement guard ---------- */
 
 export function Guard(p: { sql: string; onCancel: () => void; onRun: () => void }) {
@@ -285,8 +340,16 @@ export function Settings(p: {
               <div className="st">Anonymous telemetry</div>
               <div className="sd">No query text or data ever leaves the device.</div>
             </div>
-            <button className={`toggle ${p.telemetry ? "on" : ""}`} onClick={() => p.onTelemetry(!p.telemetry)}>
-              <span className="knob" />
+            {/* The knob is the whole button, so without these a screen reader
+                announces "button" — no name, and no way to tell on from off. */}
+            <button
+              className={`toggle ${p.telemetry ? "on" : ""}`}
+              role="switch"
+              aria-checked={p.telemetry}
+              aria-label="Anonymous telemetry"
+              onClick={() => p.onTelemetry(!p.telemetry)}
+            >
+              <span className="knob" aria-hidden />
             </button>
           </div>
         </div>
@@ -341,8 +404,16 @@ export function UpdateToast(p: {
         <span className="dot" style={{ background: "var(--tn-accent)" }} />
         <span style={{ fontWeight: 750, fontSize: 12.5 }}>Update available</span>
         <div style={{ flex: 1 }} />
-        <button className="x" style={{ border: "none", background: "none", color: "var(--tn-tm)", cursor: "pointer" }} onClick={p.onDismiss}>
-          ×
+        {/* Same as the modals' close: the glyph is decoration, and without a
+            label this is announced as "times". */}
+        <button
+          className="x"
+          aria-label="Dismiss"
+          title="Dismiss"
+          style={{ border: "none", background: "none", color: "var(--tn-tm)", cursor: "pointer" }}
+          onClick={p.onDismiss}
+        >
+          <span aria-hidden>×</span>
         </button>
       </div>
       <p>

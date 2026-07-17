@@ -158,3 +158,99 @@ export type QueryResult = {
   rowsAffected: number | null;
   elapsedMs: number;
 };
+
+// --- Health, search and partitions -----------------------------------------
+
+/** Why an index is or isn't worth dropping. `keep` exists because the naive
+ *  "never scanned" report proposes dropping primary keys. */
+export type IndexVerdict = "used" | "keep" | "review" | "candidate";
+
+export type IndexHealthItem = {
+  schema: string;
+  table: string;
+  columns: string;
+  method: string;
+  scans: number;
+  bytes: number;
+  size: string;
+  /** How many physical indexes this one logical index spans (partitions). */
+  members: number;
+  sampleIndex: string;
+  /** Fully-qualified, quote_ident-escaped names. Populated only for verdicts
+   *  that could lead to a DROP — the rest would be dead weight on the wire. */
+  indexIdents: string[];
+  verdict: IndexVerdict;
+  why: string;
+};
+
+export type IndexHealth = {
+  items: IndexHealthItem[];
+  droppableBytes: number;
+  droppableIndexes: number;
+};
+
+export type TableHealthItem = {
+  schema: string;
+  table: string;
+  liveTuples: number;
+  deadTuples: number;
+  deadPct: number;
+  vacuumed: string;
+  analyzed: string;
+  neverAnalyzed: boolean;
+  size: string;
+};
+
+export type TableHealth = {
+  items: TableHealthItem[];
+  /** Counted across the whole database, not just the rows in `items`. */
+  neverAnalyzed: number;
+  neverVacuumed: number;
+  totalTables: number;
+  truncated: boolean;
+};
+
+export type TopQueryItem = {
+  queryId: string;
+  query: string;
+  calls: number;
+  totalMs: number;
+  meanMs: number;
+  rows: number;
+};
+
+/** `available: false` is a normal state, not an error: the extension needs a
+ *  server restart to install, so the app must explain rather than fail. */
+export type TopQueries = {
+  available: boolean;
+  reason?: string;
+  remedy?: string;
+  items: TopQueryItem[];
+};
+
+export type SearchHit = {
+  schema: string;
+  name: string;
+  kind: string;
+  /** Set when the match was on a column rather than the object name. */
+  column: string;
+};
+
+export type SearchResults = { items: SearchHit[]; truncated: boolean };
+
+export type PartitionRow = {
+  name: string;
+  bounds: string;
+  size: string;
+  rows: number;
+  rowsKnown: boolean;
+  isPartitioned: boolean;
+  partitionCount: number;
+};
+
+export type PartitionOverview = {
+  partitioned: boolean;
+  strategy: string;
+  partitionKey: string;
+  items: PartitionRow[];
+};

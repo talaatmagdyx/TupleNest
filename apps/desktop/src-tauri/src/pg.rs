@@ -625,8 +625,32 @@ fn cache_scope(request: &MetadataRequest) -> (&'static str, String, String) {
         MetadataRequest::ListConstraints { schema, table } => {
             ("constraints", schema.clone(), table.clone())
         }
+        // Sizes and usage counters are live facts; a cached copy would be a lie
+        // with a timestamp on it.
+        MetadataRequest::ObjectDetails { schema, name, .. } => {
+            ("details", schema.clone(), name.clone())
+        }
         MetadataRequest::ListTypes { schema } => ("types", schema.clone(), String::new()),
         MetadataRequest::ListRoutines { schema } => ("routines", schema.clone(), String::new()),
+        // Every one of these reads a live counter, a live size, or the current
+        // contents of the database. Caching any of them would hand the user a
+        // stale number wearing the costume of a fresh one — and these are
+        // exactly the numbers people act on.
+        MetadataRequest::IndexHealth { schema } => (
+            "index_health",
+            schema.clone().unwrap_or_default(),
+            String::new(),
+        ),
+        MetadataRequest::TableHealth { schema } => (
+            "table_health",
+            schema.clone().unwrap_or_default(),
+            String::new(),
+        ),
+        MetadataRequest::TopQueries { .. } => ("top_queries", String::new(), String::new()),
+        MetadataRequest::SearchObjects { term, .. } => ("search", term.clone(), String::new()),
+        MetadataRequest::PartitionOverview { schema, table } => {
+            ("partition_overview", schema.clone(), table.clone())
+        }
     }
 }
 

@@ -32,33 +32,35 @@ export default function SavedList(p: Props) {
           const m = envMeta(c.environment);
           const active = c.id === p.activeId;
           return (
-            <button key={c.id} className={`conn-card ${active ? "active" : ""}`} onClick={() => p.onLoad(c)}>
-              <span className="pg-avatar">PG</span>
-              <span className="meta">
-                <span className="nm">
-                  {c.name}
-                  {active && p.connected && (
-                    <span className="dot" style={{ background: "#3fb950", boxShadow: "0 0 6px rgba(63,185,80,.5)" }} />
-                  )}
+            // A container, not a button. Delete has to be its own control, and
+            // a <button> inside a <button> is invalid HTML — React warns about
+            // it, the parser may hoist the inner one out, and assistive tech
+            // has no way to present a control nested in a control.
+            <div key={c.id} className={`conn-card ${active ? "active" : ""}`}>
+              <button className="conn-open" onClick={() => p.onLoad(c)}>
+                <span className="pg-avatar">PG</span>
+                <span className="meta">
+                  <span className="nm">
+                    {c.name}
+                    {active && p.connected && (
+                      <span
+                        className="dot"
+                        style={{ background: "#3fb950", boxShadow: "0 0 6px rgba(63,185,80,.5)" }}
+                      />
+                    )}
+                  </span>
+                  <span className="full">
+                    {c.username}@{c.host}:{c.port}/{c.database}
+                  </span>
                 </span>
-                <span className="full">
-                  {c.username}@{c.host}:{c.port}/{c.database}
+                <span className="env-pill" style={{ color: m.color, background: m.bg }}>
+                  {c.environment ?? "dev"}
                 </span>
-              </span>
-              <span className="env-pill" style={{ color: m.color, background: m.bg }}>
-                {c.environment ?? "dev"}
-              </span>
-              <button
-                className="del"
-                title="Delete"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  p.onDelete(c);
-                }}
-              >
+              </button>
+              <button className="del" title="Delete" aria-label={`Delete ${c.name}`} onClick={() => p.onDelete(c)}>
                 ×
               </button>
-            </button>
+            </div>
           );
         })}
       </div>

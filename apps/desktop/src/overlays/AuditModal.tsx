@@ -16,9 +16,16 @@ export default function AuditModal(p: { onClose: () => void }) {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    invoke<AuditEntry[]>("audit_list", { limit: 300 })
-      .then(setRows)
-      .catch((e) => setErr(String(e)));
+    // async/await rather than .then().catch(), to match MonitorModal and the
+    // rest of the app. (This shape does not, as I first assumed, make the
+    // failure path testable — see the note in AuditModal.test.tsx.)
+    (async () => {
+      try {
+        setRows(await invoke<AuditEntry[]>("audit_list", { limit: 300 }));
+      } catch (e) {
+        setErr(String(e));
+      }
+    })();
   }, []);
 
   return (

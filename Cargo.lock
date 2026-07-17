@@ -5508,7 +5508,7 @@ version = "0.0.1"
 
 [[package]]
 name = "tuplenest-connection-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "tokio",
  "tuplenest-driver-api",
@@ -5516,7 +5516,7 @@ dependencies = [
 
 [[package]]
 name = "tuplenest-credential-store"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "keyring",
  "thiserror 2.0.18",
@@ -5526,7 +5526,7 @@ dependencies = [
 
 [[package]]
 name = "tuplenest-desktop"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -5553,7 +5553,7 @@ dependencies = [
 
 [[package]]
 name = "tuplenest-driver-api"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -5565,7 +5565,7 @@ dependencies = [
 
 [[package]]
 name = "tuplenest-driver-postgres"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5588,7 +5588,7 @@ version = "0.0.1"
 
 [[package]]
 name = "tuplenest-metadata-cache"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "rusqlite",
  "tempfile",
@@ -5605,7 +5605,7 @@ version = "0.0.1"
 
 [[package]]
 name = "tuplenest-result-stream"
-version = "0.0.1"
+version = "0.1.0"
 
 [[package]]
 name = "tuplenest-safety-engine"
@@ -5621,7 +5621,7 @@ version = "0.0.1"
 
 [[package]]
 name = "tuplenest-ssh-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "russh",
  "thiserror 2.0.18",
@@ -5635,7 +5635,7 @@ version = "0.0.1"
 
 [[package]]
 name = "tuplenest-telemetry"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde",
  "tempfile",
@@ -5654,7 +5654,7 @@ version = "0.0.1"
 
 [[package]]
 name = "tuplenest-workspace-store"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "rusqlite",
  "serde",

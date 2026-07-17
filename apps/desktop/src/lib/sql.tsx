@@ -1,4 +1,5 @@
 import React from "react";
+import { cellExport as cellText } from "./text";
 import { invoke } from "@tauri-apps/api/core";
 
 /** SQL syntax highlighting (from the HUD design's tokenizer). */
@@ -27,6 +28,20 @@ export function tokenizeSQL(sql: string): React.ReactNode[] {
 }
 
 /** Pages the backend row store until `stored` rows are collected. */
+/**
+ * How many rows an export or copy actually contains.
+ *
+ * A result the backend truncated holds fewer rows than the query matched, and
+ * a file written from it is a subset with nothing on its face to say so. The
+ * grid shows a banner; the .csv on disk cannot. So the count says it: "100,000
+ * of 4,213,662 rows (truncated)" rather than a confident "100,000 rows" beside
+ * a file that is missing 98% of the answer.
+ */
+export function rowCountNote(written: number, result: { totalRows: number; truncated: boolean }): string {
+  if (!result.truncated || result.totalRows <= written) return `${written.toLocaleString()} rows`;
+  return `${written.toLocaleString()} of ${result.totalRows.toLocaleString()} rows (truncated)`;
+}
+
 export async function fetchAllRows(stored: number, cap = 100_000): Promise<unknown[][]> {
   const n = Math.min(stored, cap);
   const out: unknown[][] = [];
@@ -37,9 +52,6 @@ export async function fetchAllRows(stored: number, cap = 100_000): Promise<unkno
   }
   return out;
 }
-
-const cellText = (v: unknown): string =>
-  v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
 
 export function toCSV(cols: { name: string }[], rows: unknown[][]): string {
   const esc = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);

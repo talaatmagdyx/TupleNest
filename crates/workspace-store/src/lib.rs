@@ -17,7 +17,7 @@ pub enum StoreError {
     Json(#[from] serde_json::Error),
 }
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 const MIGRATION_V1: &str = r#"
 CREATE TABLE meta        (key TEXT PRIMARY KEY, value TEXT);
@@ -75,6 +75,30 @@ CREATE TABLE audit_log (
   sql_text TEXT NOT NULL, at INTEGER NOT NULL
 );
 CREATE INDEX idx_audit_conn ON audit_log(connection_key, at DESC);
+"#;
+
+/// Repair for databases that recorded v4 without ever getting v4's tables.
+///
+/// A build recorded `schema_version = 4` on databases that do not have
+/// `snippets` or `audit_log`. Because the runner trusts the recorded number,
+/// v4 could never run again on those files: saving a snippet failed with "no
+/// such table" forever, and — worse — the production audit log silently
+/// recorded nothing.
+///
+/// Everything here is `IF NOT EXISTS`, so it is a no-op on a database that
+/// really did get v4, and it repairs one that did not. Migrations from here on
+/// are written this way: a version number is a claim about the schema, and
+/// this is what it costs when the claim is wrong.
+const MIGRATION_V5: &str = r#"
+CREATE TABLE IF NOT EXISTS snippets (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, body TEXT NOT NULL,
+  tags TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS audit_log (
+  id TEXT PRIMARY KEY, connection_key TEXT NOT NULL, environment TEXT,
+  sql_text TEXT NOT NULL, at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_conn ON audit_log(connection_key, at DESC);
 "#;
 
 pub struct Store {
@@ -141,6 +165,9 @@ impl Store {
         }
         if current < 4 {
             self.conn.execute_batch(MIGRATION_V4)?;
+        }
+        if current < 5 {
+            self.conn.execute_batch(MIGRATION_V5)?;
         }
         if current < SCHEMA_VERSION {
             self.conn.execute(
@@ -619,6 +646,78 @@ mod tests {
     }
 
     #[test]
+    fn fresh_store_has_the_tables_its_version_claims() {
+        // The version number is a claim about the schema. Recording 4 without
+        // creating v4's tables is exactly the bug that shipped: every snippet
+        // save failed, and the prod audit log recorded nothing at all.
+        let store = Store::open_in_memory().unwrap();
+        store.snippet_list().expect("snippets table missing");
+        store
+            .conn
+            .query_row("SELECT count(*) FROM audit_log", [], |r| r.get::<_, i64>(0))
+            .expect("audit_log table missing");
+    }
+
+    #[test]
+    fn repairs_a_store_that_recorded_v4_without_v4s_tables() {
+        // A real database from this machine: schema_version = 4, no snippets
+        // and no audit_log. The runner trusts the number, so v4 could never
+        // run again and the feature was broken forever.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("broken.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(MIGRATION_V1).unwrap();
+            conn.execute_batch(MIGRATION_V2).unwrap();
+            conn.execute_batch(MIGRATION_V3).unwrap();
+            // v4 skipped, but claimed:
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '4')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+        store.snippet_list().expect("snippets should have been repaired");
+
+        // And it actually works now, rather than merely existing.
+        store
+            .snippet_upsert(&SnippetRecord {
+                id: "s1".into(),
+                name: "recent users".into(),
+                body: "select * from users".into(),
+                tags: None,
+            })
+            .unwrap();
+        assert_eq!(store.snippet_list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn repair_leaves_a_healthy_v4_store_alone() {
+        // The repair is IF NOT EXISTS, so it must not disturb a database that
+        // really did get v4 — including the rows already in it.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ok.db");
+        {
+            let store = Store::open(&path).unwrap();
+            store
+                .snippet_upsert(&SnippetRecord {
+                    id: "keep".into(),
+                    name: "keep me".into(),
+                    body: "select 1".into(),
+                    tags: None,
+                })
+                .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        let all = store.snippet_list().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].name, "keep me");
+    }
+
+    #[test]
     fn upgrades_v1_store_to_v2_preserving_data() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("v1.db");
@@ -857,7 +956,10 @@ mod tests {
             .unwrap();
         }
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 4);
+        // Against the constant, not a literal: a version bump is not a reason
+        // for this test to fail, and pinning the number here is what let the
+        // v4 gap go unnoticed.
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
         assert!(store.snippet_list().unwrap().is_empty());
         assert!(store.audit_list(10).unwrap().is_empty());
     }

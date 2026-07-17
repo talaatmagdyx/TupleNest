@@ -316,3 +316,48 @@ describe("previewSql", () => {
     expect(previewSql(st)).toContain(`'o''brien'`);
   });
 });
+
+describe("coerceValue — boolean and numeric fallbacks", () => {
+  it.each(["t", "yes", "y", "1", "TRUE"])("reads %s as true", (s) =>
+    expect(coerceValue(s, "bool")).toBe(true),
+  );
+
+  it.each(["f", "no", "n", "0", "FALSE"])("reads %s as false", (s) =>
+    expect(coerceValue(s, "bool")).toBe(false),
+  );
+
+  it("passes an unrecognised boolean through for the server to reject", () => {
+    // Guessing here would silently write `false` for a typo like "ture".
+    expect(coerceValue("ture", "bool")).toBe("ture");
+  });
+
+  it("passes an unparseable numeric through untrimmed", () => {
+    expect(coerceValue(" 1e5 ", "int8")).toBe(" 1e5 ");
+  });
+
+  it("handles a negative number", () => {
+    expect(coerceValue("-42", "int4")).toBe(-42);
+  });
+});
+
+describe("analyzeEditability — table detection", () => {
+  // A catalog must be present: "schema is still loading" is checked first, so
+  // passing undefined here would test that blocker instead of this one.
+  const cols = [col("id", "int8", true)];
+
+  // `Editability` is a discriminated union: `reason` only exists on the
+  // not-editable arm, so the assertion has to narrow first.
+  const reasonFor = (sql: string): string => {
+    const r = analyzeEditability(sql, cols, cat);
+    expect(r.editable).toBe(false);
+    return r.editable ? "" : r.reason;
+  };
+
+  it("declines when no table can be found", () => {
+    expect(reasonFor("select 1")).toContain("no table was detected");
+  });
+
+  it("declines a join rather than guessing which table to write to", () => {
+    expect(reasonFor("select * from users join logs on true")).toContain("more than one table");
+  });
+});

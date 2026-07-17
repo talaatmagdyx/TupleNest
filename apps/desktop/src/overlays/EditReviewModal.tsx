@@ -1,4 +1,5 @@
 import { buildStatements, previewSql, type CellEdit, type EditTarget } from "../lib/dml";
+import { ModalHead } from "./Overlays";
 
 type Props = {
   target: EditTarget;
@@ -22,12 +23,9 @@ export default function EditReviewModal(p: Props) {
   return (
     <div className="overlay center" onClick={p.onClose}>
       <div className="modal edit-review" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <span className="t">Review changes</span>
-          <button className="x" onClick={p.onClose}>
-            ×
-          </button>
-        </div>
+        {/* Was a hand-rolled copy of ModalHead, which meant it missed the
+            accessible label on the close button. Use the real one. */}
+        <ModalHead title="Review changes" onClose={p.onClose} />
 
         <div className="er-sum">
           <span className="er-count">{p.edits.length}</span>

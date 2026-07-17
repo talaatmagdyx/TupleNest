@@ -557,6 +557,14 @@ impl DatabaseSession for PostgresSession {
                     })
                     .collect::<Vec<_>>())
             }
+            MetadataRequest::ObjectDetails {
+                schema,
+                name,
+                object_kind,
+            } => {
+                object_details(&self.client, schema.as_str(), name.as_str(), object_kind.as_str())
+                    .await?
+            }
             MetadataRequest::ListTypes { schema } => {
                 let rows = self
                     .client
@@ -635,6 +643,19 @@ impl DatabaseSession for PostgresSession {
                         })
                     })
                     .collect::<Vec<_>>())
+            }
+            MetadataRequest::IndexHealth { schema } => {
+                index_health(&self.client, schema.as_deref()).await?
+            }
+            MetadataRequest::TableHealth { schema } => {
+                table_health(&self.client, schema.as_deref()).await?
+            }
+            MetadataRequest::TopQueries { limit } => top_queries(&self.client, limit).await?,
+            MetadataRequest::SearchObjects { term, limit } => {
+                search_objects(&self.client, term.as_str(), limit).await?
+            }
+            MetadataRequest::PartitionOverview { schema, table } => {
+                partition_overview(&self.client, schema.as_str(), table.as_str()).await?
             }
             MetadataRequest::DescribeObject { schema, name } => {
                 let rows = self
@@ -872,6 +893,603 @@ impl DatabaseSession for PostgresSession {
     fn is_broken(&self) -> bool {
         self.client.is_closed()
     }
+}
+
+/// A labelled group of key/value rows, ready to render without the UI knowing
+/// anything about Postgres catalogs.
+fn section(label: &str, rows: Vec<(&str, String)>) -> serde_json::Value {
+    serde_json::json!({
+        "label": label,
+        "rows": rows
+            .into_iter()
+            .filter(|(_, v)| !v.is_empty())
+            .map(|(k, v)| serde_json::json!({ "k": k, "v": v }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn opt(v: Option<String>) -> String {
+    v.unwrap_or_default()
+}
+
+/// Why an index is or isn't a candidate for dropping.
+///
+/// `idx_scan = 0` is the seductive, wrong answer. On this developer's database
+/// it flags 6.1 GB — of which 4 GB are primary keys and unique constraints that
+/// enforce correctness and are scanned by the *constraint machinery*, not by
+/// planner index scans. Reporting those as waste would be actively dangerous.
+/// So the verdict, not the scan count, is what the UI leads with.
+fn index_verdict(scans: i64, pk: bool, backs_constraint: bool, unique: bool) -> (&'static str, &'static str) {
+    if scans > 0 {
+        ("used", "Scanned since the last stats reset.")
+    } else if pk || backs_constraint {
+        (
+            "keep",
+            "Never scanned, but it enforces a primary key or constraint. Dropping it would drop the guarantee.",
+        )
+    } else if unique {
+        (
+            "review",
+            "Never scanned, but it enforces uniqueness. Safe to drop only if nothing relies on that.",
+        )
+    } else {
+        (
+            "candidate",
+            "Never scanned since the last stats reset, and enforces nothing.",
+        )
+    }
+}
+
+/// Index usage, folded by (partition root, column signature) so that one
+/// logical index across 290 partitions reads as one row.
+///
+/// Folding by parent *index* would be the obvious approach and fails here:
+/// this database attaches indexes to the leaves directly, so pg_inherits has
+/// no parent to group by. The column signature is what actually identifies
+/// "the same index" across a partition tree.
+async fn index_health(client: &Client, schema: Option<&str>) -> Result<serde_json::Value, DriverError> {
+    let rows = client
+        .query(
+            // `base` exists so the column signature can be computed per index
+            // and then grouped on. Computing it inline in the GROUP BY forces
+            // s.relid into the grouping key, which silently un-folds every
+            // partition back into its own row — the failure looks like working
+            // code that reports "1 partition" 8,887 times.
+            "WITH base AS (
+               SELECT s.indexrelid, s.idx_scan, s.schemaname,
+                      i.relname, am.amname AS method,
+                      x.indisunique AS uniq, x.indisprimary AS pk,
+                      (c.conindid IS NOT NULL) AS backs_con,
+                      rt.relname AS root_table, rn.nspname AS root_schema,
+                      (SELECT string_agg(a.attname, ', ' ORDER BY k.ord)
+                         FROM unnest(x.indkey) WITH ORDINALITY k(attnum, ord)
+                         JOIN pg_attribute a ON a.attrelid = s.relid AND a.attnum = k.attnum) AS cols
+               FROM pg_stat_user_indexes s
+               JOIN pg_index x ON x.indexrelid = s.indexrelid
+               JOIN pg_class i ON i.oid = s.indexrelid
+               JOIN pg_am am ON am.oid = i.relam
+               LEFT JOIN pg_constraint c ON c.conindid = s.indexrelid
+               JOIN pg_class rt ON rt.oid = COALESCE(pg_partition_root(s.relid), s.relid)
+               JOIN pg_namespace rn ON rn.oid = rt.relnamespace
+               WHERE ($1::text IS NULL OR s.schemaname = $1::text)
+             ), g AS (
+               SELECT root_schema, root_table, cols, method, uniq,
+                      bool_or(pk) AS pk,
+                      bool_or(backs_con) AS backs_con,
+                      sum(idx_scan)::bigint AS scans,
+                      sum(pg_relation_size(indexrelid))::bigint AS bytes,
+                      count(*)::bigint AS members,
+                      min(relname) AS sample_index,
+                      -- Fully qualified and quoted by Postgres itself. A
+                      -- partitioned index can have children in other schemas,
+                      -- so a bare name would drop the wrong thing or nothing;
+                      -- and quote_ident is the only correct escaper here.
+                      array_agg(quote_ident(schemaname) || '.' || quote_ident(relname)
+                                ORDER BY relname) AS index_idents
+               FROM base
+               GROUP BY root_schema, root_table, cols, method, uniq
+             )
+             SELECT root_schema, root_table, cols, method, uniq, pk, backs_con,
+                    scans, bytes, pg_size_pretty(bytes), members, sample_index,
+                    index_idents,
+                    -- Totals over every group, not just the rows that survive
+                    -- the LIMIT. A headline number that quietly means \"of the
+                    -- 500 biggest\" is worse than no headline number.
+                    sum(bytes) FILTER (WHERE scans = 0 AND NOT pk AND NOT backs_con AND NOT uniq)
+                      OVER ()::bigint AS total_drop_bytes,
+                    sum(members) FILTER (WHERE scans = 0 AND NOT pk AND NOT backs_con AND NOT uniq)
+                      OVER ()::bigint AS total_drop_n
+             FROM g ORDER BY bytes DESC LIMIT 500",
+            &[&schema],
+        )
+        .await
+        .map_err(normalize_error)?;
+
+    let mut items = Vec::new();
+    // Identical across every row (window over the whole set); read once.
+    let cand_bytes: i64 = rows.first().and_then(|r| r.get(13)).unwrap_or(0);
+    let cand_n: i64 = rows.first().and_then(|r| r.get(14)).unwrap_or(0);
+    for r in &rows {
+        let scans: i64 = r.get(7);
+        let (verdict, why) = index_verdict(scans, r.get(5), r.get(6), r.get(4));
+        let bytes: i64 = r.get(8);
+        let members: i64 = r.get(10);
+        // The physical names are only needed to build a DROP script, and a
+        // script is only ever offered for what might be dropped. Shipping all
+        // 8,887 names to render a table nobody will act on is pure weight.
+        let idents: Vec<String> = if verdict == "candidate" || verdict == "review" {
+            r.get::<_, Vec<String>>(12)
+        } else {
+            Vec::new()
+        };
+        items.push(serde_json::json!({
+            "schema": r.get::<_, String>(0),
+            "table": r.get::<_, String>(1),
+            "columns": opt(r.get::<_, Option<String>>(2)),
+            "method": r.get::<_, String>(3),
+            "scans": scans,
+            "bytes": bytes,
+            "size": opt(r.get::<_, Option<String>>(9)),
+            "members": members,
+            "sampleIndex": r.get::<_, String>(11),
+            "indexIdents": idents,
+            "verdict": verdict,
+            "why": why,
+        }));
+    }
+    Ok(serde_json::json!({
+        "items": items,
+        "droppableBytes": cand_bytes,
+        "droppableIndexes": cand_n,
+    }))
+}
+
+/// Dead tuples and vacuum/analyze recency.
+///
+/// Ordering by dead tuples alone would bury the real problem here: 2,603 tables
+/// have never been vacuumed at all, and a table nobody has analyzed reports
+/// zero dead tuples because nobody has counted them. Never-analyzed sorts first.
+async fn table_health(client: &Client, schema: Option<&str>) -> Result<serde_json::Value, DriverError> {
+    let rows = client
+        .query(
+            "SELECT schemaname, relname, n_live_tup, n_dead_tup,
+                    CASE WHEN n_live_tup + n_dead_tup > 0
+                         THEN round(100.0 * n_dead_tup / (n_live_tup + n_dead_tup), 1)::float8
+                         ELSE 0::float8 END AS dead_pct,
+                    GREATEST(last_vacuum, last_autovacuum)   AS vacuumed,
+                    GREATEST(last_analyze, last_autoanalyze)  AS analyzed,
+                    pg_size_pretty(pg_relation_size(relid)),
+                    -- Counted over every table, then truncated by the LIMIT.
+                    -- Counting the returned page instead would report \"500
+                    -- never analyzed\" forever, which is just the page size
+                    -- wearing a fact's clothing.
+                    count(*) FILTER (WHERE last_analyze IS NULL AND last_autoanalyze IS NULL)
+                      OVER ()::bigint AS total_never_analyzed,
+                    count(*) FILTER (WHERE last_vacuum IS NULL AND last_autovacuum IS NULL)
+                      OVER ()::bigint AS total_never_vacuumed,
+                    count(*) OVER ()::bigint AS total_tables
+             FROM pg_stat_user_tables
+             WHERE ($1::text IS NULL OR schemaname = $1::text)
+             ORDER BY (GREATEST(last_analyze, last_autoanalyze) IS NULL) DESC,
+                      n_dead_tup DESC
+             LIMIT 500",
+            &[&schema],
+        )
+        .await
+        .map_err(normalize_error)?;
+
+    let fmt = |t: Option<chrono::DateTime<chrono::Utc>>| match t {
+        Some(t) => t.format("%Y-%m-%d %H:%M").to_string(),
+        None => "never".to_string(),
+    };
+    let items: Vec<_> = rows
+        .iter()
+        .map(|r| {
+            let analyzed: Option<chrono::DateTime<chrono::Utc>> = r.get(6);
+            serde_json::json!({
+                "schema": r.get::<_, String>(0),
+                "table": r.get::<_, String>(1),
+                "liveTuples": r.get::<_, i64>(2),
+                "deadTuples": r.get::<_, i64>(3),
+                "deadPct": r.get::<_, f64>(4),
+                "vacuumed": fmt(r.get(5)),
+                "analyzed": fmt(analyzed),
+                // The flag that matters: every row estimate this app shows for
+                // such a table — including the details modal — is a guess.
+                "neverAnalyzed": analyzed.is_none(),
+                "size": opt(r.get::<_, Option<String>>(7)),
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "items": items,
+        "neverAnalyzed": rows.first().and_then(|r| r.get::<_, Option<i64>>(8)).unwrap_or(0),
+        "neverVacuumed": rows.first().and_then(|r| r.get::<_, Option<i64>>(9)).unwrap_or(0),
+        "totalTables": rows.first().and_then(|r| r.get::<_, Option<i64>>(10)).unwrap_or(0),
+        "truncated": rows.len() >= 500,
+    }))
+}
+
+/// Top statements, or an honest explanation of why there are none.
+async fn top_queries(client: &Client, limit: i64) -> Result<serde_json::Value, DriverError> {
+    let installed: bool = client
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')",
+            &[],
+        )
+        .await
+        .map_err(normalize_error)?
+        .get(0);
+    if !installed {
+        return Ok(serde_json::json!({
+            "available": false,
+            "reason": "The pg_stat_statements extension is not installed on this server.",
+            "remedy": "It must be added to shared_preload_libraries in postgresql.conf, which needs a server restart, then: CREATE EXTENSION pg_stat_statements;",
+            "items": [],
+        }));
+    }
+    // total_exec_time is the PG13+ name; PG12 called it total_time. Ask the
+    // catalog rather than the version string — forks renumber themselves.
+    let modern: bool = client
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                             WHERE table_name = 'pg_stat_statements'
+                               AND column_name = 'total_exec_time')",
+            &[],
+        )
+        .await
+        .map_err(normalize_error)?
+        .get(0);
+    let (total, mean) = if modern {
+        ("total_exec_time", "mean_exec_time")
+    } else {
+        ("total_time", "mean_time")
+    };
+    let sql = format!(
+        "SELECT queryid::text, query, calls, {total} AS total_ms, {mean} AS mean_ms, rows
+         FROM pg_stat_statements ORDER BY {total} DESC LIMIT $1"
+    );
+    let rows = client.query(&sql, &[&limit]).await.map_err(normalize_error)?;
+    let items: Vec<_> = rows
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "queryId": opt(r.get::<_, Option<String>>(0)),
+                "query": opt(r.get::<_, Option<String>>(1)),
+                "calls": r.get::<_, i64>(2),
+                "totalMs": r.get::<_, f64>(3),
+                "meanMs": r.get::<_, f64>(4),
+                "rows": r.get::<_, i64>(5),
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({ "available": true, "items": items }))
+}
+
+/// Find an object by name anywhere in the database.
+///
+/// Partitions are excluded: matching "eng_interactions" would otherwise return
+/// 300 near-identical children and hide the parent the user actually wants.
+async fn search_objects(client: &Client, term: &str, limit: i64) -> Result<serde_json::Value, DriverError> {
+    let pat = format!("%{}%", term.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+    let rows = client
+        .query(
+            "SELECT n.nspname, c.relname,
+                    CASE c.relkind WHEN 'r' THEN 'table' WHEN 'p' THEN 'table'
+                                   WHEN 'v' THEN 'view'  WHEN 'm' THEN 'matview'
+                                   WHEN 'S' THEN 'sequence' WHEN 'i' THEN 'index'
+                                   WHEN 'I' THEN 'index' WHEN 'f' THEN 'foreign' END AS kind,
+                    NULL::text AS column_name
+             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.relname ILIKE $1 ESCAPE '\\'
+               AND NOT c.relispartition
+               AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
+               AND c.relkind IN ('r','p','v','m','S','i','I','f')
+             UNION ALL
+             SELECT n.nspname, c.relname, 'column', a.attname
+             FROM pg_attribute a
+             JOIN pg_class c ON c.oid = a.attrelid
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE a.attname ILIKE $1 ESCAPE '\\'
+               AND a.attnum > 0 AND NOT a.attisdropped
+               AND NOT c.relispartition
+               AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
+               AND c.relkind IN ('r','p','v','m','f')
+             ORDER BY 3, 1, 2
+             LIMIT $2",
+            &[&pat, &limit],
+        )
+        .await
+        .map_err(normalize_error)?;
+    let items: Vec<_> = rows
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "schema": r.get::<_, String>(0),
+                "name": r.get::<_, String>(1),
+                "kind": opt(r.get::<_, Option<String>>(2)),
+                "column": opt(r.get::<_, Option<String>>(3)),
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({ "items": items, "truncated": items.len() as i64 >= limit }))
+}
+
+/// Direct partitions with bounds, size and rows.
+async fn partition_overview(
+    client: &Client,
+    schema: &str,
+    table: &str,
+) -> Result<serde_json::Value, DriverError> {
+    let head = client
+        .query_opt(
+            "SELECT pg_get_partkeydef(c.oid), c.relkind::text
+             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = $1 AND c.relname = $2",
+            &[&schema, &table],
+        )
+        .await
+        .map_err(normalize_error)?;
+    let (partkey, is_part) = match head {
+        Some(r) => (opt(r.get::<_, Option<String>>(0)), r.get::<_, String>(1) == "p"),
+        None => (String::new(), false),
+    };
+    if !is_part {
+        return Ok(serde_json::json!({
+            "partitioned": false,
+            "strategy": "",
+            "partitionKey": "",
+            "items": [],
+        }));
+    }
+    let rows = client
+        .query(
+            // Same trap as the parent: a sub-partitioned child stores nothing
+            // itself, so its own size is 0 next to 300,000 rows. Sum its tree.
+            "SELECT ch.relname,
+                    pg_get_expr(ch.relpartbound, ch.oid) AS bounds,
+                    pg_size_pretty(COALESCE(
+                      (SELECT sum(pg_total_relation_size(pt.relid)) FROM pg_partition_tree(ch.oid) pt),
+                      pg_total_relation_size(ch.oid))),
+                    ch.reltuples::bigint,
+                    ch.relkind = 'p' AS sub_partitioned,
+                    (SELECT count(*) FROM pg_inherits gi WHERE gi.inhparent = ch.oid)::bigint
+             FROM pg_inherits i
+             JOIN pg_class ch ON ch.oid = i.inhrelid
+             JOIN pg_class p  ON p.oid  = i.inhparent
+             JOIN pg_namespace n ON n.oid = p.relnamespace
+             WHERE n.nspname = $1 AND p.relname = $2
+             ORDER BY ch.relname",
+            &[&schema, &table],
+        )
+        .await
+        .map_err(normalize_error)?;
+    let strategy = partkey
+        .split_once(' ')
+        .map(|(s, _)| s.to_string())
+        .unwrap_or_else(|| partkey.clone());
+    let items: Vec<_> = rows
+        .iter()
+        .map(|r| {
+            let est: i64 = r.get(3);
+            serde_json::json!({
+                "name": r.get::<_, String>(0),
+                "bounds": opt(r.get::<_, Option<String>>(1)),
+                "size": opt(r.get::<_, Option<String>>(2)),
+                "rows": if est < 0 { 0 } else { est },
+                "rowsKnown": est >= 0,
+                "isPartitioned": r.get::<_, bool>(4),
+                "partitionCount": r.get::<_, i64>(5),
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "partitioned": true,
+        "strategy": strategy,
+        "partitionKey": partkey,
+        "items": items,
+    }))
+}
+
+/// Facts about one object. Each kind is asked what it can actually answer:
+/// a sequence knows its last value, an index knows how often it was scanned,
+/// a table knows its size — and none of them share a catalog view.
+async fn object_details(
+    client: &Client,
+    schema: &str,
+    name: &str,
+    kind: &str,
+) -> Result<serde_json::Value, DriverError> {
+    let mut sections: Vec<serde_json::Value> = Vec::new();
+
+    if kind == "sequence" {
+        // pg_sequences holds the definition; last_value needs the sequence
+        // itself and is only visible with privileges, so it may be absent.
+        let r = client
+            .query_opt(
+                "SELECT start_value, min_value, max_value, increment_by, cycle, cache_size, last_value
+                 FROM pg_sequences WHERE schemaname = $1 AND sequencename = $2",
+                &[&schema, &name],
+            )
+            .await
+            .map_err(normalize_error)?;
+        if let Some(r) = r {
+            sections.push(section(
+                "Sequence",
+                vec![
+                    ("Last value", r.get::<_, Option<i64>>(6).map(|v| v.to_string()).unwrap_or_else(|| "not yet called".into())),
+                    ("Start", r.get::<_, i64>(0).to_string()),
+                    ("Increment", r.get::<_, i64>(3).to_string()),
+                    ("Minimum", r.get::<_, i64>(1).to_string()),
+                    ("Maximum", r.get::<_, i64>(2).to_string()),
+                    ("Cache", r.get::<_, i64>(5).to_string()),
+                    ("Cycles", if r.get::<_, bool>(4) { "yes".into() } else { "no".into() }),
+                ],
+            ));
+        }
+        // Which column owns it, if any — the answer to "where does this get used".
+        let owned = client
+            .query_opt(
+                "SELECT tc.relname || '.' || a.attname
+                 FROM pg_depend d
+                 JOIN pg_class sc ON sc.oid = d.objid
+                 JOIN pg_namespace n ON n.oid = sc.relnamespace
+                 JOIN pg_class tc ON tc.oid = d.refobjid
+                 JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+                 WHERE sc.relkind = 'S' AND n.nspname = $1 AND sc.relname = $2
+                   AND d.deptype IN ('a','i')",
+                &[&schema, &name],
+            )
+            .await
+            .map_err(normalize_error)?;
+        if let Some(o) = owned {
+            sections.push(section("Owned by", vec![("Column", o.get::<_, String>(0))]));
+        }
+    } else if kind == "index" {
+        let r = client
+            .query_opt(
+                "SELECT pg_get_indexdef(i.indexrelid),
+                        pg_size_pretty(pg_relation_size(i.indexrelid)),
+                        COALESCE(s.idx_scan, 0),
+                        COALESCE(s.idx_tup_read, 0),
+                        COALESCE(s.idx_tup_fetch, 0),
+                        i.indisunique, i.indisprimary, i.indisvalid,
+                        tc.relname,
+                        am.amname
+                 FROM pg_index i
+                 JOIN pg_class ic ON ic.oid = i.indexrelid
+                 JOIN pg_class tc ON tc.oid = i.indrelid
+                 JOIN pg_am am ON am.oid = ic.relam
+                 JOIN pg_namespace n ON n.oid = ic.relnamespace
+                 LEFT JOIN pg_stat_user_indexes s ON s.indexrelid = i.indexrelid
+                 WHERE n.nspname = $1 AND ic.relname = $2",
+                &[&schema, &name],
+            )
+            .await
+            .map_err(normalize_error)?;
+        if let Some(r) = r {
+            let scans: i64 = r.get(2);
+            sections.push(section(
+                "Index",
+                vec![
+                    ("On table", r.get::<_, String>(8)),
+                    ("Method", r.get::<_, String>(9)),
+                    ("Size", opt(r.get::<_, Option<String>>(1))),
+                    ("Unique", if r.get::<_, bool>(5) { "yes".into() } else { "no".into() }),
+                    ("Primary key", if r.get::<_, bool>(6) { "yes".into() } else { "no".into() }),
+                    ("Valid", if r.get::<_, bool>(7) { "yes".into() } else { "NO — rebuild it".into() }),
+                ],
+            ));
+            sections.push(section(
+                "Usage since stats reset",
+                vec![
+                    ("Scans", if scans == 0 { "0 — never used".into() } else { scans.to_string() }),
+                    ("Tuples read", r.get::<_, i64>(3).to_string()),
+                    ("Tuples fetched", r.get::<_, i64>(4).to_string()),
+                ],
+            ));
+            sections.push(section("Definition", vec![("SQL", r.get::<_, String>(0))]));
+        }
+    } else {
+        // Tables, views, matviews, foreign tables.
+        let r = client
+            .query_opt(
+                // A partitioned parent stores nothing itself, so
+                // pg_total_relation_size(parent) is 0 — a true number that
+                // reads as a lie next to three million rows. Sum the partition
+                // tree instead. pg_partition_tree returns no rows for an
+                // ordinary table, hence the COALESCE back to its own size.
+                "SELECT pg_size_pretty(COALESCE(
+                          (SELECT sum(pg_total_relation_size(pt.relid)) FROM pg_partition_tree(c.oid) pt),
+                          pg_total_relation_size(c.oid))),
+                        pg_size_pretty(COALESCE(
+                          (SELECT sum(pg_relation_size(pt.relid)) FROM pg_partition_tree(c.oid) pt),
+                          pg_relation_size(c.oid))),
+                        pg_size_pretty(COALESCE(
+                          (SELECT sum(pg_indexes_size(pt.relid)) FROM pg_partition_tree(c.oid) pt),
+                          pg_indexes_size(c.oid))),
+                        c.reltuples::bigint,
+                        pg_get_userbyid(c.relowner),
+                        obj_description(c.oid, 'pg_class'),
+                        c.relkind::text,
+                        c.relispartition,
+                        pg_get_expr(c.relpartbound, c.oid),
+                        (SELECT p.relname FROM pg_inherits i JOIN pg_class p ON p.oid = i.inhparent
+                          WHERE i.inhrelid = c.oid),
+                        (SELECT count(*) FROM pg_inherits i WHERE i.inhparent = c.oid),
+                        pg_get_partkeydef(c.oid),
+                        COALESCE(t.spcname, 'default'),
+                        (SELECT count(*) FROM pg_attribute a
+                          WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped),
+                        -- Whole tree minus self. The direct-partition count
+                        -- understates this whenever partitions are themselves
+                        -- partitioned, which is exactly when it matters.
+                        GREATEST((SELECT count(*) FROM pg_partition_tree(c.oid)) - 1, 0)
+                 FROM pg_class c
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                 LEFT JOIN pg_tablespace t ON t.oid = c.reltablespace
+                 WHERE n.nspname = $1 AND c.relname = $2",
+                &[&schema, &name],
+            )
+            .await
+            .map_err(normalize_error)?;
+        if let Some(r) = r {
+            let rows_est: i64 = r.get(3);
+            let is_partitioned = r.get::<_, String>(6) == "p";
+            let leaves: i64 = r.get(14);
+            // Say what the number covers. On a parent these are tree totals,
+            // and a reader who assumes otherwise draws the wrong conclusion.
+            let note = |v: String| {
+                if is_partitioned && !v.is_empty() {
+                    format!("{v} — all {leaves} partitions")
+                } else {
+                    v
+                }
+            };
+            sections.push(section(
+                "Storage",
+                vec![
+                    ("Total size", note(opt(r.get::<_, Option<String>>(0)))),
+                    ("Table", note(opt(r.get::<_, Option<String>>(1)))),
+                    ("Indexes", note(opt(r.get::<_, Option<String>>(2)))),
+                    // Planner estimate, not a count — saying so avoids a
+                    // number being trusted as exact.
+                    ("Rows (estimate)", if rows_est < 0 { "unknown — never analyzed".into() } else { rows_est.to_string() }),
+                    ("Columns", r.get::<_, i64>(13).to_string()),
+                    ("Tablespace", r.get::<_, String>(12)),
+                ],
+            ));
+            let partkey = opt(r.get::<_, Option<String>>(11));
+            let parent = opt(r.get::<_, Option<String>>(9));
+            let children: i64 = r.get(10);
+            if !partkey.is_empty() || !parent.is_empty() {
+                sections.push(section(
+                    "Partitioning",
+                    vec![
+                        ("Partitioned by", partkey),
+                        ("Direct partitions", if children > 0 { children.to_string() } else { String::new() }),
+                        // Only worth saying when the two differ — i.e. when the
+                        // partitions are themselves partitioned.
+                        (
+                            "All levels",
+                            if leaves > children { leaves.to_string() } else { String::new() },
+                        ),
+                        ("Parent", parent),
+                        ("Bounds", opt(r.get::<_, Option<String>>(8))),
+                    ],
+                ));
+            }
+            sections.push(section(
+                "About",
+                vec![
+                    ("Owner", r.get::<_, String>(4)),
+                    ("Comment", opt(r.get::<_, Option<String>>(5))),
+                ],
+            ));
+        }
+    }
+
+    Ok(serde_json::json!({ "title": name, "kind": kind, "sections": sections }))
 }
 
 fn convert_row(row: &Row) -> Vec<CellValue> {

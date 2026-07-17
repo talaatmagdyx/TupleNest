@@ -18,16 +18,24 @@ type Props = {
   onSettings: () => void;
 };
 
-/** VS Code / DataGrip-style activity rail: switches the sidebar panel and
- *  launches tool overlays. The active view shows an accent indicator bar. */
-export default function ActivityRail(p: Props) {
-  const Item = (opts: {
-    active?: boolean;
-    disabled?: boolean;
-    title: string;
-    onClick: () => void;
-    children: React.ReactNode;
-  }) => (
+/**
+ * One rail button.
+ *
+ * Defined out here on purpose. It used to live inside `ActivityRail`, which
+ * made it a new component type on every render: React cannot know the two are
+ * the same, so it threw the buttons away and built them again each time. The
+ * rail is a row of static icons, so it looked fine — until you noticed that
+ * keyboard focus on a rail button was dropped by any re-render, and App
+ * re-renders once a second while a transaction is open, to tick the timer.
+ */
+function Item(opts: {
+  active?: boolean;
+  disabled?: boolean;
+  title: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
     <button
       className={`rail-btn ${opts.active ? "on" : ""}`}
       title={opts.title}
@@ -38,7 +46,11 @@ export default function ActivityRail(p: Props) {
       {opts.children}
     </button>
   );
+}
 
+/** VS Code / DataGrip-style activity rail: switches the sidebar panel and
+ *  launches tool overlays. The active view shows an accent indicator bar. */
+export default function ActivityRail(p: Props) {
   return (
     <nav className="activity-rail">
       <div className="rail-group">

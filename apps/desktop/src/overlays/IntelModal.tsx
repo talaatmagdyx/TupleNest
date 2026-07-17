@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { DbColumn, DbObject, MetadataOut } from "../ipc/types";
 import type { Catalog } from "../lib/complete";
+import { ModalHead } from "./Overlays";
 import {
   comparePlans,
   diffSchemas,
@@ -111,12 +112,9 @@ export default function IntelModal(p: Props) {
   return (
     <div className="overlay center" onClick={p.onClose}>
       <div className="modal intel" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <span className="t">SQL intelligence</span>
-          <button className="x" onClick={p.onClose}>
-            ×
-          </button>
-        </div>
+        {/* Third hand-rolled copy of ModalHead in this codebase, and the third
+            to be missing the close button's accessible label. Use the real one. */}
+        <ModalHead title="SQL intelligence" onClose={p.onClose} />
 
         <div className="intel-tabs">
           {(

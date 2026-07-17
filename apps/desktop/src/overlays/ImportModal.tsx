@@ -106,10 +106,19 @@ export default function ImportModal(p: Props) {
   return (
     <div className="overlay center" onClick={busy ? undefined : p.onClose}>
       <div className="modal import" onClick={(e) => e.stopPropagation()}>
+        {/* Fourth copy of ModalHead in this codebase; all four had lost the
+            close button's accessible label. This one also has to refuse to
+            close mid-import, so it keeps its own disabled state. */}
         <div className="modal-head">
           <span className="t">Import CSV</span>
-          <button className="x" onClick={p.onClose} disabled={busy}>
-            ×
+          <button
+            className="x"
+            aria-label="Close"
+            title="Close"
+            onClick={p.onClose}
+            disabled={busy}
+          >
+            <span aria-hidden>×</span>
           </button>
         </div>
 
@@ -240,7 +249,10 @@ export default function ImportModal(p: Props) {
 
         {/* Errors live in the footer, not the scrollable body — an error at the
             bottom of a scrolled body is an error nobody sees. */}
-        {table && error && <div className="er-error imp-error">{error}</div>}
+        {/* Not `table && error`: the "no header row" error fires precisely when
+            there is no table, so gating on one hid the only message that
+            explains why nothing happened. */}
+        {error && <div className="er-error imp-error">{error}</div>}
 
         {table && (
           <div className="modal-foot">

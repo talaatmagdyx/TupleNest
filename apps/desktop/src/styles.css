@@ -188,10 +188,18 @@ a { color: var(--tn-accent); text-decoration: none; }
 }
 .side-head .plus:hover { background: var(--tn-s2); color: var(--tn-tp); }
 .conn-list { flex: none; padding: 0 8px 6px; max-height: 200px; overflow-y: auto; }
+/* The card is a container; `.conn-open` is the button that fills it and
+   `.del` sits on top. Previously the card itself was a button with another
+   button inside it — invalid, and React said so. */
 .conn-card {
-  width: 100%; display: flex; align-items: center; gap: 9px; padding: 7px 8px;
-  border-radius: 8px; border: 1px solid transparent; background: transparent;
-  cursor: pointer; text-align: left; margin-bottom: 2px; position: relative;
+  width: 100%; display: flex; align-items: center;
+  border-radius: 8px; border: 1px solid transparent;
+  margin-bottom: 2px; position: relative;
+}
+.conn-open {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px;
+  padding: 7px 8px; border: none; border-radius: 8px; background: transparent;
+  cursor: pointer; text-align: left; font: inherit; color: inherit;
 }
 .conn-card:hover { background: var(--tn-s2); }
 .conn-card.active { border-color: var(--tn-bh); background: var(--tn-s2); }
@@ -206,8 +214,11 @@ a { color: var(--tn-accent); text-decoration: none; }
   font-family: "JetBrains Mono", monospace; font-size: 9.5px; color: var(--tn-tm);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.conn-card .del { opacity: 0; border: none; background: none; color: var(--tn-tm); cursor: pointer; }
-.conn-card:hover .del { opacity: .8; }
+.conn-card .del {
+  flex: none; opacity: 0; border: none; background: none; color: var(--tn-tm);
+  cursor: pointer; padding: 0 8px; align-self: stretch;
+}
+.conn-card:hover .del, .conn-card .del:focus-visible { opacity: .8; }
 .side-sep { flex: none; height: 1px; background: var(--tn-bs); margin: 6px 12px; }
 
 .src-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 800; letter-spacing: .08em; }
@@ -297,7 +308,10 @@ a { color: var(--tn-accent); text-decoration: none; }
 }
 .tx-chip .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--tn-warning); animation: tnpulse 1.4s infinite; }
 .toolbar .sep { width: 1px; height: 18px; background: var(--tn-bs); }
-.toolbar .grow { flex: 1; }
+/* The flex spacer. One definition — every toolbar, footer and option row
+   uses it, and a scoped copy per container is how the Explain modal ended up
+   without one. */
+.grow { flex: 1; }
 .menu-wrap { position: relative; }
 .drop-menu {
   position: absolute; top: 32px; right: 0; z-index: 55; width: 200px;
@@ -457,7 +471,6 @@ a { color: var(--tn-accent); text-decoration: none; }
 }
 .statusbar .item { display: flex; align-items: center; gap: 6px; }
 .statusbar .bar-sep { color: var(--tn-bs); }
-.statusbar .grow { flex: 1; }
 .statusbar .lock { color: var(--tn-success); }
 .statusbar .txwarn { color: var(--tn-warning); }
 
@@ -480,12 +493,15 @@ a { color: var(--tn-accent); text-decoration: none; }
   flex: none; display: flex; align-items: center; justify-content: space-between;
   padding: 15px 20px 12px; border-bottom: 1px solid var(--tn-bs);
 }
-.modal-head .t { font-size: 14px; font-weight: 750; letter-spacing: -.01em; }
+.modal-head .t { font-size: 14px; font-weight: 750; letter-spacing: -.01em; min-width: 0; }
+/* Header commands: pushed to the right, kept clear of the close button so a
+   miss doesn't shut the modal. */
+.modal-head .head-acts { display: flex; align-items: center; gap: 8px; margin-left: auto; margin-right: 14px; }
+.modal-head .head-acts .btn { height: 24px; padding: 0 10px; font-size: 11.5px; }
 .modal-head .x { border: none; background: none; color: var(--tn-tm); font-size: 16px; cursor: pointer; }
 .modal-head .x:hover { color: var(--tn-tp); }
 .modal-body { flex: 1; overflow-y: auto; padding: 16px 20px; }
 .modal-foot { flex: none; display: flex; align-items: center; gap: 9px; padding: 13px 20px; border-top: 1px solid var(--tn-bs); }
-.modal-foot .grow { flex: 1; }
 
 .field { margin-bottom: 12px; }
 .field label {
@@ -963,7 +979,6 @@ body { background: var(--tn-desk); background-image: none; }
 .statusbar .item:first-child .dot { background: #fff !important; box-shadow: none !important; }
 [data-tn-theme="dark"] .statusbar .item:not(:first-child):hover,
 [data-tn-theme="light"] .statusbar .item:not(:first-child):hover { background: var(--tn-s2); }
-.statusbar .grow { flex: 1; }
 .statusbar .txwarn { background: rgba(224, 161, 58, .16); }
 
 /* When disconnected, the first segment is muted grey, not accent */
@@ -1122,6 +1137,27 @@ body { background: var(--tn-desk); background-image: none; }
 /* An index nobody has scanned is dead weight — say so plainly. */
 .tree-row .dead { color: #ff8080; background: rgba(239, 77, 77, .16); }
 .tree .note { font-size: 11px; color: var(--tn-tm); padding: 3px 0; }
+.tree-row.clickable { cursor: pointer; }
+.tree-row.clickable:hover { background: var(--tn-s2); }
+/* The ⓘ needs a real hit target — a bare glyph is ~10px wide and gets missed,
+   and the miss lands on the row, which does something else entirely. */
+.det-btn {
+  all: unset; cursor: pointer; font-size: 12px; line-height: 1;
+  color: var(--tn-tm); padding: 4px 5px; border-radius: 4px;
+}
+.det-btn:hover { color: var(--tn-tp); background: var(--tn-s3, var(--tn-s2)); }
+
+/* Object details */
+.modal.details-modal { width: 620px; max-width: 92vw; }
+.det-sect { margin-bottom: 16px; }
+.det-sect:last-child { margin-bottom: 0; }
+.det-v { font: 12px "JetBrains Mono", monospace; color: var(--tn-tp); text-align: right; }
+.det-code {
+  font: 11px/1.6 "JetBrains Mono", monospace; color: var(--tn-ts);
+  background: var(--tn-bg); border: 1px solid var(--tn-bs); border-radius: 5px;
+  padding: 6px 8px; white-space: pre-wrap; word-break: break-all;
+  max-width: 400px; user-select: text;
+}
 
 /* ============================================================
    EXPLAIN OPTIONS BAR
@@ -1407,3 +1443,147 @@ select.intel-input { font-family: Inter, sans-serif; }
   box-shadow: 0 0 0 1px rgba(255,122,69,.18) inset, 0 8px 26px rgba(255,85,96,.16);
 }
 .onboard-glyph svg { filter: drop-shadow(0 2px 6px rgba(255,85,96,.30)); }
+
+/* ============ HEALTH REPORT ============ */
+.modal.health-modal { width: 1000px; max-width: 95vw; }
+.modal.health-modal .modal-body { max-height: 64vh; overflow: auto; }
+
+.health-hero {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; padding: 14px 16px; margin-bottom: 12px;
+  background: var(--tn-s2); border: 1px solid var(--tn-bs); border-radius: 8px;
+}
+.hero-n { font: 600 26px/1.1 "JetBrains Mono", monospace; color: var(--tn-brand-a, #FFC24B); }
+.hero-l { font-size: 11.5px; color: var(--tn-tm); margin-top: 3px; }
+
+.health-caveat {
+  font-size: 11.5px; line-height: 1.65; color: var(--tn-tm);
+  border-left: 2px solid var(--tn-bs); padding: 2px 0 2px 10px; margin: 0 0 12px;
+}
+.health-caveat b { color: var(--tn-ts); font-weight: 600; }
+.health-caveat.warn { border-left-color: var(--tn-warning); color: var(--tn-ts); }
+
+.chip-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.fchip {
+  all: unset; cursor: pointer; font-size: 10.5px; letter-spacing: .02em;
+  padding: 4px 9px; border-radius: 999px; color: var(--tn-tm);
+  border: 1px solid var(--tn-bs); background: transparent;
+}
+.fchip:hover { color: var(--tn-tp); }
+.fchip.on { background: var(--tn-s3, var(--tn-s2)); color: var(--tn-tp); border-color: var(--tn-tm); }
+
+.vchip {
+  font: 600 9.5px/1 "JetBrains Mono", monospace; letter-spacing: .04em;
+  padding: 3px 5px; border-radius: 3px;
+}
+.v-used   { color: var(--tn-tm);      background: var(--tn-s2); }
+.v-keep   { color: var(--tn-success); background: color-mix(in srgb, var(--tn-success) 14%, transparent); }
+.v-review { color: var(--tn-warning); background: color-mix(in srgb, var(--tn-warning) 14%, transparent); }
+.v-cand   { color: var(--tn-danger);  background: color-mix(in srgb, var(--tn-danger) 14%, transparent); }
+.fchip.v-keep.on, .fchip.v-review.on, .fchip.v-cand.on { border-color: currentColor; }
+
+.htable { border: 1px solid var(--tn-bs); border-radius: 6px; overflow: hidden; }
+.hrow {
+  display: grid; grid-template-columns: 1.4fr 1.6fr 90px 84px 84px 74px;
+  gap: 10px; align-items: center; padding: 6px 10px;
+  border-bottom: 1px solid var(--tn-bs); font-size: 11.5px;
+}
+.hrow.t5 { grid-template-columns: 1.8fr 110px 130px 140px 140px; }
+.hrow.t4 { grid-template-columns: 2.6fr 90px 110px 100px; }
+.hrow:last-child { border-bottom: 0; }
+.hrow:hover { background: var(--tn-s2); }
+.hrow.hhead {
+  background: var(--tn-s2); color: var(--tn-tm); font-size: 10px;
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.hrow.hhead:hover { background: var(--tn-s2); }
+.hrow .r { text-align: right; }
+.hrow .dim { color: var(--tn-tm); }
+.hrow .bad { color: var(--tn-danger); }
+.t-el { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.empty-state { text-align: center; padding: 36px 20px; }
+.es-t { font-size: 13px; color: var(--tn-tp); margin-bottom: 6px; }
+.es-b { font-size: 11.5px; color: var(--tn-tm); margin-bottom: 14px; }
+.es-code {
+  text-align: left; font: 11px/1.7 "JetBrains Mono", monospace; color: var(--tn-ts);
+  background: var(--tn-bg); border: 1px solid var(--tn-bs); border-radius: 6px;
+  padding: 10px 12px; white-space: pre-wrap; user-select: text; max-width: 620px; margin: 0 auto;
+}
+
+/* ============ GLOBAL SEARCH ============ */
+.modal.search-modal { width: 640px; max-width: 92vw; }
+.in.big { width: 100%; font-size: 13px; padding: 9px 11px; margin-bottom: 10px; }
+.hit-list { max-height: 46vh; overflow: auto; border: 1px solid var(--tn-bs); border-radius: 6px; }
+.hit {
+  display: grid; grid-template-columns: 20px 1fr auto; gap: 9px; align-items: center;
+  padding: 6px 10px; cursor: pointer; font-size: 12px;
+  border-bottom: 1px solid var(--tn-bs);
+}
+.hit:last-child { border-bottom: 0; }
+.hit.on { background: var(--tn-s2); }
+.hit b { color: var(--tn-tp); font-weight: 600; }
+.note.dim { color: var(--tn-tm); opacity: .7; }
+.part-badge.act { cursor: pointer; }
+.part-badge.act:hover { color: var(--tn-tp); border-color: currentColor; }
+
+/* .btn hard-codes height:28px, which overflows a 6px-padded table row and
+   gets clipped by the table's overflow:hidden. Row-level buttons need their
+   own height, not just smaller text. */
+.btn.sm {
+  height: 22px; padding: 0 8px; gap: 4px;
+  font-size: 10.5px; font-weight: 600; border-radius: 5px;
+}
+/* .btn.danger is a solid red fill — right for a modal's final confirm button,
+   far too loud for a row action that only opens a script. */
+.btn.sm.danger {
+  background: transparent; color: var(--tn-danger);
+  border-color: color-mix(in srgb, var(--tn-danger) 45%, transparent);
+}
+.btn.sm.danger:hover { background: color-mix(in srgb, var(--tn-danger) 12%, transparent); }
+
+/* Partition rows: their own grid, with an action column wide enough for both
+   buttons. Reusing the 5-column health grid left them fighting for 140px. */
+.prow {
+  display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.2fr) 104px 92px 152px;
+  gap: 10px; align-items: center; padding: 5px 10px;
+  border-bottom: 1px solid var(--tn-bs); font-size: 11.5px;
+}
+.prow:last-child { border-bottom: 0; }
+.prow:hover { background: var(--tn-s2); }
+.prow.hhead {
+  background: var(--tn-s2); color: var(--tn-tm); font-size: 10px;
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.prow.hhead:hover { background: var(--tn-s2); }
+.prow .r { text-align: right; }
+.prow .acts { display: flex; gap: 5px; justify-content: flex-end; }
+/* Reserved, not hidden: hover-only buttons make rows jump and hide the fact
+   that the actions exist at all. */
+.prow .acts { opacity: 0; transition: opacity .12s ease; }
+.prow:hover .acts, .prow:focus-within .acts { opacity: 1; }
+/* Gap rows: same shape as .prow but only one action. Named `.gap-row`, not
+   `.grow` — that is the generic flex spacer, and this rule's display:grid and
+   border-bottom were landing on every spacer in the app. */
+.gap-row {
+  display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr) 92px;
+  gap: 10px; align-items: center; padding: 5px 10px;
+  border-bottom: 1px solid var(--tn-bs); font-size: 11.5px;
+}
+.gap-row:last-child { border-bottom: 0; }
+.gap-row:hover { background: var(--tn-s2); }
+.gap-row.hhead {
+  background: var(--tn-s2); color: var(--tn-tm); font-size: 10px;
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.gap-row.hhead:hover { background: var(--tn-s2); }
+.gap-row .acts { display: flex; justify-content: flex-end; }
+
+/* Tabs inside a modal: same underline language as the results tabs, but
+   inset to the modal's padding and without the panel-edge hairline. */
+.rtabs.modal-tabs {
+  padding: 0 18px; margin-bottom: 2px;
+  border-bottom: 1px solid var(--tn-bs);
+}
+.edit-bar.readonly { background: transparent; border-top: 1px solid var(--tn-bs); }
+.edit-bar.readonly .muted { font-size: 11.5px; }

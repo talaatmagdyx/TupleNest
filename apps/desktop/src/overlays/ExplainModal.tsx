@@ -77,6 +77,40 @@ export default function ExplainModal(p: Props) {
               </span>
             </span>
           }
+          actions={
+            <>
+              <div className="menu-wrap">
+                <button className="btn" disabled={!p.nodes && !p.error} onClick={() => setMenu((m) => !m)}>
+                  Export ▾
+                </button>
+                {menu && (
+                  <div className="drop-menu">
+                    <div className="menu-label">Save plan as</div>
+                    <button onClick={() => { setMenu(false); p.onExport("json"); }}>
+                      JSON <span>.json</span>
+                    </button>
+                    <button onClick={() => { setMenu(false); p.onExport("txt"); }}>
+                      Text tree <span>.txt</span>
+                    </button>
+                    <button onClick={() => { setMenu(false); p.onExport("md"); }}>
+                      Markdown <span>.md</span>
+                    </button>
+                    <div className="divider" />
+                    <div className="menu-label">Copy to clipboard</div>
+                    <button onClick={() => { setMenu(false); p.onCopy("json"); }}>
+                      JSON <span>for pev2 / depesz</span>
+                    </button>
+                    <button onClick={() => { setMenu(false); p.onCopy("txt"); }}>
+                      Text tree
+                    </button>
+                  </div>
+                )}
+              </div>
+              <button className="btn primary" onClick={p.onRerun} disabled={p.busy || errors.length > 0}>
+                {p.busy ? "Running…" : "Re-run"}
+              </button>
+            </>
+          }
           onClose={p.onClose}
         />
 
@@ -110,37 +144,6 @@ export default function ExplainModal(p: Props) {
               </option>
             ))}
           </select>
-          <div className="grow" />
-          <div className="menu-wrap">
-            <button className="btn" disabled={!p.nodes && !p.error} onClick={() => setMenu((m) => !m)}>
-              Export ▾
-            </button>
-            {menu && (
-              <div className="drop-menu">
-                <div className="menu-label">Save plan as</div>
-                <button onClick={() => { setMenu(false); p.onExport("json"); }}>
-                  JSON <span>.json</span>
-                </button>
-                <button onClick={() => { setMenu(false); p.onExport("txt"); }}>
-                  Text tree <span>.txt</span>
-                </button>
-                <button onClick={() => { setMenu(false); p.onExport("md"); }}>
-                  Markdown <span>.md</span>
-                </button>
-                <div className="divider" />
-                <div className="menu-label">Copy to clipboard</div>
-                <button onClick={() => { setMenu(false); p.onCopy("json"); }}>
-                  JSON <span>for pev2 / depesz</span>
-                </button>
-                <button onClick={() => { setMenu(false); p.onCopy("txt"); }}>
-                  Text tree
-                </button>
-              </div>
-            )}
-          </div>
-          <button className="btn primary" onClick={p.onRerun} disabled={p.busy || errors.length > 0}>
-            {p.busy ? "Running…" : "Re-run"}
-          </button>
         </div>
 
         {errors.map((i, k) => (

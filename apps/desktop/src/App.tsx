@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { errText } from "./lib/text";
 import { invoke } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { ask } from "@tauri-apps/plugin-dialog";
 import Titlebar from "./app-shell/Titlebar";
 import StatusBar from "./app-shell/StatusBar";
 import ActivityRail, { type RailView } from "./app-shell/ActivityRail";
@@ -9,13 +11,14 @@ import HistoryPanel from "./history/HistoryPanel";
 import SavedList from "./connections/SavedList";
 import ConnectionForm from "./connections/ConnectionForm";
 import ExplorerTree from "./explorer/ExplorerTree";
-import TabsBar, { type QueryTab } from "./editor/TabsBar";
+import TabsBar from "./editor/TabsBar";
 import QueryPanel, { type ChartDatum, type ResultTab } from "./editor/QueryPanel";
 import {
   Cheatsheet,
   ConnLost,
   Guard,
   Inspector,
+  NamePrompt,
   Palette,
   Settings,
   TxPrompt,
@@ -25,9 +28,6 @@ import { BrandMark } from "./lib/icons";
 import type { Catalog, CatalogTable } from "./lib/complete";
 import { summarizePlan, type PlanSummary } from "./lib/intel";
 import {
-  DEFAULT_EXPLAIN,
-  buildExplain,
-  optionIssues,
   planFilename,
   planToJson,
   planToMarkdown,
@@ -37,24 +37,40 @@ import {
   type ExportablePlan,
 } from "./lib/explain";
 import { FILTERS, baseName, saveText } from "./lib/save";
+import { MAX_CHART_ROWS, aggregateChart, chartSubtitle, chartTitle, pickChartColumns } from "./lib/chart";
 import IntelModal from "./overlays/IntelModal";
 import ImportModal from "./overlays/ImportModal";
-import { analyzeEditability, buildStatements, type CellEdit } from "./lib/dml";
+import DetailsModal, { type ObjectDetails } from "./overlays/DetailsModal";
+import { useQueryTabs } from "./hooks/useQueryTabs";
+import { useSearch } from "./hooks/useSearch";
+import { useHealth } from "./hooks/useHealth";
+import { useConnectionForm } from "./hooks/useConnectionForm";
+import { useQuery } from "./hooks/useQuery";
+import { defaultSearchPath } from "./lib/nodes";
+import { useTransaction } from "./hooks/useTransaction";
+import { useExplain } from "./hooks/useExplain";
+import { useRowEdits } from "./hooks/useRowEdits";
+import { useHistory } from "./hooks/useHistory";
+import { useExplorerTree } from "./hooks/useExplorerTree";
+import { useConnection } from "./hooks/useConnection";
+import { suggestName, useSnippets } from "./hooks/useSnippets";
+import HealthModal, { type HealthTab } from "./overlays/HealthModal";
+import SearchModal from "./overlays/SearchModal";
+import PartitionsModal from "./overlays/PartitionsModal";
+import { analyzeEditability } from "./lib/dml";
 import EditReviewModal from "./overlays/EditReviewModal";
 import SchemaModal, { type SchemaExtra } from "./overlays/SchemaModal";
 import MonitorModal from "./overlays/MonitorModal";
 import DiagramModal from "./overlays/DiagramModal";
 import AuditModal from "./overlays/AuditModal";
-import ExplainModal, { type PlanNode, type PlanStats } from "./overlays/ExplainModal";
+import ExplainModal from "./overlays/ExplainModal";
 import { UpdateToast } from "./overlays/Overlays";
 import { ParamPrompt } from "./overlays/Overlays";
 import {
   coerceParam,
   fetchAllRows,
   formatSQL,
-  looksLikeSelect,
-  needsGuard,
-  paramCount,
+  rowCountNote,
   toCSV,
   toJSONExport,
   toMarkdown,
@@ -63,20 +79,11 @@ import type {
   AppInfo,
   ConnectionRecord,
   DbColumn,
-  DbConstraint,
-  DbIndex,
-  DbObject,
-  DbPartition,
-  DbRoutine,
-  DbType,
-  HistoryEntry,
   MetadataOut,
+  PartitionOverview,
   PgParams,
-  QueryResult,
-  SnippetRecord,
+  SearchHit,
   SshParams,
-  TestReport,
-  TestStage,
 } from "./ipc/types";
 
 type OverlayKind =
@@ -96,6 +103,11 @@ type OverlayKind =
   | "diagram"
   | "intel"
   | "import"
+  | "details"
+  | "health"
+  | "search"
+  | "parts"
+  | "snippetName"
   | "audit";
 
 export default function App() {
@@ -103,44 +115,27 @@ export default function App() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [telemetry, setTelemetry] = useState(false);
 
-  // Connection form
-  const [host, setHost] = useState("localhost");
-  const [port, setPort] = useState(5432);
-  const [database, setDatabase] = useState("postgres");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [secretRef, setSecretRef] = useState<string | null>(null);
-  const [tlsMode, setTlsMode] = useState("verify-full");
-  const [tlsCaPath, setTlsCaPath] = useState("");
-  const [sshEnabled, setSshEnabled] = useState(false);
-  const [sshHost, setSshHost] = useState("");
-  const [sshPort, setSshPort] = useState(22);
-  const [sshUser, setSshUser] = useState("");
-  const [sshKeyPath, setSshKeyPath] = useState("");
-  const [sshFingerprint, setSshFingerprint] = useState("");
+  // The connection form and profile identity move as one unit, so they live
+  // in one hook. Destructured to keep every read site unchanged; writes go
+  // through `form.set`.
+  const form = useConnectionForm();
+  const {
+    host, port, database, username, password, secretRef, tlsMode, tlsCaPath,
+    sshEnabled, sshHost, sshPort, sshUser, sshKeyPath, sshFingerprint,
+    profileId, profileName, environment,
+  } = form;
 
-  // Profiles
-  const [profileId, setProfileId] = useState<string | null>(null);
-  const [profileName, setProfileName] = useState("");
-  const [environment, setEnvironment] = useState<string>("dev");
   const [saved, setSaved] = useState<ConnectionRecord[]>([]);
 
-  // Session
-  const [status, setStatus] = useState("");
-  const [stages, setStages] = useState<TestStage[] | null>(null);
-  const [testing, setTesting] = useState(false);
-  const [testSummary, setTestSummary] = useState("");
+  // The session. `connected` follows the server, never the form — the hook
+  // owns that rule.
+  const session = useConnection();
+  const { connected, connectedEnv, serverVersion, status, setStatus, stages, testing, testSummary } = session;
   const [updateInfo, setUpdateInfo] = useState<{ version: string; notes: string } | null>(null);
-  const [connected, setConnected] = useState(false);
-  const [connectedEnv, setConnectedEnv] = useState<string | null>(null);
-  const [serverVersion, setServerVersion] = useState<string | null>(null);
-  const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<QueryResult | null>(null);
-  const [lastError, setLastError] = useState<string | null>(null);
-  const [queryEpoch, setQueryEpoch] = useState(0);
-  /** The SQL that produced `result` — editability is judged on this, not on
-   *  whatever the user has since typed into the editor. */
-  const [ranSql, setRanSql] = useState("");
+  // Execution and its result state live in a hook; App keeps the overlays.
+  const query = useQuery();
+  const { running, result, lastError, ranSql } = query;
+  const queryEpoch = query.epoch;
   /** Recent EXPLAIN summaries, oldest first — Phase 3 plan comparison. */
   const [plans, setPlans] = useState<{ label: string; summary: PlanSummary }[]>([]);
   /** Server major version, so options the server is too old for are disabled
@@ -149,17 +144,17 @@ export default function App() {
     const m = /^(\d+)/.exec(serverVersion ?? "");
     return m ? Number(m[1]) : undefined;
   }, [serverVersion]);
-  const [runStatus, setRunStatus] = useState<{ icon: string; text: string; color: string } | null>(null);
-  const [inTx, setInTx] = useState(false);
-  const [txOpenSince, setTxOpenSince] = useState<number | null>(null);
+  // `inTx` is a claim about the server, so it only moves when the server
+  // confirms. The hook owns that rule.
+  const tx = useTransaction();
+  const { inTx } = tx;
+  const txOpenSince = tx.openSince;
   const [, setTick] = useState(0); // re-render for tx timer
 
   // Workspace / UI
-  const [tabs, setTabs] = useState<QueryTab[]>([
-    { name: "untitled-1.sql", sql: "select now(), version()", dirty: false },
-  ]);
-  const [activeTab, setActiveTab] = useState(0);
-  const untitledSeq = useRef(2);
+  // Tabs live in a hook so their invariants (valid active index, dirty means
+  // "user edited", never zero tabs) are stated and tested in one place.
+  const { tabs, activeTab, setActiveTab, setActiveSql, newTab, closeTab, setTabs } = useQueryTabs();
   const [overlay, setOverlay] = useState<OverlayKind>(null);
   const [paletteQ, setPaletteQ] = useState("");
   const [paletteIdx, setPaletteIdx] = useState(0);
@@ -185,45 +180,45 @@ export default function App() {
   const [schemaCols, setSchemaCols] = useState<DbColumn[] | null>(null);
   const [schemaExtra, setSchemaExtra] = useState<SchemaExtra | null>(null);
   const [inspectCol, setInspectCol] = useState<string | undefined>(undefined);
-  const [explain, setExplain] = useState<{
-    title: string;
-    /** The query being explained (not the EXPLAIN wrapper). */
-    sql: string;
-    /** The exact statement sent, shown in the modal and in exports. */
-    statement: string;
-    nodes: PlanNode[] | null;
-    stats: PlanStats;
-    suggestion: string | null;
-    error: string | null;
-    /** Raw server payload, kept verbatim so JSON export is byte-faithful. */
-    raw: string;
-    /** The options that produced this plan — compared against the live ones to
-     *  tell the user when what they're looking at is out of date. */
-    ranOpts: ExplainOptions;
-  } | null>(null);
-  const [explainOpts, setExplainOpts] = useState<ExplainOptions>(DEFAULT_EXPLAIN);
-  const [explainBusy, setExplainBusy] = useState(false);
+  const [snippetName, setSnippetName] = useState("");
+  const {
+    explain,
+    opts: explainOpts,
+    setOpts: setExplainOpts,
+    busy: explainBusy,
+    run: runExplainRaw,
+  } = useExplain(serverMajor);
 
   // Explorer
   const [schemas, setSchemas] = useState<string[] | null>(null);
-  /** One flat map of expanded nodes: s:schema, g:schema:kind, t:schema.table,
-   *  c:/i:/p: for a table's columns, indexes and partitions. */
-  const [openNodes, setOpenNodes] = useState<Record<string, boolean>>({});
-  const [objects, setObjects] = useState<Record<string, DbObject[]>>({});
-  const [columns, setColumns] = useState<Record<string, DbColumn[]>>({});
-  const [indexes, setIndexes] = useState<Record<string, DbIndex[]>>({});
-  const [constraints, setConstraints] = useState<Record<string, DbConstraint[]>>({});
-  const [partitions, setPartitions] = useState<Record<string, DbPartition[]>>({});
-  const [types, setTypes] = useState<Record<string, DbType[]>>({});
-  const [routines, setRoutines] = useState<Record<string, DbRoutine[]>>({});
-  const [metaCached, setMetaCached] = useState(false);
+  const [details, setDetails] = useState<{
+    schema: string;
+    data: ObjectDetails | null;
+    error: string | null;
+  } | null>(null);
 
-  // History
-  const [historyItems, setHistoryItems] = useState<HistoryEntry[]>([]);
-  const [historySearch, setHistorySearch] = useState("");
+  // Health + global search
+  const health = useHealth();
+  // Search lives in a hook: the keystroke race it guards against is a real
+  // invariant, and it is worth stating once and testing.
+  const search = useSearch();
+  const [parts, setParts] = useState<{
+    schema: string;
+    table: string;
+    data: PartitionOverview | null;
+    error: string | null;
+  } | null>(null);
 
-  // Snippets (Phase 2)
-  const [snippets, setSnippets] = useState<SnippetRecord[]>([]);
+  const {
+    items: historyItems,
+    search: historySearch,
+    setSearch: setHistorySearch,
+    refresh: refreshHistory,
+    toggleFavorite: toggleHistoryFavorite,
+    clear: clearHistory,
+  } = useHistory();
+
+  const { items: snippets, refresh: refreshSnippets, save: saveSnippetRecord } = useSnippets();
 
   const showToast = useCallback((t: string) => {
     setToast(t);
@@ -233,17 +228,6 @@ export default function App() {
 
   /* ---------------- bootstrap ---------------- */
 
-  const refreshHistory = useCallback(async (search: string) => {
-    try {
-      setHistoryItems(await invoke<HistoryEntry[]>("history_list", { search: search || null, limit: 50 }));
-    } catch (e) {
-      console.error(e);
-    }
-  }, []);
-  useEffect(() => {
-    refreshHistory(historySearch);
-  }, [historySearch, refreshHistory]);
-
   const refreshSaved = useCallback(async () => {
     try {
       setSaved(await invoke<ConnectionRecord[]>("connection_list"));
@@ -251,15 +235,6 @@ export default function App() {
       console.error(e);
     }
   }, []);
-
-  const refreshSnippets = useCallback(async () => {
-    try {
-      setSnippets(await invoke<SnippetRecord[]>("snippet_list"));
-    } catch (e) {
-      console.error(e);
-    }
-  }, []);
-
 
   useEffect(() => {
     invoke<AppInfo>("app_get_info").then(setInfo).catch(console.error);
@@ -295,46 +270,21 @@ export default function App() {
 
   /* ---------------- params & connection ---------------- */
 
-  const sshValue = useCallback((): SshParams | null => {
-    if (!sshEnabled || !sshHost) return null;
-    return { host: sshHost, port: sshPort, username: sshUser, keyPath: sshKeyPath, fingerprint: sshFingerprint };
-  }, [sshEnabled, sshHost, sshPort, sshUser, sshKeyPath, sshFingerprint]);
 
   const savePassword = useCallback(async () => {
     if (!password) return null;
     const ref = await invoke<string>("pg_secret_save", { password });
-    setPassword("");
-    setSecretRef(ref);
+    form.set("password", "");
+    form.set("secretRef", ref);
     return ref;
   }, [password]);
 
+  /** Params for the backend, saving the password to the keychain first if the
+   *  user typed a new one. The shape itself is the hook's business. */
   const withSecret = useCallback(async (): Promise<PgParams> => {
     const ref = password ? await savePassword() : secretRef;
-    return {
-      host,
-      port,
-      database,
-      username,
-      secretRef: ref,
-      tlsMode,
-      tlsCaPath: tlsCaPath || null,
-      environment,
-      ssh: sshValue(),
-    };
-  }, [password, savePassword, secretRef, host, port, database, username, tlsMode, tlsCaPath, environment, sshValue]);
-
-  const resetExplorer = useCallback(() => {
-    setSchemas(null);
-    setOpenNodes({});
-    setObjects({});
-    setColumns({});
-    setIndexes({});
-    setConstraints({});
-    setPartitions({});
-    setTypes({});
-    setRoutines({});
-    setMetaCached(false);
-  }, []);
+    return form.toParams(ref);
+  }, [password, savePassword, secretRef, form]);
 
   const metaFetch = useCallback(
     async (request: Record<string, unknown>): Promise<MetadataOut<unknown> | null> => {
@@ -347,61 +297,45 @@ export default function App() {
     [connected, host, port, database, username, tlsMode]
   );
 
-  const loadServerVersion = useCallback(async () => {
-    try {
-      const r = await invoke<MetadataOut<{ version: string }>>("pg_metadata", {
-        request: { kind: "server_info" },
-      });
-      const m = /PostgreSQL ([\d.]+)/.exec(r.payload.version ?? "");
-      setServerVersion(m ? m[1] : null);
-    } catch {
-      setServerVersion(null);
-    }
-  }, []);
+  /** The lazy schema tree. Declared after `metaFetch` because it takes it. */
+  const tree = useExplorerTree(metaFetch, setStatus);
+  const { openNodes, objects, columns, indexes, constraints, partitions, types, routines, metaCached, setMetaCached } = tree;
+  const toggleNode = tree.toggle;
 
-  const afterConnect = useCallback(
-    (env: string) => {
-      setConnected(true);
-      setConnectedEnv(env);
-      setStatus("Connected");
-      resetExplorer();
-      invoke<MetadataOut<string[]>>("pg_metadata", { request: { kind: "list_schemas" } })
-        .then((r) => {
-          setSchemas(r.payload);
-          setMetaCached(r.cached);
-        })
-        .catch((e) => setStatus(`Explorer error: ${e}`));
-      loadServerVersion();
-    },
-    [resetExplorer, loadServerVersion]
-  );
+  /** A new connection is a new catalog. */
+  const resetExplorer = useCallback(() => {
+    setSchemas(null);
+    tree.reset();
+  }, [tree]);
+
+  /** Load the catalog for a session the hook has just opened. */
+  const afterConnect = useCallback(() => {
+    resetExplorer();
+    invoke<MetadataOut<string[]>>("pg_metadata", { request: { kind: "list_schemas" } })
+      .then((r) => {
+        setSchemas(r.payload);
+        setMetaCached(r.cached);
+      })
+      .catch((e) => setStatus(`Explorer error: ${errText(e)}`));
+  }, [resetExplorer, setMetaCached, setStatus]);
 
   const doConnect = useCallback(async () => {
-    setStatus("Connecting…");
-    try {
-      await invoke("pg_connect", { params: await withSecret() });
-      afterConnect(environment);
-      showToast(`Connected — ${username}@${host}/${database}`);
-    } catch (e) {
-      setStatus(`Error: ${e}`);
-      showToast(String(e).slice(0, 90));
+    const out = await session.connect(await withSecret(), environment);
+    if (!out.ok) {
+      showToast(out.message.slice(0, 90));
+      return;
     }
-  }, [withSecret, environment, afterConnect, showToast, username, host, database]);
+    afterConnect();
+    showToast(`Connected — ${username}@${host}/${database}`);
+  }, [session, withSecret, environment, afterConnect, showToast, username, host, database]);
 
   const reallyDisconnect = useCallback(async () => {
-    await invoke("pg_disconnect").catch(() => {});
-    setConnected(false);
-    setConnectedEnv(null);
-    setServerVersion(null);
-    setResult(null);
-    setLastError(null);
-    setRunStatus(null);
-    setInTx(false);
-    setTxOpenSince(null);
+    await session.disconnect();
+    query.reset();
+    tx.forget(); // the session is gone; the transaction went with it
     setOverlay(null);
     resetExplorer();
-    setStatus("Disconnected");
-  }, [resetExplorer]);
+  }, [session, resetExplorer, query, tx]);
 
   const doDisconnect = useCallback(async () => {
     if (inTx) {
@@ -413,38 +347,12 @@ export default function App() {
 
   const loadProfile = useCallback(
     (c: ConnectionRecord) => {
-      setProfileId(c.id);
-      setProfileName(c.name);
-      setEnvironment(c.environment ?? "dev");
-      setHost(c.host);
-      setPort(c.port);
-      setDatabase(c.database);
-      setUsername(c.username);
-      setSecretRef(c.secretRef);
-      setTlsMode(c.tlsMode || "verify-full");
-      setTlsCaPath(c.tlsCaPath ?? "");
-      if (c.sshJson) {
-        try {
-          const ssh = JSON.parse(c.sshJson) as SshParams;
-          setSshEnabled(true);
-          setSshHost(ssh.host);
-          setSshPort(ssh.port || 22);
-          setSshUser(ssh.username);
-          setSshKeyPath(ssh.keyPath);
-          setSshFingerprint(ssh.fingerprint ?? "");
-        } catch {
-          setSshEnabled(false);
-        }
-      } else {
-        setSshEnabled(false);
-        setSshHost("");
-        setSshUser("");
-        setSshKeyPath("");
-        setSshFingerprint("");
-      }
-      setPassword("");
+      // Field copying, ssh parsing and the "never restore the password" rule
+      // all live in the hook now.
+      form.load(c);
       if (connected) return;
       resetExplorer();
+      // Cached metadata is keyed by the target, not the credentials.
       invoke<MetadataOut<string[]> | null>("pg_metadata_cached", {
         params: {
           host: c.host,
@@ -465,7 +373,7 @@ export default function App() {
         })
         .catch(() => {});
     },
-    [connected, resetExplorer]
+    [form, connected, resetExplorer]
   );
 
   /** Titlebar switcher: load profile AND connect (HUD behavior). */
@@ -476,67 +384,40 @@ export default function App() {
         setOverlay("txPrompt");
         return;
       }
-      await invoke("pg_disconnect").catch(() => {});
-      setConnected(false);
+      await session.disconnect();
       loadProfile(c);
-      setStatus("Connecting…");
-      try {
-        const ssh = c.sshJson ? (JSON.parse(c.sshJson) as SshParams) : null;
-        await invoke("pg_connect", {
-          params: {
-            host: c.host,
-            port: c.port,
-            database: c.database,
-            username: c.username,
-            secretRef: c.secretRef,
-            tlsMode: c.tlsMode || "verify-full",
-            tlsCaPath: c.tlsCaPath,
-            environment: c.environment,
-            ssh,
-          },
-        });
-        afterConnect(c.environment ?? "dev");
-        showToast(`Connected — ${c.name}`);
-      } catch (e) {
-        setStatus(`Error: ${e}`);
-        showToast(String(e).slice(0, 90));
+      const ssh = c.sshJson ? (JSON.parse(c.sshJson) as SshParams) : null;
+      const out = await session.connect(
+        {
+          host: c.host,
+          port: c.port,
+          database: c.database,
+          username: c.username,
+          secretRef: c.secretRef,
+          // A profile saved before TLS existed has no mode. Defaulting to
+          // verify-full fails closed rather than silently downgrading.
+          tlsMode: c.tlsMode || "verify-full",
+          tlsCaPath: c.tlsCaPath,
+          environment: c.environment,
+          ssh,
+        } as PgParams,
+        c.environment ?? "dev",
+      );
+      if (!out.ok) {
+        showToast(out.message.slice(0, 90));
+        return;
       }
+      afterConnect();
+      showToast(`Connected — ${c.name}`);
     },
-    [inTx, loadProfile, afterConnect, showToast]
+    [inTx, session, loadProfile, afterConnect, showToast]
   );
 
   /* ---------------- test / save profile ---------------- */
 
   const doTest = useCallback(async () => {
-    setTesting(true);
-    setStages(null);
-    setStatus("Testing…");
-    try {
-      const report = await invoke<TestReport>("pg_test", { params: await withSecret() });
-      // Progressive reveal (HUD design): stages appear one by one.
-      setStages([]);
-      setTestSummary("");
-      report.stages.forEach((s, i) => {
-        setTimeout(() => {
-          setStages((prev) => [...(prev ?? []), s]);
-          if (i === report.stages.length - 1) {
-            setTesting(false);
-            const failed = report.stages.filter((x) => !x.passed);
-            const summary =
-              failed.length === 0
-                ? `OK — server ${report.serverVersion ?? "?"}`
-                : `FAILED at ${failed[0].name}`;
-            setTestSummary(summary);
-            setStatus(summary);
-          }
-        }, 160 * (i + 1));
-      });
-      if (report.stages.length === 0) setTesting(false);
-    } catch (e) {
-      setTesting(false);
-      setStatus(`Error: ${e}`);
-    }
-  }, [withSecret]);
+    await session.test(await withSecret());
+  }, [session, withSecret]);
 
   const doSaveProfile = useCallback(async (): Promise<ConnectionRecord | null> => {
     try {
@@ -554,21 +435,21 @@ export default function App() {
           password: password || null,
           tlsMode,
           tlsCaPath: tlsCaPath || null,
-          sshJson: sshValue() ? JSON.stringify(sshValue()) : null,
+          sshJson: form.ssh() ? JSON.stringify(form.ssh()) : null,
         },
       });
-      setPassword("");
-      setProfileId(rec.id);
-      setProfileName(rec.name);
-      setSecretRef(rec.secretRef);
+      form.set("password", "");
+      form.set("profileId", rec.id);
+      form.set("profileName", rec.name);
+      form.set("secretRef", rec.secretRef);
       setStatus(`Saved "${rec.name}"`);
       await refreshSaved();
       return rec;
     } catch (e) {
-      setStatus(`Save error: ${e}`);
+      setStatus(`Save error: ${errText(e)}`);
       return null;
     }
-  }, [profileId, profileName, environment, host, port, database, username, password, tlsMode, tlsCaPath, sshValue, refreshSaved]);
+  }, [profileId, profileName, environment, host, port, database, username, password, tlsMode, tlsCaPath, form, refreshSaved]);
 
   const saveAndConnect = useCallback(async () => {
     const rec = await doSaveProfile();
@@ -578,16 +459,16 @@ export default function App() {
   }, [doSaveProfile, doConnect]);
 
   const newProfile = useCallback(() => {
-    setProfileId(null);
-    setProfileName("");
-    setSecretRef(null);
-    setPassword("");
-    setSshEnabled(false);
-    setSshHost("");
-    setSshUser("");
-    setSshKeyPath("");
-    setSshFingerprint("");
-    setStages(null);
+    form.set("profileId", null);
+    form.set("profileName", "");
+    form.set("secretRef", null);
+    form.set("password", "");
+    form.set("sshEnabled", false);
+    form.set("sshHost", "");
+    form.set("sshUser", "");
+    form.set("sshKeyPath", "");
+    form.set("sshFingerprint", "");
+    session.clearTest();
     setStatus("");
     setOverlay("connEditor");
     setConnMenu(false);
@@ -596,21 +477,35 @@ export default function App() {
   const editProfile = useCallback(
     (c: ConnectionRecord) => {
       loadProfile(c);
-      setStages(null);
+      session.clearTest();
       setOverlay("connEditor");
     },
-    [loadProfile]
+    [loadProfile, session]
   );
 
   const doDeleteProfile = useCallback(
     async (c: ConnectionRecord) => {
+      // The × is small and sits next to the row you click to open. Deleting a
+      // profile takes its keychain reference with it, so it cannot be undone
+      // by retyping the host — ask first.
+      //
+      // `ask` from the dialog plugin, not `window.confirm`: the webview's
+      // confirm returns true without ever drawing a dialog, so a guard built
+      // on it deletes silently while looking like it asked.
+      const ok = await ask(`Delete the connection "${c.name}"?`, {
+        title: "Delete connection",
+        kind: "warning",
+        okLabel: "Delete",
+        cancelLabel: "Keep",
+      });
+      if (!ok) return;
       try {
         await invoke("connection_delete", { id: c.id });
-        if (profileId === c.id) setProfileId(null);
+        if (profileId === c.id) form.set("profileId", null);
         showToast(`Deleted "${c.name}"`);
         await refreshSaved();
       } catch (e) {
-        setStatus(`Delete error: ${e}`);
+        setStatus(`Delete error: ${errText(e)}`);
       }
     },
     [profileId, refreshSaved, showToast]
@@ -618,68 +513,68 @@ export default function App() {
 
   /* ---------------- explorer ---------------- */
 
-  /** Expand/collapse a tree node, fetching only what that node needs.
-   *
-   *  Nothing loads until it is opened: a schema here holds 13,103 relations,
-   *  so eager loading is not an option. Node ids carry their own meaning —
-   *  `s:` schema, `g:` group, `t:` table, `c:`/`i:`/`p:` a table's columns,
-   *  indexes and partitions. */
-  const toggleNode = useCallback(
-    async (key: string) => {
-      const opening = !openNodes[key];
-      setOpenNodes((m) => ({ ...m, [key]: opening }));
-      if (!opening) return;
-
-      const [tag, rest] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
-      const table = () => {
-        const i = rest.lastIndexOf(".");
-        return { schema: rest.slice(0, i), name: rest.slice(i + 1) };
-      };
-
+  /** Everything the server knows about one object. Always fetched live —
+   *  sizes and scan counters are the whole point, and a cached copy of either
+   *  is just a stale number wearing a confident face. */
+  const showDetails = useCallback(
+    async (schema: string, name: string, kind: string) => {
+      setDetails({ schema, data: null, error: null });
+      setOverlay("details");
       try {
-        if (tag === "s" && !(rest in objects)) {
-          const r = await metaFetch({ kind: "list_objects", schema: rest });
-          setObjects((m) => ({ ...m, [rest]: r ? (r.payload as DbObject[]) : [] }));
-          if (r?.cached) setMetaCached(true);
-          // Types and routines are small and make the groups appear at once.
-          metaFetch({ kind: "list_types", schema: rest })
-            .then((t) => setTypes((m) => ({ ...m, [rest]: t ? (t.payload as DbType[]) : [] })))
-            .catch(() => setTypes((m) => ({ ...m, [rest]: [] })));
-          metaFetch({ kind: "list_routines", schema: rest })
-            .then((t) => setRoutines((m) => ({ ...m, [rest]: t ? (t.payload as DbRoutine[]) : [] })))
-            .catch(() => setRoutines((m) => ({ ...m, [rest]: [] })));
-        } else if (tag === "c" && !(rest in columns)) {
-          const { schema, name } = table();
-          const r = await metaFetch({ kind: "describe_object", schema, name });
-          const desc = r?.payload as { columns: DbColumn[] } | undefined;
-          setColumns((m) => ({ ...m, [rest]: desc?.columns ?? [] }));
-          if (r?.cached) setMetaCached(true);
-        } else if (tag === "i" && !(rest in indexes)) {
-          const { schema, name } = table();
-          const r = await metaFetch({ kind: "list_indexes", schema, table: name });
-          setIndexes((m) => ({ ...m, [rest]: r ? (r.payload as DbIndex[]) : [] }));
-        } else if (tag === "k" && !(rest in constraints)) {
-          const { schema, name } = table();
-          const r = await metaFetch({ kind: "list_constraints", schema, table: name });
-          setConstraints((m) => ({ ...m, [rest]: r ? (r.payload as DbConstraint[]) : [] }));
-        } else if (tag === "p" && !(rest in partitions)) {
-          const { schema, name } = table();
-          const r = await metaFetch({ kind: "list_partitions", schema, table: name });
-          setPartitions((m) => ({ ...m, [rest]: r ? (r.payload as DbPartition[]) : [] }));
-        }
+        const r = await invoke<MetadataOut<ObjectDetails>>("pg_metadata", {
+          request: { kind: "object_details", schema, name, objectKind: kind },
+        });
+        setDetails({ schema, data: r.payload, error: null });
       } catch (e) {
-        setStatus(`Explorer error: ${e}`);
+        setDetails({ schema, data: null, error: String(e) });
       }
     },
-    [openNodes, objects, columns, indexes, constraints, partitions, metaFetch]
+    []
   );
+
+  /** Open the health report on a tab. The fetching and caching live in the
+   *  hook; App only owns which overlay is on screen. */
+  const loadHealth = useCallback(
+    (tab: HealthTab) => {
+      setOverlay("health");
+      void health.load(tab);
+    },
+    [health],
+  );
+
+
+  /** Partitions of one table, with bounds and sizes. */
+  const showPartitions = useCallback(async (schema: string, table: string) => {
+    setParts({ schema, table, data: null, error: null });
+    setOverlay("parts");
+    try {
+      const r = await invoke<MetadataOut<PartitionOverview>>("pg_metadata", {
+        request: { kind: "partition_overview", schema, table },
+      });
+      setParts({ schema, table, data: r.payload, error: null });
+    } catch (e) {
+      setParts({ schema, table, data: null, error: String(e) });
+    }
+  }, []);
+
+  /** Put generated DDL in a tab instead of running it.
+   *
+   *  Everything routed through here is destructive or long-running. The app's
+   *  job is to write the statement correctly; deciding to run it is the
+   *  user's, and they need to see it first to make that decision. */
+  const openScript = useCallback(
+    (name: string, sql: string) => {
+      newTab({ name, sql, dirty: true });
+      setOverlay(null);
+      showToast("Opened as a script — nothing was executed.");
+    },
+    [newTab, showToast],
+  );
+
 
   /* ---------------- completion catalog ---------------- */
 
-  const searchPath = useMemo(
-    () => ((schemas ?? []).includes("public") ? ["public"] : schemas?.length ? [schemas[0]] : ["public"]),
-    [schemas]
-  );
+  const searchPath = useMemo(() => defaultSearchPath(schemas), [schemas]);
 
   const catalog: Catalog | undefined = useMemo(() => {
     if (!schemas) return undefined;
@@ -692,63 +587,14 @@ export default function App() {
 
   /** Load object lists / column lists the editor needs but the explorer
    *  hasn't lazily opened yet. Guarded so each key is fetched once. */
-  const inFlight = useRef<Set<string>>(new Set());
-
-  const prefetchSchemaObjects = useCallback(
-    async (schema: string) => {
-      const key = `objs:${schema}`;
-      if (schema in objects || inFlight.current.has(key)) return;
-      inFlight.current.add(key);
-      try {
-        const r = await metaFetch({ kind: "list_objects", schema });
-        setObjects((m) => ({ ...m, [schema]: r ? (r.payload as DbObject[]) : [] }));
-      } catch {
-        /* completion is best-effort — never surface an error for it */
-      } finally {
-        inFlight.current.delete(key);
-      }
-    },
-    [objects, metaFetch]
-  );
-
-  const prefetchTables = useCallback(
-    (want: { schema: string; name: string }[]) => {
-      for (const { schema, name } of want) {
-        const key = `${schema}.${name}`;
-        if (key in columns || inFlight.current.has(key)) continue;
-        inFlight.current.add(key);
-        metaFetch({ kind: "describe_object", schema, name })
-          .then((r) => {
-            if (r) {
-              const desc = r.payload as { columns: DbColumn[] };
-              setColumns((m) => ({ ...m, [key]: desc.columns }));
-            }
-          })
-          .catch(() => {
-            /* table may not exist yet while the user is mid-type — ignore */
-          })
-          .finally(() => inFlight.current.delete(key));
-      }
-    },
-    [columns, metaFetch]
-  );
+  const { prefetchSchemaObjects, prefetchTables } = tree;
 
   // Warm the default schema's object list so `from <tab>` works immediately.
   useEffect(() => {
     if (connected && schemas) prefetchSchemaObjects(searchPath[0]);
   }, [connected, schemas, searchPath, prefetchSchemaObjects]);
 
-  const setActiveSql = useCallback(
-    (sql: string, opts?: { markClean?: boolean }) => {
-      setTabs((ts) => {
-        const out = [...ts];
-        if (out.length === 0) return [{ name: "untitled-1.sql", sql, dirty: false }];
-        out[activeTab] = { ...out[activeTab], sql, dirty: !opts?.markClean };
-        return out;
-      });
-    },
-    [activeTab]
-  );
+
 
   const insertSelect = useCallback(
     (schema: string, name: string) => {
@@ -798,43 +644,31 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabs, activeTab, setActiveSql, showToast]);
 
-  const saveSnippet = useCallback(async () => {
+  /** Open the name prompt for the current query. `window.prompt` cannot be
+   *  used here — see NamePrompt. */
+  const saveSnippet = useCallback(() => {
     const body = tabs[activeTab]?.sql ?? "";
     if (!body.trim()) {
       showToast("Nothing to save");
       return;
     }
-    const name = window.prompt("Snippet name:", body.slice(0, 40).replace(/\s+/g, " ").trim());
-    if (!name) return;
-    try {
-      await invoke("snippet_save", { id: null, name, body, tags: null });
-      await refreshSnippets();
-      showToast(`Saved snippet "${name}"`);
-    } catch (e) {
-      showToast(String(e).slice(0, 70));
-    }
-  }, [tabs, activeTab, showToast, refreshSnippets]);
+    setSnippetName(suggestName(body));
+    setOverlay("snippetName");
+  }, [tabs, activeTab, showToast]);
+
+  const commitSnippet = useCallback(async () => {
+    const body = tabs[activeTab]?.sql ?? "";
+    const name = snippetName.trim();
+    if (!name || !body.trim()) return;
+    setOverlay(null);
+    const out = await saveSnippetRecord({ name, body });
+    showToast(out.ok ? `Saved snippet "${name}"` : out.message.slice(0, 70));
+  }, [tabs, activeTab, snippetName, showToast, saveSnippetRecord]);
 
   /* ---------------- tabs ---------------- */
 
-  const newTab = useCallback(() => {
-    setTabs((ts) => [...ts, { name: `untitled-${untitledSeq.current++}.sql`, sql: "", dirty: false }]);
-    setTabs((ts) => {
-      setActiveTab(ts.length - 1);
-      return ts;
-    });
-  }, []);
 
-  const closeTab = useCallback(
-    (i: number) => {
-      setTabs((ts) => {
-        const out = ts.filter((_, x) => x !== i);
-        setActiveTab((a) => Math.max(0, Math.min(a >= i ? a - 1 : a, out.length - 1)));
-        return out;
-      });
-    },
-    []
-  );
+
 
   /* ---------------- run / transactions / explain ---------------- */
 
@@ -843,71 +677,54 @@ export default function App() {
   const doRun = useCallback(
     async (force = false, boundParams?: unknown[]) => {
       const sql = tabs[activeTab]?.sql ?? "";
-      if (!sql.trim() || !connected) return;
-      if (!force && needsGuard(sql, connectedEnv)) {
+      if (!connected) return;
+      // The hook decides what is needed and reports back; App owns the
+      // overlays, so nothing here has to re-derive that from state.
+      const out = await query.run(sql, { env: connectedEnv, force, params: boundParams });
+      if (out.kind === "needs-guard") {
         setGuardSql(sql);
         setOverlay("guard");
         return;
       }
-      // Phase 3: if the SQL has $n placeholders and none were supplied, prompt.
-      const pc = paramCount(sql);
-      if (pc > 0 && boundParams === undefined) {
-        setParamValues(Array(pc).fill(""));
+      if (out.kind === "needs-params") {
+        setParamValues(Array(out.count).fill(""));
         setOverlay("params");
         return;
       }
-      setRunning(true);
-      setRunStatus(null);
+      if (out.kind === "blocked") return;
+
       setChart(null);
-      try {
-        const r = await invoke<QueryResult>("pg_query", {
-          sql,
-          params: boundParams ?? null,
-        });
-        setResult(r);
-        setRanSql(sql);
-        setLastError(null);
-        setQueryEpoch((n) => n + 1);
+      if (out.kind === "ok") {
         setResultTab("results");
+        // The tab matches what the server just ran, so it is no longer dirty.
         setTabs((ts) => {
-          const out = [...ts];
-          if (out[activeTab]) out[activeTab] = { ...out[activeTab], dirty: false };
-          return out;
+          const o = [...ts];
+          if (o[activeTab]) o[activeTab] = { ...o[activeTab], dirty: false };
+          return o;
         });
-        const text =
-          r.columns.length > 0
-            ? `${r.totalRows.toLocaleString()} row(s) in ${r.elapsedMs}ms${
-                r.truncated ? ` (first ${r.storedRows.toLocaleString()} kept for scrolling)` : ""
-              }`
-            : `${r.rowsAffected ?? 0} row(s) affected in ${r.elapsedMs}ms`;
-        setRunStatus({ icon: "✓", text, color: "var(--tn-success)" });
-      } catch (e) {
-        const msg = String(e);
-        setResult(null);
-        setLastError(msg);
-        setRunStatus({ icon: "✕", text: msg, color: "var(--tn-danger)" });
-        if (msg.startsWith("Connection lost:")) {
-          setConnected(false);
-          setConnectedEnv(null);
-          setInTx(false);
-          setTxOpenSince(null);
-          setConnLostDetail(msg);
-          setOverlay("connLost");
-        }
-      } finally {
-        setRunning(false);
-        refreshHistory(historySearch);
+      } else if (out.connectionLost) {
+        session.markLost();
+        tx.forget(); // no server left to hold a transaction open
+        setConnLostDetail(out.message);
+        setOverlay("connLost");
       }
+      refreshHistory();
     },
-    [tabs, activeTab, connected, connectedEnv, refreshHistory, historySearch]
+    [tabs, activeTab, connected, connectedEnv, query, tx, setTabs, refreshHistory, historySearch]
   );
 
   /* ---------------- safe row editing ---------------- */
 
-  const [edits, setEdits] = useState<CellEdit[]>([]);
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [applyError, setApplyError] = useState<string | null>(null);
+  const {
+    edits,
+    stage: stageEdit,
+    discard: discardEdits,
+    reviewOpen,
+    setReviewOpen,
+    applying,
+    applyError,
+    apply: applyRowEdits,
+  } = useRowEdits(queryEpoch);
 
   /** Whether the current result maps back to editable rows of exactly one table. */
   const editability = useMemo(
@@ -916,67 +733,22 @@ export default function App() {
   );
   const editTarget = editability?.editable ? editability.target : null;
 
-  // Staged edits belong to the result they were made against — a new result
-  // invalidates them.
-  useEffect(() => {
-    setEdits([]);
-    setReviewOpen(false);
-    setApplyError(null);
-  }, [queryEpoch]);
-
-  const stageEdit = useCallback((e: CellEdit) => {
-    setEdits((list) => {
-      const i = list.findIndex((x) => x.rowKey === e.rowKey && x.column === e.column);
-      if (i === -1) return [...list, e];
-      const next = [...list];
-      next[i] = e;
-      return next;
-    });
-  }, []);
-
-  const discardEdits = useCallback(() => {
-    setEdits([]);
-    setReviewOpen(false);
-    setApplyError(null);
-  }, []);
-
-  /** Apply staged edits in one transaction: any failure rolls the whole set back.
-   *  If the user already has a transaction open we join it and leave the
-   *  commit decision to them. */
+  /** Apply the staged edits and tell the user what became of them. The hook
+   *  owns the transaction; this owns what the rest of the app does after. */
   const applyEdits = useCallback(async () => {
-    if (!editTarget || edits.length === 0) return;
-    setApplying(true);
-    setApplyError(null);
-    const statements = buildStatements(editTarget, edits);
-    const joinExisting = inTx;
-    try {
-      if (!joinExisting) await invoke("pg_begin");
-      for (const st of statements) {
-        await invoke<QueryResult>("pg_query", { sql: st.sql, params: st.params });
-      }
-      if (!joinExisting) await invoke("pg_commit");
-      setEdits([]);
-      setReviewOpen(false);
-      showToast(
-        joinExisting
-          ? `${statements.length} statement(s) staged in your transaction`
-          : `Applied ${statements.length} statement${statements.length === 1 ? "" : "s"}`
-      );
-      refreshHistory(historySearch);
-      if (!joinExisting) doRun(true); // re-read so the grid shows what's actually stored
-    } catch (e) {
-      setApplyError(String(e));
-      if (!joinExisting) {
-        try {
-          await invoke("pg_rollback");
-        } catch {
-          /* session may already be gone; the original error is what matters */
-        }
-      }
-    } finally {
-      setApplying(false);
+    const out = await applyRowEdits({ target: editTarget, inTx });
+    if (out.kind === "noop" || out.kind === "error") return;
+    refreshHistory();
+    if (out.kind === "staged") {
+      showToast(`${out.count} statement(s) staged in your transaction`);
+      return; // their transaction, their commit — and no re-read, see below
     }
-  }, [editTarget, edits, inTx, doRun, refreshHistory, historySearch, showToast]);
+    showToast(`Applied ${out.count} statement${out.count === 1 ? "" : "s"}`);
+    // Re-read so the grid shows what is actually stored. Only safe once the
+    // commit has landed: re-reading inside the user's open transaction would
+    // show uncommitted rows as though they were.
+    doRun(true);
+  }, [applyRowEdits, editTarget, inTx, doRun, refreshHistory, historySearch, showToast]);
 
   const doCancel = useCallback(async () => {
     try {
@@ -988,183 +760,70 @@ export default function App() {
   }, [showToast]);
 
   const doBegin = useCallback(async () => {
-    try {
-      await invoke("pg_begin");
-      setInTx(true);
-      setTxOpenSince(Date.now());
-      showToast("Transaction started");
-    } catch (e) {
-      showToast(String(e).slice(0, 80));
-    }
-  }, [showToast]);
+    const r = await tx.begin();
+    showToast(r.ok ? "Transaction started" : String(r.message).slice(0, 80));
+  }, [tx, showToast]);
 
   const doCommit = useCallback(async () => {
-    try {
-      await invoke("pg_commit");
-      setInTx(false);
-      setTxOpenSince(null);
-      showToast("COMMIT");
-    } catch (e) {
-      showToast(`Commit error: ${String(e).slice(0, 70)}`);
-    }
-  }, [showToast]);
+    const r = await tx.commit();
+    showToast(r.ok ? "COMMIT" : `Commit error: ${String(r.message).slice(0, 70)}`);
+  }, [tx, showToast]);
 
   const doRollback = useCallback(async () => {
-    try {
-      await invoke("pg_rollback");
-      setInTx(false);
-      setTxOpenSince(null);
-      showToast("ROLLBACK");
-    } catch (e) {
-      showToast(`Rollback error: ${String(e).slice(0, 70)}`);
-    }
-  }, [showToast]);
+    const r = await tx.rollback();
+    showToast(r.ok ? "ROLLBACK" : `Rollback error: ${String(r.message).slice(0, 70)}`);
+  }, [tx, showToast]);
 
   const commitAndDisconnect = useCallback(async () => {
-    try {
-      await invoke("pg_commit");
-    } catch (e) {
-      showToast(`Commit error: ${String(e).slice(0, 70)}`);
+    const r = await tx.commit();
+    if (!r.ok) {
+      // Still open on the server. Disconnecting now would abandon it silently,
+      // so stop and let the user see what happened.
+      showToast(`Commit error: ${String(r.message).slice(0, 70)}`);
       setOverlay(null);
       return;
     }
-    setInTx(false);
-    setTxOpenSince(null);
     await reallyDisconnect();
     showToast("Committed & disconnected");
-  }, [reallyDisconnect, showToast]);
+  }, [tx, reallyDisconnect, showToast]);
 
   const rollbackAndDisconnect = useCallback(async () => {
-    await invoke("pg_rollback").catch(() => {});
-    setInTx(false);
-    setTxOpenSince(null);
+    // Best-effort: we are dropping the session either way, and an unreachable
+    // server has already rolled it back for us.
+    await tx.rollback();
+    tx.forget();
     await reallyDisconnect();
     showToast("Rolled back & disconnected");
-  }, [reallyDisconnect, showToast]);
+  }, [tx, reallyDisconnect, showToast]);
 
-  type RawPlan = Record<string, unknown> & { Plans?: RawPlan[] };
-
-  const runExplain = useCallback(async (override?: ExplainOptions | unknown) => {
-    const sql = tabs[activeTab]?.sql ?? "";
-    if (!sql.trim() || !connected) return;
-
-    // Ignore anything that isn't really an options object. `onClick={runExplain}`
-    // hands over a MouseEvent, which used to sail through as `override` and
-    // blow up on `o.format.toUpperCase()` — the button silently did nothing.
-    const valid = override && typeof (override as ExplainOptions).format === "string";
-
-    // Default ANALYZE on for a plain SELECT (real timings, no side effects) and
-    // off otherwise — EXPLAIN ANALYZE *executes* the statement, so a DELETE
-    // would really delete. The user can still tick it, but that is a deliberate
-    // act with a warning attached, not something we do on their behalf.
-    const opts = valid ? (override as ExplainOptions) : { ...explainOpts, analyze: looksLikeSelect(sql) };
-    setExplainOpts(opts);
-    if (optionIssues(opts, sql, serverMajor).some((i) => i.level === "error")) return;
-
-    const stmt = buildExplain(sql, opts);
-    setExplainBusy(true);
-    setExplain((x) => ({
-      title: tabs[activeTab]?.name ?? "query",
-      sql,
-      statement: stmt,
-      nodes: x?.nodes ?? null,
-      stats: x?.stats ?? [],
-      suggestion: null,
-      error: null,
-      raw: x?.raw ?? "",
-      ranOpts: x?.ranOpts ?? opts,
-    }));
-    setOverlay("explain");
-    try {
-      const qr = await invoke<QueryResult>("pg_query", { sql: stmt });
-      // FORMAT TEXT returns one row *per line* of the plan (295 for a real
-      // query here) — fetching a single row would silently keep only the first
-      // line. JSON/YAML/XML come back as one row holding the whole document.
-      const rows = await invoke<unknown[][]>("pg_rows", { offset: 0, limit: Math.max(1, qr.storedRows) });
-      const raw =
-        opts.format === "text"
-          ? rows.map((r) => String(r[0] ?? "")).join("\n")
-          : typeof rows[0]?.[0] === "string"
-            ? (rows[0][0] as string)
-            : JSON.stringify(rows[0]?.[0]);
-      const cell = rows[0]?.[0];
-
-      // Only FORMAT JSON can be walked into a tree; the others are shown raw.
-      if (opts.format !== "json") {
-        setExplain((x) => (x ? { ...x, raw, nodes: [], stats: [], error: null, ranOpts: opts } : x));
-        setResult(null);
-        setRunStatus(null);
-        return;
-      }
-
-      const parsed = typeof cell === "string" ? JSON.parse(cell) : cell;
-      const root = (Array.isArray(parsed) ? parsed[0] : parsed) as Record<string, unknown>;
-      const plan = root["Plan"] as RawPlan;
-      const total = (plan["Actual Total Time"] as number) ?? (plan["Total Cost"] as number) ?? 1;
-      const nodes: PlanNode[] = [];
-      let hotIdx = 0;
-      let hotVal = -1;
-      const walk = (n: RawPlan, depth: number) => {
-        const ms = (n["Actual Total Time"] as number) ?? null;
-        const cost = (n["Total Cost"] as number) ?? 0;
-        const metric = ms ?? cost;
-        const rel = n["Relation Name"] ? ` on ${n["Relation Name"]}` : "";
-        const detailBits = [
-          n["Index Name"] ? `index: ${n["Index Name"]}` : null,
-          n["Filter"] ? `filter: ${n["Filter"]}` : null,
-          n["Hash Cond"] ? `cond: ${n["Hash Cond"]}` : null,
-          n["Sort Key"] ? `sort key: ${(n["Sort Key"] as string[]).join(", ")}` : null,
-          n["Actual Rows"] !== undefined ? `rows ${(n["Actual Rows"] as number).toLocaleString()}` : n["Plan Rows"] !== undefined ? `est rows ${(n["Plan Rows"] as number).toLocaleString()}` : null,
-        ].filter(Boolean);
-        const i = nodes.length;
-        nodes.push({
-          kind: String(n["Node Type"] ?? "node"),
-          title: `${n["Node Type"]}${rel}`,
-          detail: detailBits.join(" · "),
-          ms,
-          pct: Math.min(100, (metric / total) * 100),
-          indent: depth,
-          hot: false,
-        });
-        if ((n["Node Type"] as string)?.includes("Seq Scan") && metric > hotVal) {
-          hotVal = metric;
-          hotIdx = i;
-        }
-        (n.Plans ?? []).forEach((c) => walk(c, depth + 1));
-      };
-      walk(plan, 0);
-      if (hotVal > 0 && nodes.length > 1) nodes[hotIdx].hot = true;
-      const stats: PlanStats = [];
-      if (root["Planning Time"] !== undefined) stats.push({ label: "Planning time", value: `${(root["Planning Time"] as number).toFixed(2)} ms` });
-      if (root["Execution Time"] !== undefined) stats.push({ label: "Execution time", value: `${(root["Execution Time"] as number).toFixed(1)} ms` });
-      stats.push({ label: "Plan nodes", value: String(nodes.length) });
-      const hot = nodes.find((n) => n.hot);
-      const suggestion = hot
-        ? `${hot.title} dominates this plan. An index matching its filter could avoid the full scan.`
-        : null;
-      setExplain({
-        title: tabs[activeTab]?.name ?? "query",
-        sql,
-        statement: stmt,
-        nodes,
-        stats,
-        suggestion,
-        error: null,
-        raw,
-        ranOpts: opts,
+  /**
+   * Run EXPLAIN for the active tab and show it.
+   *
+   * The hook owns the statement and the plan; this decides what the rest of
+   * the app does about it — open the modal (on start, so a slow ANALYZE shows
+   * a spinner rather than nothing), keep the summary for comparison, and drop
+   * the backend row store, which EXPLAIN has just overwritten with its output.
+   */
+  const runExplain = useCallback(
+    async (override?: ExplainOptions | unknown) => {
+      const title = tabs[activeTab]?.name ?? "query";
+      const out = await runExplainRaw({
+        sql: tabs[activeTab]?.sql ?? "",
+        title,
+        connected,
+        override,
+        onStart: () => setOverlay("explain"),
       });
-      // Phase 3: keep the last few plan summaries so two runs can be compared.
-      setPlans((ps) =>
-        [...ps, { label: `${tabs[activeTab]?.name ?? "query"} · ${new Date().toLocaleTimeString()}`, summary: summarizePlan(root) }].slice(-6)
-      );
-      setResult(null); // explain replaced the backend row store
-      setRunStatus(null);
-    } catch (e) {
-      setExplain((x) => (x ? { ...x, error: String(e), nodes: [] } : x));
-    } finally {
-      setExplainBusy(false);
-    }
-  }, [tabs, activeTab, connected, explainOpts, serverMajor]);
+      if (out.kind !== "ok") return;
+      query.reset(); // EXPLAIN replaced the backend row store
+      // Phase 3: keep the last few summaries so two runs can be compared.
+      if (out.root) {
+        const summary = summarizePlan(out.root);
+        setPlans((ps) => [...ps, { label: `${title} · ${new Date().toLocaleTimeString()}`, summary }].slice(-6));
+      }
+    },
+    [tabs, activeTab, connected, runExplainRaw, query],
+  );
 
   /** Everything the exporters need from the current plan. */
   const exportablePlan = useCallback((): ExportablePlan | null => {
@@ -1229,7 +888,7 @@ export default function App() {
         .replace(/[:T]/g, "-")}.${ext}`;
       try {
         const path = await saveText(name, text, FILTERS[ext]);
-        if (path) showToast(`Saved ${baseName(path)} — ${rows.length.toLocaleString()} rows`);
+        if (path) showToast(`Saved ${baseName(path)} — ${rowCountNote(rows.length, result)}`);
       } catch (e) {
         showToast(`Export failed: ${String(e).slice(0, 60)}`);
       }
@@ -1245,39 +904,22 @@ export default function App() {
       const text =
         kind === "csv" ? toCSV(result.columns, rows) : kind === "json" ? toJSONExport(result.columns, rows) : toMarkdown(result.columns, rows);
       await navigator.clipboard.writeText(text);
-      showToast(`${kind.toUpperCase()} copied — ${rows.length.toLocaleString()} rows`);
+      showToast(`${kind.toUpperCase()} copied — ${rowCountNote(rows.length, result)}`);
     },
     [result, showToast]
   );
 
   const buildChart = useCallback(async () => {
-    if (!result || result.columns.length === 0 || result.storedRows === 0) {
+    const pick = result && result.storedRows > 0 ? pickChartColumns(result.columns) : null;
+    if (!result || !pick) {
       setChart(null);
       return;
     }
-    const isNum = (t: string) => /int|numeric|float|double|real|money/.test(t);
-    const li = result.columns.findIndex((c) => !isNum(c.dbType));
-    const vi = result.columns.findIndex((c) => isNum(c.dbType));
-    if (li < 0 || vi < 0) {
-      setChart(null);
-      return;
-    }
-    const rows = await fetchAllRows(Math.min(result.storedRows, 50_000));
-    const agg = new Map<string, number>();
-    for (const r of rows) {
-      const k = r[li] === null || r[li] === undefined ? "null" : String(r[li]);
-      const v = Number(r[vi]);
-      if (!Number.isFinite(v)) continue;
-      agg.set(k, (agg.get(k) ?? 0) + v);
-    }
-    const data = [...agg.entries()]
-      .map(([label, v]) => ({ label, v }))
-      .sort((a, b) => b.v - a.v)
-      .slice(0, 12);
+    const rows = await fetchAllRows(Math.min(result.storedRows, MAX_CHART_ROWS));
     setChart({
-      title: `sum(${result.columns[vi].name}) by ${result.columns[li].name}`,
-      sub: `aggregated from ${rows.length.toLocaleString()} rows · bar`,
-      data,
+      title: chartTitle(result.columns, pick),
+      sub: chartSubtitle(rows.length, result.totalRows),
+      data: aggregateChart(rows, pick.label, pick.value),
     });
   }, [result]);
 
@@ -1372,6 +1014,13 @@ export default function App() {
         setPaletteQ("");
         setPaletteIdx(0);
         setOverlay("palette");
+      } else if (mod && (e.key === "p" || e.key === "P")) {
+        // Only useful against a live server: the search reads pg_catalog.
+        e.preventDefault();
+        if (connected) {
+          search.reset();
+          setOverlay("search");
+        }
       } else if (mod && (e.key === "t" || e.key === "T")) {
         e.preventDefault();
         newTab();
@@ -1414,6 +1063,10 @@ export default function App() {
       { icon: "⚙", label: "Open settings", type: "Action", exec: () => setOverlay("settings") },
     ];
     if (connected) {
+      items.push({ icon: "⌕", label: "Find anything (all schemas)…", type: "Action", kbd: "⌘P", exec: () => setOverlay("search") });
+      items.push({ icon: "◱", label: "Index health (unused & recoverable)…", type: "Action", exec: () => loadHealth("indexes") });
+      items.push({ icon: "☰", label: "Vacuum & bloat…", type: "Action", exec: () => loadHealth("tables") });
+      items.push({ icon: "⏱", label: "Top queries…", type: "Action", exec: () => loadHealth("queries") });
       items.push({ icon: "📊", label: "Server monitor (sessions & locks)", type: "Action", exec: () => setOverlay("monitor") });
       items.push({ icon: "◫", label: "ER diagram (relationships)", type: "Action", exec: () => setOverlay("diagram") });
       if (connectedEnv === "prod")
@@ -1589,6 +1242,8 @@ export default function App() {
                 routines={routines}
                 onInsertSelect={insertSelect}
                 onDescribe={describeObject}
+                onDetails={showDetails}
+                onPartitions={showPartitions}
                 onConnect={saved.length ? () => setConnMenu(true) : newProfile}
               />
             </>
@@ -1602,14 +1257,10 @@ export default function App() {
                 search={historySearch}
                 onSearch={setHistorySearch}
                 onClear={async () => {
-                  await invoke("history_clear", { includeFavorites: false }).catch(() => {});
-                  refreshHistory(historySearch);
+                  await clearHistory();
                   showToast("Cleared history — favorites kept");
                 }}
-                onToggleFavorite={async (h) => {
-                  await invoke("history_favorite", { id: h.id, favorite: !h.favorite }).catch(() => {});
-                  refreshHistory(historySearch);
-                }}
+                onToggleFavorite={(h) => toggleHistoryFavorite(h.id, !h.favorite)}
                 onLoad={(sql) => {
                   setActiveSql(sql);
                   showToast("Loaded into editor");
@@ -1629,7 +1280,7 @@ export default function App() {
           />
         )}
         <main className="main-col">
-          <TabsBar tabs={tabs} active={activeTab} onSelect={setActiveTab} onClose={closeTab} onNew={newTab} />
+          <TabsBar tabs={tabs} active={activeTab} onSelect={setActiveTab} onClose={closeTab} onNew={() => newTab()} />
           {tabs.length === 0 ? (
             <div className="onboard">
               <div className="card">
@@ -1642,7 +1293,9 @@ export default function App() {
                   anywhere with the command palette.
                 </p>
                 <div className="row">
-                  <button className="btn primary" onClick={newTab}>
+                  {/* Not `onClick={newTab}` — that hands the MouseEvent to
+                      newTab as its init options. */}
+                  <button className="btn primary" onClick={() => newTab()}>
                     New query <span className="kbd">⌘T</span>
                   </button>
                   <button className="btn" onClick={() => setOverlay("palette")}>
@@ -1660,7 +1313,7 @@ export default function App() {
               inTx={inTx}
               editorH={editorH}
               onSplitStart={onSplitStart}
-              status={runStatus}
+              status={query.status}
               result={result}
               lastError={lastError}
               queryEpoch={queryEpoch}
@@ -1704,14 +1357,10 @@ export default function App() {
                 search: historySearch,
                 onSearch: setHistorySearch,
                 onClear: async () => {
-                  await invoke("history_clear", { includeFavorites: false }).catch(() => {});
-                  refreshHistory(historySearch);
+                  await clearHistory();
                   showToast("Cleared history — favorites kept");
                 },
-                onToggleFavorite: async (h) => {
-                  await invoke("history_favorite", { id: h.id, favorite: !h.favorite }).catch(() => {});
-                  refreshHistory(historySearch);
-                },
+                onToggleFavorite: (h) => toggleHistoryFavorite(h.id, !h.favorite),
                 onLoad: (sql) => {
                   setActiveSql(sql);
                   showToast("Loaded into editor");
@@ -1773,21 +1422,21 @@ export default function App() {
           sshUser={sshUser}
           sshKeyPath={sshKeyPath}
           sshFingerprint={sshFingerprint}
-          onSshEnabled={setSshEnabled}
-          onSshHost={setSshHost}
-          onSshPort={setSshPort}
-          onSshUser={setSshUser}
-          onSshKeyPath={setSshKeyPath}
-          onSshFingerprint={setSshFingerprint}
-          onProfileName={setProfileName}
-          onEnvironment={setEnvironment}
-          onHost={setHost}
-          onPort={setPort}
-          onDatabase={setDatabase}
-          onUsername={setUsername}
-          onPassword={setPassword}
-          onTlsMode={setTlsMode}
-          onTlsCaPath={setTlsCaPath}
+          onSshEnabled={(v) => form.set("sshEnabled", v)}
+          onSshHost={(v) => form.set("sshHost", v)}
+          onSshPort={(v) => form.set("sshPort", v)}
+          onSshUser={(v) => form.set("sshUser", v)}
+          onSshKeyPath={(v) => form.set("sshKeyPath", v)}
+          onSshFingerprint={(v) => form.set("sshFingerprint", v)}
+          onProfileName={(v) => form.set("profileName", v)}
+          onEnvironment={(v) => form.set("environment", v)}
+          onHost={(v) => form.set("host", v)}
+          onPort={(v) => form.set("port", v)}
+          onDatabase={(v) => form.set("database", v)}
+          onUsername={(v) => form.set("username", v)}
+          onPassword={(v) => form.set("password", v)}
+          onTlsMode={(v) => form.set("tlsMode", v)}
+          onTlsCaPath={(v) => form.set("tlsCaPath", v)}
           onSave={doSaveProfile}
           onTest={doTest}
           onSaveConnect={saveAndConnect}
@@ -1805,7 +1454,53 @@ export default function App() {
           onDone={(m) => {
             showToast(m);
             resetExplorer();
-            refreshHistory(historySearch);
+            refreshHistory();
+          }}
+          onClose={() => setOverlay(null)}
+        />
+      )}
+      {overlay === "details" && details && (
+        <DetailsModal
+          schema={details.schema}
+          details={details.data}
+          error={details.error}
+          onClose={() => setOverlay(null)}
+        />
+      )}
+      {overlay === "health" && (
+        <HealthModal
+          tab={health.tab}
+          onTab={loadHealth}
+          indexes={health.indexes}
+          tables={health.tables}
+          queries={health.queries}
+          error={health.error}
+          // Opened as a tab, never executed. Dropping 580 indexes is not a
+          // thing an app should offer to do on one click, and the comments at
+          // the top of the script are the point of generating it.
+          onOpenScript={(sql) => openScript("drop-unused-indexes.sql", sql)}
+          onClose={() => setOverlay(null)}
+        />
+      )}
+      {overlay === "parts" && parts && (
+        <PartitionsModal
+          schema={parts.schema}
+          table={parts.table}
+          data={parts.data}
+          error={parts.error}
+          onOpenScript={openScript}
+          onClose={() => setOverlay(null)}
+        />
+      )}
+      {overlay === "search" && (
+        <SearchModal
+          results={search.results}
+          busy={search.busy}
+          error={search.error}
+          onSearch={search.run}
+          onPick={(h: SearchHit) => {
+            setOverlay(null);
+            showDetails(h.schema, h.name, h.kind === "column" ? "table" : h.kind);
           }}
           onClose={() => setOverlay(null)}
         />
@@ -1891,6 +1586,16 @@ export default function App() {
         />
       )}
       {overlay === "audit" && <AuditModal onClose={() => setOverlay(null)} />}
+      {overlay === "snippetName" && (
+        <NamePrompt
+          title="Save snippet"
+          label="Name"
+          value={snippetName}
+          onChange={setSnippetName}
+          onSave={commitSnippet}
+          onCancel={() => setOverlay(null)}
+        />
+      )}
       {overlay === "cheatsheet" && <Cheatsheet onClose={() => setOverlay(null)} />}
       {overlay === "inspect" && (
         <Inspector text={inspectText} colName={inspectCol} onClose={() => setOverlay(null)} />
