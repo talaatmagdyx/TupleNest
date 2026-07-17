@@ -53,7 +53,48 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+
+      # `cargo test --workspace` includes credential-store's
+      # `live_os_keychain_contract`, which talks to the real OS keychain. On
+      # macOS and Windows the runner has one. On Linux the keychain *is* the
+      # Secret Service, and a bare runner has no daemon owning
+      # `org.freedesktop.secrets` — so the test panicked and this leg was red.
+      #
+      # The tempting fix is to skip it on Linux. That would be the worst
+      # option: Linux is the one platform where this genuinely fails for real
+      # users, because a desktop without a keyring daemon has nowhere to put a
+      # password. Skipping would remove the coverage exactly where it is load
+      # bearing, and turn a red leg into a green one that proves less.
+      - name: Secret Service, so the Linux keyring is tested rather than skipped
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get install -y gnome-keyring dbus-x11
+
+      # `dbus-run-session` gives the whole command its own session bus, which is
+      # what `gnome-keyring-daemon` registers the Secret Service on. It has to
+      # wrap the tests in a single step: a bus started in an earlier step dies
+      # with that step's shell, and its address would not reach this one.
+      # `--unlock` reads the passphrase from stdin; empty is fine, the keyring
+      # is created for this run and thrown away with the runner.
+      - name: cargo test (Linux, with an unlocked keyring on a session bus)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            echo -n "" | gnome-keyring-daemon --unlock --components=secrets
+            # Prove the daemon is actually there before blaming the code: if
+            # this name is unowned the tests fail with the same DBus error as
+            # before, and the cause would be this step, not TupleNest.
+            # `dbus-send` rather than `busctl`, because dbus-x11 is installed
+            # above and busctl would be an unstated dependency on systemd.
+            dbus-send --session --print-reply --dest=org.freedesktop.DBus \
+              /org/freedesktop/DBus org.freedesktop.DBus.ListNames \
+              | grep -q org.freedesktop.secrets \
+              || { echo "no Secret Service on the bus — the keyring daemon did not start"; exit 1; }
+            cargo test --workspace
+          '
+
+      - name: cargo test
+        if: matrix.os != 'ubuntu-latest'
+        run: cargo test --workspace
 
   # The contract tests: everything that can only be answered by a real server.
   # Cancellation, the 100k streaming checksum, TLS fails-closed, read-only
