@@ -195,8 +195,58 @@ fn audit_list(
         .map_err(|e| e.to_string())
 }
 
+/// The app menu, with macOS's native About panel swapped for ours.
+///
+/// The menu bar's "About TupleNest" opened a bare system panel showing the
+/// version and nothing else, while the palette and Settings opened the real
+/// one — two different About boxes, and the menu bar is where people look
+/// first.
+///
+/// This starts from `Menu::default` and changes one item rather than building
+/// a menu from scratch: the default carries the standard Edit submenu, and on
+/// macOS that submenu is what makes Cut/Copy/Paste work in a webview at all.
+/// Hand-rolling the menu and forgetting it would silently break ⌘C everywhere
+/// in the app.
+///
+/// The swap is macOS-only. Windows and Linux have no application submenu to
+/// put an About in; there the palette and Settings are the way to it, which is
+/// the platform convention anyway.
+fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<tauri::menu::Menu<R>> {
+    let menu = tauri::menu::Menu::default(app)?;
+
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::menu::{MenuItem, MenuItemKind};
+
+        // The first submenu is the application menu, and its first item is the
+        // predefined About. Both are positional facts about `Menu::default`,
+        // so every step is checked: a Tauri release that reorders this should
+        // leave the stock menu alone, not panic or drop Edit.
+        if let Some(MenuItemKind::Submenu(app_menu)) = menu.items()?.into_iter().next() {
+            let first = app_menu.items()?.into_iter().next();
+            if let Some(MenuItemKind::Predefined(predefined)) = first {
+                let about = MenuItem::with_id(app, "about", "About TupleNest", true, None::<&str>)?;
+                app_menu.remove(&predefined)?;
+                app_menu.prepend(&about)?;
+            }
+        }
+    }
+
+    Ok(menu)
+}
+
 fn main() {
     tauri::Builder::default()
+        .menu(build_menu)
+        .on_menu_event(|app, event| {
+            if event.id() == "about" {
+                // The frontend owns the About box, so the menu only announces
+                // the intent. Failing to emit is not worth killing the app
+                // over — the palette still reaches it.
+                use tauri::Emitter;
+                let _ = app.emit("menu:about", ());
+            }
+        })
         // Auto-update. Payloads are verified against the minisign public key in
         // tauri.conf.json — an update that isn't signed with our private key is
         // rejected, so a compromised release host still cannot ship code.

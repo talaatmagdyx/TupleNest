@@ -343,3 +343,22 @@ describe("App — comparing two schemas", () => {
     expect((right as HTMLSelectElement).value).toBe("audit");
   });
 });
+
+describe("App — the macOS menu bar's About", () => {
+  it("opens the real About box, not the system's version panel", async () => {
+    // The menu item lives in Rust and only emits; without this listener the
+    // menu bar fell through to macOS's bare panel while the palette opened
+    // the designed one — two different About boxes.
+    const { listen } = await import("@tauri-apps/api/event");
+    await mount();
+
+    const call = vi.mocked(listen).mock.calls.find(([name]) => name === "menu:about");
+    expect(call, "App never subscribed to menu:about").toBeDefined();
+
+    const handler = call![1] as (e: unknown) => void;
+    handler({ event: "menu:about", id: 1, payload: undefined });
+
+    await waitFor(() => expect(screen.getByText("About TupleNest")).toBeInTheDocument());
+    expect(screen.getByText("github.com/talaatmagdyx")).toBeInTheDocument();
+  });
+});

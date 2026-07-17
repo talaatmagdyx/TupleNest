@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { kbd } from "./lib/platform";
 import { errText } from "./lib/text";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -259,6 +260,16 @@ export default function App() {
   useEffect(() => {
     document.documentElement.setAttribute("data-tn-theme", theme);
   }, [theme]);
+
+  /* macOS's menu bar owns "About TupleNest", but the About box lives here, so
+     the menu item only emits and this opens it. Without this the menu bar fell
+     through to the system's bare version panel — a second, worse About. */
+  useEffect(() => {
+    const stop = listen("menu:about", () => setOverlay("about"));
+    return () => {
+      void stop.then((off) => off());
+    };
+  }, []);
 
   useEffect(() => {
     if (!txOpenSince) return;

@@ -420,7 +420,10 @@ export function About(p: { version: string; os: string; onClose: () => void }) {
             <BrandMark size={44} />
             <div className="about-id">
               <div className="about-name">TupleNest</div>
-              <div className="about-tag">A PostgreSQL desktop IDE that asks before it writes.</div>
+              {/* No engine named on purpose. It speaks Postgres today and the
+                  plan is for it not to stop there — a tagline outlives the
+                  release that made it true. */}
+              <div className="about-tag">A home for your tuples. Careful by default.</div>
               {/* Mono: a version is a string to be read exactly and quoted back
                   in a bug report, not prose. */}
               <div className="about-ver mono">
