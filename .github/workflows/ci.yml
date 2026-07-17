@@ -91,8 +91,13 @@ jobs:
             # password does not create the login keyring, so the daemon had no
             # default collection to store into. A daemon on the bus with no
             # collection is one more thing that looks alive and is not. The
-            # keyring crate's own CI unlocks with a throwaway non-empty
-            # password for exactly this reason; this is its recipe.
+            # keyring crate uses a throwaway non-empty password in its own CI
+            # for exactly this reason; this mirrors that recipe.
+            #
+            # NO APOSTROPHES IN THESE COMMENTS. This whole block is one
+            # single-quoted bash -c string; a stray apostrophe ends it early
+            # and the step dies with "unexpected EOF" — which is how attempt
+            # three failed, in a comment, after every test had passed.
             eval "$(echo -n "ci-throwaway" | gnome-keyring-daemon --unlock --components=secrets --daemonize)"
 
             # Claiming a bus name is not instant. Poll instead of sleeping a
