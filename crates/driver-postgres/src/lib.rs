@@ -1369,7 +1369,7 @@ async fn top_queries(client: &Client, limit: i64) -> Result<serde_json::Value, D
 
 /// Find an object by name anywhere in the database.
 ///
-/// Partitions are excluded: matching "eng_interactions" would otherwise return
+/// Partitions are excluded: matching "messages" would otherwise return
 /// 300 near-identical children and hide the parent the user actually wants.
 async fn search_objects(
     client: &Client,

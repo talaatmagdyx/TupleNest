@@ -100,17 +100,17 @@ describe("useSearch — races", () => {
     act(() => void result.current.run("eng_int"));
 
     await act(async () => {
-      fast.resolve(hits("eng_interactions"));
+      fast.resolve(hits("messages"));
       await fast.promise;
     });
-    expect(result.current.results?.items[0].name).toBe("eng_interactions");
+    expect(result.current.results?.items[0].name).toBe("messages");
 
     await act(async () => {
       slow.resolve(hits("eng_stale"));
       await slow.promise;
     });
     // Still the newer answer.
-    expect(result.current.results?.items[0].name).toBe("eng_interactions");
+    expect(result.current.results?.items[0].name).toBe("messages");
   });
 
   it("does not clear busy when a stale search finishes", async () => {
@@ -145,11 +145,11 @@ describe("useSearch — races", () => {
     act(() => void result.current.run("eng_int"));
 
     await act(async () => {
-      fresh.resolve(hits("eng_interactions"));
+      fresh.resolve(hits("messages"));
       await fresh.promise;
     });
     expect(result.current.error).toBeNull();
-    expect(result.current.results?.items[0].name).toBe("eng_interactions");
+    expect(result.current.results?.items[0].name).toBe("messages");
   });
 
   it("abandons an in-flight search on reset", async () => {

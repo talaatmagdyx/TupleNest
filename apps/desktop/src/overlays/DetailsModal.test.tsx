@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import DetailsModal, { type ObjectDetails } from "./DetailsModal";
 
 const details: ObjectDetails = {
-  title: "eng_interactions",
+  title: "messages",
   kind: "table",
   sections: [
     {
@@ -18,7 +18,7 @@ const details: ObjectDetails = {
   ],
 };
 
-const base = { schema: "company_1_schema", details, error: null, onClose: vi.fn() };
+const base = { schema: "analytics", details, error: null, onClose: vi.fn() };
 
 describe("DetailsModal", () => {
   it("says loading before the data lands", () => {
@@ -35,7 +35,7 @@ describe("DetailsModal", () => {
   it("titles with the kind and the qualified name", () => {
     render(<DetailsModal {...base} />);
     expect(screen.getByText("TABLE")).toBeInTheDocument();
-    expect(screen.getByText(/company_1_schema\.eng_interactions/)).toBeInTheDocument();
+    expect(screen.getByText(/analytics\.messages/)).toBeInTheDocument();
   });
 
   it("falls back to a neutral title before the payload arrives", () => {

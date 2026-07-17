@@ -176,7 +176,7 @@ describe("ExplorerTree — sequences are leaves", () => {
 });
 
 describe("ExplorerTree — partitions", () => {
-  const t = obj("eng_interactions", { isPartitioned: true, partitionCount: 10 });
+  const t = obj("messages", { isPartitioned: true, partitionCount: 10 });
 
   it("badges a partitioned table with its direct count", () => {
     render(<ExplorerTree {...withTable(t)} />);
@@ -188,7 +188,7 @@ describe("ExplorerTree — partitions", () => {
     const onToggle = vi.fn();
     render(<ExplorerTree {...withTable(t)} onPartitions={onPartitions} onToggle={onToggle} />);
     await userEvent.click(screen.getByTitle(/10 direct partitions/));
-    expect(onPartitions).toHaveBeenCalledWith("public", "eng_interactions");
+    expect(onPartitions).toHaveBeenCalledWith("public", "messages");
     expect(onToggle).not.toHaveBeenCalled();
   });
 
@@ -201,12 +201,12 @@ describe("ExplorerTree — partitions", () => {
     render(
       <ExplorerTree
         {...withTable(t, {
-          open: { "p:public.eng_interactions": true },
-          partitions: { "public.eng_interactions": [part("eng_interactions_email")] },
+          open: { "p:public.messages": true },
+          partitions: { "public.messages": [part("messages_email")] },
         })}
       />,
     );
-    expect(screen.getByText("eng_interactions_email")).toBeInTheDocument();
+    expect(screen.getByText("messages_email")).toBeInTheDocument();
   });
 });
 

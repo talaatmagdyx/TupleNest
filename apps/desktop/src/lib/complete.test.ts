@@ -250,12 +250,14 @@ describe("getCompletions — column position", () => {
 
 describe("getCompletions — ranking", () => {
   // Regression: a prefix-matching schema must surface after FROM. Previously
-  // label length was folded into the match score, so short keywords (`case`,
-  // `cast`, `coalesce`) outranked `company_1_schema` and it fell off the list.
+  // label length was folded into the match score, so the short keywords that
+  // also start with `co` (`case` — no; `cast` — no; `coalesce` — yes) outranked
+  // a longer schema name and it fell off the list. The schema here must be
+  // longer than `coalesce` and share its prefix, or the test cannot fail.
   it("surfaces a prefix-matching schema first after FROM", () => {
-    const c: Catalog = { ...cat, schemas: ["company_1_schema", "public"], tables: [] };
+    const c: Catalog = { ...cat, schemas: ["core_metrics_daily", "public"], tables: [] };
     const l = getCompletions("select * from co", 16, c).items.map((i) => i.label);
-    expect(l[0]).toBe("company_1_schema");
+    expect(l[0]).toBe("core_metrics_daily");
   });
 
   // Same regression, checked where keywords legitimately co-exist with columns.

@@ -25,11 +25,29 @@ export type ParsedNode =
 /**
  * Split a node id into what it addresses.
  *
- * Table ids are `tag:schema.table`, and the split is on the LAST dot: a
- * schema cannot contain one, but this database's table names are full of
- * them (`engine__location__eng__interactions`). Splitting on the first dot
- * would address a table called `location__eng__interactions` that does not
- * exist. Returns null for anything unrecognised rather than guessing.
+ * Table ids are `tag:schema.table`, built by joining with a dot
+ * (`ExplorerTree.tsx`) and split here on the LAST dot.
+ *
+ * **This is ambiguous and the split is a guess.** PostgreSQL allows any
+ * character in a quoted identifier, so both parts may contain dots, and
+ * joining them with one throws away the boundary:
+ *
+ *   schema `public`,    table `"q3.totals"` → `t:public.q3.totals`
+ *   schema `"my.sch"`,  table `users`      → `t:my.sch.users`
+ *
+ * Those two are indistinguishable. Splitting on the last dot resolves the
+ * second correctly and the first wrongly (schema `public.q3`, table
+ * `totals`); splitting on the first would do the reverse. Last-dot is the
+ * better bet only because a dotted *schema* is rarer than a dotted *table*
+ * — this is a heuristic, not a parse.
+ *
+ * The consequence is bounded: a mis-split addresses an object that does not
+ * exist, so the metadata request fails and the node stays empty. It cannot
+ * misdirect a write — nothing here reaches `buildUpdate`. Fixing it properly
+ * means making the id unambiguous (encode each part, or carry schema and
+ * table separately) rather than choosing a cleverer dot.
+ *
+ * Returns null for anything unrecognised rather than guessing.
  */
 export function parseNode(id: string): ParsedNode | null {
   const colon = id.indexOf(":");

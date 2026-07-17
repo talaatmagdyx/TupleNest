@@ -22,20 +22,41 @@ describe("parseNode", () => {
     });
   });
 
-  it("splits on the LAST dot, because table names contain them", () => {
-    // `engine__location__eng__interactions` is a real table here. Splitting on
-    // the first dot would address a table that does not exist.
-    expect(parseNode("i:company_1_schema.engine__location__eng__interactions")).toMatchObject({
-      schema: "company_1_schema",
-      table: "engine__location__eng__interactions",
+  it("keeps underscores and other non-dot punctuation in the table name", () => {
+    expect(parseNode("i:analytics.engine__location__line__items")).toMatchObject({
+      schema: "analytics",
+      table: "engine__location__line__items",
+    });
+  });
+
+  // The previous version of this test claimed to prove the split was on the
+  // LAST dot, using a fixture whose table name contained no dots at all. With
+  // a single dot in the id, first-dot and last-dot agree — so it passed
+  // against either implementation and pinned nothing. These two do disagree.
+  it("splits a dotted SCHEMA correctly (why it is lastIndexOf)", () => {
+    expect(parseNode('t:my.sch.users')).toMatchObject({
+      schema: "my.sch",
+      table: "users",
+    });
+  });
+
+  it("splits a dotted TABLE wrongly — a known, bounded limitation", () => {
+    // `CREATE TABLE "q3.totals"` is legal PostgreSQL. The id format joins
+    // schema and table with a dot and cannot tell this apart from the case
+    // above, so the split lands in the wrong place. Asserted rather than
+    // wished away: it addresses a nonexistent object, the metadata fetch
+    // fails, and the node stays empty. See the note on parseNode.
+    expect(parseNode("t:public.q3.totals")).toMatchObject({
+      schema: "public.q3",
+      table: "totals",
     });
   });
 
   it("reads a partition node under a dotted name", () => {
-    expect(parseNode("p:company_1_schema.eng_interactions")).toMatchObject({
+    expect(parseNode("p:analytics.messages")).toMatchObject({
       tag: "p",
-      schema: "company_1_schema",
-      table: "eng_interactions",
+      schema: "analytics",
+      table: "messages",
     });
   });
 
@@ -139,7 +160,7 @@ describe("defaultSearchPath", () => {
   });
 
   it("falls back to the first schema when there is no public", () => {
-    expect(defaultSearchPath(["company_1_schema", "inbox_e2e_schema"])).toEqual(["company_1_schema"]);
+    expect(defaultSearchPath(["analytics", "reporting"])).toEqual(["analytics"]);
   });
 
   it("assumes public before the schema list has loaded", () => {
