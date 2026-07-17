@@ -27,6 +27,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: vi.fn(), ask:
 vi.mock("@tauri-apps/plugin-fs", () => ({ writeTextFile: vi.fn(), readTextFile: vi.fn() }));
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn(async () => null) }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn(async () => {}) }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(async () => {}) }));
 
 /* jsdom implements neither of these, and the virtualized grid measures with
    both. Without them Grid throws on mount. */

@@ -15,6 +15,7 @@ import ExplorerTree from "./explorer/ExplorerTree";
 import TabsBar from "./editor/TabsBar";
 import QueryPanel, { type ChartDatum, type ResultTab } from "./editor/QueryPanel";
 import {
+  About,
   Cheatsheet,
   ConnLost,
   Guard,
@@ -97,6 +98,7 @@ type OverlayKind =
   | "explain"
   | "schema"
   | "cheatsheet"
+  | "about"
   | "inspect"
   | "monitor"
   | "params"
@@ -1076,6 +1078,7 @@ export default function App() {
       { icon: "⇄", label: "Compare schemas…", type: "Action", exec: () => setOverlay("intel") },
       { icon: "◫", label: "Compare EXPLAIN plans…", type: "Action", exec: () => setOverlay("intel") },
       { icon: "⚙", label: "Open settings", type: "Action", exec: () => setOverlay("settings") },
+      { icon: "◈", label: "About TupleNest", type: "Action", exec: () => setOverlay("about") },
     ];
 
     /** Needs a live server: every one of these reads the catalog or the
@@ -1592,6 +1595,7 @@ export default function App() {
           telemetry={telemetry}
           onTheme={applyTheme}
           onTelemetry={applyTelemetry}
+          onAbout={() => setOverlay("about")}
           onClose={() => setOverlay(null)}
         />
       )}
@@ -1626,6 +1630,13 @@ export default function App() {
         />
       )}
       {overlay === "cheatsheet" && <Cheatsheet onClose={() => setOverlay(null)} />}
+      {overlay === "about" && (
+        <About
+          version={info?.version ?? ""}
+          os={info?.os ?? ""}
+          onClose={() => setOverlay(null)}
+        />
+      )}
       {overlay === "inspect" && (
         <Inspector text={inspectText} colName={inspectCol} onClose={() => setOverlay(null)} />
       )}

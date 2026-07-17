@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
+  ABOUT_LINKS,
+  About,
   Cheatsheet,
   ConnLost,
   Guard,
@@ -392,6 +394,73 @@ describe("Settings", () => {
   it("closes", async () => {
     const onClose = vi.fn();
     render(<Settings {...base} onClose={onClose} />);
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onClose).toHaveBeenCalled();
+  });
+});
+
+describe("About", () => {
+  it("shows the version and the OS it is running on", () => {
+    render(<About version="0.1.0" os="macos" onClose={vi.fn()} />);
+    // "macos" is what Rust's std::env::consts::OS returns; nobody writes it
+    // that way.
+    expect(screen.getByText("Version 0.1.0 · macOS")).toBeInTheDocument();
+  });
+
+  it("names each platform the way that platform does", () => {
+    const { rerender } = render(<About version="0.1.0" os="windows" onClose={vi.fn()} />);
+    expect(screen.getByText("Version 0.1.0 · Windows")).toBeInTheDocument();
+    rerender(<About version="0.1.0" os="linux" onClose={vi.fn()} />);
+    expect(screen.getByText("Version 0.1.0 · Linux")).toBeInTheDocument();
+  });
+
+  it("survives app_get_info not having answered yet", () => {
+    // The version comes over IPC, so the first render has neither field.
+    render(<About version="" os="" onClose={vi.fn()} />);
+    expect(screen.getByText("Version —")).toBeInTheDocument();
+  });
+
+  it("credits the author, Claude and VS Code", () => {
+    render(<About version="0.1.0" os="macos" onClose={vi.fn()} />);
+    expect(screen.getByText("Talaat Magdy")).toBeInTheDocument();
+    expect(screen.getByText("github.com/talaatmagdyx")).toBeInTheDocument();
+    expect(screen.getByText("Claude")).toBeInTheDocument();
+    expect(screen.getByText("Inspired by Visual Studio Code")).toBeInTheDocument();
+  });
+
+  it("opens links in the real browser, not in the app's own webview", async () => {
+    // The whole point of routing through the opener plugin: an <a href> would
+    // navigate this webview and the app would be gone with no way back.
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+    render(<About version="0.1.0" os="macos" onClose={vi.fn()} />);
+
+    await userEvent.click(screen.getByText("github.com/talaatmagdyx"));
+    await waitFor(() => expect(openUrl).toHaveBeenCalledWith("https://github.com/talaatmagdyx"));
+
+    await userEvent.click(screen.getByText("claude.com"));
+    await waitFor(() => expect(openUrl).toHaveBeenCalledWith("https://claude.com"));
+  });
+
+  it("only ever opens URLs the capability file allows", async () => {
+    // These two must match capabilities/default.json. A URL in one and not the
+    // other is rejected at runtime, which no type check would catch.
+    const allowed = ["https://github.com/talaatmagdyx", "https://claude.com"];
+    expect(Object.values(ABOUT_LINKS).sort()).toEqual([...allowed].sort());
+  });
+
+  it("stays quiet when there is no browser to open", async () => {
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+    vi.mocked(openUrl).mockRejectedValueOnce(new Error("no handler"));
+    render(<About version="0.1.0" os="macos" onClose={vi.fn()} />);
+    // An About box is not worth an error dialog; the handle is written out in
+    // full beside the link, so it is still copyable.
+    await userEvent.click(screen.getByText("github.com/talaatmagdyx"));
+    expect(screen.getByText("github.com/talaatmagdyx")).toBeInTheDocument();
+  });
+
+  it("closes", async () => {
+    const onClose = vi.fn();
+    render(<About version="0.1.0" os="macos" onClose={onClose} />);
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalled();
   });

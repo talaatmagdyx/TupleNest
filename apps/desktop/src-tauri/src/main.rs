@@ -206,6 +206,12 @@ fn main() {
         // the user picks in the dialog — no ambient filesystem access.
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        // Hands the About box's links to the real browser. A plain <a href>
+        // would navigate *this* webview and the app would vanish behind a web
+        // page with no way back. The capability file allows two exact URLs and
+        // nothing else — notably not `opener:default`, which would permit any
+        // https:// URL the frontend cared to pass.
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;

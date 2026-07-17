@@ -8,6 +8,10 @@
     "updater:default",
     "process:allow-restart",
     "dialog:allow-save",
-    "fs:allow-write-text-file"
+    "fs:allow-write-text-file",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://github.com/talaatmagdyx" }, { "url": "https://claude.com" }]
+    }
   ]
 }

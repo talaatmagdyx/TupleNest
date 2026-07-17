@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { enterKey, kbd } from "../lib/platform";
+import { BrandMark } from "../lib/icons";
 
 /* ---------- shared ---------- */
 
@@ -303,6 +304,9 @@ export function Settings(p: {
   telemetry: boolean;
   onTheme: (t: "dark" | "light") => void;
   onTelemetry: (v: boolean) => void;
+  /** Optional: the palette can reach About directly, so Settings offers it
+   *  rather than owning it — this is just where people look for it. */
+  onAbout?: () => void;
   onClose: () => void;
 }) {
   return (
@@ -359,6 +363,114 @@ export function Settings(p: {
               <span className="knob" aria-hidden />
             </button>
           </div>
+          {p.onAbout && (
+            <div className="section-row">
+              <div>
+                <div className="st">About TupleNest</div>
+                <div className="sd">Version, credits and licences.</div>
+              </div>
+              <button className="btn" onClick={p.onAbout}>
+                About
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </Overlay>
+  );
+}
+
+/* ---------- about ---------- */
+
+/** Where the About box is willing to send you. Kept next to the component so
+ *  it is obvious these two must stay in step with the `opener:allow-open-url`
+ *  scope in capabilities/default.json — a URL that isn't in both is a runtime
+ *  rejection, not a compile error. */
+export const ABOUT_LINKS = {
+  author: "https://github.com/talaatmagdyx",
+  claude: "https://claude.com",
+} as const;
+
+/**
+ * Hands a URL to the system browser.
+ *
+ * Not an <a href>: this webview *is* the app, so following a link in it
+ * replaces the UI with a web page and leaves no way back — there is no
+ * chrome, no back button. `openUrl` sends it to the real browser instead.
+ */
+async function openExternal(url: string): Promise<void> {
+  try {
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+    await openUrl(url);
+  } catch {
+    /* No browser, or the URL is outside the capability scope. An About box is
+       not worth an error dialog — the handle is written out in full next to
+       the link, so it stays copyable either way. */
+  }
+}
+
+export function About(p: { version: string; os: string; onClose: () => void }) {
+  const osLabel = { macos: "macOS", windows: "Windows", linux: "Linux" }[p.os] ?? p.os;
+  return (
+    <Overlay onClose={p.onClose}>
+      <div className="modal about" style={{ width: 460 }}>
+        <ModalHead title="About TupleNest" onClose={p.onClose} />
+        <div className="modal-body">
+          <div className="about-hero">
+            <BrandMark size={44} />
+            <div className="about-id">
+              <div className="about-name">TupleNest</div>
+              <div className="about-tag">A PostgreSQL desktop IDE that asks before it writes.</div>
+              {/* Mono: a version is a string to be read exactly and quoted back
+                  in a bug report, not prose. */}
+              <div className="about-ver mono">
+                Version {p.version || "—"}
+                {p.os ? ` · ${osLabel}` : ""}
+              </div>
+            </div>
+          </div>
+
+          <div className="about-rows">
+            <div className="about-row">
+              <span className="al">Created by</span>
+              <span className="av">
+                Talaat Magdy
+                <button
+                  className="about-link"
+                  onClick={() => void openExternal(ABOUT_LINKS.author)}
+                  title="Open github.com/talaatmagdyx in your browser"
+                >
+                  github.com/talaatmagdyx
+                </button>
+              </span>
+            </div>
+            <div className="about-row">
+              <span className="al">Built with</span>
+              <span className="av">
+                Claude
+                <button
+                  className="about-link"
+                  onClick={() => void openExternal(ABOUT_LINKS.claude)}
+                  title="Open claude.com in your browser"
+                >
+                  claude.com
+                </button>
+              </span>
+            </div>
+            <div className="about-row">
+              <span className="al">Interface</span>
+              <span className="av">Inspired by Visual Studio Code</span>
+            </div>
+            <div className="about-row">
+              <span className="al">Built on</span>
+              <span className="av">Tauri · Rust · React · JetBrains Mono</span>
+            </div>
+          </div>
+
+          <p className="about-foot">
+            Not affiliated with Microsoft, JetBrains, Anthropic or the PostgreSQL Global Development
+            Group. PostgreSQL is a trademark of the PostgreSQL Community Association.
+          </p>
         </div>
       </div>
     </Overlay>

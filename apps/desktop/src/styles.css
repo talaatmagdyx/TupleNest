@@ -612,6 +612,40 @@ a { color: var(--tn-accent); text-decoration: none; }
 .section-row .st { font-size: 12.5px; font-weight: 650; }
 .section-row .sd { font-size: 11px; color: var(--tn-tm); margin-top: 2px; }
 
+/* ===== About ===== */
+.about-hero { display: flex; align-items: center; gap: 14px; padding: 4px 0 16px; }
+/* min-width:0 so the tagline can wrap instead of forcing the modal wider —
+   a flex item's floor is its longest word unless you say otherwise. */
+.about-id { min-width: 0; }
+.about-name { font: 750 19px var(--tn-sans); letter-spacing: -0.01em; }
+.about-tag { font-size: 11.5px; color: var(--tn-tm); margin-top: 2px; }
+.about-ver { font-size: 10.5px; color: var(--tn-ts); margin-top: 6px; }
+
+.about-rows { border-top: 1px solid var(--tn-bs); }
+.about-row {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 9px 0; border-bottom: 1px solid var(--tn-bs);
+}
+/* Fixed label column: the rows read as a table of facts, and a ragged left
+   edge is what makes an About box look thrown together. */
+.about-row .al {
+  flex: none; width: 88px;
+  font: 700 9px var(--tn-sans); letter-spacing: .08em; text-transform: uppercase;
+  color: var(--tn-tm);
+}
+.about-row .av { min-width: 0; font-size: 12px; display: flex; flex-wrap: wrap; gap: 3px 8px; align-items: baseline; }
+
+/* A button, not an <a>: see openExternal — a real href would navigate the app
+   away. Styled as a link because that is what it behaves like. */
+.about-link {
+  border: none; background: none; padding: 0; cursor: pointer;
+  font: inherit; font-size: 11px; color: var(--tn-accent);
+}
+.about-link:hover { text-decoration: underline; }
+.about-link:focus-visible { outline: 2px solid var(--tn-accent); outline-offset: 2px; border-radius: 3px; }
+
+.about-foot { margin-top: 14px; font-size: 10px; line-height: 1.5; color: var(--tn-tm); }
+
 .test-panel { margin-top: 4px; background: var(--tn-bg); border: 1px solid var(--tn-bs); border-radius: 10px; padding: 11px 14px; }
 .test-panel .tp-head { display: flex; justify-content: space-between; margin-bottom: 7px; }
 .test-panel .tp-title { font-size: 9.5px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--tn-tm); }
