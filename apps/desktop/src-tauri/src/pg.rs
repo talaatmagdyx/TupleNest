@@ -194,6 +194,68 @@ fn err_to_string(e: DriverError) -> String {
     out
 }
 
+/// The error form that is safe to WRITE TO DISK (query history).
+///
+/// Security review PRIV-01: `err_to_string` (what the user sees) includes the
+/// server's `original_message` — which for a constraint violation is
+/// `Detail: Key (email)=(alice@example.com) already exists.`, i.e. real row
+/// values. Persisting that to `tuplenest.db` contradicted PRIVACY.md's promise
+/// that row data is memory-only, and it happened even on prod connections.
+///
+/// This keeps only fields that cannot carry row values: the fixed title (a
+/// hardcoded string from `normalize_error`), the SQLSTATE, and the category
+/// enum. DETAIL/HINT/CONTEXT are deliberately dropped. The full report still
+/// reaches the UI in memory via `err_to_string`; only the disk copy is reduced.
+fn persisted_error(e: &DriverError) -> String {
+    let mut s = e.title.clone();
+    if let Some(code) = &e.native_code {
+        s.push_str(&format!(" [SQLSTATE {code}]"));
+    }
+    if let Ok(cat) = serde_json::to_string(&e.category) {
+        s.push_str(&format!(" ({})", cat.trim_matches('"')));
+    }
+    s
+}
+
+#[cfg(test)]
+mod persisted_error_tests {
+    use super::*;
+    use tuplenest_driver_api::ErrorCategory;
+
+    #[test]
+    fn keeps_title_sqlstate_category_but_drops_row_values() {
+        // The full display error carries the server DETAIL with a real value.
+        let e = DriverError::new(ErrorCategory::ConstraintViolation, "Constraint violation")
+            .with_native_code("23505")
+            .with_original_message(
+                "duplicate key value violates unique constraint \"users_email_key\"\n\
+                 Detail: Key (email)=(alice@example.com) already exists.",
+            );
+        let disk = persisted_error(&e);
+        assert_eq!(
+            disk,
+            "Constraint violation [SQLSTATE 23505] (constraint_violation)"
+        );
+        // The row value must NOT be in what we persist.
+        assert!(
+            !disk.contains("alice@example.com"),
+            "row value leaked to disk: {disk}"
+        );
+        assert!(
+            !disk.to_lowercase().contains("detail"),
+            "DETAIL leaked to disk: {disk}"
+        );
+    }
+
+    #[test]
+    fn works_without_a_sqlstate() {
+        let e = DriverError::new(ErrorCategory::Network, "Connection closed")
+            .with_original_message("connection reset by peer to db.prod.internal");
+        // No native_code; still no message body persisted.
+        assert_eq!(persisted_error(&e), "Connection closed (network)");
+    }
+}
+
 #[cfg(test)]
 mod err_to_string_tests {
     use super::*;
@@ -638,6 +700,9 @@ pub async fn pg_query(
             // Mark it dead so nothing can silently re-run on a half-open
             // connection; the user must reconnect explicitly.
             let broken = matches!(e.category, tuplenest_driver_api::ErrorCategory::Network);
+            // Persist the reduced form (no DETAIL/row values); show the full
+            // report in memory. Compute the disk copy before `e` is consumed.
+            let persisted = persisted_error(&e);
             let msg = err_to_string(e);
             let status = if msg.to_lowercase().contains("cancel") {
                 "cancelled"
@@ -649,7 +714,7 @@ pub async fn pg_query(
                 &state,
                 &sql,
                 status,
-                Some(msg.clone()),
+                Some(persisted),
                 0,
                 None,
                 started_wall.elapsed().as_millis() as u64,

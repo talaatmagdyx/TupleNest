@@ -18,7 +18,7 @@ Windows, `~/.local/share/app.tuplenest.desktop` on Linux.
 |---|---|---|
 | **Passwords** | OS keychain | Keychain / Credential Manager / Secret Service. Never in the files below — the SQLite table has no password column, only an opaque reference. |
 | **Connection profiles** | `<data>` SQLite | Host, port, database, username, TLS mode, SSH settings. Not the password. |
-| **Query history** | `<data>` SQLite | Newest 1,000. **On prod-tagged connections the SQL text is not recorded** — only timing, row counts, and status. |
+| **Query history** | `<data>` SQLite | Newest 1,000. **On prod-tagged connections the SQL text is not recorded** — only timing, row counts, and status. When a query fails, only a reduced error is stored (the error title, its SQLSTATE, and category); the server's DETAIL/HINT — which can quote row values like `Key (email)=(…)` — is shown on screen but **not** written to disk. |
 | **Production audit log** | `<data>` SQLite | Separate from history and deliberately the opposite trade: on prod-tagged connections the **full SQL is retained**, so there is a record of what was run against production. If that is not what you want, do not tag the connection prod. |
 | **Cached schema** | `<data>` SQLite | Table, column and index names, so the explorer works offline. Not row data. |
 | **Snippets, layout, settings** | `<data>` SQLite | |
@@ -26,7 +26,12 @@ Windows, `~/.local/share/app.tuplenest.desktop` on Linux.
 | **Exports** | wherever you choose | CSV/JSON/Markdown go only where the save dialog puts them. |
 
 Row data from your database is held **in memory only** while a result is on
-screen, and is dropped when you run the next query or close the app.
+screen, and is dropped when you run the next query or close the app. The one
+place a stray value could otherwise reach disk — a database error whose DETAIL
+quotes the offending row — is reduced before it is written to history, so the
+persisted copy keeps the error's title, SQLSTATE and category but not the
+value. The full detail still appears on screen for as long as the error is
+shown.
 
 ## Telemetry
 
