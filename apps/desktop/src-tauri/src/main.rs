@@ -321,6 +321,195 @@ fn main() {
             pg::pg_rollback,
             pg::pg_cancel
         ])
+        // Nothing here handles window close, deliberately.
+        //
+        // The red X did nothing at all: no close, no quit. The obvious reading
+        // was the Cocoa convention — macOS keeps an app alive after its last
+        // window — so the first fix was an `on_window_event` that caught
+        // `Destroyed` and called `exit(0)`. It changed nothing, because the
+        // premise was wrong twice over. Tauri already exits once the last
+        // window is destroyed, so the handler was answering a question nobody
+        // asked; and `Destroyed` was never firing anyway.
+        //
+        // The real cause was one line away, in `capabilities/default.json`.
+        // `core:default` grants only the read-only window commands, not
+        // `allow-destroy`. The close guard in App.tsx ends in
+        // `getCurrentWindow().destroy()`; the ACL rejected it, the rejection
+        // surfaced nowhere, and the X became inert. Granting the permission is
+        // the whole fix — verified by running this binary with the exit
+        // handler disabled and watching the app quit anyway.
+        //
+        // Left as a comment rather than deleted quietly because the wrong fix
+        // was plausible, self-consistent, and shipped a real `exit(0)` that
+        // would have looked load-bearing to the next reader.
         .run(tauri::generate_context!())
         .expect("error while running TupleNest");
+}
+
+/// The capability file must grant every window command the frontend calls.
+///
+/// Written after the red X shipped broken in v0.1.0-beta.1. `App.tsx` calls
+/// `getCurrentWindow().destroy()`; `capabilities/default.json` listed only
+/// `core:default`, which covers the read-only window commands and not
+/// `allow-destroy`. Tauri's ACL rejected the call, and because
+/// `@tauri-apps/api` never awaits its own `destroy()` inside the
+/// close-requested listener, the rejection produced no error, no log, and no
+/// console output. The button simply stopped working, and 1644 passing tests
+/// had nothing to say about it — the break lived between a TypeScript file and
+/// a JSON file, which no unit test in either language was looking at.
+///
+/// This checks the two against each other. It cannot prove `destroy()` works
+/// at runtime; only launching the app does that. It catches the one piece that
+/// is mechanically checkable: a call the source really makes, with the
+/// matching permission silently absent.
+#[cfg(test)]
+mod capability_tests {
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+
+    fn desktop_dir() -> PathBuf {
+        // CARGO_MANIFEST_DIR is apps/desktop/src-tauri.
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("src-tauri has a parent")
+            .to_path_buf()
+    }
+
+    /// Permission names inside `core:window:default`, which `core:default`
+    /// pulls in. Anything outside this list needs granting by hand.
+    const CORE_WINDOW_DEFAULT: &[&str] = &[
+        "activity-name",
+        "available-monitors",
+        "current-monitor",
+        "cursor-position",
+        "get-all-windows",
+        "inner-position",
+        "inner-size",
+        "internal-toggle-maximize",
+        "is-always-on-top",
+        "is-closable",
+        "is-decorated",
+        "is-enabled",
+        "is-focused",
+        "is-fullscreen",
+        "is-maximizable",
+        "is-maximized",
+        "is-minimizable",
+        "is-minimized",
+        "is-resizable",
+        "is-visible",
+        "monitor-from-point",
+        "outer-position",
+        "outer-size",
+        "primary-monitor",
+        "scale-factor",
+        "scene-identifier",
+        "theme",
+        "title",
+    ];
+
+    /// Every `getCurrentWindow().foo()` in the frontend, as permission names.
+    ///
+    /// Event subscriptions (`onCloseRequested`, `listen`, `once`) are
+    /// `core:event`, not window commands, so they are skipped.
+    fn window_calls_in_frontend() -> BTreeSet<String> {
+        let mut found = BTreeSet::new();
+        let src = desktop_dir().join("src");
+        let mut stack = vec![src];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).expect("frontend src is readable") {
+                let path = entry.expect("readable dir entry").path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                let is_ts = matches!(
+                    path.extension().and_then(|e| e.to_str()),
+                    Some("ts") | Some("tsx")
+                );
+                if !is_ts {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).expect("source file is utf-8");
+                for (_, rest) in text
+                    .match_indices("getCurrentWindow().")
+                    .map(|(i, m)| (i, &text[i + m.len()..]))
+                {
+                    let method: String = rest
+                        .chars()
+                        .take_while(|c| c.is_ascii_alphanumeric())
+                        .collect();
+                    if method.is_empty()
+                        || method.starts_with("on")
+                        || method == "listen"
+                        || method == "once"
+                    {
+                        continue;
+                    }
+                    // camelCase -> kebab-case, matching Tauri's permission names.
+                    let mut perm = String::new();
+                    for c in method.chars() {
+                        if c.is_ascii_uppercase() {
+                            perm.push('-');
+                            perm.push(c.to_ascii_lowercase());
+                        } else {
+                            perm.push(c);
+                        }
+                    }
+                    found.insert(perm);
+                }
+            }
+        }
+        found
+    }
+
+    fn granted_permissions() -> BTreeSet<String> {
+        let raw =
+            std::fs::read_to_string(desktop_dir().join("src-tauri/capabilities/default.json"))
+                .expect("capability file exists");
+        let json: serde_json::Value = serde_json::from_str(&raw).expect("capability file is JSON");
+        json["permissions"]
+            .as_array()
+            .expect("permissions is an array")
+            .iter()
+            .filter_map(|p| {
+                p.as_str()
+                    .or_else(|| p["identifier"].as_str())
+                    .map(str::to_owned)
+            })
+            .collect()
+    }
+
+    /// Guards the test below: if the frontend stops matching this pattern —
+    /// renamed import, extracted helper — the scan returns nothing and every
+    /// assertion passes vacuously, which is the failure this file exists to
+    /// prevent.
+    #[test]
+    fn scan_finds_the_calls_it_is_checking() {
+        assert!(
+            window_calls_in_frontend().contains("destroy"),
+            "expected to find getCurrentWindow().destroy() in the frontend; if that call \
+             moved or was renamed, update this scan — do not delete it, or the check below \
+             silently starts asserting nothing"
+        );
+    }
+
+    #[test]
+    fn every_window_call_the_frontend_makes_is_granted() {
+        let granted = granted_permissions();
+        for perm in window_calls_in_frontend() {
+            if CORE_WINDOW_DEFAULT.contains(&perm.as_str()) {
+                continue; // covered by core:default
+            }
+            let needed = format!("core:window:allow-{perm}");
+            assert!(
+                granted.contains(&needed),
+                "the frontend calls getCurrentWindow().{perm}(), but \
+                 capabilities/default.json does not grant {needed}, and core:default does \
+                 not cover it. Tauri's ACL will reject the call at runtime; the rejection \
+                 is swallowed inside @tauri-apps/api, so the feature fails silently with \
+                 no error anywhere."
+            );
+        }
+    }
 }

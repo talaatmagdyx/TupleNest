@@ -1,10 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window. This file governs the Tauri *plugin* surface only, and grants the narrowest form of each: save-dialog + write to the file the dialog returned, restart for the updater, and two exact URLs for the opener. TupleNest's own pg_* commands are Rust #[tauri::command]s registered in main.rs and are not ACL-gated here — nor are the two files the driver reads directly (a TLS CA and an SSH private key), which the user names in the connection form and which are read Rust-side, outside this scope. Said plainly because the previous wording ('every TupleNest command is explicitly listed; nothing broad is exposed') was not true of either.",
+  "description": "Main window. This file governs the Tauri *plugin* surface only, and grants the narrowest form of each: save-dialog + write to the file the dialog returned, restart for the updater, and two exact URLs for the opener. core:window:allow-destroy is listed because core:default grants only the read-only window commands, and the app's close guard ends in getCurrentWindow().destroy() — without it the ACL rejected that call, the promise rejection went nowhere, and the red X did nothing at all. TupleNest's own pg_* commands are Rust #[tauri::command]s registered in main.rs and are not ACL-gated here — nor are the two files the driver reads directly (a TLS CA and an SSH private key), which the user names in the connection form and which are read Rust-side, outside this scope. Said plainly because the previous wording ('every TupleNest command is explicitly listed; nothing broad is exposed') was not true of either.",
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-destroy",
     "updater:default",
     "process:allow-restart",
     "dialog:allow-save",
