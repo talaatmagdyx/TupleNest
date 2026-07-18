@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { check, type Update } from "@tauri-apps/plugin-updater";
+import { meetsUpdateFloor } from "./lib/version";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { ask } from "@tauri-apps/plugin-dialog";
 import Titlebar from "./app-shell/Titlebar";
@@ -1269,6 +1270,10 @@ export default function App() {
       try {
         const up = await check();
         if (!up || cancelled) return;
+        // Anti-rollback floor (UPD-01): refuse an update advertised below the
+        // compiled-in minimum, so an honestly-advertised downgrade to a known
+        // bad line is never offered. Not a full defense — see lib/version.ts.
+        if (!meetsUpdateFloor(up.version)) return;
         pendingUpdate.current = up;
         setUpdateInfo({ version: up.version, notes: up.body ?? "" });
       } catch {

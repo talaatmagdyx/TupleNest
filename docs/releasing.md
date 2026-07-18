@@ -298,6 +298,37 @@ If the bad version must be made unusable rather than merely superseded, that is
 a code change in 1.3.1 — a startup check — not a release operation. Prefer not
 to need it.
 
+### Anti-rollback: what protects against a forced downgrade, and what doesn't
+
+The updater verifies the bundle's **minisign signature** and installs only a
+**newer** version than the one running. Neither stops the sharpest rollback
+attack: an attacker who controls the release host serves a `latest.json` that
+advertises a high version but points the download at a genuine, still-signed
+**old** build. The signature check passes (it is a real signed artifact) and
+the version check passes (the advertised number is higher), so the user is
+rolled back to an authentic-but-vulnerable build. This is possible because the
+updater trusts the version string in `latest.json`, which is **unsigned**.
+
+What is in place:
+
+- **A compiled-in version floor** (`MIN_UPDATE_VERSION` in
+  `apps/desktop/src/lib/version.ts`). The app refuses to offer any update whose
+  advertised version is below it. Bump it whenever a release line must never be
+  rolled back past. This stops an *honestly-advertised* downgrade; it does not
+  stop the advertise-high/ship-old attack above, because there the advertised
+  number is high.
+
+- **The real trust anchor is the GitHub account and release-asset integrity.**
+  Keep 2FA on; protect the release/tag; treat the signing-workflow Actions as
+  load-bearing (they are SHA-pinned for this reason). If the account is
+  compromised, the attacker can serve a validly-signed old build regardless of
+  the floor — so account security *is* the anti-rollback control here.
+
+- **Not yet done:** signing the version manifest itself (which would close the
+  gap) is not supported by tauri-plugin-updater without a custom updater. If
+  that becomes a priority, it is the correct fix; until then this section is the
+  honest statement of the residual risk.
+
 ### What is not recoverable
 
 - **A lost signing key.** Nothing you publish afterwards will be accepted by
