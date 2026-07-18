@@ -5,6 +5,33 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security — data, local and desktop hardening (PR 2 & PR 3)
+
+- **On-disk stores, logs and crash reports are now owner-only.** The app-data
+  directory is locked to `0700` and the SQLite DBs (and WAL/SHM) to `0600` on
+  Unix, so another local user can no longer read connection profiles, history,
+  the schema cache, or logs. (Windows relies on the user-profile ACL.)
+- **Stored SQL is scrubbed of secret literals** (`PASSWORD '…'`,
+  `IDENTIFIED BY '…'`, `key=…`, connection-string URLs), and a
+  `-- tuplenest:no-history` comment skips a statement's history row entirely.
+  Best-effort, documented as such in PRIVACY.md.
+- **A single huge cell can no longer spike memory** — rendered values are
+  capped at 1 MiB with a truncation marker, and `bytea`/unknown values are
+  bounded before hex-encoding.
+- **Keychain entries are no longer orphaned** on every Test/connect — a held
+  reference is reused, and a tested credential is adopted on Save.
+- **Exports go through a Rust command that owns the save dialog and the write**,
+  so the WebView has no filesystem-write permission at all (the `fs` plugin was
+  removed). CSP tightened with `object-src 'none'`, `base-uri 'none'`,
+  `frame-ancestors 'none'`.
+- **Auto-update anti-rollback floor** — the app refuses an update advertised
+  below a compiled-in minimum; `docs/releasing.md` documents the residual
+  (an unsigned version manifest; account/release integrity is the real anchor).
+- **Release-build logging** caps chatty transport/crypto crates to `warn` so
+  they cannot write connection detail to the on-disk log.
+- **Deterministic fuzz** over the numeric and raw-value decoders (300k+ inputs)
+  guards the malicious-server DoS surface.
+
 ### Security — release blockers from the security review (PR 1)
 
 - **TLS is now actually required in the verify modes (CRITICAL).** The client
