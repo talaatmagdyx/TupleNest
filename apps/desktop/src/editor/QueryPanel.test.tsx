@@ -46,6 +46,8 @@ const base = {
   exportMenu: false,
   onToggleExport: vi.fn(),
   onExport: vi.fn(),
+  csvSafe: true,
+  onCsvSafe: vi.fn(),
   chart: null,
   onInspect: vi.fn(),
   onCopyable: vi.fn(),

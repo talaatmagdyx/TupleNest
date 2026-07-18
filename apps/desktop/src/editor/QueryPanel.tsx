@@ -35,6 +35,8 @@ type Props = {
   onToggleExport: () => void;
   onExport: (kind: "csv" | "json" | "md") => void;
   onCopyResult?: (kind: "csv" | "json" | "md") => void;
+  csvSafe: boolean;
+  onCsvSafe: (v: boolean) => void;
   chart: { title: string; sub: string; data: ChartDatum[] } | null;
   onInspect: (text: string, colName: string) => void;
   onCopyable: (v: string | null) => void;
@@ -128,6 +130,15 @@ export default function QueryPanel(p: Props) {
               <button onClick={() => p.onExport("md")}>
                 Markdown <span>.md</span>
               </button>
+              <div className="divider" />
+              <label className="menu-check" title="Prefixes cells starting with = + - @ so spreadsheets treat them as text, not formulas">
+                <input
+                  type="checkbox"
+                  checked={p.csvSafe}
+                  onChange={(e) => p.onCsvSafe(e.target.checked)}
+                />
+                <span>Spreadsheet-safe CSV</span>
+              </label>
               {p.onCopyResult && (
                 <>
                   <div className="divider" />

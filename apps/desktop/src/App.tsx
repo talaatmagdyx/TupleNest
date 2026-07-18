@@ -170,6 +170,8 @@ export default function App() {
   const [railView, setRailView] = useState<RailView>("explorer");
   const [connMenu, setConnMenu] = useState(false);
   const [exportMenu, setExportMenu] = useState(false);
+  // CSV export neutralizes spreadsheet formulas by default (security FILE-01).
+  const [csvSafe, setCsvSafe] = useState(true);
   const [resultTab, setResultTab] = useState<ResultTab>("results");
   const [editorH, setEditorH] = useState(200);
   const dragRef = useRef<{ y: number; h: number } | null>(null);
@@ -972,8 +974,9 @@ export default function App() {
       if (!result || result.columns.length === 0) return;
       showToast("Collecting rows…");
       const rows = await fetchAllRows(result.storedRows);
+      const csvMode = csvSafe ? "spreadsheet-safe" : "raw";
       const text =
-        kind === "csv" ? toCSV(result.columns, rows) : kind === "json" ? toJSONExport(result.columns, rows) : toMarkdown(result.columns, rows);
+        kind === "csv" ? toCSV(result.columns, rows, csvMode) : kind === "json" ? toJSONExport(result.columns, rows) : toMarkdown(result.columns, rows);
       const ext = kind === "md" ? "md" : kind;
       const name = `${(tabs[activeTab]?.name ?? "result").replace(/\.sql$/i, "")}-${new Date()
         .toISOString()
@@ -986,7 +989,7 @@ export default function App() {
         showToast(`Export failed: ${String(e).slice(0, 60)}`);
       }
     },
-    [result, showToast, tabs, activeTab]
+    [result, showToast, tabs, activeTab, csvSafe]
   );
 
   const doCopyResult = useCallback(
@@ -994,12 +997,13 @@ export default function App() {
       setExportMenu(false);
       if (!result || result.columns.length === 0) return;
       const rows = await fetchAllRows(result.storedRows);
+      const csvMode = csvSafe ? "spreadsheet-safe" : "raw";
       const text =
-        kind === "csv" ? toCSV(result.columns, rows) : kind === "json" ? toJSONExport(result.columns, rows) : toMarkdown(result.columns, rows);
+        kind === "csv" ? toCSV(result.columns, rows, csvMode) : kind === "json" ? toJSONExport(result.columns, rows) : toMarkdown(result.columns, rows);
       await navigator.clipboard.writeText(text);
       showToast(`${kind.toUpperCase()} copied — ${rowCountNote(rows.length, result)}`);
     },
-    [result, showToast]
+    [result, showToast, csvSafe]
   );
 
   const buildChart = useCallback(async () => {
@@ -1447,6 +1451,8 @@ export default function App() {
               onToggleExport={() => setExportMenu((v) => !v)}
               onExport={doExport}
               onCopyResult={doCopyResult}
+              csvSafe={csvSafe}
+              onCsvSafe={setCsvSafe}
               chart={chart}
               onInspect={(t, col) => {
                 setInspectText(t);

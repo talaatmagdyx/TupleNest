@@ -396,6 +396,11 @@ a { color: var(--tn-accent); text-decoration: none; }
 }
 .drop-menu button:hover { background: var(--tn-s2); }
 .drop-menu button span { color: var(--tn-tm); font: 10px var(--tn-mono); }
+.drop-menu .menu-check {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  font-size: 12px; color: var(--tn-t); cursor: pointer; user-select: none;
+}
+.drop-menu .menu-check input { margin: 0; }
 
 /* ===== Editor ===== */
 .editor-zone { flex: none; display: flex; flex-direction: column; min-height: 0; }

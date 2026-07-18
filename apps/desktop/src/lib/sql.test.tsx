@@ -128,6 +128,50 @@ describe("toCSV", () => {
     expect(toCSV([{ name: "a,b" }], [])).toBe('"a,b"');
   });
 
+  describe("spreadsheet formula injection (FILE-01)", () => {
+    const payloads = [
+      '=HYPERLINK("http://evil","x")',
+      "=cmd|'/c calc'!A1",
+      "+SUM(1)",
+      "-2+3",
+      "@SUM(A1)",
+      "\ttabbed",
+      "\rcarriage",
+    ];
+
+    it("neutralizes every formula-leading value by default", () => {
+      for (const p of payloads) {
+        const out = toCSV([{ name: "c" }], [[p]]);
+        const cell = out.split("\n")[1];
+        // The value is prefixed with ' so a spreadsheet reads it as text. It may
+        // then also be RFC-4180 quoted (e.g. the comma/tab cases).
+        expect(cell.startsWith("'") || cell.startsWith('"\'')).toBe(true);
+      }
+    });
+
+    it("neutralizes formula-leading COLUMN NAMES too", () => {
+      expect(toCSV([{ name: "=danger" }], [])).toBe("'=danger");
+    });
+
+    it("leaves ordinary values, incl. negative numbers written as numbers, unquoted", () => {
+      // A real negative numeric arrives as a JS number, stringified to "-5" —
+      // still formula-leading as text, so it IS neutralized. Documenting the
+      // trade-off: safety wins over pristine minus signs; raw mode is the escape.
+      expect(toCSV([{ name: "c" }], [["hello"]]).split("\n")[1]).toBe("hello");
+      expect(toCSV([{ name: "c" }], [[-5]]).split("\n")[1]).toBe("'-5");
+    });
+
+    it("raw mode preserves the exact bytes (opt-out)", () => {
+      expect(toCSV([{ name: "c" }], [["=BAD()"]], "raw").split("\n")[1]).toBe("=BAD()");
+    });
+
+    it("neutralizes THEN quotes, so a comma-bearing formula is both safe and valid", () => {
+      // =A1,B1 : leading = must be neutralized AND the comma must be quoted.
+      const cell = toCSV([{ name: "c" }], [["=A1,B1"]]).split("\n")[1];
+      expect(cell).toBe("\"'=A1,B1\"");
+    });
+  });
+
   it("renders null and undefined as empty, not as the word null", () => {
     expect(toCSV(cols, [[null, undefined]])).toBe("id,name\n,");
   });

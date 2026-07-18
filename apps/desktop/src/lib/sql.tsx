@@ -1,5 +1,5 @@
 import React from "react";
-import { cellExport as cellText, mdCell } from "./text";
+import { cellExport as cellText, mdCell, neutralizeFormula } from "./text";
 import { maskLiterals } from "./complete";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -54,8 +54,22 @@ export async function fetchAllRows(stored: number, cap = 100_000): Promise<unkno
   return out;
 }
 
-export function toCSV(cols: { name: string }[], rows: unknown[][]): string {
-  const esc = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+/** CSV export safety: neutralize spreadsheet formulas, or preserve raw bytes. */
+export type CsvSafetyMode = "spreadsheet-safe" | "raw";
+
+export function toCSV(
+  cols: { name: string }[],
+  rows: unknown[][],
+  mode: CsvSafetyMode = "spreadsheet-safe"
+): string {
+  // Order: neutralize the formula FIRST, then RFC-4180 quote. Quoting after
+  // means the leading `'` is inside the quoted field where the spreadsheet
+  // still sees it; quoting first would let a `"=..."` slip through. The quote
+  // trigger includes \r so a CR-bearing value is always wrapped.
+  const esc = (raw: string) => {
+    const s = mode === "spreadsheet-safe" ? neutralizeFormula(raw) : raw;
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
   const head = cols.map((c) => esc(c.name)).join(",");
   return [head, ...rows.map((r) => r.map((v) => esc(cellText(v))).join(","))].join("\n");
 }
