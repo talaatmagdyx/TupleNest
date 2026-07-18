@@ -1800,16 +1800,31 @@ fn convert_row(row: &Row) -> Vec<CellValue> {
 /// base-10000 digits. The value is sum(digits[k] * 10000^(weight-k)).
 struct PgNumeric(String);
 
+/// PostgreSQL's own ceilings on a `numeric`: at most 0x3FFF (16383) display
+/// digits after the point, and 1000 base-10000 wire digits. A real server never
+/// exceeds these; a *malicious* one is not bound by them, so we enforce them
+/// ourselves before any allocation is sized from the values.
+const NUMERIC_DSCALE_MAX: usize = 0x3FFF;
+const MAX_NUMERIC_DIGITS: usize = 1000;
+/// Hard cap on the rendered decimal string. Well above any legitimate value
+/// (16383 fractional + ~4000 integer chars ≈ 20 KB); this is the backstop that
+/// turns a crafted length into a bounded error instead of an OOM.
+const MAX_NUMERIC_RENDER_BYTES: usize = 64 * 1024;
+
 impl<'a> FromSql<'a> for PgNumeric {
     fn from_sql(_: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
         if raw.len() < 8 {
             return Err("numeric: header too short".into());
         }
-        let rd = |o: usize| i16::from_be_bytes([raw[o], raw[o + 1]]);
-        let ndigits = rd(0);
-        let weight = rd(2) as i32;
+        // Read scale-like fields UNSIGNED. `dscale`/`ndigits`/`weight` are
+        // unsigned on the wire; a prior `i16 as usize` sign-extended a crafted
+        // high-bit value to a near-usize::MAX loop bound (security review
+        // RUST-01) — a single `1::numeric`-shaped reply with dscale=0xFFFF hung
+        // the app. Read as u16 and validate before use.
+        let ndigits_raw = u16::from_be_bytes([raw[0], raw[1]]);
+        let weight = i16::from_be_bytes([raw[2], raw[3]]) as i32;
         let sign = u16::from_be_bytes([raw[4], raw[5]]);
-        let dscale = rd(6) as usize;
+        let dscale = u16::from_be_bytes([raw[6], raw[7]]) as usize;
 
         match sign {
             0xC000 => return Ok(PgNumeric("NaN".into())),
@@ -1817,10 +1832,29 @@ impl<'a> FromSql<'a> for PgNumeric {
             0xF000 => return Ok(PgNumeric("-Infinity".into())),
             _ => {}
         }
-        if ndigits < 0 || raw.len() < 8 + ndigits as usize * 2 {
+
+        if dscale > NUMERIC_DSCALE_MAX {
+            return Err(
+                format!("numeric: display scale {dscale} exceeds PostgreSQL maximum").into(),
+            );
+        }
+        let ndigits = ndigits_raw as usize;
+        if ndigits > MAX_NUMERIC_DIGITS {
+            return Err(format!("numeric: digit count {ndigits} implausibly large").into());
+        }
+        if raw.len() < 8 + ndigits * 2 {
             return Err("numeric: digit count does not match payload".into());
         }
-        let digits: Vec<i16> = (0..ndigits as usize).map(|k| rd(8 + k * 2)).collect();
+        // Bound the rendered size from the header before building the string.
+        // Integer part ≈ (weight+1) groups of 4 chars; fraction ≈ dscale chars.
+        let int_chars = (weight.max(-1) + 1) as usize * 4;
+        let estimated = int_chars.saturating_add(dscale).saturating_add(4);
+        if estimated > MAX_NUMERIC_RENDER_BYTES {
+            return Err("numeric: value too large to render safely".into());
+        }
+        let digits: Vec<i16> = (0..ndigits)
+            .map(|k| i16::from_be_bytes([raw[8 + k * 2], raw[9 + k * 2]]))
+            .collect();
         let at = |k: i32| -> i16 {
             if k < 0 {
                 0
@@ -2316,6 +2350,85 @@ mod array_element_tests {
         // actual NULL, which is a different fact about the data.
         assert_eq!(quote_array_element("NULL"), r#""NULL""#);
         assert_eq!(quote_array_element("null"), r#""null""#);
+    }
+}
+
+#[cfg(test)]
+mod numeric_decode_tests {
+    use super::*;
+
+    /// Build a raw `numeric` wire datum. digits are base-10000 groups.
+    fn wire(ndigits: u16, weight: i16, sign: u16, dscale: u16, digits: &[i16]) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(&ndigits.to_be_bytes());
+        b.extend_from_slice(&weight.to_be_bytes());
+        b.extend_from_slice(&sign.to_be_bytes());
+        b.extend_from_slice(&dscale.to_be_bytes());
+        for d in digits {
+            b.extend_from_slice(&d.to_be_bytes());
+        }
+        b
+    }
+
+    fn decode(raw: &[u8]) -> Result<String, String> {
+        PgNumeric::from_sql(&Type::NUMERIC, raw)
+            .map(|n| n.0)
+            .map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn decodes_a_normal_value_with_trailing_zero() {
+        // 125000.50  → ndigits=3 [12,5000,5000], weight=1, dscale=2
+        let raw = wire(3, 1, 0x0000, 2, &[12, 5000, 5000]);
+        assert_eq!(decode(&raw).unwrap(), "125000.50");
+    }
+
+    #[test]
+    fn decodes_negative_and_specials() {
+        assert_eq!(decode(&wire(1, 0, 0x4000, 0, &[42])).unwrap(), "-42");
+        assert_eq!(decode(&wire(0, 0, 0xC000, 0, &[])).unwrap(), "NaN");
+        assert_eq!(decode(&wire(0, 0, 0xD000, 0, &[])).unwrap(), "Infinity");
+        assert_eq!(decode(&wire(0, 0, 0xF000, 0, &[])).unwrap(), "-Infinity");
+    }
+
+    #[test]
+    fn rejects_dscale_high_bit_the_review_payload() {
+        // RUST-01: dscale=0xFFFF. Before the fix this sign-extended to a
+        // near-usize::MAX loop bound and hung the app; now it is a bounded error.
+        let raw = wire(0, 0, 0x0000, 0xFFFF, &[]);
+        let err = decode(&raw).unwrap_err();
+        assert!(err.contains("display scale"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_dscale_just_over_the_max() {
+        assert!(
+            decode(&wire(0, 0, 0x0000, (NUMERIC_DSCALE_MAX + 1) as u16, &[]))
+                .unwrap_err()
+                .contains("display scale")
+        );
+        // exactly at the max is allowed (0 digits → "0")
+        assert!(decode(&wire(0, 0, 0x0000, NUMERIC_DSCALE_MAX as u16, &[])).is_ok());
+    }
+
+    #[test]
+    fn rejects_implausible_digit_count() {
+        // ndigits claims 2000 groups but the payload is short → must not panic.
+        let raw = wire(2000, 0, 0x0000, 0, &[1, 2, 3]);
+        assert!(decode(&raw).unwrap_err().contains("digit count"));
+    }
+
+    #[test]
+    fn rejects_a_short_header_without_panic() {
+        assert!(decode(&[0u8; 4]).unwrap_err().contains("header too short"));
+    }
+
+    #[test]
+    fn rejects_a_value_too_large_to_render() {
+        // weight=20000 → integer part ≈ 80004 chars, over the 64 KB backstop;
+        // must be a bounded error, not a large allocation.
+        let raw = wire(1, 20000, 0x0000, 0, &[1]);
+        assert!(decode(&raw).unwrap_err().contains("too large"));
     }
 }
 
