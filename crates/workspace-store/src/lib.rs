@@ -105,9 +105,40 @@ pub struct Store {
     conn: Connection,
 }
 
+/// Restrict a SQLite database and its WAL/SHM siblings to owner-only (0600) on
+/// Unix. This file holds connection profiles, full query history and the prod
+/// audit log; the shipped umask left it 0644 (world-readable). The containing
+/// directory is also locked to 0700 by the app on startup, but 0600 here is
+/// defense-in-depth for the case where the file is later copied out. No-op on
+/// Windows, which relies on the user-profile ACL. (Security review FILE-02.)
+pub fn secure_sqlite_files(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for suffix in ["", "-wal", "-shm"] {
+            let p = if suffix.is_empty() {
+                path.to_path_buf()
+            } else {
+                let mut s = path.as_os_str().to_owned();
+                s.push(suffix);
+                std::path::PathBuf::from(s)
+            };
+            if let Ok(meta) = std::fs::metadata(&p) {
+                let mut perms = meta.permissions();
+                perms.set_mode(0o600);
+                let _ = std::fs::set_permissions(&p, perms);
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
 impl Store {
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        Self::init(Connection::open(path)?)
+        let store = Self::init(Connection::open(path)?)?;
+        secure_sqlite_files(path);
+        Ok(store)
     }
 
     pub fn open_in_memory() -> Result<Self, StoreError> {
@@ -643,6 +674,28 @@ mod tests {
     fn migrates_fresh_store_to_current() {
         let store = Store::open_in_memory().unwrap();
         assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn on_disk_db_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tuplenest.db");
+        let store = Store::open(&path).unwrap();
+        // Force the WAL/SHM siblings into existence with a write.
+        store.setting_set("k", &serde_json::json!("v")).unwrap();
+        secure_sqlite_files(&path);
+        for suffix in ["", "-wal", "-shm"] {
+            let p = std::path::PathBuf::from(format!("{}{}", path.display(), suffix));
+            if let Ok(meta) = std::fs::metadata(&p) {
+                assert_eq!(
+                    meta.permissions().mode() & 0o777,
+                    0o600,
+                    "{p:?} must be owner-only, not world-readable"
+                );
+            }
+        }
     }
 
     #[test]

@@ -265,6 +265,11 @@ fn main() {
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
+            // Lock the whole app-data tree to the owner (0700 on Unix) so no
+            // other local user can read the connection DB, history, cache or
+            // logs beneath it. Each store also tightens its own files; this is
+            // the umbrella. (Security review FILE-02.)
+            tuplenest_telemetry::secure_dir(&dir);
 
             // E0.7: structured file logging (rotated daily) + crash capture.
             // JSON logs in release; human-readable in dev.

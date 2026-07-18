@@ -44,9 +44,37 @@ pub struct MetadataCache {
     conn: Connection,
 }
 
+/// Restrict the cache DB (and WAL/SHM) to owner-only on Unix. This holds
+/// schema/table/column names — not row data, but still an information-disclosure
+/// surface — and shipped 0644. No-op on Windows. (Security review FILE-02.)
+fn secure_sqlite_files(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for suffix in ["", "-wal", "-shm"] {
+            let p = if suffix.is_empty() {
+                path.to_path_buf()
+            } else {
+                let mut s = path.as_os_str().to_owned();
+                s.push(suffix);
+                std::path::PathBuf::from(s)
+            };
+            if let Ok(meta) = std::fs::metadata(&p) {
+                let mut perms = meta.permissions();
+                perms.set_mode(0o600);
+                let _ = std::fs::set_permissions(&p, perms);
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
 impl MetadataCache {
     pub fn open(path: &Path) -> Result<Self, CacheError> {
-        Self::init(Connection::open(path)?)
+        let cache = Self::init(Connection::open(path)?)?;
+        secure_sqlite_files(path);
+        Ok(cache)
     }
 
     pub fn open_in_memory() -> Result<Self, CacheError> {
