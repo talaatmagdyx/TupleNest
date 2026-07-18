@@ -19,21 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-
----
-
-THIRD-PARTY COMPONENTS
-
-The application ships one component that is not under the licence above.
-
-JetBrains Mono — apps/desktop/src/assets/fonts/JetBrainsMono-var.woff2 and
-JetBrainsMono-Italic-var.woff2. Copyright 2020 The JetBrains Mono Project
-Authors, licensed under the SIL Open Font License 1.1, whose full text sits
-beside the fonts in apps/desktop/src/assets/fonts/OFL.txt as clause 2 of that
-licence requires.
-
-The OFL covers the font files only. It asks that the fonts not be sold on
-their own and that this notice travel with them; it places no condition on the
-rest of this software, nor on anything produced with it.
-

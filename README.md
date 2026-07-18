@@ -255,12 +255,25 @@ keychain; safety predicates (`needsGuard`, editability, masking) are pure
 functions with adversarial test corpora.
 
 More detail: [`SECURITY.md`](SECURITY.md) ·
-[`PRIVACY.md`](PRIVACY.md) · [`docs/releasing.md`](docs/releasing.md) ·
-[`CHANGELOG.md`](CHANGELOG.md)
+[`PRIVACY.md`](PRIVACY.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md) ·
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) ·
+[`docs/releasing.md`](docs/releasing.md) · [`CHANGELOG.md`](CHANGELOG.md) ·
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)
+
+## Feedback is the point
+
+This is a beta because the questions that matter now cannot be answered by a
+test suite: is the editor comfortable, are the shortcuts findable, does the
+connection dialog make sense, does it break on your OS. So:
+
+- 🐞 **[Something broke](../../issues/new?template=bug_report.yml)**
+- 🤔 **[Nothing broke — it just felt wrong](../../issues/new?template=ux_feedback.yml)** ← the one that matters most
+- 💬 **[Discussions](../../discussions)** for anything shaped like a conversation
 
 ## License
 
-[MIT](LICENSE) © [Talaat Magdy](https://github.com/talaatmagdyx)
+[MIT](LICENSE) © [Talaat Magdy](https://github.com/talaatmagdyx). One shipped
+component is not MIT — see [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
 
 Built with amazing help from [Claude](https://claude.com). Design inspired by
 VS Code.
