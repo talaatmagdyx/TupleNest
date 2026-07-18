@@ -2407,6 +2407,100 @@ mod array_element_tests {
     }
 }
 
+/// Deterministic fuzz over the value decoders against a MALICIOUS server.
+///
+/// A hostile server controls the exact bytes behind every cell, so
+/// `PgNumeric::from_sql` and `render_raw` must never panic and must never
+/// produce an unbounded allocation, whatever it sends. Seeded xorshift rather
+/// than a proptest dependency — keeping the supply chain small is itself part
+/// of this project's security posture, and a fixed seed makes any failure
+/// reproducible. (Security review RUST-01/RUST-02, "fuzz the decoder".)
+#[cfg(test)]
+mod decoder_fuzz_tests {
+    use super::*;
+
+    struct XorShift(u64);
+    impl XorShift {
+        fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+        fn bytes(&mut self, max_len: usize) -> Vec<u8> {
+            let len = (self.next() as usize) % (max_len + 1);
+            (0..len).map(|_| (self.next() & 0xFF) as u8).collect()
+        }
+    }
+
+    #[test]
+    fn numeric_decoder_never_panics_or_over_allocates_on_random_bytes() {
+        let mut rng = XorShift(0x9E37_79B9_7F4A_7C15);
+        for _ in 0..200_000 {
+            let raw = rng.bytes(40);
+            // Must not panic on any input; a successful decode must be bounded.
+            if let Ok(n) = PgNumeric::from_sql(&Type::NUMERIC, &raw) {
+                assert!(
+                    n.0.len() <= MAX_NUMERIC_RENDER_BYTES,
+                    "numeric render exceeded its cap: {} bytes",
+                    n.0.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn render_raw_never_panics_or_over_allocates_on_random_bytes() {
+        let mut rng = XorShift(0x1234_5678_9ABC_DEF0);
+        let types = [
+            Type::BYTEA,
+            Type::MONEY,
+            Type::TEXT,
+            Type::INTERVAL,
+            Type::XML,
+        ];
+        for _ in 0..100_000 {
+            let raw = rng.bytes(2048);
+            let ty = &types[(rng.next() as usize) % types.len()];
+            let cell = render_raw(RawValue(raw), ty);
+            let len = match &cell {
+                CellValue::Text(s) => s.len(),
+                CellValue::Other { rendered, .. } => rendered.len(),
+                _ => 0,
+            };
+            // render_raw caps its own output; cap_cell would enforce it again.
+            assert!(
+                len <= MAX_RENDERED_CELL_BYTES + 64,
+                "render exceeded cap: {len}"
+            );
+        }
+    }
+
+    #[test]
+    fn numeric_with_crafted_oversized_headers_is_always_bounded() {
+        // Sweep the whole dscale/ndigits/weight header space at the extremes —
+        // the shapes a fuzzer is least likely to hit by chance but an attacker
+        // would reach for.
+        for &dscale in &[0u16, 1, 0x3FFF, 0x4000, 0x8000, 0xFFFF] {
+            for &ndigits in &[0u16, 1, 1000, 1001, 0x7FFF, 0xFFFF] {
+                for &weight in &[i16::MIN, -1, 0, 1, i16::MAX] {
+                    let mut b = Vec::new();
+                    b.extend_from_slice(&ndigits.to_be_bytes());
+                    b.extend_from_slice(&weight.to_be_bytes());
+                    b.extend_from_slice(&0u16.to_be_bytes()); // sign = positive
+                    b.extend_from_slice(&dscale.to_be_bytes());
+                    b.resize(b.len() + 8, 0); // a couple of digit words
+                    if let Ok(n) = PgNumeric::from_sql(&Type::NUMERIC, &b) {
+                        assert!(n.0.len() <= MAX_NUMERIC_RENDER_BYTES);
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod cell_cap_tests {
     use super::*;
