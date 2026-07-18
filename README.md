@@ -7,7 +7,7 @@
 <p align="center"><strong>The PostgreSQL IDE that asks before it writes.</strong></p>
 
 <p align="center">
-  Rust + Tauri 2 + React &nbsp;·&nbsp; macOS, Windows, Linux &nbsp;·&nbsp; MIT
+  Rust + Tauri 2 + React &nbsp;·&nbsp; macOS, Windows, Linux &nbsp;·&nbsp; MIT &nbsp;·&nbsp; local-first, no accounts, no telemetry
 </p>
 
 <p align="center">
@@ -17,111 +17,180 @@
 </p>
 
 <p align="center">
+  <a href="../../releases/latest"><b>⬇ Download</b></a> ·
+  <a href="#sixty-seconds-to-your-first-query">Quick start</a> ·
+  <a href="#the-tour">Tour</a> ·
+  <a href="#the-safety-model">Safety model</a> ·
+  <a href="#the-keyboard">Keyboard</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#what-tuplenest-is-not-yet">Honest limits</a>
+</p>
+
+<p align="center">
   <img src="docs/site/shots/hero.png" width="900" alt="TupleNest — query editor with a formatted SQL join and a streaming results grid, connected over verify-full TLS" />
 </p>
 
-TupleNest is a fast, local-first desktop workspace for exploring, developing,
-debugging, and operating PostgreSQL. It is built around one conviction: **a
-database tool's first job is to not hurt your database.** Every destructive
-path in the app asks first, refuses politely, or is enforced by the server
-itself — and every one of those guarantees has a test that would fail if it
-stopped being true.
-
-This release ships a complete PostgreSQL adapter; other engines are on the
-roadmap.
-
-> ⚠️ **Early software.** TupleNest is a v0.1.0 that has been tested far more
-> than it has been *used*. The test suite is unusually serious for a first
-> release — 1,600+ frontend tests, 34 contract tests against live PostgreSQL
-> 13/15/17, SSH tunnel tests against a real sshd — but nobody has lived with it
-> yet. Treat it accordingly, and file issues generously.
-
 ---
 
-## What it feels like
+Every database tool can run `SELECT`. The interesting question is what happens
+at 5 p.m. on a Friday when you type `DELETE FROM orders`, forget the `WHERE`,
+and your cursor is hovering over Run — **on production**.
 
-**Connect without ceremony, but with proof.** A new connection runs a staged
-probe — DNS, TCP, auth, server version — so when something is wrong you learn
-*which layer* is wrong, not just "could not connect". TLS `verify-full` is the
-default and fails closed; `verify-ca` exists for SSH tunnels, where the
+Most tools run it. TupleNest is built around the other answer: **a database
+tool's first job is to not hurt your database.** Every destructive path either
+asks first, refuses with a reason, or is enforced by PostgreSQL itself rather
+than by a client-side promise. And every one of those guarantees has a test
+that executes the misuse and asserts the refusal — so the safety claims in this
+README aren't copy, they're pinned behavior that CI would catch regressing.
+
+This release ships a complete PostgreSQL adapter. Other engines are on the
+roadmap; none of them are pretended at in the UI.
+
+> ⚠️ **Early software, stated plainly.** This is a v0.1.0 beta that has been
+> *tested* far more than it has been *used* — 1,600+ frontend tests, contract
+> tests against live PostgreSQL 13/15/17, SSH tunnel tests against a real sshd,
+> thirteen adversarial attempts to trick its own safety guard. What it hasn't
+> had is people living in it. That's the part you'd be contributing.
+
+## Sixty seconds to your first query
+
+1. [**Grab the installer**](../../releases/latest) for your OS. Nothing is
+   code-signed yet, so your OS will object once — [Install](#install) has the
+   exact click-path through every dialog you'll see.
+2. Launch, press <kbd>⌘O</kbd> (Ctrl on Windows/Linux), fill in host, database,
+   user. Password is optional and goes to your **OS keychain** — never a config
+   file.
+3. Hit **Test**. You get a staged probe — DNS ✓, TCP ✓, auth ✓, server
+   version ✓ — so if something's wrong you learn *which layer*, not just
+   "could not connect".
+4. **Save & Connect**, type a query, <kbd>⌘↵</kbd>.
+
+That's the whole ceremony. No account, no cloud sync, no analytics endpoint.
+The app talks to exactly two things: the databases you point it at, and — once,
+at startup — GitHub, to ask if a newer release exists. That's the entire
+network story, and [`PRIVACY.md`](PRIVACY.md) exists so you can check it.
+
+## The tour
+
+### Connecting is a diagnosis, not a coin flip
+
+Pick an environment — dev, test, staging, **prod** — and the whole window knows
+it: the frame tints, prod gets a banner, and the dangerous verbs start asking
+harder questions. TLS `verify-full` is the *default* and fails closed.
+`verify-ca` exists for exactly one honest reason: SSH tunnels, where the
 certificate names the real host but you dial localhost.
 
 <p align="center">
   <img src="docs/site/shots/connection.png" width="560" alt="New connection dialog: environment picker (dev/test/staging/prod), TLS verify-full with CA file, and a staged connection test — dns, tcp, auth, server version, each ticked with timings" />
 </p>
 
-**Passwords go to the OS keychain — Keychain, Credential Manager, or Secret
-Service — never to a config file, never over IPC, never into logs.** The form
-says so, right under the field, because a promise you can't see is a promise
-you can't check.
+The form tells you where your password goes, right under the field — because a
+promise you can't see is a promise you can't check.
 
-**Write SQL with a copilot that knows your schema.** Completion is
-context-driven: tables after `FROM`, columns of the in-scope tables in
-`WHERE`, `alias.` resolves to that table's columns. Comments and string
-literals are masked first, so a table name inside a comment never poisons the
-suggestions.
+### Autocomplete that has actually read your schema
+
+Tables after `FROM`. Columns of the in-scope tables in `WHERE`. Type `alias.`
+and get that table's columns, not an alphabet soup of keywords. Comments and
+string literals are masked *before* the context is computed, so a table name
+inside a comment never poisons the suggestions.
 
 <p align="center">
   <img src="docs/site/shots/complete.png" width="640" alt="Schema-aware autocomplete suggesting the books table mid-keystroke" />
 </p>
 
-**Watch results stream, not load.** The grid is virtualized and backpressured
-— rows arrive in bounded batches, the first 100,000 are kept (with both a row
-cap and a byte budget), and the footer tells you the truth about truncation.
-A checksum test pins that nothing is lost or duplicated on the way. Unknown
-column types are decoded from what the type *is*, never guessed from what the
-bytes *look like* — a `money` value renders as money or as visibly-raw hex,
-never as a plausible wrong number.
+### Results stream — they don't "load"
 
-**Explore the schema like a filesystem.** Lazy tree of schemas → tables →
-columns / indexes / constraints, with types and PK badges inline, backed by a
-metadata cache that serves instantly and refreshes live.
+The grid is virtualized and backpressured: rows arrive in bounded batches, the
+first 100,000 are kept (row cap *and* byte budget), and the footer tells the
+truth about truncation instead of quietly showing you a subset. A checksum test
+pins that nothing is lost or duplicated in transit.
+
+One decoding rule with teeth: **column types are decoded from what the type
+*is*, never guessed from what the bytes *look like*.** A `money` value renders
+as money or as visibly-raw hex — never as a plausible wrong number. In a
+database tool, a confident wrong value is worse than an ugly honest one.
+
+### The schema is a place you walk around in
+
+Lazy tree of schemas → tables → columns / indexes / constraints, types and PK
+badges inline, backed by a metadata cache that serves instantly and refreshes
+live — and keeps serving read-only when the connection drops.
 
 <p align="center">
   <img src="docs/site/shots/explorer.png" width="900" alt="Schema explorer expanded to a table's columns beside live query results" />
 </p>
 
-**See how the schema hangs together.** The ER view draws the foreign-key graph
-and lists every constraint by name.
-
 <p align="center">
   <img src="docs/site/shots/er-diagram.png" width="620" alt="ER diagram: authors, books, orders, order_items joined by their three foreign keys" />
 </p>
 
-**Operate, not just query.** Live server activity — backends, cache hit ratio,
-commits/rollbacks, blocked locks, per-session state — with cancel and
-terminate. Terminating a backend always asks; on prod it makes you type the
-pid.
+The ER view draws the foreign-key graph and names every constraint — the
+picture *and* the receipts.
+
+### Operate, not just query
+
+Live server activity: backends, cache hit ratio, commits vs rollbacks, blocked
+locks, per-session state, with cancel and terminate. Terminating a backend
+always asks. On prod, it makes you **type the pid** — the extra three
+keystrokes that separate "confirmed" from "clicked through".
 
 <p align="center">
   <img src="docs/site/shots/monitor.png" width="760" alt="Server activity monitor: backends, DB size, cache hit, commits, rollbacks, blocked locks, session list" />
 </p>
 
----
+## The safety model
 
-## The safety model, in one table
+Five layers, each with its enforcement named — because "we're careful" is not
+an architecture:
 
-| Layer | What it does | What enforces it |
+| Layer | What it does | What actually enforces it |
 | --- | --- | --- |
-| **Read-only profiles** | Writes are refused | PostgreSQL itself (`SET SESSION CHARACTERISTICS … READ ONLY`) — not a client-side promise |
+| **Read-only profiles** | Writes are refused | PostgreSQL itself (`SET SESSION CHARACTERISTICS … READ ONLY`) — the server, not a client-side promise |
 | **Destructive-statement guard** | `UPDATE`/`DELETE` without `WHERE`, `DROP`, `TRUNCATE`, `ALTER`, `GRANT`… ask before running on prod *and* staging | SQL is masked (comments, strings, dollar-quotes) before matching, so `-- where` can't disarm it. Best-effort by design — the seatbelt light, not the seatbelt |
-| **Safe row editing** | Only single-table SELECTs with the full primary key are editable; joins, groups, CTEs, derived tables are refused with a reason | You review the exact generated `UPDATE`s before anything runs. Every statement is parameter-bound, keyed by the full PK, and guarded with `IS NOT DISTINCT FROM` on the old values — an edit racing another session affects 0 rows and is **refused**, not silently won |
-| **Transactions** | One session serves all tabs, so the tab that opened a transaction owns it | Committing from another tab is refused and names the owner. Closing the window mid-transaction always prompts |
-| **Auto-update** | Updates verified against a minisign key compiled into the binary | The release host only serves bytes; it never holds the key. Updating is refused while a transaction is open |
-| **Generated/identity columns** | Read-only in the grid | Marked from `pg_catalog` (`attgenerated`/`attidentity`), not guessed from names |
+| **Safe row editing** | Only single-table SELECTs with the full primary key are editable; joins, groups, CTEs, derived tables are refused *with a reason* | You review the exact generated `UPDATE`s before anything runs. Parameter-bound, keyed by the full PK, guarded with `IS NOT DISTINCT FROM` on old values — an edit racing another session affects 0 rows and is **refused**, not silently won |
+| **Transactions** | One session serves all tabs, so the tab that opened a transaction owns it | Committing from another tab is refused and names the owner. Closing the window mid-transaction always prompts — commit, roll back, or stay |
+| **Auto-update** | Update payloads verified against a minisign key compiled into the binary | The release host only serves bytes; it never holds the key. Updating is refused while a transaction is open |
 
-Everything in that table has a test that executes the misuse and asserts the
-refusal — including thirteen adversarial bypasses of the guard, the comma-join
-editability hole, and the zero-row write.
+Plus one that's easy to miss: generated and identity columns are read-only in
+the grid, marked from `pg_catalog` (`attgenerated` / `attidentity`) — not
+guessed from column names.
+
+**Every row of that table has a test that tries the misuse.** Including
+thirteen adversarial bypasses of the guard (dollar-quoting tricks, nested
+comments, unicode), the comma-join editability hole, and the zero-row
+concurrent write.
+
+## The keyboard
+
+Press <kbd>?</kbd> anywhere for the in-app cheatsheet. The spine of it
+(<kbd>⌘</kbd> is <kbd>Ctrl</kbd> on Windows/Linux):
+
+| | |
+| --- | --- |
+| <kbd>⌘↵</kbd> | Run |
+| <kbd>Esc</kbd> | Cancel a running query · close any overlay |
+| <kbd>⌘K</kbd> | Command palette — every action, snippets included |
+| <kbd>⌘P</kbd> | Global object search across the live database |
+| <kbd>⌘T</kbd> | New query tab |
+| <kbd>⌘O</kbd> | Connections |
+| <kbd>⌘B</kbd> | Toggle sidebar |
+| <kbd>⇧⌘F</kbd> | Format SQL |
+| <kbd>⇧⌘L</kbd> | Dark ↔ light |
+| <kbd>⌘C</kbd> | Copy the focused cell (when not editing text) |
+
+The results grid is fully keyboard-navigable — arrows, PageUp/Down, Home/End,
+Enter to edit — with real `role="grid"` semantics, every modal is a real
+`role="dialog"` with a focus trap, and `prefers-reduced-motion` is respected.
 
 ## Everything else in the box
 
 **Query work** — Format SQL · EXPLAIN / EXPLAIN ANALYZE plan tab · `$1..$n`
-parameter binding · searchable history · a production audit log that keeps the
-full SQL of everything run on prod · reusable snippets via the command palette
-· CSV/JSON export with an honest truncation note.
+parameter binding · searchable history · a production **audit log** that keeps
+the full SQL of everything run on prod · reusable snippets via the palette ·
+CSV/JSON export with an honest truncation note · one-click charts from a
+result set.
 
-**Schema work** — global object search · schema diff (column-by-column, types,
+**Schema work** — global object search · schema diff (column-by-column: types,
 nullability, PKs) · find-usages and rename across tabs (whole-identifier,
 unicode-aware) · EXPLAIN plan comparison with cost deltas and a "new
 sequential scan" regression flag · partition tree browsing.
@@ -130,15 +199,31 @@ sequential scan" regression flag · partition tree browsing.
 top queries (when the extension is installed).
 
 **Data in** — CSV import wizard: RFC-4180 parsing, type inference you review
-before anything runs, batched inserts inside one transaction. The whole file
-is read into memory, so very large CSVs are not yet practical.
+*before* anything runs, batched inserts inside one transaction.
 
 **Fit and finish** — environment-reactive window frame (dev/staging/prod get
-different ambient colors) · full keyboard navigation in the grid
-(arrows/PageUp/Home/End, Enter to edit) with real `role="grid"` semantics ·
-every modal is a real `role="dialog"` with a focus trap · respects
-`prefers-reduced-motion` · dark, dense, flat — deliberately an IDE, not a
-dashboard.
+different ambient colors, so the wrong window is visibly the wrong window) ·
+dark, dense, flat — deliberately an IDE, not a dashboard.
+
+## What TupleNest is *not* (yet)
+
+Marketing pages don't have this section, which is why you should trust a README
+that does.
+
+- **One engine.** PostgreSQL 13+, done properly, before anything else is
+  attempted. If you need MySQL today, TupleNest isn't your tool today.
+- **The CSV importer reads the whole file into memory.** Fine for the files
+  people actually import; not yet fine for the 10 GB one.
+- **The destructive-statement guard is best-effort.** It's masked-then-matched
+  and survived thirteen bypass attempts, but it is the seatbelt *light*.
+  Read-only profiles are the seatbelt — they're enforced by the server.
+- **Nothing is code-signed.** Each OS objects once, the docs walk you through
+  it, and the [attestation check](#verifying-a-download) proves more than the
+  dialogs do anyway.
+- **Saved passwords on Linux need a keyring daemon** (GNOME Keyring / KWallet).
+  Connecting works without one; *saving* doesn't. This is the one Linux
+  behavior with no automated coverage — [tell us](../../issues/new?template=bug_report.yml)
+  if it bites you.
 
 ## Install
 
@@ -146,9 +231,9 @@ Every platform is built from the same source on its own CI runner.
 [**Download the latest release**](../../releases/latest).
 
 Because nothing is code-signed yet, **every OS will try to stop you at least
-once.** That is expected, and each stop is spelled out below — including what
-the error actually says, because the first two beta testers hit obstacles the
-docs skipped past.
+once.** Expected, and each stop is spelled out below — including what the
+error actually says, because the first beta testers hit obstacles the docs
+skipped past.
 
 ### macOS · `TupleNest_0.1.0_aarch64.dmg` (Apple Silicon) or the Intel `.dmg`
 
@@ -219,9 +304,7 @@ sudo dnf install ./TupleNest-0.1.0-1.x86_64.rpm  # Fedora/RHEL
 
 > **Saved passwords need a keyring daemon** (GNOME Keyring, KWallet). A normal
 > desktop has one; a minimal or server install may not. Without it, connecting
-> works and *saving* a password fails. This is the one Linux behaviour with no
-> automated coverage — [tell us](../../issues/new?template=bug_report.yml) if it
-> bites you.
+> works and *saving* a password fails.
 
 <details>
 <summary><b>"Could not get lock /var/lib/dpkg/lock-frontend … held by process NNNN (unattended-upgr)"</b></summary>
@@ -311,6 +394,26 @@ functions (`pg_partition_tree`) that arrived in PostgreSQL 12, and 13 is the
 oldest version the contract tests actually run against. CI exercises the full
 suite against 13, 15 and 17 on every push.
 
+## The receipts
+
+The claims above are only as good as what checks them, so here is what checks
+them, in CI, on every push:
+
+- **1,600+ frontend tests**, including a suite that *executes each documented
+  misuse* — the guard bypasses, the editability holes, the racing edit, the
+  cross-tab commit — and asserts the refusal.
+- **Contract tests against live PostgreSQL 13, 15 and 17** — not mocks: a real
+  server, real TLS with a CA the tests mint themselves, real cancellation.
+- **SSH tunnel tests against a real sshd**, including the fails-closed host-key
+  paths.
+- **A capability test born from a shipped bug**: in beta.1 the window close
+  button silently did nothing because one ACL permission was missing and the
+  rejection surfaced nowhere. There's now a test that cross-checks every window
+  API call the frontend makes against the permissions file — and this README
+  tells you that story instead of hiding it, because that's the deal here.
+- CodeQL, `cargo deny` (licenses + advisories), typos, dependency pinning, and
+  a coverage gate.
+
 ## Build from source
 
 ```sh
@@ -347,11 +450,15 @@ crates/             Rust workspace: driver-api, driver-postgres, connection-core
 docs/               plans, releasing runbook, this site
 ```
 
-The frontend never sees a password and never builds SQL for writes by string
-concatenation. The driver streams rows through a bounded channel with
-backpressure; the credential store is an opaque-reference API over the OS
-keychain; safety predicates (`needsGuard`, editability, masking) are pure
-functions with adversarial test corpora.
+Three rules hold the shape:
+
+1. **The frontend never sees a password** — the credential store is an
+   opaque-reference API over the OS keychain, and secrets never cross IPC.
+2. **Writes are never built by string concatenation** — parameter binding,
+   everywhere, no exceptions.
+3. **Safety predicates are pure functions** — `needsGuard`, editability,
+   masking — each with an adversarial test corpus, because a safety check you
+   can't unit-test is a safety vibe.
 
 More detail: [`SECURITY.md`](SECURITY.md) ·
 [`PRIVACY.md`](PRIVACY.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md) ·
