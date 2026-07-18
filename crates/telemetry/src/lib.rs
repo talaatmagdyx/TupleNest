@@ -68,7 +68,26 @@ pub fn init_app(log_dir: &std::path::Path, json: bool) -> std::io::Result<LogGua
     secure_dir(log_dir);
     let appender = tracing_appender::rolling::daily(log_dir, "tuplenest.log");
     let (writer, guard) = tracing_appender::non_blocking(appender);
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let mut filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    // In release, cap chatty transport/crypto crates to `warn` regardless of
+    // RUST_LOG. They run in-process and could otherwise write connection
+    // parameters or wire detail to the persistent on-disk log at trace/debug —
+    // TupleNest's own redaction net does not wrap dependency output. Debug
+    // builds keep RUST_LOG fully honored for development. (Security review
+    // LOG-01.)
+    if !cfg!(debug_assertions) {
+        for directive in [
+            "russh=warn",
+            "tokio_postgres=warn",
+            "rustls=warn",
+            "russh_keys=warn",
+            "h2=warn",
+        ] {
+            if let Ok(d) = directive.parse() {
+                filter = filter.add_directive(d);
+            }
+        }
+    }
     let builder = fmt()
         .with_env_filter(filter)
         .with_writer(writer)
