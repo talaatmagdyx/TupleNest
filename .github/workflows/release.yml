@@ -37,6 +37,14 @@ jobs:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.platform }}
 
+    # The `secrets` context cannot be read from a step-level `if:`, so the
+    # "does this secret exist" question is answered once here and the steps
+    # branch on the answer. Comparing to '' is the only way to distinguish an
+    # absent secret from a present one — its value is never exposed.
+    env:
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      HAS_APPLE_ID: ${{ secrets.APPLE_ID != '' }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -70,6 +78,52 @@ jobs:
         working-directory: apps/desktop
         run: npm ci
 
+      # Sign a throwaway file before spending twelve minutes compiling.
+      #
+      # `bundle.createUpdaterArtifacts` is on, so the very last thing a release
+      # build does is sign — which means a wrong signing password wastes the
+      # entire build on every platform and then reports
+      # "failed to decode secret key: incorrect updater private key password"
+      # under a log full of successful bundles. That is exactly how the first
+      # v0.1.0-beta.1 attempt failed: deb, rpm and AppImage all built, then the
+      # signature killed it.
+      #
+      # Twenty seconds here turns that into a named failure before any
+      # compilation. The probe file must exist: `signer sign` checks the
+      # password first and the file second, so a missing file fails for the
+      # wrong reason and would read as a pass.
+      - name: Preflight — the updater key and its password must actually work
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set — the build would produce installers and then fail at signing."
+            exit 1
+          fi
+          printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" > "$RUNNER_TEMP/tn.key"
+          echo preflight > "$RUNNER_TEMP/tn_probe.txt"
+          if ! npx tauri signer sign \
+                 -f "$RUNNER_TEMP/tn.key" \
+                 -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
+                 "$RUNNER_TEMP/tn_probe.txt" > "$RUNNER_TEMP/tn_probe.log" 2>&1; then
+            echo "::error::Cannot sign with the configured updater key. The build would have failed after ~12 minutes of compiling."
+            # The message names the cause: wrong password vs unreadable key are
+            # different problems with different fixes.
+            sed -e 's/^/    /' "$RUNNER_TEMP/tn_probe.log" | head -5
+            echo ""
+            echo "If this says 'Wrong password for that key': the secret does not match the key."
+            echo "A trailing newline is the usual reason — set it with printf, which adds none:"
+            echo "    printf %s 'your passphrase' | gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            rm -f "$RUNNER_TEMP/tn.key" "$RUNNER_TEMP/tn_probe.txt" "$RUNNER_TEMP/tn_probe.txt.sig"
+            exit 1
+          fi
+          rm -f "$RUNNER_TEMP/tn.key" "$RUNNER_TEMP/tn_probe.txt" "$RUNNER_TEMP/tn_probe.txt.sig"
+          echo "Updater key and password verified — the signing step at the end will work."
+
       # The same gates CI runs, once per platform: a release should not be the
       # first time these are checked on this OS.
       - name: Check
@@ -79,6 +133,51 @@ jobs:
           npm run typecheck
           npm test
 
+      # Apple signing is opt-in, and it has to be opt-in by the variable being
+      # ABSENT — not empty.
+      #
+      # Tauri's bundler enables macOS codesigning when APPLE_CERTIFICATE is
+      # *defined*: `std::env::var` returns Ok("") for a variable that is set to
+      # the empty string, so an `env:` block listing a secret that does not
+      # exist still turns signing on, with an empty certificate. Every macOS
+      # bundle then died at:
+      #
+      #   failed to bundle project: failed codesign application:
+      #   failed to run command security import: failed to import keychain certificate
+      #
+      # That is what killed the first v0.1.0-beta.1 build, on the leg that had
+      # nothing to do with signing. The comment that used to sit here claimed
+      # the opposite — "absent, the mac builds are ad-hoc signed" — which was
+      # never true and had never been run.
+      #
+      # `$GITHUB_ENV` is the only way to set a variable conditionally: an `env:`
+      # key always exists. HAS_APPLE_CERT is computed at job level because the
+      # `secrets` context is not available in a step-level `if:`.
+      - name: Apple signing — only when a certificate actually exists
+        if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
+        run: |
+          {
+            echo "APPLE_CERTIFICATE<<__TN_EOF__"
+            echo "${{ secrets.APPLE_CERTIFICATE }}"
+            echo "__TN_EOF__"
+            echo "APPLE_CERTIFICATE_PASSWORD=${{ secrets.APPLE_CERTIFICATE_PASSWORD }}"
+            echo "APPLE_SIGNING_IDENTITY=${{ secrets.APPLE_SIGNING_IDENTITY }}"
+          } >> "$GITHUB_ENV"
+          echo "Apple certificate present — bundles will be Developer ID signed."
+
+      # Notarization is a second, independent thing: it needs an Apple ID as
+      # well as a certificate, and asking for it without one hangs or errors
+      # rather than skipping.
+      - name: Apple notarization — only when the Apple ID exists too
+        if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true' && env.HAS_APPLE_ID == 'true'
+        run: |
+          {
+            echo "APPLE_ID=${{ secrets.APPLE_ID }}"
+            echo "APPLE_PASSWORD=${{ secrets.APPLE_PASSWORD }}"
+            echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}"
+          } >> "$GITHUB_ENV"
+          echo "Apple ID present — bundles will be notarized and stapled."
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -87,15 +186,10 @@ jobs:
           # *after* producing the installers — which looks like it worked.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # macOS only, and only once an Apple Developer account exists. Absent,
-          # the mac builds are ad-hoc signed and Gatekeeper will warn on first
-          # launch — see docs/releasing.md.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # APPLE_* deliberately absent here — see the two steps above. Without
+          # an Apple Developer account the macOS bundles are ad-hoc signed and
+          # Gatekeeper warns on first launch; that is the documented, tested
+          # state, and now actually the behaviour.
         with:
           projectPath: apps/desktop
           args: --target ${{ matrix.target }}
