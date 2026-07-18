@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import ConnectionForm from "./ConnectionForm";
+import ConnectionForm, { isLocalHost } from "./ConnectionForm";
 import type { TestStage } from "../ipc/types";
 
 const base = {
@@ -130,6 +130,37 @@ describe("ConnectionForm — TLS", () => {
     render(<ConnectionForm {...base} onTlsMode={onTlsMode} />);
     await userEvent.selectOptions(screen.getByRole("combobox"), "verify-full");
     expect(onTlsMode).toHaveBeenCalledWith("verify-full");
+  });
+
+  it("warns that prefer is unsafe for a REMOTE host", () => {
+    render(<ConnectionForm {...base} tlsMode="prefer" host="db.prod.internal" />);
+    const warn = screen.getByRole("note");
+    expect(warn).toHaveTextContent(/does not guarantee encryption/i);
+    expect(warn).toHaveTextContent("db.prod.internal");
+  });
+
+  it("does NOT warn about prefer for a local host", () => {
+    render(<ConnectionForm {...base} tlsMode="prefer" host="localhost" />);
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+  });
+
+  it("does NOT warn when a verify mode is chosen for a remote host", () => {
+    render(<ConnectionForm {...base} tlsMode="verify-full" host="db.prod.internal" />);
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+  });
+});
+
+describe("isLocalHost", () => {
+  it("treats loopback names/addresses and the empty field as local", () => {
+    for (const h of ["", "localhost", "127.0.0.1", "::1", "[::1]", "app.localhost", "  LocalHost  "]) {
+      expect(isLocalHost(h)).toBe(true);
+    }
+  });
+
+  it("treats everything else as remote (conservative — a false remote is only a nudge)", () => {
+    for (const h of ["db.prod.internal", "10.0.0.5", "example.com", "127.0.0.1.evil.com"]) {
+      expect(isLocalHost(h)).toBe(false);
+    }
   });
 });
 

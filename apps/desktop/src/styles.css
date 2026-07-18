@@ -464,6 +464,12 @@ a { color: var(--tn-accent); text-decoration: none; }
   white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; cursor: text;
   max-height: 40vh; overflow-y: auto;
 }
+.tls-warn {
+  margin: -2px 0 8px; padding: 8px 12px; border-radius: 8px;
+  background: rgba(255, 207, 92, .09); border: 1px solid rgba(255, 207, 92, .3);
+  font-size: 12px; line-height: 1.5; color: var(--tn-warning);
+}
+.tls-warn strong { color: var(--tn-warning); }
 .trunc-note {
   flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 14px;
   background: rgba(255, 207, 92, .09); border-bottom: 1px solid rgba(255, 207, 92, .25);

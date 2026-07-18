@@ -2,6 +2,25 @@ import { useId } from "react";
 import type { TestStage } from "../ipc/types";
 import { ModalHead, Overlay } from "../overlays/Overlays";
 
+/**
+ * Is this host the local machine, where "prefer" TLS is a defensible dev
+ * default? Loopback names/addresses and the empty (not-yet-typed) field only.
+ * Everything else is treated as remote, so the prefer warning shows — a false
+ * "remote" is a harmless nudge; a false "local" would suppress a real warning,
+ * so the set is deliberately conservative.
+ */
+export function isLocalHost(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  return (
+    h === "" ||
+    h === "localhost" ||
+    h === "127.0.0.1" ||
+    h === "::1" ||
+    h === "[::1]" ||
+    h.endsWith(".localhost")
+  );
+}
+
 type Props = {
   isEdit: boolean;
   profileName: string;
@@ -159,6 +178,14 @@ export default function ConnectionForm(p: Props) {
               </div>
             )}
           </div>
+          {p.tlsMode === "prefer" && !isLocalHost(p.host) && (
+            <div className="tls-warn" role="note">
+              <strong>prefer</strong> does not guarantee encryption or verify the
+              server's identity — a network attacker can strip TLS or impersonate{" "}
+              <span className="mono">{p.host || "this host"}</span>. Use{" "}
+              <strong>verify-full</strong> for remote and production databases.
+            </div>
+          )}
           <div className="section-row">
             <span className="st">SSH tunnel</span>
             {/* Without these it is announced as an unlabelled button, and its

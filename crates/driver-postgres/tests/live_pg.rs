@@ -532,6 +532,94 @@ async fn live_tls_prefer_encrypts_without_verification() {
     assert_eq!(sink.0.lock().unwrap().as_deref(), Some("true"));
 }
 
+// --- TLS downgrade / SSL-stripping tests (security review NET-01) -----------
+// These need a PLAINTEXT server (ssl=off) — distinct from the ssl=on server the
+// tests above use. Point them at one with TUPLENEST_TEST_PG_PLAINTEXT_PORT
+// (default 5433). The whole reason these exist: before the ssl_mode fix, a
+// verify-full connection to a no-TLS server SILENTLY SUCCEEDED in plaintext.
+// After the fix, the verify modes must refuse it.
+
+fn plaintext_config(mode: TlsMode) -> ConnectionConfig {
+    let mut c = test_config();
+    c.tls_mode = mode;
+    c.tls_ca_path = None;
+    c.port = std::env::var("TUPLENEST_TEST_PG_PLAINTEXT_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(5433);
+    c
+}
+
+#[tokio::test]
+#[ignore = "requires a plaintext (ssl=off) PostgreSQL server"]
+async fn live_tls_verify_full_refuses_a_plaintext_server() {
+    // The NET-01 regression. A server that does not offer TLS must NOT be
+    // reached over plaintext when the user asked for verify-full.
+    let config = plaintext_config(TlsMode::VerifyFull);
+    let report = PostgresDriver
+        .test_with_password(&config, None)
+        .await
+        .unwrap();
+    assert!(
+        !report.passed(),
+        "verify-full must fail closed against a no-TLS server, not downgrade: {:?}",
+        report.stages
+    );
+    assert!(
+        PostgresDriver.connect_concrete(config).await.is_err(),
+        "connect must also refuse plaintext under verify-full"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires a plaintext (ssl=off) PostgreSQL server"]
+async fn live_tls_verify_ca_refuses_a_plaintext_server() {
+    let config = plaintext_config(TlsMode::VerifyCa);
+    let report = PostgresDriver
+        .test_with_password(&config, None)
+        .await
+        .unwrap();
+    assert!(
+        !report.passed(),
+        "verify-ca must fail closed against a no-TLS server: {:?}",
+        report.stages
+    );
+    assert!(
+        PostgresDriver.connect_concrete(config).await.is_err(),
+        "connect must also refuse plaintext under verify-ca"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires a plaintext (ssl=off) PostgreSQL server"]
+async fn live_tls_prefer_allows_a_plaintext_server() {
+    // Prefer's documented behavior: try TLS, accept plaintext if unavailable.
+    // This must still succeed after the fix — the fix only tightens verify-*.
+    let report = PostgresDriver
+        .test_with_password(&plaintext_config(TlsMode::Prefer), None)
+        .await
+        .unwrap();
+    assert!(
+        report.passed(),
+        "prefer must still connect to a plaintext server: {:?}",
+        report.stages
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires a plaintext (ssl=off) PostgreSQL server"]
+async fn live_tls_disabled_connects_to_a_plaintext_server() {
+    let report = PostgresDriver
+        .test_with_password(&plaintext_config(TlsMode::Disabled), None)
+        .await
+        .unwrap();
+    assert!(
+        report.passed(),
+        "disabled must connect to a plaintext server: {:?}",
+        report.stages
+    );
+}
+
 #[tokio::test]
 #[ignore]
 async fn live_tls_cancel_works_over_tls() {

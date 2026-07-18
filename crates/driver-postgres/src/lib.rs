@@ -143,6 +143,28 @@ impl PostgresDriver {
         if let Some(pw) = password {
             c.password(pw);
         }
+
+        // Decide whether TLS is *required*, separately from how the certificate
+        // is *verified*. This is the load-bearing line the security review
+        // flagged CRITICAL: without it, tokio-postgres defaults to
+        // `SslMode::Prefer`, and a server (or on-path attacker) that answers the
+        // SSLRequest with "no" drops the whole session to plaintext — even under
+        // verify-full. The rustls verifier in `tls.rs` never runs, because no
+        // handshake happens. `Require` closes that door: the verify modes now
+        // refuse to speak plaintext at all.
+        //
+        // `tls::build` still controls the verifier (chain, hostname); this only
+        // controls whether an unencrypted channel is acceptable.
+        let ssl_mode = match config.tls_mode {
+            TlsMode::Disabled => tokio_postgres::config::SslMode::Disable,
+            // Prefer keeps the tokio-postgres default: try TLS, silently fall
+            // back to plaintext. Documented and UI-warned as no-guarantee.
+            TlsMode::Prefer => tokio_postgres::config::SslMode::Prefer,
+            // Both verify modes REQUIRE TLS. verify-ca vs verify-full differ only
+            // in whether the hostname is checked, which is the verifier's job.
+            TlsMode::VerifyCa | TlsMode::VerifyFull => tokio_postgres::config::SslMode::Require,
+        };
+        c.ssl_mode(ssl_mode);
         c
     }
 
