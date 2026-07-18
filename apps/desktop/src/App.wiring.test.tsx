@@ -158,7 +158,8 @@ describe("App — the password", () => {
     await typePassword(user, "hunter2");
     await user.click(screen.getByRole("button", { name: /^Save & Connect$/ }));
     await waitFor(() => expect(be.sent("pg_secret_save")).toHaveLength(1));
-    expect(be.sent("pg_secret_save")[0]).toEqual({ password: "hunter2" });
+    // reuseRef is null on a fresh form — no ref held yet to overwrite (CRED-01).
+    expect(be.sent("pg_secret_save")[0]).toEqual({ password: "hunter2", reuseRef: null });
     await waitFor(() => expect(be.sent("pg_connect")).toHaveLength(1));
     const params = be.sent("pg_connect")[0].params as Record<string, unknown>;
     expect(params.secretRef).toBe("ref-1");

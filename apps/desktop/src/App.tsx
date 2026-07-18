@@ -307,11 +307,14 @@ export default function App() {
 
   const savePassword = useCallback(async () => {
     if (!password) return null;
-    const ref = await invoke<string>("pg_secret_save", { password });
+    // Reuse the ref the form already holds so repeated Test/connect (or editing
+    // a profile) overwrites one keychain entry instead of orphaning a new one
+    // each time (CRED-01).
+    const ref = await invoke<string>("pg_secret_save", { password, reuseRef: secretRef });
     form.set("password", "");
     form.set("secretRef", ref);
     return ref;
-  }, [password, form]);
+  }, [password, secretRef, form]);
 
   /** Params for the backend, saving the password to the keychain first if the
    *  user typed a new one. The shape itself is the hook's business. */
@@ -468,6 +471,9 @@ export default function App() {
           database,
           username,
           password: password || null,
+          // Adopt the ref created during a prior Test (which cleared the typed
+          // password) instead of leaving it orphaned and saving no password.
+          secretRef: password ? null : secretRef,
           tlsMode,
           tlsCaPath: tlsCaPath || null,
           sshJson: form.ssh() ? JSON.stringify(form.ssh()) : null,
@@ -484,7 +490,7 @@ export default function App() {
       setStatus(`Save error: ${errText(e)}`);
       return null;
     }
-  }, [profileId, profileName, environment, host, port, database, username, password, tlsMode, tlsCaPath, form, refreshSaved, setStatus]);
+  }, [profileId, profileName, environment, host, port, database, username, password, secretRef, tlsMode, tlsCaPath, form, refreshSaved, setStatus]);
 
   const saveAndConnect = useCallback(async () => {
     const rec = await doSaveProfile();

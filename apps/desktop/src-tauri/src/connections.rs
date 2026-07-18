@@ -29,6 +29,10 @@ pub struct ConnectionInput {
     pub username: String,
     /// One-time password; replaced by a keychain ref before persisting.
     pub password: Option<String>,
+    /// A keychain ref already created this session (e.g. by a prior Test that
+    /// consumed the typed password). Adopted when no fresh password is sent, so
+    /// the tested credential is kept rather than orphaned. (CRED-01.)
+    pub secret_ref: Option<String>,
     /// "disabled" | "prefer" | "verify-ca" | "verify-full" (default).
     pub tls_mode: Option<String>,
     pub tls_ca_path: Option<String>,
@@ -50,7 +54,8 @@ pub fn connection_save(
         .and_then(|c| c.secret_ref);
 
     // Password handling: new password → create or replace keychain entry;
-    // no password → keep whatever reference the profile already had.
+    // no password → keep the profile's existing ref, or adopt one already
+    // created this session (a prior Test), so it isn't orphaned.
     let keychain = KeychainStore::new();
     let secret_ref = match input.password {
         Some(pw) if !pw.is_empty() => Some(match &existing_ref {
@@ -67,7 +72,7 @@ pub fn connection_save(
                 .key()
                 .to_string(),
         }),
-        _ => existing_ref,
+        _ => existing_ref.or_else(|| input.secret_ref.filter(|k| !k.is_empty())),
     };
 
     let record = ConnectionRecord {

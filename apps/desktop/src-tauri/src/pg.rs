@@ -315,11 +315,28 @@ mod err_to_string_tests {
 /// Stores a password in the OS keychain; returns the opaque reference key.
 /// This is the ONLY command that ever sees a secret, and it does not log it.
 #[tauri::command]
-pub fn pg_secret_save(password: String) -> Result<String, String> {
-    KeychainStore::new()
-        .set(Secret::new(password))
-        .map(|r| r.key().to_string())
-        .map_err(|e| e.to_string())
+pub fn pg_secret_save(password: String, reuse_ref: Option<String>) -> Result<String, String> {
+    let store = KeychainStore::new();
+    // Reuse the ref the form already holds instead of minting a new keychain
+    // entry every time. Previously each Test/connect of a typed password
+    // created a fresh tn-secret-* entry that nothing referenced unless the
+    // profile was later saved — orphans that accumulated forever, since the
+    // keyring crate offers no way to enumerate and sweep them. Reusing bounds a
+    // whole test-then-save session (or repeated tests while editing a profile)
+    // to a single entry. (Security review CRED-01.)
+    match reuse_ref.filter(|k| !k.is_empty()) {
+        Some(key) => {
+            let r = SecretRef::new(key.clone());
+            store
+                .replace(&r, Secret::new(password))
+                .map_err(|e| e.to_string())?;
+            Ok(key)
+        }
+        None => store
+            .set(Secret::new(password))
+            .map(|r| r.key().to_string())
+            .map_err(|e| e.to_string()),
+    }
 }
 
 #[derive(serde::Serialize)]
