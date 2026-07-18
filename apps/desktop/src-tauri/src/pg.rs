@@ -618,6 +618,98 @@ pub struct ColumnOut {
     db_type: String,
 }
 
+/// Does this statement opt out of query history? A `-- tuplenest:no-history`
+/// line comment anywhere in the SQL suppresses the history row (e.g. before a
+/// `ALTER ROLE … PASSWORD …`). It does NOT suppress the prod audit log — that
+/// is an accountability record and must not be silenceable by a comment.
+fn opts_out_of_history(sql: &str) -> bool {
+    sql.to_ascii_lowercase().contains("tuplenest:no-history")
+}
+
+/// Best-effort redaction of secret literals before SQL is written to disk.
+///
+/// `tuplenest_telemetry::redact_text` already handles `password=…` and
+/// connection-string URLs, but SQL's own shapes use a keyword + whitespace +
+/// quoted literal (`PASSWORD 'x'`, `IDENTIFIED BY 'x'`, `ENCRYPTED PASSWORD
+/// 'x'`) that it doesn't match. This scrubs those, then defers to redact_text.
+/// Documented as best-effort, not a guarantee — the honest position is that
+/// truly sensitive statements should be run with history disabled.
+fn redact_sql(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let lower = sql.to_ascii_lowercase();
+    let mut i = 0;
+    // Keywords after which a quoted literal is a secret.
+    const MARKERS: [&str; 2] = ["password", "identified by"];
+    while i < sql.len() {
+        let mut matched = false;
+        for m in MARKERS {
+            if lower[i..].starts_with(m) {
+                // Emit the keyword, then look for the next quoted literal and
+                // replace its contents.
+                let after = i + m.len();
+                let rest = &sql[after..];
+                let ws = rest.len() - rest.trim_start().len();
+                let body = &rest[ws..];
+                if let Some(q @ ('\'' | '"')) = body.chars().next() {
+                    if let Some(close) = body[1..].find(q) {
+                        out.push_str(&sql[i..after]); // keyword
+                        out.push_str(&rest[..ws]); // whitespace
+                        out.push(q);
+                        out.push_str("[REDACTED]");
+                        out.push(q);
+                        i = after + ws + 1 + close + 1;
+                        matched = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !matched {
+            let ch = sql[i..].chars().next().unwrap();
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    tuplenest_telemetry::redact_text(&out)
+}
+
+#[cfg(test)]
+mod redact_sql_tests {
+    use super::*;
+
+    #[test]
+    fn scrubs_create_role_password_literal() {
+        let out = redact_sql("CREATE ROLE app PASSWORD 'hunter2'");
+        assert!(!out.contains("hunter2"), "{out}");
+        assert!(out.contains("PASSWORD '[REDACTED]'"), "{out}");
+    }
+
+    #[test]
+    fn scrubs_alter_user_and_identified_by() {
+        assert!(!redact_sql("ALTER USER x PASSWORD 'p@ss'").contains("p@ss"));
+        assert!(!redact_sql("... IDENTIFIED BY \"sekret\"").contains("sekret"));
+    }
+
+    #[test]
+    fn defers_to_telemetry_for_kv_and_urls() {
+        assert!(!redact_sql("copy from 'postgresql://u:pw@h/db'").contains("pw"));
+    }
+
+    #[test]
+    fn leaves_ordinary_sql_alone() {
+        let sql = "SELECT * FROM users WHERE id = 1";
+        assert_eq!(redact_sql(sql), sql);
+    }
+
+    #[test]
+    fn no_history_directive_detected_case_insensitively() {
+        assert!(opts_out_of_history(
+            "-- TupleNest:No-History\nALTER ROLE x PASSWORD 'y'"
+        ));
+        assert!(!opts_out_of_history("SELECT 1"));
+    }
+}
+
 /// Records an execution in query history (E1.5). Prod-tagged connections
 /// store no SQL text. History failures never fail the query itself.
 #[allow(clippy::too_many_arguments)]
@@ -644,10 +736,18 @@ fn record_history(
         .and_then(|e| e.clone())
         .as_deref()
         == Some("prod");
+    let no_history = opts_out_of_history(sql);
+    // Store SQL redacted of secret literals; prod history still omits it
+    // entirely. The `-- tuplenest:no-history` directive drops the history row.
+    let sql_text = if is_prod || no_history {
+        None
+    } else {
+        Some(redact_sql(sql))
+    };
     let entry = tuplenest_workspace_store::HistoryEntry {
         id: uuid::Uuid::new_v4().to_string(),
         connection_key,
-        sql_text: if is_prod { None } else { Some(sql.to_string()) },
+        sql_text,
         status: status.to_string(),
         error_text,
         rows_returned,
@@ -660,13 +760,20 @@ fn record_history(
         favorite: false,
     };
     if let Ok(store) = app.store.lock() {
-        if let Err(e) = store.history_add(&entry, 1_000) {
-            tracing::warn!(component = "history", error = %e, "failed to record history");
+        // The no-history directive suppresses only the history row (timing,
+        // counts, status) that carries no value without its SQL. It records
+        // nothing rather than a contentless row.
+        if !no_history {
+            if let Err(e) = store.history_add(&entry, 1_000) {
+                tracing::warn!(component = "history", error = %e, "failed to record history");
+            }
         }
-        // Prod audit trail: full SQL text is always retained here even though
-        // the history row omits it (Phase 6).
+        // Prod audit trail: retained even under the no-history directive — it is
+        // an accountability record, not user history, and must not be
+        // silenceable by a comment. SQL is redacted of secret literals but
+        // otherwise kept in full.
         if is_prod {
-            let _ = store.audit_add(&entry.connection_key, Some("prod"), sql);
+            let _ = store.audit_add(&entry.connection_key, Some("prod"), &redact_sql(sql));
         }
     }
 }

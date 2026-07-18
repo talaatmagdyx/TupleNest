@@ -18,8 +18,8 @@ Windows, `~/.local/share/app.tuplenest.desktop` on Linux.
 |---|---|---|
 | **Passwords** | OS keychain | Keychain / Credential Manager / Secret Service. Never in the files below — the SQLite table has no password column, only an opaque reference. |
 | **Connection profiles** | `<data>` SQLite | Host, port, database, username, TLS mode, SSH settings. Not the password. |
-| **Query history** | `<data>` SQLite | Newest 1,000. **On prod-tagged connections the SQL text is not recorded** — only timing, row counts, and status. When a query fails, only a reduced error is stored (the error title, its SQLSTATE, and category); the server's DETAIL/HINT — which can quote row values like `Key (email)=(…)` — is shown on screen but **not** written to disk. |
-| **Production audit log** | `<data>` SQLite | Separate from history and deliberately the opposite trade: on prod-tagged connections the **full SQL is retained**, so there is a record of what was run against production. If that is not what you want, do not tag the connection prod. |
+| **Query history** | `<data>` SQLite | Newest 1,000. **On prod-tagged connections the SQL text is not recorded** — only timing, row counts, and status. On other environments the SQL is stored with a best-effort scrub of secret literals (`PASSWORD '…'`, `IDENTIFIED BY '…'`, `key=…`, connection-string URLs → `[REDACTED]`). Add a `-- tuplenest:no-history` comment to a statement to skip its history row entirely. When a query fails, only a reduced error is stored (title, SQLSTATE, category); the server's DETAIL/HINT — which can quote row values like `Key (email)=(…)` — is shown on screen but **not** written to disk. |
+| **Production audit log** | `<data>` SQLite | Separate from history and deliberately the opposite trade: on prod-tagged connections the SQL is **retained in full** (secret literals still scrubbed) so there is a record of what was run against production. This is an accountability record: `-- tuplenest:no-history` does **not** suppress it. If you do not want it, do not tag the connection prod. |
 | **Cached schema** | `<data>` SQLite | Table, column and index names, so the explorer works offline. Not row data. |
 | **Snippets, layout, settings** | `<data>` SQLite | |
 | **Crash reports** | `<data>/crashes/*.txt` | Written locally on a panic. **Never uploaded.** Timestamp, thread, source location, panic message. Delete them freely. |
@@ -32,6 +32,13 @@ quotes the offending row — is reduced before it is written to history, so the
 persisted copy keeps the error's title, SQLSTATE and category but not the
 value. The full detail still appears on screen for as long as the error is
 shown.
+
+The SQL redaction is **best-effort, not a guarantee.** It catches the common
+secret shapes (`PASSWORD '…'`, `IDENTIFIED BY '…'`, `key=value`, connection
+strings), but a novel phrasing could slip a secret through. For a statement you
+know is sensitive, use `-- tuplenest:no-history` so it is never written at all,
+or run it on a prod-tagged connection (which stores no history SQL). Do not
+rely on redaction as a substitute for those.
 
 ## Telemetry
 
