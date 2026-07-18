@@ -1,4 +1,12 @@
 name: CI
+
+# Least privilege: CI only reads the repo. Without this the workflow inherits
+# the repo/org default GITHUB_TOKEN, which can be read-write contents — more
+# than any test/lint job needs, and a token a malicious build script could
+# abuse. Release jobs that need more scope declare it themselves in release.yml.
+permissions:
+  contents: read
+
 on:
   push: { branches: [main] }
   pull_request:
@@ -14,8 +22,8 @@ jobs:
     name: cargo-deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           command: check
 
@@ -25,8 +33,8 @@ jobs:
     name: typos
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: crate-ci/typos@master
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: crate-ci/typos@3bc303c295c081add5df4a4d52a1e117f2fb2dce # master @ 2025-07
 
   rust:
     strategy:
@@ -34,8 +42,8 @@ jobs:
       matrix: { os: [ubuntu-latest, macos-latest, windows-latest] }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch @ 2025-07
         with: { components: "rustfmt, clippy" }
 
       # `apps/desktop/src-tauri` is a workspace member, so `--workspace` builds
@@ -50,7 +58,7 @@ jobs:
             librsvg2-dev libxdo-dev libayatana-appindicator3-dev \
             build-essential curl wget file libssl-dev patchelf
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -192,9 +200,9 @@ jobs:
       TUPLENEST_TEST_PG_USER: postgres
       PGPASSWORD: postgres
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch @ 2025-07
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Linux system dependencies (Tauri)
         run: |
           sudo apt-get update
@@ -289,9 +297,9 @@ jobs:
       TUPLENEST_TEST_PG_DB: postgres
       TUPLENEST_TEST_PG_USER: postgres
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch @ 2025-07
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Linux system dependencies (Tauri)
         run: |
           sudo apt-get update
@@ -384,8 +392,8 @@ jobs:
       run:
         working-directory: apps/desktop
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
