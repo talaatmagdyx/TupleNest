@@ -104,12 +104,17 @@ jobs:
             echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set — the build would produce installers and then fail at signing."
             exit 1
           fi
-          printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" > "$RUNNER_TEMP/tn.key"
+          # No flags: the key and password come from the environment, which is
+          # exactly how tauri-action invokes the signer at the end of the build.
+          # A preflight that takes a different path can pass while the real
+          # thing fails, which would make it worse than no preflight — and the
+          # first attempt at this step did precisely that in reverse: it passed
+          # `-f <keyfile>` *while* TAURI_SIGNING_PRIVATE_KEY was set, and the
+          # CLI refused ("--private-key-path cannot be used with
+          # --private-key"). It failed the build for a reason that had nothing
+          # to do with the key.
           echo preflight > "$RUNNER_TEMP/tn_probe.txt"
-          if ! npx tauri signer sign \
-                 -f "$RUNNER_TEMP/tn.key" \
-                 -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
-                 "$RUNNER_TEMP/tn_probe.txt" > "$RUNNER_TEMP/tn_probe.log" 2>&1; then
+          if ! npx tauri signer sign "$RUNNER_TEMP/tn_probe.txt" > "$RUNNER_TEMP/tn_probe.log" 2>&1; then
             echo "::error::Cannot sign with the configured updater key. The build would have failed after ~12 minutes of compiling."
             # The message names the cause: wrong password vs unreadable key are
             # different problems with different fixes.
@@ -118,10 +123,10 @@ jobs:
             echo "If this says 'Wrong password for that key': the secret does not match the key."
             echo "A trailing newline is the usual reason — set it with printf, which adds none:"
             echo "    printf %s 'your passphrase' | gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
-            rm -f "$RUNNER_TEMP/tn.key" "$RUNNER_TEMP/tn_probe.txt" "$RUNNER_TEMP/tn_probe.txt.sig"
+            rm -f "$RUNNER_TEMP/tn_probe.txt" "$RUNNER_TEMP/tn_probe.txt.sig"
             exit 1
           fi
-          rm -f "$RUNNER_TEMP/tn.key" "$RUNNER_TEMP/tn_probe.txt" "$RUNNER_TEMP/tn_probe.txt.sig"
+          rm -f "$RUNNER_TEMP/tn_probe.txt" "$RUNNER_TEMP/tn_probe.txt.sig"
           echo "Updater key and password verified — the signing step at the end will work."
 
       # The same gates CI runs, once per platform: a release should not be the
