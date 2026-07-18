@@ -252,17 +252,20 @@
       <tr>
         <td>Windows<br><span class="how" style="font-weight:400">10+</span></td>
         <td><span class="mono">.exe</span> or <span class="mono">.msi</span></td>
-        <td class="how">Unsigned: SmartScreen says <strong>"Windows protected your PC"</strong> →
-          <strong>More info</strong> → <strong>Run anyway</strong>. WebView2 auto-installs if missing.</td>
+        <td class="how">Unsigned: SmartScreen says <strong>"Windows protected your PC"</strong>,
+          publisher <strong>unknown</strong> → <strong>More info</strong> → <strong>Run anyway</strong>.
+          WebView2 auto-installs if missing.</td>
       </tr>
     </table>
     <div class="cta" style="justify-content:flex-start;margin-top:26px">
       <a class="btn primary" href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Get it from GitHub Releases</a>
       <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest/issues/new?template=bug_report.yml">Install didn't work? Tell us</a>
     </div>
-    <p class="note">The Gatekeeper and SmartScreen warnings are a funding problem, not a
-    trust problem — code-signing certificates cost real money. The verification below is
-    stronger than either dialog.</p>
+    <p class="note">Gatekeeper is a funding problem: an Apple account and notarization make
+    it stop. SmartScreen is not the same, and this page used to imply it was — a certificate
+    puts a real name on the installer, but the warning stays until the download earns
+    reputation, and that resets with every release. Neither dialog tells you what you
+    actually downloaded. The checksums below do.</p>
   </div>
 </section>
 

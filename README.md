@@ -252,9 +252,17 @@ sudo systemctl start unattended-upgrades
 
 Windows 10+. WebView2 installs automatically if missing.
 
-The installer is unsigned, so SmartScreen shows **"Windows protected your PC"**:
-click **More info** → **Run anyway**. An Authenticode certificate is the same
-funding problem as Apple notarization.
+The installer is unsigned, so SmartScreen shows **"Windows protected your PC"**
+and **"Unknown publisher"**: click **More info** → **Run anyway**.
+
+This one is not simply a funding problem, and it used to say it was. Apple's is:
+pay, notarize, the warning stops. SmartScreen doesn't work that way. A standard
+certificate makes the publisher name real but the warning stays until the
+download builds reputation, so early users see it regardless. Only an EV
+certificate skips that wait. Being unsigned makes this worse, not different —
+and the wait resets whenever the signed file changes, which is every release.
+[Verify the download instead](#verifying-a-download); it proves more than the
+dialog does.
 
 > Auto-update points at this repository's releases. A **draft** release is not
 > `latest`, so the endpoint 404s and the app finds nothing until a release is

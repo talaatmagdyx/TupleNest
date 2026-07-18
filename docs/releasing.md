@@ -29,10 +29,31 @@ older distros.
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | as above | the build fails at signing — the key is passphrase-protected, so this is **not** optional |
 | `APPLE_*` (see below) | notarizing the macOS builds | mac builds are ad-hoc signed; Gatekeeper warns |
 
-Windows installers are unsigned unless you add an Authenticode certificate;
-SmartScreen will warn on first run. That needs a code-signing cert (an EV one to
-avoid the reputation wait) and is the Windows equivalent of the Apple account
-below — the same kind of problem, the same kind of money.
+Windows installers are unsigned unless you add an Authenticode certificate, so
+SmartScreen shows "Windows protected your PC" and an unknown publisher.
+
+Read this before spending anything, because signing buys less here than the
+Apple account below does:
+
+- **A standard (OV) certificate does not stop the warning.** It puts a real
+  publisher name on the installer, but SmartScreen keeps warning until the file
+  earns download reputation. Reputation attaches to the file, so it resets on
+  every release — which, at this project's release cadence, means most users
+  keep seeing it anyway. Only an **EV** certificate is trusted on first run.
+- **Azure Artifact Signing** (formerly Trusted Signing) is the cheap option at
+  ~$10/month, and it is OV — same reputation wait. It also has an eligibility
+  gate worth checking *first*: public-trust certificates are limited to
+  organisations in the US, Canada, the EU and the UK, and to individual
+  developers in the US and Canada only. If you are outside those, this option is
+  closed regardless of budget.
+
+So the honest ordering is: EV certificate (works immediately, costs the most and
+usually requires a registered company), or stay unsigned and lean on the
+published checksums, which prove more than the dialog does either way. What is
+*not* on the table is paying a little and having the warning go away.
+
+Checked July 2026 — Microsoft moves this around, so verify before buying:
+<https://learn.microsoft.com/en-us/azure/artifact-signing/faq>
 
 ---
 
