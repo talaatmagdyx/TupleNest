@@ -89,36 +89,36 @@ connect"*.
 
 <table>
 <tr>
-<td width="50%">
+<td width="50%" valign="top">
 <img src="docs/site/shots/connection.png" alt="New connection dialog: environment picker (dev/test/staging/prod), TLS verify-full with CA file, and a staged connection test" />
 <p align="center"><b>Connecting is a diagnosis, not a coin flip</b></p>
 <sub>Pick dev / test / staging / <b>prod</b> and the whole window knows it — the frame tints, prod gets a banner, and dangerous verbs ask harder questions. TLS <code>verify-full</code> is the <i>default</i> and fails closed.</sub>
 </td>
-<td width="50%">
+<td width="50%" valign="top">
 <img src="docs/site/shots/complete.png" alt="Schema-aware autocomplete suggesting the books table mid-keystroke" />
 <p align="center"><b>Autocomplete that has read your schema</b></p>
 <sub>Tables after <code>FROM</code>. In-scope columns in <code>WHERE</code>. <code>alias.</code> → that table's columns. Comments and strings are masked <i>first</i>, so a table name in a comment never poisons suggestions.</sub>
 </td>
 </tr>
 <tr>
-<td width="50%">
+<td width="50%" valign="top">
 <img src="docs/site/shots/explorer.png" alt="Schema explorer expanded to a table's columns beside live query results" />
 <p align="center"><b>The schema is a place you walk around in</b></p>
 <sub>Lazy tree of schemas → tables → columns / indexes / constraints, PK badges inline, backed by a cache that serves instantly — and keeps serving read-only when the connection drops.</sub>
 </td>
-<td width="50%">
+<td width="50%" valign="top">
 <img src="docs/site/shots/er-diagram.png" alt="ER diagram: authors, books, orders, order_items joined by their three foreign keys" />
 <p align="center"><b>The picture and the receipts</b></p>
 <sub>The ER view draws the foreign-key graph and names every constraint. Schema diff, find-usages, rename, and EXPLAIN plan comparison live one panel over.</sub>
 </td>
 </tr>
 <tr>
-<td width="50%">
+<td width="50%" valign="top">
 <img src="docs/site/shots/monitor.png" alt="Server activity monitor: backends, DB size, cache hit, commits, rollbacks, blocked locks, session list" />
 <p align="center"><b>Operate, not just query</b></p>
 <sub>Backends, cache hit ratio, blocked locks, per-session state — with cancel and terminate. Terminating always asks. On prod, it makes you <b>type the pid</b>.</sub>
 </td>
-<td width="50%">
+<td width="50%" valign="top">
 <p align="center"><br/><br/><b>Results stream — they don't "load"</b></p>
 <sub>The grid is virtualized and backpressured: bounded batches, a row cap <i>and</i> a byte budget, and a footer that tells the truth about truncation. A checksum test pins that nothing is lost or duplicated in transit.<br/><br/>One decoding rule with teeth: values are decoded from what the type <b>is</b>, never guessed from what the bytes look like. A <code>money</code> value renders as money or as visibly-raw hex — <b>never as a plausible wrong number</b>.</sub>
 </td>
