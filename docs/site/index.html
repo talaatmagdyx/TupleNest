@@ -217,15 +217,48 @@
     <h2>Download</h2>
     <p class="lede">Free, MIT-licensed, built from source in public CI. PostgreSQL 13+
     (13, 15 and 17 are contract-tested on every push).</p>
+    <p class="lede" style="margin-bottom:24px"><strong>Nothing is code-signed yet, so every OS
+    will try to stop you at least once.</strong> Each stop is spelled out below —
+    with the exact wording, because the first two beta testers hit obstacles the
+    docs had skipped past.</p>
     <table>
-      <tr><th>Platform</th><th>File</th><th>First-run note</th></tr>
-      <tr><td>macOS — Apple Silicon</td><td><span class="mono">TupleNest_0.1.0_aarch64.dmg</span></td><td class="how">Not notarized yet: right-click → Open → Open once.</td></tr>
-      <tr><td>macOS — Intel</td><td><span class="mono">.dmg</span> marked Intel</td><td class="how">Same Gatekeeper step.</td></tr>
-      <tr><td>Windows 10+</td><td><span class="mono">.exe</span> or <span class="mono">.msi</span></td><td class="how">Unsigned: SmartScreen → More info → Run anyway.</td></tr>
-      <tr><td>Linux (glibc 2.35+)</td><td><span class="mono">.AppImage</span> / <span class="mono">.deb</span> / <span class="mono">.rpm</span></td><td class="how">Needs webkit2gtk-4.1 and a keyring daemon (GNOME Keyring / KWallet) for saved passwords.</td></tr>
+      <tr><th>Platform</th><th>File</th><th>What will happen, and what to do</th></tr>
+      <tr>
+        <td>macOS<br><span class="how" style="font-weight:400">Apple Silicon / Intel</span></td>
+        <td><span class="mono">TupleNest_0.1.0_aarch64.dmg</span><br><span class="mono">TupleNest_0.1.0_x64.dmg</span></td>
+        <td class="how">
+          Open the DMG, then <strong>drag TupleNest.app onto the Applications shortcut inside it</strong> —
+          opening the DMG installs nothing, the drag is the install. Launch from Applications,
+          right-click → <strong>Open</strong> → <strong>Open</strong> (double-clicking offers no way through).<br><br>
+          <strong>"…is in the Trash"</strong> — your Dock icon points at an old copy you moved there;
+          macOS reports a dangling icon that way. Drag the dead icon off the Dock and launch from
+          <span class="mono">/Applications</span>.<br>
+          <strong>"…is damaged"</strong> — Gatekeeper's phrasing for unsigned:
+          <span class="mono">xattr -dr com.apple.quarantine /Applications/TupleNest.app</span>
+        </td>
+      </tr>
+      <tr>
+        <td>Linux<br><span class="how" style="font-weight:400">glibc 2.35+</span></td>
+        <td><span class="mono">.AppImage</span> ← easiest<br><span class="mono">.deb</span> / <span class="mono">.rpm</span></td>
+        <td class="how">
+          <span class="mono">chmod +x TupleNest_0.1.0_amd64.AppImage &amp;&amp; ./TupleNest_0.1.0_amd64.AppImage</span> —
+          no root, no package manager.<br><br>
+          <strong>"Could not get lock /var/lib/dpkg/lock-frontend"</strong> — that is
+          <span class="mono">unattended-upgrades</span>, Ubuntu's automatic security updater, holding
+          the lock legitimately. Never delete the lock file. Use the AppImage, or wait a few minutes.<br>
+          Needs webkit2gtk-4.1, and a keyring daemon (GNOME Keyring / KWallet) for <em>saved</em> passwords.
+        </td>
+      </tr>
+      <tr>
+        <td>Windows<br><span class="how" style="font-weight:400">10+</span></td>
+        <td><span class="mono">.exe</span> or <span class="mono">.msi</span></td>
+        <td class="how">Unsigned: SmartScreen says <strong>"Windows protected your PC"</strong> →
+          <strong>More info</strong> → <strong>Run anyway</strong>. WebView2 auto-installs if missing.</td>
+      </tr>
     </table>
     <div class="cta" style="justify-content:flex-start;margin-top:26px">
-      <a class="btn primary" href="https://github.com/talaatmagdyx/TupleNest/releases">Get it from GitHub Releases</a>
+      <a class="btn primary" href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Get it from GitHub Releases</a>
+      <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest/issues/new?template=bug_report.yml">Install didn't work? Tell us</a>
     </div>
     <p class="note">The Gatekeeper and SmartScreen warnings are a funding problem, not a
     trust problem — code-signing certificates cost real money. The verification below is

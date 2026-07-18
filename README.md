@@ -143,27 +143,118 @@ dashboard.
 ## Install
 
 Every platform is built from the same source on its own CI runner.
+[**Download the latest release**](../../releases/latest).
 
-| Platform | Download | Notes |
-| --- | --- | --- |
-| **macOS** (Apple Silicon) | `TupleNest_0.1.0_aarch64.dmg` | macOS 10.15+ |
-| **macOS** (Intel) | the `.dmg` marked Intel | macOS 10.15+ |
-| **Windows** | the `.exe` installer, or the `.msi` | Windows 10+; WebView2 auto-installs if missing |
-| **Linux** | the `.AppImage`, `.deb`, or `.rpm` | needs `webkit2gtk-4.1`; built on Ubuntu 22.04, so glibc 2.35+ |
+Because nothing is code-signed yet, **every OS will try to stop you at least
+once.** That is expected, and each stop is spelled out below — including what
+the error actually says, because the first two beta testers hit obstacles the
+docs skipped past.
 
-**macOS** — drag TupleNest into Applications. The build is not notarized, so
-first launch needs Gatekeeper approval: right-click → **Open** → **Open**, or:
+### macOS · `TupleNest_0.1.0_aarch64.dmg` (Apple Silicon) or the Intel `.dmg`
+
+Requires macOS 10.15+.
+
+1. Open the `.dmg`.
+2. **Drag TupleNest.app onto the Applications shortcut inside it.** Opening the
+   DMG does not install anything — this step is the install.
+3. Eject the DMG, then launch from Applications (not from the DMG).
+4. First launch: right-click TupleNest → **Open** → **Open**. Double-clicking
+   shows "unidentified developer" with no way through; the right-click path is
+   the only one that offers **Open**.
+
+Or the whole thing in a terminal:
+
+```sh
+cp -R /Volumes/TupleNest/TupleNest.app /Applications/
+xattr -dr com.apple.quarantine /Applications/TupleNest.app   # skips step 4
+open -a TupleNest
+```
+
+<details>
+<summary><b>"You can't open TupleNest because it is in the Trash"</b></summary>
+
+The app is not really in the Trash — your **Dock or Launchpad icon still points
+at an older copy that you moved there.** macOS reports a dangling icon this way,
+which sounds like a state problem and is actually a stale alias.
+
+Fix: drag the dead icon off the Dock, install from the DMG as above, and launch
+from `/Applications` once. The Dock will re-attach to the new path.
+
+This is also what you see if you never dragged the app out of the DMG at all —
+the icon points at a volume that is no longer mounted.
+</details>
+
+<details>
+<summary><b>"TupleNest is damaged and can't be opened"</b></summary>
+
+Not damage — Gatekeeper's message for an unsigned app it has quarantined:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/TupleNest.app
 ```
 
-**Windows** — the installer is unsigned, so SmartScreen shows "Windows
-protected your PC" on first run: **More info** → **Run anyway**.
+The quarantine flag is set by your browser on download, not by the app. Why it
+is unsigned: notarization needs an Apple Developer account ($99/yr), which this
+project does not have yet. The [attestation check](#verifying-a-download) is a
+stronger guarantee than the dialog you are dismissing.
+</details>
 
-**Linux** — `chmod +x` the AppImage and run it, or install the `.deb`/`.rpm`.
-A keyring daemon (GNOME Keyring, KWallet) must be running, or saved passwords
-have nowhere to live.
+### Linux · `.AppImage` (recommended), `.deb`, or `.rpm`
+
+Needs `webkit2gtk-4.1`; built on Ubuntu 22.04, so glibc 2.35+.
+
+**The AppImage is the fast path** — no root, no package manager, no uninstall:
+
+```sh
+chmod +x TupleNest_0.1.0_amd64.AppImage
+./TupleNest_0.1.0_amd64.AppImage
+```
+
+The `.deb`/`.rpm` integrate with your menus, at the cost of needing root:
+
+```sh
+sudo apt install ./TupleNest_0.1.0_amd64.deb     # Debian/Ubuntu
+sudo dnf install ./TupleNest-0.1.0-1.x86_64.rpm  # Fedora/RHEL
+```
+
+> **Saved passwords need a keyring daemon** (GNOME Keyring, KWallet). A normal
+> desktop has one; a minimal or server install may not. Without it, connecting
+> works and *saving* a password fails. This is the one Linux behaviour with no
+> automated coverage — [tell us](../../issues/new?template=bug_report.yml) if it
+> bites you.
+
+<details>
+<summary><b>"Could not get lock /var/lib/dpkg/lock-frontend … held by process NNNN (unattended-upgr)"</b></summary>
+
+Not a stale lock, and not TupleNest: `unattended-upgrades` is Ubuntu's automatic
+security updater, and it holds the dpkg lock legitimately while it runs. Usually
+1–5 minutes.
+
+**Do not delete the lock file** — that is how you get a half-configured dpkg
+database. Instead, use the AppImage (no dpkg involved), or wait:
+
+```sh
+sudo lsof /var/lib/dpkg/lock-frontend                        # who has it
+sudo tail -f /var/log/unattended-upgrades/unattended-upgrades.log
+```
+
+If you must go now, stop it *gracefully* — never `kill -9`, which is what
+actually corrupts things:
+
+```sh
+sudo systemctl stop unattended-upgrades
+sudo apt install ./TupleNest_0.1.0_amd64.deb
+sudo systemctl start unattended-upgrades
+```
+</details>
+
+### Windows · `.exe` (NSIS) or `.msi`
+
+Windows 10+. WebView2 installs automatically if missing.
+
+The installer is unsigned, so SmartScreen shows **"Windows protected your PC"**:
+click **More info** → **Run anyway**. An Authenticode certificate is the same
+funding problem as Apple notarization.
 
 > Auto-update points at this repository's releases. A **draft** release is not
 > `latest`, so the endpoint 404s and the app finds nothing until a release is
