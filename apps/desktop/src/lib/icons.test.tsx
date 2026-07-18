@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
+import type { JSX } from "react";
 import * as icons from "./icons";
 
 /** Every export is a presentational SVG. There is no logic to assert beyond

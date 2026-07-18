@@ -169,10 +169,18 @@ describe("App — the password", () => {
   it("clears the typed password once the keychain has it", async () => {
     // Leaving it in the form means it is in the DOM, and it gets sent again on
     // the next connect — minting a second keychain entry for the same login.
+    //
+    // Assert against the *live* input, not the one captured before the click.
+    // "Save & Connect" closes the overlay, so the input node is detached and
+    // its value is frozen at whatever was last committed to it — which React 18
+    // and React 19 disagree about for a node they are unmounting. "Test" runs
+    // the same clear (withSecret → savePassword → form.set("password", ""))
+    // but keeps the editor open, so the value we read is the one the user sees.
     const user = await mount();
-    const field = await typePassword(user, "hunter2");
-    await user.click(screen.getByRole("button", { name: /^Save & Connect$/ }));
+    await typePassword(user, "hunter2");
+    await user.click(screen.getByRole("button", { name: /^Test$/ }));
     await waitFor(() => expect(be.sent("pg_secret_save")).toHaveLength(1));
+    const field = document.querySelector('input[type="password"]') as HTMLInputElement;
     await waitFor(() => expect(field.value).toBe(""));
   });
 
