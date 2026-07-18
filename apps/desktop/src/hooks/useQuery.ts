@@ -18,6 +18,12 @@ export function isConnectionLost(message: string): boolean {
   return message.replace(/^Error:\s*/, "").startsWith(LOST_PREFIX);
 }
 
+/** The short title of a multi-line backend error — what fits in one line of UI. */
+export function firstLine(message: string): string {
+  const nl = message.indexOf("\n");
+  return nl === -1 ? message : message.slice(0, nl);
+}
+
 export type RunStatus = { icon: string; text: string; color: string };
 
 /**
@@ -107,7 +113,10 @@ export function useQuery(): Query {
       // error — that reads as "this is what your query returned".
       setResult(null);
       setLastError(message);
-      setStatus({ icon: "✕", text: message, color: "var(--tn-danger)" });
+      // The backend's layout contract: line one is the short title, the rest
+      // is the server's full report (DETAIL, HINT, constraint names). The
+      // one-line status bar gets the title; the error box gets everything.
+      setStatus({ icon: "✕", text: firstLine(message), color: "var(--tn-danger)" });
       return { kind: "error", message, connectionLost: isConnectionLost(message) };
     } finally {
       setRunning(false);

@@ -171,6 +171,25 @@ describe("useQuery — failures", () => {
     expect(result.current.status).toMatchObject({ icon: "✕" });
   });
 
+  it("keeps the full multi-line report in lastError, only the title in the status bar", async () => {
+    // The backend's contract: line one is the short title, everything under
+    // it is the server's report (Detail, Hint, constraint names). The status
+    // bar is one line tall; the error box is where the rest belongs. Losing
+    // the report here is how "Database error" became a bug report.
+    const full =
+      'Constraint violation [SQLSTATE 23505]\n' +
+      'duplicate key value violates unique constraint "books_pkey"\n' +
+      'Detail: Key (id)=(1) already exists.\n' +
+      'On: table "books", constraint "books_pkey"';
+    failOnce(full);
+    const { result } = renderHook(() => useQuery());
+    await act(async () => void (await result.current.run("insert…", dev)));
+    expect(result.current.lastError).toContain("Detail: Key (id)=(1) already exists.");
+    expect(result.current.lastError).toContain('constraint "books_pkey"');
+    expect(result.current.status?.text).toBe("Constraint violation [SQLSTATE 23505]");
+    expect(result.current.status?.text).not.toContain("\n");
+  });
+
   it("drops the previous result rather than showing it next to an error", async () => {
     // Otherwise the old rows sit under a red banner, reading as though they
     // are what the failed query returned.

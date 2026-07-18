@@ -2115,9 +2115,51 @@ pub fn normalize_error(e: tokio_postgres::Error) -> DriverError {
             SqlState::DISK_FULL => (ErrorCategory::DiskFull, "Disk full"),
             _ => (ErrorCategory::DriverFailure, "Database error"),
         };
+        // The server sends far more than the one-line message — DETAIL, HINT,
+        // CONTEXT, and the names of the objects involved. psql shows all of
+        // it; swallowing it here reduced every unmapped failure to the words
+        // "Database error", which is exactly the report a beta user filed.
+        // Reassembled in psql's order so the text reads like what the person
+        // would have seen in the terminal.
+        let mut report = db.message().to_string();
+        if let Some(d) = db.detail() {
+            report.push_str("\nDetail: ");
+            report.push_str(d);
+        }
+        if let Some(h) = db.hint() {
+            report.push_str("\nHint: ");
+            report.push_str(h);
+        }
+        if let Some(w) = db.where_() {
+            report.push_str("\nContext: ");
+            report.push_str(w);
+        }
+        // Name the object when the server names it. Only constraint/table-ish
+        // fields — never values; values live in `detail`, which the server
+        // already chose to disclose.
+        let mut on = Vec::new();
+        if let Some(s) = db.schema() {
+            on.push(format!("schema \"{s}\""));
+        }
+        if let Some(t) = db.table() {
+            on.push(format!("table \"{t}\""));
+        }
+        if let Some(c) = db.column() {
+            on.push(format!("column \"{c}\""));
+        }
+        if let Some(c) = db.constraint() {
+            on.push(format!("constraint \"{c}\""));
+        }
+        if let Some(d) = db.datatype() {
+            on.push(format!("type \"{d}\""));
+        }
+        if !on.is_empty() {
+            report.push_str("\nOn: ");
+            report.push_str(&on.join(", "));
+        }
         let mut err = DriverError::new(category, title)
             .with_native_code(db.code().code())
-            .with_original_message(db.message());
+            .with_original_message(report);
         if let Some(tokio_postgres::error::ErrorPosition::Original(p)) = db.position() {
             let p = *p as usize;
             err = err.with_query_range(p.saturating_sub(1), p);

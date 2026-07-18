@@ -3,6 +3,20 @@
 Notable changes to TupleNest. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **A failed query now shows the server's full report, not two words.** The
+  driver collected the SQLSTATE, message, `DETAIL`, `HINT`, `CONTEXT` and the
+  constraint/table names — and the IPC boundary flattened all of it to the
+  short title, so an unmapped failure reached the screen as exactly
+  "Database error". Reported by a beta user. The error box now shows the whole
+  psql-style report (selectable, so it can be pasted into an issue); the
+  status bar keeps the one-line title with the SQLSTATE. Proven against a
+  live server: a `GENERATED ALWAYS` identity violation (SQLSTATE 428C9 —
+  unmapped) now renders its message, Detail *and* Hint instead of nothing.
+
 ## [0.1.0-beta.2] — 2026-07-18
 
 One real bug, found by the first macOS tester within an hour of beta.1 — which

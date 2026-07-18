@@ -160,9 +160,94 @@ fn resolve_password(secret_ref: &Option<String>) -> Result<Option<Secret>, Strin
     }
 }
 
+/// Flatten a DriverError into the string the frontend shows.
+///
+/// This used to be `e.to_string()`, and DriverError's Display is `{title}` —
+/// so the driver would carefully collect the SQLSTATE, the server's message,
+/// DETAIL, HINT and the constraint name, and this one line would throw all of
+/// it away. An unmapped failure reached the user as the two words "Database
+/// error", which is the least useful sentence a database tool can say.
+///
+/// Layout contract: the title stays on line one, alone. `isConnectionLost`
+/// in the frontend matches a prefix of the first line, and the status bar
+/// shows only the first line; everything below it is the full report for the
+/// error box. All fields are sanitized upstream by design (no credentials).
 fn err_to_string(e: DriverError) -> String {
-    // DriverError's Display is already sanitized (no credentials by design).
-    e.to_string()
+    let mut out = e.title.clone();
+    if let Some(code) = &e.native_code {
+        out.push_str(&format!(" [SQLSTATE {code}]"));
+    }
+    if let Some(msg) = &e.original_message {
+        if msg != &e.title {
+            out.push('\n');
+            out.push_str(msg);
+        }
+    }
+    if !e.explanation.is_empty() {
+        out.push('\n');
+        out.push_str(&e.explanation);
+    }
+    for action in &e.suggested_actions {
+        out.push_str("\nTry: ");
+        out.push_str(action);
+    }
+    out
+}
+
+#[cfg(test)]
+mod err_to_string_tests {
+    use super::*;
+    use tuplenest_driver_api::ErrorCategory;
+
+    #[test]
+    fn keeps_every_field_the_driver_collected() {
+        let e = DriverError::new(ErrorCategory::ConstraintViolation, "Constraint violation")
+            .with_native_code("23505")
+            .with_original_message(
+                "duplicate key value violates unique constraint \"books_pkey\"\n\
+                 Detail: Key (id)=(1) already exists.\n\
+                 On: table \"books\", constraint \"books_pkey\"",
+            );
+        let s = err_to_string(e);
+        assert!(
+            s.starts_with("Constraint violation [SQLSTATE 23505]\n"),
+            "{s}"
+        );
+        assert!(s.contains("duplicate key value"), "{s}");
+        assert!(s.contains("Detail: Key (id)=(1) already exists."), "{s}");
+        assert!(s.contains("constraint \"books_pkey\""), "{s}");
+    }
+
+    #[test]
+    fn title_owns_the_first_line_alone() {
+        // The status bar takes line one; the frontend's connection-lost check
+        // matches a prefix of it. Multi-line messages must not leak into it.
+        let e = DriverError::new(ErrorCategory::Syntax, "Syntax error")
+            .with_native_code("42601")
+            .with_original_message("syntax error at or near \"selct\"");
+        let first = err_to_string(e);
+        let first = first.lines().next().unwrap();
+        assert_eq!(first, "Syntax error [SQLSTATE 42601]");
+    }
+
+    #[test]
+    fn no_duplicate_when_message_equals_title() {
+        let e = DriverError::new(ErrorCategory::Network, "Connection closed")
+            .with_original_message("Connection closed");
+        assert_eq!(err_to_string(e), "Connection closed");
+    }
+
+    #[test]
+    fn suggested_actions_render_as_try_lines() {
+        let e = DriverError::new(ErrorCategory::Network, "Connection closed")
+            .with_original_message("connection reset by peer")
+            .with_suggested_action("Reconnect and retry if the statement is safe to re-run");
+        let s = err_to_string(e);
+        assert!(
+            s.ends_with("Try: Reconnect and retry if the statement is safe to re-run"),
+            "{s}"
+        );
+    }
 }
 
 /// Stores a password in the OS keychain; returns the opaque reference key.

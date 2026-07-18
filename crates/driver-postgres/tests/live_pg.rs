@@ -327,6 +327,61 @@ async fn syntax_error_is_normalized_with_sqlstate_and_position() {
     assert!(err.query_range.is_some());
 }
 
+/// The server's DETAIL and the constraint name must survive normalization.
+///
+/// Exists because they didn't: `normalize_error` kept only `message()`, so a
+/// duplicate-key failure reached the UI as "Constraint violation" with no key,
+/// no value, no constraint — and an unmapped SQLSTATE as the bare words
+/// "Database error". A beta user reported exactly that. Only a live server
+/// can prove this, because tokio-postgres's DbError cannot be constructed in
+/// a unit test.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn constraint_violation_keeps_detail_and_constraint_name() {
+    let mut s = PostgresDriver.connect(test_config()).await.unwrap();
+    s.execute(
+        req("DROP TABLE IF EXISTS public.tuplenest_errdet"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    s.execute(
+        req("CREATE TABLE public.tuplenest_errdet (id int8 PRIMARY KEY)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    s.execute(
+        req("INSERT INTO public.tuplenest_errdet VALUES (1)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    let err = s
+        .execute(
+            req("INSERT INTO public.tuplenest_errdet VALUES (1)"),
+            &NullSink,
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.category, ErrorCategory::ConstraintViolation);
+    assert_eq!(err.native_code.as_deref(), Some("23505"));
+    let msg = err.original_message.as_deref().unwrap_or_default();
+    assert!(
+        msg.contains("Detail: Key (id)=(1) already exists."),
+        "server DETAIL missing from: {msg}"
+    );
+    assert!(
+        msg.contains("constraint \"tuplenest_errdet_pkey\""),
+        "constraint name missing from: {msg}"
+    );
+
+    s.execute(req("DROP TABLE public.tuplenest_errdet"), &NullSink)
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 #[ignore = "requires live PostgreSQL"]
 async fn transactions_visible_only_after_commit() {

@@ -457,6 +457,12 @@ a { color: var(--tn-accent); text-decoration: none; }
 .error-box {
   margin: 18px; border: 1px solid rgba(255, 92, 138, .4); background: rgba(255, 92, 138, .07);
   border-radius: 10px; padding: 14px 16px; font: 12px/1.5 var(--tn-mono); color: var(--tn-danger);
+  /* The backend sends the server's full report — message, Detail, Hint,
+     Context, constraint names — newline-separated. Collapsing whitespace
+     turned all of it into one run-on line; and an error you cannot select is
+     an error you cannot paste into an issue. */
+  white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; cursor: text;
+  max-height: 40vh; overflow-y: auto;
 }
 .trunc-note {
   flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 14px;
