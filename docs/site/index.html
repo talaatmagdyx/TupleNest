@@ -6,76 +6,178 @@
 <title>TupleNest — the PostgreSQL IDE that asks before it writes</title>
 <meta name="description" content="A fast, local-first PostgreSQL desktop IDE for macOS, Windows and Linux. Streaming results, schema-aware autocomplete, safe row editing, TLS that fails closed, and credentials that live only in your OS keychain. Free and MIT-licensed.">
 <meta property="og:title" content="TupleNest — the PostgreSQL IDE that asks before it writes">
-<meta property="og:description" content="Streaming results, schema-aware autocomplete, safe row editing, TLS that fails closed. Rust + Tauri. MIT.">
-<meta property="og:image" content="shots/hero.png">
+<meta property="og:description" content="Streaming results, schema-aware autocomplete, safe row editing, TLS that fails closed. Rust + Tauri. MIT. No accounts, no cloud, no telemetry.">
+<meta property="og:image" content="https://talaatmagdyx.github.io/TupleNest/shots/hero.png">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://talaatmagdyx.github.io/TupleNest/">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="logo.png">
 <style>
   :root{
-    --bg:#0d1017; --panel:#151a23; --panel2:#1a2029; --line:#232a36;
-    --text:#d7dde8; --dim:#8b94a7; --faint:#5c6474;
+    --bg:#0b0e14; --panel:#141924; --panel2:#1a2130; --line:#222b3a; --line2:#2c3750;
+    --text:#dde4f0; --dim:#939db2; --faint:#5f6980;
     --amber:#f5a623; --coral:#ff6b57; --green:#4ec97f; --blue:#5aa2f7;
+    --grad:linear-gradient(100deg,var(--amber),var(--coral));
     --mono:'SF Mono',ui-monospace,'JetBrains Mono',Menlo,Consolas,monospace;
     --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html{scroll-behavior:smooth}
-  @media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto} *{transition:none!important;animation:none!important} }
-  body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.65;overflow-x:hidden}
   a{color:var(--amber);text-decoration:none}
   a:hover{text-decoration:underline}
-  .wrap{max-width:1060px;margin:0 auto;padding:0 24px}
-  header{padding:18px 0;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(13,16,23,.85);backdrop-filter:blur(10px);z-index:10}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+
+  /* ambient glows */
+  .glow{position:absolute;border-radius:50%;filter:blur(120px);opacity:.16;pointer-events:none;z-index:0}
+  .g1{width:640px;height:640px;background:var(--amber);top:-260px;left:50%;transform:translateX(-70%)}
+  .g2{width:520px;height:520px;background:var(--coral);top:-160px;left:50%;transform:translateX(10%)}
+  .g3{width:600px;height:600px;background:#3b5bdb;opacity:.10}
+
+  header{padding:14px 0;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(11,14,20,.82);backdrop-filter:blur(12px);z-index:50}
   header .wrap{display:flex;align-items:center;gap:12px}
-  header img{width:28px;height:28px;border-radius:6px}
+  header img{width:30px;height:30px;border-radius:7px}
   header b{font-size:16px;letter-spacing:.2px}
-  header nav{margin-left:auto;display:flex;gap:22px;font-size:14px}
+  header nav{margin-left:auto;display:flex;gap:22px;font-size:14px;align-items:center}
   header nav a{color:var(--dim)} header nav a:hover{color:var(--text);text-decoration:none}
-  .hero{padding:84px 0 48px;text-align:center}
-  .hero h1{font-size:clamp(34px,5.5vw,58px);line-height:1.08;letter-spacing:-1.2px;font-weight:800}
-  .hero h1 em{font-style:normal;background:linear-gradient(100deg,var(--amber),var(--coral));-webkit-background-clip:text;background-clip:text;color:transparent}
-  .hero p.sub{margin:20px auto 0;max-width:640px;font-size:19px;color:var(--dim)}
-  .meta{margin-top:14px;color:var(--faint);font-size:14px;font-family:var(--mono)}
-  .cta{margin-top:32px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
-  .btn{display:inline-block;padding:12px 22px;border-radius:8px;font-weight:600;font-size:15px;transition:transform .12s ease}
-  .btn:hover{text-decoration:none;transform:translateY(-1px)}
-  .btn.primary{background:linear-gradient(100deg,var(--amber),var(--coral));color:#1a1205}
-  .btn.ghost{border:1px solid var(--line);color:var(--text);background:var(--panel)}
-  .shot{margin:56px auto 0;border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.55)}
+  header nav a.navbtn{color:#1a1205;background:var(--grad);padding:7px 16px;border-radius:8px;font-weight:700}
+  @media(max-width:720px){header nav a:not(.navbtn){display:none}}
+  .pill{display:inline-block;font-family:var(--mono);font-size:11px;letter-spacing:.5px;padding:2px 10px;border-radius:99px;border:1px solid var(--line2);color:var(--dim)}
+
+  .hero{position:relative;padding:96px 0 40px;text-align:center}
+  .hero .wrap{position:relative;z-index:1}
+  .tagpill{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--dim);border:1px solid var(--line2);background:var(--panel);border-radius:99px;padding:6px 16px;margin-bottom:26px}
+  .tagpill .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green)}
+  .hero h1{font-size:clamp(38px,6vw,68px);line-height:1.05;letter-spacing:-1.6px;font-weight:800}
+  .hero h1 em{font-style:normal;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero p.sub{margin:22px auto 0;max-width:660px;font-size:19px;color:var(--dim)}
+  .meta{margin-top:16px;color:var(--faint);font-size:13.5px;font-family:var(--mono)}
+  .cta{margin-top:34px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+  .btn{display:inline-flex;align-items:center;gap:9px;padding:14px 26px;border-radius:10px;font-weight:700;font-size:15.5px;transition:transform .12s ease,box-shadow .12s ease}
+  .btn:hover{text-decoration:none;transform:translateY(-2px)}
+  .btn.primary{background:var(--grad);color:#1a1205;box-shadow:0 8px 30px rgba(245,166,35,.25)}
+  .btn.primary:hover{box-shadow:0 12px 40px rgba(255,107,87,.35)}
+  .btn.ghost{border:1px solid var(--line2);color:var(--text);background:var(--panel)}
+  .subcta{margin-top:12px;font-size:13px;color:var(--faint)}
+  .subcta a{color:var(--dim)}
+  .shot{margin:60px auto 0;border:1px solid var(--line2);border-radius:14px;overflow:hidden;box-shadow:0 40px 120px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.02) inset;position:relative}
   .shot img{width:100%;display:block}
-  .honest{margin:26px auto 0;max-width:720px;font-size:13.5px;color:var(--faint);border:1px solid var(--line);border-radius:8px;padding:10px 16px;background:var(--panel)}
+  .honest{margin:28px auto 0;max-width:740px;font-size:13.5px;color:var(--faint);border:1px solid var(--line);border-radius:10px;padding:12px 18px;background:var(--panel);text-align:left}
   .honest b{color:var(--dim)}
-  section{padding:72px 0;border-top:1px solid var(--line)}
-  h2{font-size:30px;letter-spacing:-.5px;margin-bottom:8px}
-  .lede{color:var(--dim);max-width:680px;margin-bottom:40px;font-size:16.5px}
-  .feature{display:grid;grid-template-columns:1fr 1fr;gap:44px;align-items:center;margin:64px 0}
-  .feature:nth-child(even) .fimg{order:-1}
-  @media(max-width:820px){.feature{grid-template-columns:1fr}.feature:nth-child(even) .fimg{order:0}}
-  .feature h3{font-size:21px;margin-bottom:10px}
-  .feature p{color:var(--dim);font-size:15.5px}
-  .feature p+p{margin-top:10px}
-  .feature .fimg{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel);box-shadow:0 16px 44px rgba(0,0,0,.4)}
-  .feature .fimg img{width:100%;display:block}
-  .kbd,.mono{font-family:var(--mono);font-size:.92em;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 6px;white-space:nowrap}
-  table{width:100%;border-collapse:collapse;font-size:14.5px}
-  th,td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:top}
-  th{color:var(--faint);font-size:12px;text-transform:uppercase;letter-spacing:1px}
-  td:first-child{white-space:nowrap;font-weight:600}
-  td .how{color:var(--dim)}
-  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
-  @media(max-width:820px){.grid3{grid-template-columns:1fr}}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px 22px}
+
+  .statband{border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--panel);margin-top:72px}
+  .statband .wrap{display:grid;grid-template-columns:repeat(4,1fr);text-align:center}
+  .statband .s{padding:26px 10px;border-left:1px solid var(--line)}
+  .statband .s:first-child{border-left:0}
+  .statband .n{font-size:30px;font-weight:800;letter-spacing:-1px;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;font-family:var(--mono)}
+  .statband .l{font-size:12.5px;color:var(--faint);text-transform:uppercase;letter-spacing:1.2px;margin-top:4px}
+  @media(max-width:820px){.statband .wrap{grid-template-columns:repeat(2,1fr)}.statband .s:nth-child(3){border-left:0}}
+
+  section{padding:88px 0;position:relative}
+  section+section{border-top:1px solid var(--line)}
+  .kicker{font-family:var(--mono);font-size:12.5px;letter-spacing:2px;text-transform:uppercase;color:var(--amber);margin-bottom:12px}
+  h2{font-size:clamp(26px,3.6vw,38px);letter-spacing:-.8px;margin-bottom:10px;line-height:1.15}
+  .lede{color:var(--dim);max-width:700px;margin-bottom:44px;font-size:17px}
+
+  .simple{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+  @media(max-width:900px){.simple{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:520px){.simple{grid-template-columns:1fr}}
+  .simple .card{text-align:center;padding:30px 18px}
+  .simple .big{font-size:44px;font-weight:800;font-family:var(--mono);letter-spacing:-2px;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .simple h4{margin:6px 0 8px;font-size:15.5px}
+  .simple p{font-size:13.5px;color:var(--dim)}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px 24px;transition:transform .15s ease,border-color .15s ease}
+  .card:hover{transform:translateY(-3px);border-color:var(--line2)}
   .card h4{font-size:15px;margin-bottom:8px;color:var(--text)}
   .card p{font-size:13.8px;color:var(--dim)}
-  .card p .mono{font-size:.9em}
-  .dl table{font-size:15px}
-  .dl .mono{white-space:normal}
-  .note{font-size:13.5px;color:var(--faint);margin-top:18px;max-width:760px}
-  pre{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 18px;font-family:var(--mono);font-size:13.5px;overflow-x:auto;color:#c9d4e6;margin:14px 0}
+
+  table{width:100%;border-collapse:collapse;font-size:14.5px;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{text-align:left;padding:14px 16px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:0}
+  th{color:var(--faint);font-size:12px;text-transform:uppercase;letter-spacing:1px;background:var(--panel2)}
+  td:first-child{white-space:nowrap;font-weight:600}
+  td .how{color:var(--dim)}
+  td.how{color:var(--dim)}
+  .kbd,.mono{font-family:var(--mono);font-size:.92em;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 6px;white-space:nowrap}
+
+  .feature{display:grid;grid-template-columns:1fr 1fr;gap:52px;align-items:center;margin:72px 0}
+  .feature:first-of-type{margin-top:8px}
+  .feature.flip .fimg{order:-1}
+  @media(max-width:860px){.feature{grid-template-columns:1fr;gap:24px}.feature.flip .fimg{order:0}}
+  .feature h3{font-size:22px;margin-bottom:12px;letter-spacing:-.4px}
+  .feature p{color:var(--dim);font-size:15.5px}
+  .feature p+p{margin-top:12px}
+  .feature .fimg{border:1px solid var(--line2);border-radius:12px;overflow:hidden;background:var(--panel);box-shadow:0 20px 60px rgba(0,0,0,.45)}
+  .feature .fimg img{width:100%;display:block;transition:transform .3s ease}
+  .feature .fimg:hover img{transform:scale(1.015)}
+  .fnum{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:2px;margin-bottom:8px}
+
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  @media(max-width:820px){.grid3{grid-template-columns:1fr}}
+
+  .keys{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;max-width:900px}
+  @media(max-width:900px){.keys{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:560px){.keys{grid-template-columns:repeat(2,1fr)}}
+  .key{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;text-align:center}
+  .key .kbd{font-size:13px;padding:3px 9px}
+  .key .kl{display:block;margin-top:8px;font-size:12.5px;color:var(--dim)}
+
+  .oscards{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+  @media(max-width:900px){.oscards{grid-template-columns:1fr}}
+  .oscard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:28px;display:flex;flex-direction:column;transition:border-color .15s ease,transform .15s ease}
+  .oscard:hover{border-color:var(--line2);transform:translateY(-3px)}
+  .oscard.hl{border-color:var(--amber);box-shadow:0 0 0 1px var(--amber),0 16px 50px rgba(245,166,35,.12)}
+  .oscard .osname{font-size:19px;font-weight:700;display:flex;align-items:center;gap:10px}
+  .oscard .osname .oslogo{font-size:24px}
+  .oscard .osreq{font-size:12.5px;color:var(--faint);font-family:var(--mono);margin:4px 0 18px}
+  .oscard .assets{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+  .oscard .asset{display:flex;justify-content:space-between;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 13px;font-family:var(--mono);font-size:12.5px;color:var(--text)}
+  .oscard .asset:hover{border-color:var(--amber);text-decoration:none}
+  .oscard .asset .sz{color:var(--faint);white-space:nowrap}
+  .oscard details{margin-top:auto;font-size:13px;color:var(--dim)}
+  .oscard summary{cursor:pointer;color:var(--faint);font-size:12.5px}
+  .oscard summary:hover{color:var(--dim)}
+  .oscard details p{margin-top:10px}
+  .oscard details .mono{font-size:11px;white-space:normal;word-break:break-all}
+  .note{font-size:13.5px;color:var(--faint);margin-top:22px;max-width:780px}
+
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 20px;font-family:var(--mono);font-size:13.5px;overflow-x:auto;color:#c9d4e6;margin:14px 0}
   pre .c{color:var(--faint)}
-  footer{border-top:1px solid var(--line);padding:44px 0 64px;color:var(--faint);font-size:14px}
-  footer .wrap{display:flex;flex-wrap:wrap;gap:10px 28px;align-items:center}
-  footer a{color:var(--dim)}
-  .pill{display:inline-block;font-family:var(--mono);font-size:11px;letter-spacing:.5px;padding:2px 9px;border-radius:99px;border:1px solid var(--line);color:var(--dim);margin-left:8px;vertical-align:3px}
+
+  .faq{max-width:820px}
+  .faq details{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:0;margin-bottom:12px;overflow:hidden}
+  .faq summary{cursor:pointer;padding:16px 20px;font-weight:600;font-size:15.5px;list-style:none;display:flex;justify-content:space-between;align-items:center}
+  .faq summary::-webkit-details-marker{display:none}
+  .faq summary:after{content:'+';font-family:var(--mono);color:var(--faint);font-size:18px;transition:transform .15s ease}
+  .faq details[open] summary:after{transform:rotate(45deg)}
+  .faq .a{padding:0 20px 18px;color:var(--dim);font-size:14.5px}
+  .faq .a p+p{margin-top:10px}
+
+  .finale{text-align:center;padding:110px 0;position:relative;overflow:hidden}
+  .finale h2{font-size:clamp(30px,4.5vw,48px)}
+  .finale .lede{margin:14px auto 0;max-width:560px}
+  .finale .cta{margin-top:30px}
+
+  footer{border-top:1px solid var(--line);padding:48px 0 64px;color:var(--faint);font-size:14px}
+  footer .cols{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:32px}
+  @media(max-width:820px){footer .cols{grid-template-columns:1fr 1fr}}
+  footer h5{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:14px}
+  footer ul{list-style:none}
+  footer li{margin-bottom:9px}
+  footer a{color:var(--dim)} footer a:hover{color:var(--text)}
+  footer .brand{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  footer .brand img{width:26px;height:26px;border-radius:6px}
+  footer .brand b{color:var(--text)}
+  footer .fine{margin-top:36px;padding-top:20px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;gap:8px 24px;font-size:13px}
+
+  .reveal{opacity:0;transform:translateY(18px);transition:opacity .6s ease,transform .6s ease}
+  .reveal.in{opacity:1;transform:none}
+  @media (prefers-reduced-motion: reduce){
+    html{scroll-behavior:auto}
+    *{transition:none!important;animation:none!important}
+    .reveal{opacity:1;transform:none}
+  }
 </style>
 </head>
 <body>
@@ -83,62 +185,95 @@
 <header>
   <div class="wrap">
     <img src="logo.png" alt="">
-    <b>TupleNest</b><span class="pill">v0.1.0</span>
+    <b>TupleNest</b><span class="pill" id="verpill">beta</span>
     <nav>
+      <a href="#simple">Why</a>
       <a href="#safety">Safety</a>
-      <a href="#features">Features</a>
-      <a href="#download">Download</a>
-      <a href="#verify">Verify</a>
+      <a href="#tour">Tour</a>
+      <a href="#faq">FAQ</a>
       <a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a>
+      <a class="navbtn" href="#download">Download</a>
     </nav>
   </div>
 </header>
 
-<div class="hero wrap">
-  <h1>The PostgreSQL IDE that<br><em>asks before it writes.</em></h1>
-  <p class="sub">A fast, local-first desktop workspace for exploring, developing,
-  debugging and operating PostgreSQL — built on one conviction: a database
-  tool's first job is to not hurt your database.</p>
-  <div class="meta">Rust + Tauri 2 + React · macOS / Windows / Linux · MIT · no telemetry, no account, no cloud</div>
-  <div class="cta">
-    <a class="btn primary" href="https://github.com/talaatmagdyx/TupleNest/releases">Download</a>
-    <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest">View source</a>
+<div class="hero">
+  <div class="glow g1"></div><div class="glow g2"></div>
+  <div class="wrap">
+    <div class="tagpill"><span class="dot"></span> <span id="tagline">Free &amp; open source · MIT · public beta</span></div>
+    <h1>The PostgreSQL IDE that<br><em>asks before it writes.</em></h1>
+    <p class="sub">A fast, local-first desktop workspace for exploring, developing,
+    debugging and operating PostgreSQL — built on one conviction: <b>a database
+    tool's first job is to not hurt your database.</b></p>
+    <div class="meta">Rust + Tauri 2 + React · macOS / Windows / Linux · no account, no cloud, no telemetry</div>
+    <div class="cta">
+      <a class="btn primary" id="dlbtn" href="#download">⬇&nbsp; Download free</a>
+      <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest">★&nbsp; Star on GitHub</a>
+    </div>
+    <div class="subcta" id="dlsub">MIT-licensed · built from source in public CI · <a href="#verify">verifiable downloads</a></div>
+    <div class="shot"><img src="shots/hero.png" alt="TupleNest main window: formatted SQL join in the editor, streaming results grid below, verify-full TLS in the status bar"></div>
+    <p class="honest"><b>Honest label:</b> this is an early release — tested far more than it has been
+    <i>used</i>. 1,600+ frontend tests, live-PostgreSQL contract tests and real-sshd
+    tunnel tests pass in CI, but nobody has lived with it yet. Every screenshot on this
+    page is the real app on a real database. That's the deal on this whole page: every claim is checkable.</p>
   </div>
-  <div class="shot"><img src="shots/hero.png" alt="TupleNest main window: formatted SQL join in the editor, streaming results grid below, verify-full TLS in the status bar"></div>
-  <p class="honest"><b>Honest label:</b> this is a v0.1.0 — tested far more than it has been
-  <i>used</i>. 1,600+ frontend tests, 34 live-PostgreSQL contract tests and real-sshd
-  tunnel tests pass in CI, but nobody has lived with it yet. Every screenshot on this
-  page is the real app on a real database.</p>
 </div>
+
+<div class="statband">
+  <div class="wrap">
+    <div class="s"><div class="n">1,600+</div><div class="l">tests, incl. adversarial</div></div>
+    <div class="s"><div class="n">13·15·17</div><div class="l">live PG contract-tested</div></div>
+    <div class="s"><div class="n">3</div><div class="l">platforms, one codebase</div></div>
+    <div class="s"><div class="n">0</div><div class="l">telemetry, accounts, cloud</div></div>
+  </div>
+</div>
+
+<section id="simple">
+  <div class="wrap">
+    <div class="kicker">Simple on purpose</div>
+    <h2>Nothing between you and your database.</h2>
+    <p class="lede">Every number below is a checkable claim, not a slogan.</p>
+    <div class="simple">
+      <div class="card reveal"><div class="big">0</div><h4>accounts</h4><p>No sign-up, no license key, no cloud. Download, open, connect.</p></div>
+      <div class="card reveal"><div class="big">60s</div><h4>to first query</h4><p>One dialog between you and <span class="mono">SELECT</span>. Passwords go to the OS keychain, never a config file.</p></div>
+      <div class="card reveal"><div class="big">1</div><h4>window</h4><p>One window, one session, tabs inside it. No workspace files, no project setup.</p></div>
+      <div class="card reveal"><div class="big">2</div><h4>network destinations</h4><p>Your databases, plus one startup version check to GitHub. That is the <a href="https://github.com/talaatmagdyx/TupleNest/blob/main/PRIVACY.md">entire network story</a>.</p></div>
+    </div>
+  </div>
+</section>
 
 <section id="safety">
   <div class="wrap">
-    <h2>Safety is the product</h2>
-    <p class="lede">Every guarantee below is enforced in a specific place — by the
-    server where possible, by reviewed SQL where not — and every one has a test
-    that performs the misuse and asserts the refusal.</p>
-    <table>
+    <div class="kicker">The core idea</div>
+    <h2>Safety is the product.</h2>
+    <p class="lede">Every guarantee below names <b>where it is enforced</b> — by the
+    server where possible, by reviewed SQL where not — because "we're careful" is
+    not an architecture. Every row has a test that performs the misuse and asserts
+    the refusal.</p>
+    <table class="reveal">
       <tr><th>Guarantee</th><th>How it's actually enforced</th></tr>
-      <tr><td>Read-only profiles</td><td class="how">PostgreSQL itself: <span class="mono">SET SESSION CHARACTERISTICS … READ ONLY</span>. The server refuses writes — not a client-side promise.</td></tr>
-      <tr><td>Destructive guard</td><td class="how"><span class="mono">UPDATE</span>/<span class="mono">DELETE</span> without <span class="mono">WHERE</span>, plus <span class="mono">DROP / TRUNCATE / ALTER / GRANT…</span>, ask before running on prod <em>and</em> staging. SQL is masked first — comments, strings, dollar-quotes — so a commented-out <span class="mono">WHERE</span> can't disarm it. Thirteen adversarial bypasses are pinned by tests. Best-effort by design: the seatbelt light, not the seatbelt.</td></tr>
-      <tr><td>Safe row editing</td><td class="how">Only single-table SELECTs carrying the full primary key are editable; joins, groups, CTEs and derived tables are refused with a reason. You review the exact generated <span class="mono">UPDATE</span>s before anything runs. Writes are parameter-bound, keyed by the full PK, and guarded with <span class="mono">IS NOT DISTINCT FROM</span> on old values — an edit racing another session hits 0 rows and is <em>refused</em>, not silently won.</td></tr>
-      <tr><td>Transactions own their tab</td><td class="how">One session serves all tabs, so the tab that opened a transaction owns it. Commit from another tab is refused and names the owner. Closing the window mid-transaction always prompts.</td></tr>
-      <tr><td>Credentials</td><td class="how">OS keychain only — Keychain / Credential Manager / Secret Service. Never in config files, state, logs, or IPC payloads; the backend resolves opaque references.</td></tr>
-      <tr><td>TLS fails closed</td><td class="how"><span class="mono">verify-full</span> by default; a bad chain, expired cert or wrong name is an error, never a silent downgrade. <span class="mono">verify-ca</span> is real and distinct — chain checked, name knowingly skipped — for SSH tunnels where you dial localhost.</td></tr>
-      <tr><td>SSH tunnels pin host keys</td><td class="how">Fingerprint or known_hosts; an unknown or wrong host key fails closed. Tested against a live sshd in CI.</td></tr>
-      <tr><td>Signed auto-updates</td><td class="how">Verified against a minisign public key compiled into the binary. The release host serves bytes; it never holds the private key. Updating is refused while a transaction is open.</td></tr>
+      <tr><td>🔒 Read-only profiles</td><td class="how">PostgreSQL itself: <span class="mono">SET SESSION CHARACTERISTICS … READ ONLY</span>. The server refuses writes — not a client-side promise.</td></tr>
+      <tr><td>⚠️ Destructive guard</td><td class="how"><span class="mono">UPDATE</span>/<span class="mono">DELETE</span> without <span class="mono">WHERE</span>, plus <span class="mono">DROP / TRUNCATE / ALTER / GRANT…</span>, ask before running on prod <em>and</em> staging. SQL is masked first — comments, strings, dollar-quotes — so a commented-out <span class="mono">WHERE</span> can't disarm it. Thirteen adversarial bypasses are pinned by tests. Best-effort by design: the seatbelt light, not the seatbelt.</td></tr>
+      <tr><td>✏️ Safe row editing</td><td class="how">Only single-table SELECTs carrying the full primary key are editable; joins, groups, CTEs and derived tables are refused with a reason. You review the exact generated <span class="mono">UPDATE</span>s before anything runs. Writes are parameter-bound, keyed by the full PK, and guarded with <span class="mono">IS NOT DISTINCT FROM</span> on old values — an edit racing another session hits 0 rows and is <em>refused</em>, not silently won.</td></tr>
+      <tr><td>🔁 Transactions own their tab</td><td class="how">One session serves all tabs, so the tab that opened a transaction owns it. Commit from another tab is refused and names the owner. Closing the window mid-transaction always prompts.</td></tr>
+      <tr><td>🔑 Credentials</td><td class="how">OS keychain only — Keychain / Credential Manager / Secret Service. Never in config files, state, logs, or IPC payloads; the backend resolves opaque references.</td></tr>
+      <tr><td>🛡 TLS fails closed</td><td class="how"><span class="mono">verify-full</span> by default; a bad chain, expired cert or wrong name is an error, never a silent downgrade. <span class="mono">verify-ca</span> is real and distinct — chain checked, name knowingly skipped — for SSH tunnels where you dial localhost.</td></tr>
+      <tr><td>🧷 SSH tunnels pin host keys</td><td class="how">Fingerprint or known_hosts; an unknown or wrong host key fails closed. Tested against a live sshd in CI.</td></tr>
+      <tr><td>📦 Signed auto-updates</td><td class="how">Verified against a minisign public key compiled into the binary. The release host serves bytes; it never holds the private key. Updating is refused while a transaction is open.</td></tr>
     </table>
   </div>
 </section>
 
-<section id="features">
+<section id="tour">
   <div class="wrap">
-    <h2>A tour of the real thing</h2>
-    <p class="lede">Screenshots below are unretouched captures of v0.1.0 against a
-    local PostgreSQL 18.</p>
+    <div class="kicker">Product tour</div>
+    <h2>A tour of the real thing.</h2>
+    <p class="lede">Unretouched captures of the shipping build against a local
+    PostgreSQL 18.</p>
 
-    <div class="feature">
+    <div class="feature reveal">
       <div>
+        <div class="fnum">01</div>
         <h3>Connections that prove themselves</h3>
         <p>A staged probe — DNS, TCP, auth, server version — tells you <em>which layer</em>
         failed instead of "could not connect". Environments (dev / test / staging / prod)
@@ -146,11 +281,12 @@
         <p>The password field says where the password goes, because a promise you
         can't see is a promise you can't check.</p>
       </div>
-      <div class="fimg"><img src="shots/connection.png" alt="New connection dialog with staged connection test: dns, tcp, auth with TLS VerifyFull, and server version, all passing"></div>
+      <div class="fimg"><img src="shots/connection.png" alt="New connection dialog with staged connection test: dns, tcp, auth with TLS VerifyFull, and server version, all passing" loading="lazy"></div>
     </div>
 
-    <div class="feature">
+    <div class="feature flip reveal">
       <div>
+        <div class="fnum">02</div>
         <h3>Autocomplete that read your schema</h3>
         <p>Tables after <span class="mono">FROM</span>, columns of the in-scope tables in
         <span class="mono">WHERE</span>, <span class="mono">alias.</span> resolving to that table's
@@ -160,11 +296,12 @@
         <p>Plus: Format SQL, EXPLAIN / EXPLAIN ANALYZE plans, <span class="mono">$1..$n</span>
         parameter binding, searchable history, snippets in the command palette.</p>
       </div>
-      <div class="fimg"><img src="shots/complete.png" alt="Autocomplete popup suggesting the books table"></div>
+      <div class="fimg"><img src="shots/complete.png" alt="Autocomplete popup suggesting the books table" loading="lazy"></div>
     </div>
 
-    <div class="feature">
+    <div class="feature reveal">
       <div>
+        <div class="fnum">03</div>
         <h3>A grid that streams and tells the truth</h3>
         <p>Virtualized and backpressured: rows arrive in bounded batches, the first
         100,000 are kept under both a row cap and a byte budget, and the footer
@@ -175,22 +312,24 @@
         visibly-raw hex, never as a plausible wrong number. Full keyboard
         navigation, real <span class="mono">role="grid"</span> semantics.</p>
       </div>
-      <div class="fimg"><img src="shots/explorer.png" alt="Schema explorer expanded to columns, with typed results in the grid"></div>
+      <div class="fimg"><img src="shots/explorer.png" alt="Schema explorer expanded to columns, with typed results in the grid" loading="lazy"></div>
     </div>
 
-    <div class="feature">
+    <div class="feature flip reveal">
       <div>
+        <div class="fnum">04</div>
         <h3>The schema, as a picture</h3>
         <p>The ER view draws the foreign-key graph and names every constraint.
         Alongside it: schema diff (columns, types, nullability, PKs), find-usages
         and rename across tabs, plan-vs-plan comparison with a "new sequential
         scan" regression flag, and partition tree browsing.</p>
       </div>
-      <div class="fimg"><img src="shots/er-diagram.png" alt="ER diagram of authors, books, orders and order_items with the foreign key list"></div>
+      <div class="fimg"><img src="shots/er-diagram.png" alt="ER diagram of authors, books, orders and order_items with the foreign key list" loading="lazy"></div>
     </div>
 
-    <div class="feature">
+    <div class="feature reveal">
       <div>
+        <div class="fnum">05</div>
         <h3>Operate, not just query</h3>
         <p>Live backends, cache hit ratio, commits and rollbacks, blocked locks, and
         per-session detail — with cancel and terminate. Terminate always confirms;
@@ -198,87 +337,103 @@
         <p>Health panels for index usage, vacuum &amp; bloat, and
         <span class="mono">pg_stat_statements</span> top queries round it out.</p>
       </div>
-      <div class="fimg"><img src="shots/monitor.png" alt="Server activity: backends, DB size, cache hit, commits, rollbacks, blocked locks"></div>
+      <div class="fimg"><img src="shots/monitor.png" alt="Server activity: backends, DB size, cache hit, commits, rollbacks, blocked locks" loading="lazy"></div>
     </div>
 
     <div class="grid3">
-      <div class="card"><h4>CSV import wizard</h4><p>RFC-4180 parsing — quoted delimiters, escaped quotes, embedded newlines, BOM. You review inferred names and types before anything runs; inserts are batched inside one transaction. Whole file is read into memory, so huge CSVs aren't practical yet.</p></div>
-      <div class="card"><h4>Production audit log</h4><p>Everything executed on a prod-tagged connection is kept, full SQL, in a dedicated audit log — while regular history omits prod SQL for privacy. Accountability and privacy, separately.</p></div>
-      <div class="card"><h4>Global object search</h4><p>One box over every schema, table, view, column, index and function the cache knows, with instant results served locally.</p></div>
-      <div class="card"><h4>Metadata cache</h4><p>Explorer and completion answer from a local SQLite cache that refreshes live and serves offline — a schema with 13,000 relations opens as a tree, not a spinner.</p></div>
-      <div class="card"><h4>Crash logs stay local</h4><p>No telemetry, no account, no cloud. Panic reports are written to local disk with key/value and URL-credential redaction, and are never uploaded.</p></div>
-      <div class="card"><h4>Accessible by construction</h4><p>Real dialog semantics with focus traps on all 28 modals, roving-tabindex grid keyboard model, <span class="mono">prefers-reduced-motion</span> respected.</p></div>
+      <div class="card reveal"><h4>📥 CSV import wizard</h4><p>RFC-4180 parsing — quoted delimiters, escaped quotes, embedded newlines, BOM. You review inferred names and types before anything runs; inserts are batched inside one transaction.</p></div>
+      <div class="card reveal"><h4>📜 Production audit log</h4><p>Everything executed on a prod-tagged connection is kept, full SQL, in a dedicated audit log — while regular history omits prod SQL for privacy. Accountability and privacy, separately.</p></div>
+      <div class="card reveal"><h4>🔎 Global object search</h4><p>One box over every schema, table, view, column, index and function the cache knows, with instant results served locally.</p></div>
+      <div class="card reveal"><h4>⚡ Metadata cache</h4><p>Explorer and completion answer from a local SQLite cache that refreshes live and serves offline — a schema with 13,000 relations opens as a tree, not a spinner.</p></div>
+      <div class="card reveal"><h4>🔐 Crash logs stay local</h4><p>No telemetry, no account, no cloud. Panic reports are written to local disk with key/value and URL-credential redaction, and are never uploaded.</p></div>
+      <div class="card reveal"><h4>♿ Accessible by construction</h4><p>Real dialog semantics with focus traps on all 28 modals, roving-tabindex grid keyboard model, <span class="mono">prefers-reduced-motion</span> respected.</p></div>
     </div>
   </div>
 </section>
 
-<section id="download" class="dl">
+<section id="keyboard">
   <div class="wrap">
-    <h2>Download</h2>
-    <p class="lede">Free, MIT-licensed, built from source in public CI. PostgreSQL 13+
-    (13, 15 and 17 are contract-tested on every push).</p>
-    <p class="lede" style="margin-bottom:24px"><strong>Nothing is code-signed yet, so every OS
-    will try to stop you at least once.</strong> Each stop is spelled out below —
-    with the exact wording, because the first two beta testers hit obstacles the
-    docs had skipped past.</p>
-    <table>
-      <tr><th>Platform</th><th>File</th><th>What will happen, and what to do</th></tr>
-      <tr>
-        <td>macOS<br><span class="how" style="font-weight:400">Apple Silicon / Intel</span></td>
-        <td><span class="mono">TupleNest_0.1.0_aarch64.dmg</span><br><span class="mono">TupleNest_0.1.0_x64.dmg</span></td>
-        <td class="how">
-          Open the DMG, then <strong>drag TupleNest.app onto the Applications shortcut inside it</strong> —
-          opening the DMG installs nothing, the drag is the install. Launch from Applications,
-          right-click → <strong>Open</strong> → <strong>Open</strong> (double-clicking offers no way through).<br><br>
-          <strong>"…is in the Trash"</strong> — your Dock icon points at an old copy you moved there;
-          macOS reports a dangling icon that way. Drag the dead icon off the Dock and launch from
-          <span class="mono">/Applications</span>.<br>
-          <strong>"…is damaged"</strong> — Gatekeeper's phrasing for unsigned:
-          <span class="mono">xattr -dr com.apple.quarantine /Applications/TupleNest.app</span>
-        </td>
-      </tr>
-      <tr>
-        <td>Linux<br><span class="how" style="font-weight:400">glibc 2.35+</span></td>
-        <td><span class="mono">.AppImage</span> ← easiest<br><span class="mono">.deb</span> / <span class="mono">.rpm</span></td>
-        <td class="how">
-          <span class="mono">chmod +x TupleNest_0.1.0_amd64.AppImage &amp;&amp; ./TupleNest_0.1.0_amd64.AppImage</span> —
-          no root, no package manager.<br><br>
-          <strong>"Could not get lock /var/lib/dpkg/lock-frontend"</strong> — that is
-          <span class="mono">unattended-upgrades</span>, Ubuntu's automatic security updater, holding
-          the lock legitimately. Never delete the lock file. Use the AppImage, or wait a few minutes.<br>
-          Needs webkit2gtk-4.1, and a keyring daemon (GNOME Keyring / KWallet) for <em>saved</em> passwords.
-        </td>
-      </tr>
-      <tr>
-        <td>Windows<br><span class="how" style="font-weight:400">10+</span></td>
-        <td><span class="mono">.exe</span> or <span class="mono">.msi</span></td>
-        <td class="how">Unsigned: SmartScreen says <strong>"Windows protected your PC"</strong>,
-          publisher <strong>unknown</strong> → <strong>More info</strong> → <strong>Run anyway</strong>.
-          WebView2 auto-installs if missing.</td>
-      </tr>
-    </table>
-    <div class="cta" style="justify-content:flex-start;margin-top:26px">
-      <a class="btn primary" href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Get it from GitHub Releases</a>
-      <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest/issues/new?template=bug_report.yml">Install didn't work? Tell us</a>
+    <div class="kicker">Built for hands on keys</div>
+    <h2>Everything is a keystroke away.</h2>
+    <p class="lede">Press <span class="kbd">?</span> in the app for the full cheatsheet.
+    <span class="kbd">⌘</span> is <span class="kbd">Ctrl</span> on Windows / Linux.</p>
+    <div class="keys">
+      <div class="key reveal"><span class="kbd">⌘ ↵</span><span class="kl">Run query</span></div>
+      <div class="key reveal"><span class="kbd">Esc</span><span class="kl">Cancel / close</span></div>
+      <div class="key reveal"><span class="kbd">⌘ K</span><span class="kl">Command palette</span></div>
+      <div class="key reveal"><span class="kbd">⌘ P</span><span class="kl">Object search</span></div>
+      <div class="key reveal"><span class="kbd">⌘ T</span><span class="kl">New tab</span></div>
+      <div class="key reveal"><span class="kbd">⌘ O</span><span class="kl">Connections</span></div>
+      <div class="key reveal"><span class="kbd">⌘ B</span><span class="kl">Toggle sidebar</span></div>
+      <div class="key reveal"><span class="kbd">⇧ ⌘ F</span><span class="kl">Format SQL</span></div>
+      <div class="key reveal"><span class="kbd">⇧ ⌘ L</span><span class="kl">Dark ↔ light</span></div>
+      <div class="key reveal"><span class="kbd">⌘ C</span><span class="kl">Copy cell</span></div>
     </div>
+  </div>
+</section>
+
+<section id="download">
+  <div class="wrap">
+    <div class="kicker">Get TupleNest</div>
+    <h2>Download. Free, forever, MIT.</h2>
+    <p class="lede">Built from source in public CI, one runner per platform.
+    PostgreSQL 13+ (13, 15 and 17 are contract-tested on every push).
+    <b>Nothing is code-signed yet, so every OS objects once</b> — each card says
+    exactly what you'll see and what to do.</p>
+
+    <div class="oscards">
+      <div class="oscard" id="os-mac">
+        <div class="osname"><span class="oslogo">🍎</span> macOS</div>
+        <div class="osreq">10.15+ · Apple Silicon &amp; Intel</div>
+        <div class="assets" data-os="mac"><a class="asset" href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Get the .dmg from Releases →</a></div>
+        <details>
+          <summary>First-launch dialogs, decoded</summary>
+          <p>Open the DMG, then <b>drag TupleNest.app onto the Applications shortcut inside it</b> — the drag <i>is</i> the install. Launch from Applications: right-click → <b>Open</b> → <b>Open</b>. Double-clicking offers no way through.</p>
+          <p><b>"…is in the Trash"</b> — your Dock icon points at an old copy you moved there. Drag the dead icon off the Dock, launch from /Applications.</p>
+          <p><b>"…is damaged"</b> — Gatekeeper's phrasing for unsigned: <span class="mono">xattr -dr com.apple.quarantine /Applications/TupleNest.app</span></p>
+        </details>
+      </div>
+      <div class="oscard" id="os-win">
+        <div class="osname"><span class="oslogo">🪟</span> Windows</div>
+        <div class="osreq">Windows 10+ · x64</div>
+        <div class="assets" data-os="win"><a class="asset" href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Get the installer from Releases →</a></div>
+        <details>
+          <summary>About the SmartScreen warning</summary>
+          <p>SmartScreen says <b>"Windows protected your PC"</b>, publisher unknown → click <b>More info</b> → <b>Run anyway</b>. WebView2 auto-installs if missing.</p>
+          <p>A standard certificate wouldn't remove this — the warning stays until each release earns download reputation. Only EV skips the wait. <a href="#verify">Verify the download</a> instead; it proves more than the dialog does.</p>
+        </details>
+      </div>
+      <div class="oscard" id="os-linux">
+        <div class="osname"><span class="oslogo">🐧</span> Linux</div>
+        <div class="osreq">glibc 2.35+ · webkit2gtk-4.1</div>
+        <div class="assets" data-os="linux"><a class="asset" href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Get AppImage / deb / rpm →</a></div>
+        <details>
+          <summary>AppImage, dpkg lock, keyring</summary>
+          <p><span class="mono">chmod +x TupleNest_*.AppImage &amp;&amp; ./TupleNest_*.AppImage</span> — no root, no package manager.</p>
+          <p><b>"Could not get lock /var/lib/dpkg/lock-frontend"</b> — that's <span class="mono">unattended-upgrades</span> holding the lock legitimately. Never delete the lock file; use the AppImage or wait a few minutes.</p>
+          <p>Saved passwords need a keyring daemon (GNOME Keyring / KWallet). Connecting works without one; saving doesn't.</p>
+        </details>
+      </div>
+    </div>
+
     <p class="note">Gatekeeper is a funding problem: an Apple account and notarization make
-    it stop. SmartScreen is not the same, and this page used to imply it was — a certificate
-    puts a real name on the installer, but the warning stays until the download earns
-    reputation, and that resets with every release. Neither dialog tells you what you
-    actually downloaded. The checksums below do.</p>
+    it stop. SmartScreen is not the same — a certificate puts a real name on the
+    installer, but the warning stays until each release earns reputation. Neither
+    dialog tells you what you actually downloaded. The checks below do.</p>
   </div>
 </section>
 
 <section id="verify">
   <div class="wrap">
-    <h2>Verify what you downloaded</h2>
+    <div class="kicker">Trust, but verify</div>
+    <h2>Verify what you downloaded.</h2>
     <p class="lede">Two checks, honestly labeled — because they prove different things.</p>
     <pre><span class="c"># catches a corrupted or truncated download</span>
 shasum -a 256 -c SHA256SUMS --ignore-missing
 
 <span class="c"># binds the file to the CI build that produced it — signed by GitHub's</span>
 <span class="c"># OIDC identity, not by anything sitting in the release. The one worth running.</span>
-gh attestation verify TupleNest_0.1.0_aarch64.dmg --repo talaatmagdyx/TupleNest</pre>
+gh attestation verify TupleNest_&lt;file&gt; --repo talaatmagdyx/TupleNest</pre>
     <p class="note"><span class="mono">SHA256SUMS</span> sits beside the installers and is unsigned —
     whoever could swap an installer could swap it too. The attestation can't be swapped.
     CycloneDX SBOMs (one per Rust crate, one for the npm tree) ship with every release.
@@ -287,16 +442,150 @@ gh attestation verify TupleNest_0.1.0_aarch64.dmg --repo talaatmagdyx/TupleNest<
   </div>
 </section>
 
+<section id="faq">
+  <div class="wrap">
+    <div class="kicker">Fair questions</div>
+    <h2>Asked, answered honestly.</h2>
+    <p class="lede">Including the ones a marketing page would skip.</p>
+    <div class="faq">
+      <details>
+        <summary>Why another PostgreSQL client?</summary>
+        <div class="a"><p>Because every one we used would happily run <span class="mono">DELETE FROM orders</span> with no <span class="mono">WHERE</span> against production. Mature tools exist — DBeaver, pgAdmin, TablePlus — and if you need multi-engine support today, use them. TupleNest exists for one reason: a safety model that names its enforcement, on a fast native app, MIT-licensed.</p></div>
+      </details>
+      <details>
+        <summary>Is my data safe? Where does anything go?</summary>
+        <div class="a"><p>Nothing you do in TupleNest leaves your computer. No account, no analytics endpoint, no server run by this project. The app talks to two things: the databases you point it at, and — once, at startup — GitHub, to ask whether a newer release exists. Passwords live in your OS keychain. Row data is held in memory only while a result is on screen. <a href="https://github.com/talaatmagdyx/TupleNest/blob/main/PRIVACY.md">PRIVACY.md</a> lists every file it writes, so you can go look.</p></div>
+      </details>
+      <details>
+        <summary>Why is it unsigned? Should that worry me?</summary>
+        <div class="a"><p>Signing costs money this project doesn't have yet — and on Windows, a standard certificate wouldn't even remove the warning (reputation is per-file and resets each release; only EV skips it). What you can do instead is stronger than either dialog: <span class="mono">gh attestation verify</span> cryptographically binds your download to this repository's CI build at a specific commit. It's in the <a href="#verify">verify section</a>.</p></div>
+      </details>
+      <details>
+        <summary>What's missing? What should I not expect yet?</summary>
+        <div class="a"><p>One engine: PostgreSQL 13+, done properly, before anything else is attempted. The CSV importer reads the whole file into memory — fine for real-world imports, not the 10&nbsp;GB one. The destructive-statement guard is best-effort by design (the seatbelt light; read-only profiles are the seatbelt — the server enforces those). And on Linux, saved passwords need a keyring daemon.</p></div>
+      </details>
+      <details>
+        <summary>How is a beta this heavily tested — and what broke anyway?</summary>
+        <div class="a"><p>1,600+ frontend tests including a suite that executes each documented misuse and asserts the refusal; contract tests against live PostgreSQL 13/15/17; SSH tunnel tests against a real sshd. And still: beta.1 shipped with a close button that did nothing — one missing ACL permission, its rejection swallowed inside a library callback, invisible to every test. beta.2 fixed it and added a test for that whole class of gap. The commit history keeps the story, including the wrong fix that came first, because being checkable is the product.</p></div>
+      </details>
+      <details>
+        <summary>Is it really free? What's the catch?</summary>
+        <div class="a"><p>MIT-licensed, source on GitHub, built in public CI. There is no paid tier, no account, and no data collection to monetize. The only "catch" is the honest one: it's early software, and what it needs from you is feedback — there's an issue template literally called <i>"nothing broke, it just felt wrong."</i></p></div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<div class="finale">
+  <div class="glow g3" style="top:20px;left:50%;transform:translateX(-50%)"></div>
+  <div class="wrap" style="position:relative;z-index:1">
+    <h2>Your database deserves a tool<br>that <em style="font-style:normal;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent">asks first.</em></h2>
+    <p class="lede" style="margin-left:auto;margin-right:auto">Free, open source, sixty seconds to your first query.</p>
+    <div class="cta">
+      <a class="btn primary" href="#download">⬇&nbsp; Download TupleNest</a>
+      <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest">View the source</a>
+    </div>
+  </div>
+</div>
+
 <footer>
   <div class="wrap">
-    <span>MIT © <a href="https://github.com/talaatmagdyx">Talaat Magdy</a></span>
-    <a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a>
-    <a href="https://github.com/talaatmagdyx/TupleNest/blob/main/SECURITY.md">Security policy</a>
-    <a href="https://github.com/talaatmagdyx/TupleNest/blob/main/PRIVACY.md">Privacy</a>
-    <a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CHANGELOG.md">Changelog</a>
-    <span style="margin-left:auto">Built with amazing help from <a href="https://claude.com">Claude</a> · design inspired by VS Code</span>
+    <div class="cols">
+      <div>
+        <div class="brand"><img src="logo.png" alt=""><b>TupleNest</b></div>
+        <p>The PostgreSQL IDE that asks before it writes. Local-first, MIT-licensed, built in public.</p>
+      </div>
+      <div>
+        <h5>Product</h5>
+        <ul>
+          <li><a href="#download">Download</a></li>
+          <li><a href="https://github.com/talaatmagdyx/TupleNest/releases">Releases</a></li>
+          <li><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CHANGELOG.md">Changelog</a></li>
+          <li><a href="#verify">Verify a download</a></li>
+        </ul>
+      </div>
+      <div>
+        <h5>Project</h5>
+        <ul>
+          <li><a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a></li>
+          <li><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Contributing</a></li>
+          <li><a href="https://github.com/talaatmagdyx/TupleNest/discussions">Discussions</a></li>
+          <li><a href="https://github.com/talaatmagdyx/TupleNest/issues/new?template=ux_feedback.yml">"It felt wrong" feedback</a></li>
+        </ul>
+      </div>
+      <div>
+        <h5>Trust</h5>
+        <ul>
+          <li><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/SECURITY.md">Security policy</a></li>
+          <li><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/PRIVACY.md">Privacy</a></li>
+          <li><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/LICENSE">MIT license</a></li>
+          <li><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/THIRD-PARTY-NOTICES.md">Third-party notices</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="fine">
+      <span>MIT © <a href="https://github.com/talaatmagdyx">Talaat Magdy</a></span>
+      <span style="margin-left:auto">Built with amazing help from <a href="https://claude.com">Claude</a> · design inspired by VS Code</span>
+    </div>
   </div>
 </footer>
+
+<script>
+(function(){
+  // Scroll-reveal (no-op under prefers-reduced-motion via CSS).
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function(es){
+      es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, {rootMargin:'0px 0px -8% 0px'});
+    document.querySelectorAll('.reveal').forEach(function(el){ io.observe(el); });
+  } else {
+    document.querySelectorAll('.reveal').forEach(function(el){ el.classList.add('in'); });
+  }
+
+  // Detect the visitor's OS: label the hero button and highlight their card.
+  var ua = navigator.userAgent, os = null;
+  if (/Mac/i.test(ua) && !/iPhone|iPad/i.test(ua)) os = 'mac';
+  else if (/Win/i.test(ua)) os = 'win';
+  else if (/Linux/i.test(ua) && !/Android/i.test(ua)) os = 'linux';
+  var names = {mac:'macOS', win:'Windows', linux:'Linux'};
+  if (os) {
+    var b = document.getElementById('dlbtn');
+    b.textContent = '⬇  Download for ' + names[os];
+    var card = document.getElementById('os-' + os);
+    if (card) card.classList.add('hl');
+  }
+
+  // Live release data from the GitHub API — the page never hardcodes a version,
+  // so it cannot claim a release that doesn't exist. Fails soft: without the
+  // API, every link already points at the releases page.
+  fetch('https://api.github.com/repos/talaatmagdyx/TupleNest/releases?per_page=1')
+    .then(function(r){ return r.ok ? r.json() : Promise.reject(); })
+    .then(function(rel){
+      rel = rel && rel[0]; if (!rel || !rel.assets) return;
+      document.getElementById('verpill').textContent = rel.tag_name;
+      var mb = function(n){ return (n/1048576).toFixed(1) + ' MB'; };
+      var pick = {
+        mac:   function(n){ return /\.dmg$/.test(n); },
+        win:   function(n){ return /-setup\.exe$|\.msi$/.test(n); },
+        linux: function(n){ return /\.AppImage$|\.deb$|\.rpm$/.test(n); }
+      };
+      Object.keys(pick).forEach(function(key){
+        var box = document.querySelector('.assets[data-os="' + key + '"]');
+        var assets = rel.assets.filter(function(a){ return pick[key](a.name); });
+        if (!box || !assets.length) return;
+        box.innerHTML = '';
+        assets.forEach(function(a){
+          var el = document.createElement('a');
+          el.className = 'asset';
+          el.href = a.browser_download_url;
+          el.innerHTML = '<span>' + a.name + '</span><span class="sz">' + mb(a.size) + '</span>';
+          box.appendChild(el);
+        });
+      });
+    })
+    .catch(function(){ /* releases page links remain */ });
+})();
+</script>
 
 </body>
 </html>
