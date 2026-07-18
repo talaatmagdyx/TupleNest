@@ -5,6 +5,30 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security — release blockers from the security review (PR 1)
+
+- **TLS is now actually required in the verify modes (CRITICAL).** The client
+  never set `ssl_mode`, so it defaulted to `prefer` — a server or on-path
+  attacker could strip TLS to plaintext even under `verify-full`, silently.
+  `verify-ca`/`verify-full` now map to `require` and refuse plaintext; proven
+  against a real `ssl=off` server with a negative control. The connection form
+  also warns when `prefer` is chosen for a remote host.
+- **A malicious server can no longer OOM the app via a `numeric` value (HIGH).**
+  The wire `dscale` was read as a signed int and cast to a huge loop bound;
+  it's now read unsigned and clamped, with digit/render-size ceilings, so a
+  crafted value is a bounded error instead of a hang.
+- **CSV export neutralizes spreadsheet formula injection (HIGH).** Cells that
+  start with `= + - @` (or TAB/CR) are prefixed so Excel/Sheets/LibreOffice
+  treat them as text, not formulas. On by default; a "Spreadsheet-safe CSV"
+  toggle in the Export menu allows raw output.
+- **All third-party GitHub Actions pinned to commit SHAs**, and CI runs with a
+  least-privilege `contents: read` token — closing a supply-chain path to the
+  release signing key.
+- **Failed-query history no longer persists row values.** The server's DETAIL
+  (which can quote a row, e.g. an email) is still shown on screen but only a
+  reduced error — title, SQLSTATE, category — is written to disk, matching
+  PRIVACY.md.
+
 ### Fixed
 
 - **A failed query now shows the server's full report, not two words.** The
