@@ -195,6 +195,45 @@ fn audit_list(
         .map_err(|e| e.to_string())
 }
 
+/// Save an export to a user-chosen file — dialog and write both Rust-side.
+///
+/// Security review TAURI-01: previously the frontend opened the save dialog and
+/// then called the fs plugin's `writeTextFile(path, contents)` itself, so the
+/// capability had to grant `fs:allow-write-text-file` with no scope. A
+/// compromised WebView could have called it with any absolute path
+/// (`~/.zshrc`, a LaunchAgent) — arbitrary-write / persistence, entirely
+/// outside the "user picked it" invariant the comment claimed.
+///
+/// Here the WebView supplies only the *contents* and a suggested name; it never
+/// supplies a path. The native save panel runs in the backend, and the write
+/// goes only to what the user chose there. The fs plugin write permission is
+/// therefore removed from the capability entirely — the invariant is now
+/// enforced by construction, not by convention.
+#[tauri::command]
+fn export_save(
+    app: tauri::AppHandle,
+    default_name: String,
+    contents: String,
+    filter_name: Option<String>,
+    extensions: Option<Vec<String>>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let mut builder = app.dialog().file().set_file_name(&default_name);
+    if let (Some(name), Some(exts)) = (filter_name, extensions.as_ref()) {
+        let refs: Vec<&str> = exts.iter().map(String::as_str).collect();
+        builder = builder.add_filter(name, &refs);
+    }
+    // blocking_* must run off the main thread; sync command handlers do.
+    match builder.blocking_save_file() {
+        Some(fp) => {
+            let path = fp.into_path().map_err(|e| e.to_string())?;
+            std::fs::write(&path, contents).map_err(|e| e.to_string())?;
+            Ok(Some(path.to_string_lossy().into_owned()))
+        }
+        None => Ok(None), // user cancelled — not an error
+    }
+}
+
 /// The app menu, with macOS's native About panel swapped for ours.
 ///
 /// The menu bar's "About TupleNest" opened a bare system panel showing the
@@ -252,10 +291,11 @@ fn main() {
         // rejected, so a compromised release host still cannot ship code.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        // Save dialog + write access, scoped by the capability file to paths
-        // the user picks in the dialog — no ambient filesystem access.
+        // Native dialogs: the ask/confirm prompts, and the save panel that the
+        // Rust `export_save` command drives. The fs plugin is deliberately not
+        // registered — the WebView has no filesystem access; exports write
+        // Rust-side through export_save (security review TAURI-01).
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         // Hands the About box's links to the real browser. A plain <a href>
         // would navigate *this* webview and the app would vanish behind a web
         // page with no way back. The capability file allows two exact URLs and
@@ -296,6 +336,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             app_get_info,
+            export_save,
             settings_get,
             settings_set,
             layout_save,

@@ -1,8 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
 import App from "./App";
 import { CONNECTION, LOST, PLAN, backend, type Backend } from "./test/backend";
 
@@ -207,28 +205,29 @@ describe("App — the chart", () => {
 });
 
 describe("App — exporting", () => {
-  it("writes the rows to the file the user picked", async () => {
-    vi.mocked(saveDialog).mockResolvedValue("/tmp/out.csv");
+  it("hands the rows to the backend export command (contents, never a path)", async () => {
     const user = await connected();
     await run(user, "select kind, n from t");
     await user.click(screen.getByRole("button", { name: /^Export/ }));
     const menu = document.querySelector(".drop-menu") as HTMLElement;
     await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
-    await waitFor(() => expect(vi.mocked(writeTextFile)).toHaveBeenCalled());
-    const [, body] = vi.mocked(writeTextFile).mock.calls[0];
-    expect(body).toContain("kind,n");
-    expect(body).toContain("13109");
+    await waitFor(() => expect(be.sent("export_save")).toHaveLength(1));
+    const args = be.sent("export_save")[0] as { contents: string };
+    expect(args.contents).toContain("kind,n");
+    expect(args.contents).toContain("13109");
+    // The WebView supplies contents + name, never a filesystem path.
+    expect(args).not.toHaveProperty("path");
   });
 
-  it("writes nothing when the save dialog is dismissed", async () => {
-    vi.mocked(saveDialog).mockResolvedValue(null);
+  it("surfaces a cancelled save without error (backend returns null)", async () => {
+    be.on("export_save", () => null);
     const user = await connected();
     await run(user, "select kind, n from t");
     await user.click(screen.getByRole("button", { name: /^Export/ }));
     const menu = document.querySelector(".drop-menu") as HTMLElement;
     await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
-    await waitFor(() => expect(vi.mocked(saveDialog)).toHaveBeenCalled());
-    expect(vi.mocked(writeTextFile)).not.toHaveBeenCalled();
+    await waitFor(() => expect(be.sent("export_save")).toHaveLength(1));
+    // No throw, no crash — cancelling is normal.
   });
 });
 

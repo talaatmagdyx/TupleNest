@@ -217,8 +217,9 @@ describe("App — the EXPLAIN plan", () => {
 
   it("says so when the plan could not be saved", async () => {
     // A failed save that says nothing looks exactly like a successful one.
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    vi.mocked(save).mockRejectedValueOnce(new Error("disk full"));
+    be.on("export_save", () => {
+      throw new Error("disk full");
+    });
     const user = await explained();
     const modal = document.querySelector(".modal") as HTMLElement;
     // Export is a menu; the format is picked from inside it.

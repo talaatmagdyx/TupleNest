@@ -1,8 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
 import App from "./App";
 import { CONNECTION, PLAN, backend, type Backend } from "./test/backend";
 
@@ -134,17 +132,16 @@ describe("App — exporting a plan", () => {
   };
 
   it("writes the raw JSON, which is what pev2 and depesz read", async () => {
-    vi.mocked(saveDialog).mockResolvedValue("/tmp/plan.json");
     const user = await connected();
     await explain(user);
     const modal = document.querySelector(".explain-modal") as HTMLElement;
     await user.click(within(modal).getByRole("button", { name: /^Export/ }));
     const menu = modal.querySelector(".drop-menu") as HTMLElement;
     await user.click(within(menu).getByRole("button", { name: "JSON .json" }));
-    await waitFor(() => expect(vi.mocked(writeTextFile)).toHaveBeenCalled());
-    const [path, body] = vi.mocked(writeTextFile).mock.calls[0];
-    expect(path).toBe("/tmp/plan.json");
-    expect(JSON.parse(String(body))[0].Plan["Node Type"]).toBe("Seq Scan");
+    await waitFor(() => expect(be.sent("export_save")).toHaveLength(1));
+    const args = be.sent("export_save")[0] as { contents: string; extensions: string[] };
+    expect(args.extensions).toEqual(["json"]);
+    expect(JSON.parse(args.contents)[0].Plan["Node Type"]).toBe("Seq Scan");
   });
 
   it("copies the plan to the clipboard", async () => {

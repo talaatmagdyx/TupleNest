@@ -1,7 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import App from "./App";
 import { CONNECTION, backend, type Backend } from "./test/backend";
 
@@ -84,9 +83,6 @@ describe("App — exporting the result", () => {
   it("says what a truncated export is missing", async () => {
     // A .csv has no banner. If the count does not say the file holds 2 of
     // 4,213,662 rows, the file reads as the whole answer.
-    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-    vi.mocked(writeTextFile).mockClear();
-    vi.mocked(saveDialog).mockResolvedValue("/tmp/out.csv");
     be.on("pg_query", () => ({
       columns: [
         { name: "kind", dbType: "text" },
@@ -109,7 +105,6 @@ describe("App — exporting the result", () => {
 
 
   it("does not cry truncation on a complete export", async () => {
-    vi.mocked(saveDialog).mockResolvedValue("/tmp/out.csv");
     const user = await connected();
     await run(user);
     const menu = await exportMenu(user);
@@ -118,7 +113,9 @@ describe("App — exporting the result", () => {
   });
 
   it("says why a write failed rather than claiming it saved", async () => {
-    vi.mocked(saveDialog).mockRejectedValue(new Error("disk full"));
+    be.on("export_save", () => {
+      throw new Error("disk full");
+    });
     const user = await connected();
     await run(user);
     const menu = await exportMenu(user);
@@ -127,15 +124,14 @@ describe("App — exporting the result", () => {
   });
 
   it("writes markdown when markdown was asked for", async () => {
-    vi.mocked(saveDialog).mockResolvedValue("/tmp/out.md");
-    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-    vi.mocked(writeTextFile).mockClear();
     const user = await connected();
     await run(user);
     const menu = await exportMenu(user);
     await user.click(within(menu).getByRole("button", { name: "Markdown .md" }));
-    await waitFor(() => expect(vi.mocked(writeTextFile)).toHaveBeenCalled());
-    expect(String(vi.mocked(writeTextFile).mock.calls[0][1])).toContain("|");
+    await waitFor(() => expect(be.sent("export_save")).toHaveLength(1));
+    const args = be.sent("export_save")[0] as { contents: string; extensions: string[] };
+    expect(args.extensions).toEqual(["md"]);
+    expect(args.contents).toContain("|");
   });
 });
 

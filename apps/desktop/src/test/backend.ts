@@ -115,6 +115,10 @@ const defaults = (): Record<string, (args: Record<string, unknown>) => unknown> 
   // fixture was answering a command nothing calls, and the keychain path went
   // untested because reaching it threw "no handler" instead.
   pg_secret_save: () => "ref-1",
+  // Export now goes through the Rust export_save command (dialog + write are
+  // both server-side, TAURI-01). Default to a written path; tests that assert a
+  // cancel override this to return null.
+  export_save: () => "/tmp/out.csv",
   pg_connect: () => undefined,
   pg_disconnect: () => undefined,
   pg_begin: () => undefined,

@@ -1,14 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { save } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { invoke } from "@tauri-apps/api/core";
 import { baseName, FILTERS, saveText } from "./save";
 
-const saveMock = vi.mocked(save);
-const writeMock = vi.mocked(writeTextFile);
+// The dialog + write both happen in the Rust `export_save` command now; the
+// frontend only invokes it. So the unit test asserts the invoke shape (TAURI-01).
+const invokeMock = vi.mocked(invoke);
 
 beforeEach(() => {
-  saveMock.mockReset();
-  writeMock.mockReset();
+  invokeMock.mockReset();
 });
 
 describe("baseName", () => {
@@ -44,39 +43,42 @@ describe("FILTERS", () => {
 });
 
 describe("saveText", () => {
-  it("writes to the path the user picked and returns it", async () => {
-    saveMock.mockResolvedValue("/tmp/out.json");
+  it("returns the path the backend wrote", async () => {
+    invokeMock.mockResolvedValue("/tmp/out.json");
     const out = await saveText("out.json", "{}", FILTERS.json);
     expect(out).toBe("/tmp/out.json");
-    expect(writeMock).toHaveBeenCalledWith("/tmp/out.json", "{}");
   });
 
-  it("passes the filter through to the native panel", async () => {
-    saveMock.mockResolvedValue("/tmp/a.csv");
+  it("hands the backend the contents, name and filter — never a path", async () => {
+    invokeMock.mockResolvedValue("/tmp/a.csv");
     await saveText("a.csv", "x", FILTERS.csv);
-    expect(saveMock).toHaveBeenCalledWith({
-      defaultPath: "a.csv",
-      filters: [FILTERS.csv],
+    expect(invokeMock).toHaveBeenCalledWith("export_save", {
+      defaultName: "a.csv",
+      contents: "x",
+      filterName: "CSV",
+      extensions: ["csv"],
     });
   });
 
-  it("omits filters entirely when none is given", async () => {
-    saveMock.mockResolvedValue("/tmp/a");
+  it("sends null filter fields when none is given", async () => {
+    invokeMock.mockResolvedValue("/tmp/a");
     await saveText("a", "x");
-    expect(saveMock).toHaveBeenCalledWith({ defaultPath: "a", filters: undefined });
+    expect(invokeMock).toHaveBeenCalledWith("export_save", {
+      defaultName: "a",
+      contents: "x",
+      filterName: null,
+      extensions: null,
+    });
   });
 
-  // Cancelling is the normal way to decline a save. Treating it as an error
-  // would put a red toast in front of someone who simply changed their mind.
-  it("returns null and writes nothing when the user cancels", async () => {
-    saveMock.mockResolvedValue(null);
+  // Cancelling is the normal way to decline a save; the backend returns null.
+  it("returns null when the user cancels", async () => {
+    invokeMock.mockResolvedValue(null);
     expect(await saveText("out.json", "{}")).toBeNull();
-    expect(writeMock).not.toHaveBeenCalled();
   });
 
   it("does not swallow a real write failure", async () => {
-    saveMock.mockResolvedValue("/root/denied.json");
-    writeMock.mockRejectedValue(new Error("permission denied"));
+    invokeMock.mockRejectedValue(new Error("permission denied"));
     await expect(saveText("denied.json", "{}")).rejects.toThrow("permission denied");
   });
 });
