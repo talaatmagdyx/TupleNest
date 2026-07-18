@@ -46,6 +46,6 @@ serde_json = "1"
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
