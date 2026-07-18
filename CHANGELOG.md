@@ -3,6 +3,49 @@
 Notable changes to TupleNest. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.0-beta.2] — 2026-07-18
+
+One real bug, found by the first macOS tester within an hour of beta.1 — which
+is exactly what betas are for.
+
+### Fixed
+
+- **The window close button did nothing.** Not "didn't quit the app" — nothing:
+  no close, no error, no log line. The close guard ends in
+  `getCurrentWindow().destroy()`, and the Tauri capability file granted only
+  `core:default`, which covers the read-only window commands and not
+  `allow-destroy`. The ACL rejected the call and the rejection was swallowed
+  inside `@tauri-apps/api`, so 1,600+ passing tests had nothing to say about
+  it. One granted permission is the whole fix.
+- The same missing permission silently broke the open-transaction close prompt:
+  **"Commit & quit" and "Rollback & quit" could never actually quit.** Both
+  paths are now verified against a live database, including that no
+  transaction is left dangling server-side afterwards.
+
+### Added
+
+- A test that scans the frontend for every `getCurrentWindow()` call and
+  asserts the capability file grants it — the class of gap (TypeScript call,
+  JSON permission, nothing watching the seam) this bug lived in. Verified by
+  removing the permission and watching it fail.
+
+### Docs
+
+- README rewritten: sixty-second quick start, the real keyboard map, an honest
+  "what TupleNest is not (yet)" section, and the receipts behind the safety
+  claims.
+- Corrected what a Windows code-signing certificate actually buys: a standard
+  (OV) cert does not stop the SmartScreen warning — reputation is per-file and
+  resets each release; only EV skips the wait. The old text called it "the same
+  funding problem as Apple notarization", which would have wasted money.
+  `docs/releasing.md` now also carries Azure Artifact Signing's eligibility
+  gate (orgs US/CA/EU/UK; individuals US/CA only).
+
+Installers keep the `0.1.0` filenames — the app version is unchanged; the tag
+is the release identity. If you have beta.1: download beta.2 and reinstall.
+Auto-update cannot deliver this (pre-releases are never `latest`, so the
+updater's check 404s by design).
+
 ## [0.1.0-beta.1] — 2026-07-18
 
 First public release. The goal is not to prove the product is finished — it is
@@ -108,5 +151,5 @@ First public release. PostgreSQL only.
 - ER diagrams, find-usages and rename, schema diff, EXPLAIN plan comparison.
 - CSV import, SQL snippets, signed auto-update.
 
-[Unreleased]: https://github.com/talaatmagdyx/TupleNest/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0
+[0.1.0-beta.2]: https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.2
+[0.1.0-beta.1]: https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.1
