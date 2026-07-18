@@ -1966,13 +1966,67 @@ fn render_raw(v: RawValue, ty: &Type) -> CellValue {
             return CellValue::Text(s.to_owned());
         }
     }
+    // Hex doubles the size, so cap the *input* bytes before encoding rather than
+    // building a 2 GB string and truncating it. Keep MAX/2 bytes → MAX hex
+    // chars, then note the rest. cap_cell would catch the length anyway; this
+    // avoids the transient allocation on the way there. (RUST-02.)
+    let cap = MAX_RENDERED_CELL_BYTES / 2;
+    if v.0.len() > cap {
+        let dropped = v.0.len() - cap;
+        return CellValue::Other {
+            rendered: format!(
+                "\\x{}… <truncated {dropped} more bytes>",
+                hex::encode(&v.0[..cap])
+            ),
+            db_type: ty.name().to_string(),
+        };
+    }
     CellValue::Other {
         rendered: format!("\\x{}", hex::encode(&v.0)),
         db_type: ty.name().to_string(),
     }
 }
 
+/// The largest rendered cell string TupleNest keeps. A PostgreSQL field can be
+/// ~1 GB on the wire, and an unknown/`bytea` value is hex-encoded to *twice*
+/// its bytes — one pathological row could spike memory and freeze the grid
+/// before the result-set byte budget (which counts *after* conversion) engages.
+/// 1 MiB is far beyond any value worth showing whole in a cell; past it we keep
+/// a head and label the truncation. (Security review RUST-02.)
+const MAX_RENDERED_CELL_BYTES: usize = 1024 * 1024;
+
+/// Truncate an over-long rendered cell on a char boundary, with a visible note
+/// of how much was dropped. The value stays inspectable; it just cannot bury
+/// the UI or the process.
+fn cap_rendered(s: String) -> String {
+    if s.len() <= MAX_RENDERED_CELL_BYTES {
+        return s;
+    }
+    let mut end = MAX_RENDERED_CELL_BYTES;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    let dropped = s.len() - end;
+    format!("{}… <truncated {dropped} more bytes>", &s[..end])
+}
+
+/// Apply the per-cell cap to whichever variants carry a rendered string.
+fn cap_cell(c: CellValue) -> CellValue {
+    match c {
+        CellValue::Text(s) => CellValue::Text(cap_rendered(s)),
+        CellValue::Other { rendered, db_type } => CellValue::Other {
+            rendered: cap_rendered(rendered),
+            db_type,
+        },
+        other => other,
+    }
+}
+
 fn convert_cell(row: &Row, i: usize) -> CellValue {
+    cap_cell(convert_cell_inner(row, i))
+}
+
+fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
     let ty = row.columns()[i].type_().clone();
     macro_rules! take {
         ($t:ty, $wrap:expr) => {
@@ -2350,6 +2404,44 @@ mod array_element_tests {
         // actual NULL, which is a different fact about the data.
         assert_eq!(quote_array_element("NULL"), r#""NULL""#);
         assert_eq!(quote_array_element("null"), r#""null""#);
+    }
+}
+
+#[cfg(test)]
+mod cell_cap_tests {
+    use super::*;
+
+    #[test]
+    fn short_values_are_untouched() {
+        assert_eq!(cap_rendered("hello".into()), "hello");
+        let big = "x".repeat(MAX_RENDERED_CELL_BYTES);
+        assert_eq!(cap_rendered(big.clone()), big); // exactly at the cap is kept
+    }
+
+    #[test]
+    fn over_long_values_are_truncated_with_a_note() {
+        let s = "a".repeat(MAX_RENDERED_CELL_BYTES + 5000);
+        let out = cap_rendered(s);
+        assert!(out.len() < MAX_RENDERED_CELL_BYTES + 200, "must be bounded");
+        assert!(
+            out.contains("<truncated 5000 more bytes>"),
+            "{}",
+            &out[out.len() - 60..]
+        );
+    }
+
+    #[test]
+    fn truncation_lands_on_a_char_boundary_for_multibyte_text() {
+        // A run of 4-byte emoji: naive slicing at MAX would split one.
+        let s = "😀".repeat(MAX_RENDERED_CELL_BYTES); // 4 bytes each, well over cap
+        let out = cap_rendered(s); // must not panic on a non-boundary slice
+        assert!(out.contains("<truncated"), "expected a truncation note");
+    }
+
+    #[test]
+    fn cap_cell_only_touches_string_bearing_variants() {
+        assert!(matches!(cap_cell(CellValue::Int(7)), CellValue::Int(7)));
+        assert!(matches!(cap_cell(CellValue::Null), CellValue::Null));
     }
 }
 
