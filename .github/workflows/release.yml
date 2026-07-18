@@ -210,7 +210,7 @@ jobs:
           # github.com/talaatmagdyx/TupleNest/releases/latest/download/latest.json,
           # which this generates from the per-platform .sig files. Without it
           # the endpoint 404s and no installed copy ever sees an update.
-          includeUpdaterJson: true
+          uploadUpdaterJson: true
           # Draft on purpose — nothing ships until it is published by hand.
           # Worth knowing: a draft is not "latest", so the updater URL stays a
           # 404 until you hit Publish. That is the intended sequence, not a
