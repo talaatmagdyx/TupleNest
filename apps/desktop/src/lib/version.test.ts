@@ -15,9 +15,13 @@ describe("compareVersions", () => {
     expect(compareVersions("0.2.0-beta.1", "0.1.0")).toBeGreaterThan(0);
   });
 
-  it("treats missing components as zero", () => {
+  it("treats missing components as zero, whichever side is shorter", () => {
     expect(compareVersions("1", "1.0.0")).toBe(0);
+    expect(compareVersions("1.0.0", "1")).toBe(0);
     expect(compareVersions("1.1", "1.0.9")).toBeGreaterThan(0);
+    // b shorter than a, with a's extra component deciding the order.
+    expect(compareVersions("1.0.1", "1")).toBeGreaterThan(0);
+    expect(compareVersions("1", "1.0.1")).toBeLessThan(0);
   });
 
   it("does not misread non-numeric junk as a high version", () => {

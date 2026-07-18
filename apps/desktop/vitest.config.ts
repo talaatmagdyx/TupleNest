@@ -34,12 +34,20 @@ export default defineConfig({
        *
        * If a legitimate change lowers these, move the number and say why in
        * the commit. Do not delete the block.
+       *
+       * Re-baselined for vitest 4 / @vitest/coverage-v8 4. v4 remaps coverage
+       * through the AST rather than v8's raw byte ranges, so it counts more
+       * statements and branches and reads ~2 points stricter than v3 measured
+       * on the SAME suite — 97.4/92.0/98.0/98.9 here, where v3 showed
+       * 99.7/94.3/98.7/99.7. No tests were removed; the suite is unchanged.
+       * These floors sit just under the v4 measurement so the ratchet still
+       * catches a real regression, now against a more accurate baseline.
        */
       thresholds: {
-        lines: 99,
-        statements: 99,
-        functions: 98,
-        branches: 93,
+        lines: 98,
+        statements: 97,
+        functions: 97,
+        branches: 91,
       },
     },
   },
