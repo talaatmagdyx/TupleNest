@@ -120,6 +120,15 @@ A keypair already exists:
 ~/.tuplenest-keys/tuplenest.key.pub   ← public; already in tauri.conf.json
 ```
 
+`tauri signer generate` writes the private key **world-readable** (`0644`), and
+it stayed that way here until someone looked. Any process running as any user on
+the machine could read it. Fix it, and check rather than assume:
+
+```sh
+chmod 700 ~/.tuplenest-keys && chmod 600 ~/.tuplenest-keys/tuplenest.key
+stat -f '%Sp %N' ~/.tuplenest-keys/*        # expect -rw------- on the private key
+```
+
 It is passphrase-protected (key id `C35ED434C8AECC1B`). The first keypair was
 not, and this note used to tell you to fix that before shipping — which is now
 done, before anything shipped, because it could not have been done after.
@@ -300,6 +309,44 @@ to need it.
 
 ### Rehearse it
 
-Publish a `v0.0.1-rollback-drill` prerelease, un-publish it, and confirm
-`releases/latest/download/latest.json` goes back to what it was. Ten minutes
-now, versus finding out during an incident.
+Ten minutes now, versus finding out during an incident.
+
+**This drill used to say "publish a prerelease", which made it a test that could
+not fail.** A prerelease is never `latest`, so
+`releases/latest/download/latest.json` 404s before the drill and 404s after it —
+you would watch the endpoint not change and call that a pass. While every
+release is a prerelease (as now, through the betas), the updater path is inert
+and there is nothing to rehearse; the endpoint returning 404 is the designed
+state, not a fault.
+
+So the drill only means something once a **normal, non-prerelease** release
+exists — and then it is:
+
+```sh
+# 0. Precondition: a real release exists and IS latest.
+gh release list --json tagName,isLatest -q '.[] | select(.isLatest)'
+curl -sI -L https://github.com/talaatmagdyx/TupleNest/releases/latest/download/latest.json | head -1
+#    -> expect 200, and note the version inside it
+
+# 1. Publish the drill as a NORMAL release, so it actually takes `latest`.
+#    Use a version BELOW the shipped one: installed copies compare versions and
+#    refuse anything not newer, so nobody can be updated onto the drill.
+gh release create v0.0.1-rollback-drill --title "rollback drill" --notes "temporary" --latest
+
+# 2. Prove it moved. If this step does not change, the drill is not testing
+#    anything and something is wrong with your assumptions, not the endpoint.
+gh release list --json tagName,isLatest -q '.[] | select(.isLatest)'
+
+# 3. Roll it back the way you would in an incident.
+gh release edit v0.0.1-rollback-drill --draft
+
+# 4. Prove it reverted to the previous release.
+gh release list --json tagName,isLatest -q '.[] | select(.isLatest)'
+
+# 5. Clean up.
+gh release delete v0.0.1-rollback-drill --yes
+git push --delete origin v0.0.1-rollback-drill 2>/dev/null || true
+```
+
+Steps 2 and 4 are the drill. Steps 1 and 3 are just the setup — if you skip the
+proofs, you have rehearsed typing, not recovering.
