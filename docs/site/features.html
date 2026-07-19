@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Features — TupleNest</title>
+<meta name="description" content="Every major TupleNest capability: smart SQL editor, streaming result grid, query performance, schema explorer, ER diagrams, production safety, connection manager, import/export, and keyboard-first productivity.">
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="logo.png" alt=""><b>TupleNest</b></a>
+    <nav>
+      <a class="link" href="index.html">Home</a><a class="link active" href="features.html">Features</a>
+      <a class="link" href="security.html">Security</a><a class="link" href="download.html">Download</a>
+      <a class="link" href="docs.html">Docs</a><a class="link" href="roadmap.html">Roadmap</a>
+      <a class="link" href="blog.html">Blog</a><a class="link" href="changelog.html">Changelog</a>
+      <a class="ghostbtn" href="https://github.com/talaatmagdyx/TupleNest"><span class="stars hidden" data-stars></span>GitHub</a>
+      <a class="navbtn" href="download.html">Download</a>
+    </nav>
+    <button class="menu-toggle" aria-label="Open menu">☰</button>
+  </div>
+  <div class="mobile-menu">
+    <a href="index.html">Home</a><a href="features.html">Features</a><a href="security.html">Security</a>
+    <a href="download.html">Download</a><a href="docs.html">Docs</a><a href="roadmap.html">Roadmap</a>
+    <a href="blog.html">Blog</a><a href="changelog.html">Changelog</a><a href="https://github.com/talaatmagdyx/TupleNest">GitHub ↗</a>
+  </div>
+</header>
+
+<section class="hero sm">
+  <div class="glow g1"></div>
+  <div class="wrap">
+    <span class="tagpill"><span class="dot"></span> A focused PostgreSQL environment</span>
+    <h1>Everything you need.<br><em>Nothing you don't.</em></h1>
+    <p class="sub">A focused PostgreSQL environment for writing queries, exploring schemas, understanding performance, and working safely with real databases.</p>
+    <div class="shot reveal" style="max-width:1000px">
+      <div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>TupleNest — the full IDE</span></div>
+      <img src="shots/hero.png" alt="The full TupleNest IDE.">
+    </div>
+  </div>
+</section>
+
+<div class="tabs">
+  <div class="wrap" style="display:flex;gap:8px;flex-wrap:wrap">
+    <a href="#editor">SQL Editor</a><a href="#results">Results</a><a href="#performance">Performance</a>
+    <a href="#schema">Schema</a><a href="#er">ER Diagrams</a><a href="#safety">Safety</a>
+    <a href="#connections">Connections</a><a href="#io">Import &amp; Export</a><a href="#productivity">Productivity</a><a href="#native">Native</a>
+  </div>
+</div>
+
+<!-- SQL EDITOR -->
+<section id="editor">
+  <div class="wrap">
+    <div class="feature">
+      <div class="fimg"><img src="shots/complete.png" alt="Autocomplete popup in the SQL editor."></div>
+      <div>
+        <div class="fnum">SQL EDITOR</div>
+        <h3>Smart SQL editor</h3>
+        <p>Built for PostgreSQL specifically — the literal masking understands dollar-quoting, nested comments, and <code class="inline">E''</code> escapes, so features like the destructive-statement guard read the real query rather than raw text.</p>
+        <ul>
+          <li>PostgreSQL syntax highlighting</li><li>Schema-aware completion: tables, columns, functions, keywords</li>
+          <li>Formatting and selected-query execution</li><li>Multiple editor tabs with unsaved-change indicators</li>
+          <li>Line and block comments, find and replace</li><li>Query history and reusable snippets</li>
+          <li>Query parameters (<code class="inline">$1..$n</code>) with binding</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- RESULTS -->
+<section id="results">
+  <div class="wrap">
+    <div class="feature flip">
+      <div class="fimg"><img src="shots/monitor.png" alt="Result grid with metadata."></div>
+      <div>
+        <div class="fnum">RESULT GRID</div>
+        <h3>Results that stay responsive</h3>
+        <p>Rows stream from a bounded store into a virtualized grid, so large or wide results don't freeze the window — and the footer counts the real total, not the cap.</p>
+        <ul>
+          <li>Streaming result loading, virtualized rows</li><li>Column resizing, sorting, filtering, search</li>
+          <li>Explicit NULL representation</li><li>Copy cell, row, or selection</li>
+          <li>Export (CSV / JSON / Markdown)</li><li>Query duration, row count, truncation indicators</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PERFORMANCE -->
+<section id="performance">
+  <div class="wrap">
+    <div class="kicker">Query performance</div>
+    <h2>See why a query is slow</h2>
+    <p class="lede">EXPLAIN-based tooling to inspect plans and compare them, plus schema-level diffing for change review.</p>
+    <div class="grid2">
+      <div class="card"><span class="pill ok">Available</span><ul style="margin-top:12px">
+        <li>EXPLAIN and EXPLAIN ANALYZE</li><li>Text plan inspection</li><li>Plan comparison between runs</li>
+        <li>Planning vs execution time</li><li>Schema diff for change review</li>
+      </ul></div>
+      <div class="card"><span class="pill plan">Planned</span><ul style="margin-top:12px">
+        <li>Richer visual plan with expensive-node highlighting</li><li>Sequential-scan &amp; sort/join call-outs</li>
+        <li>BUFFERS-aware view</li><li>A dedicated query profiler</li>
+      </ul></div>
+    </div>
+    <div class="callout info" style="margin-top:20px">Where a richer visualization isn't built yet, it's listed here as planned rather than shown as done. See the <a href="roadmap.html">Roadmap</a>.</div>
+  </div>
+</section>
+
+<!-- SCHEMA -->
+<section id="schema">
+  <div class="wrap">
+    <div class="feature">
+      <div class="fimg"><img src="shots/explorer.png" alt="Schema explorer tree."></div>
+      <div>
+        <div class="fnum">SCHEMA EXPLORER</div>
+        <h3>Browse the whole catalog</h3>
+        <p>A lazy tree that loads schemas, objects, and columns on demand and serves from a local cache when you're offline.</p>
+        <ul>
+          <li>Databases, schemas, tables, views, materialized views</li><li>Functions, enums, indexes, constraints, triggers</li>
+          <li>Foreign keys and dependencies</li><li>Global object search and refresh</li>
+          <li>Open an object straight into the editor</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ER DIAGRAMS -->
+<section id="er">
+  <div class="wrap">
+    <div class="feature flip">
+      <div class="fimg"><img src="shots/er-diagram.png" alt="ER diagram."></div>
+      <div>
+        <div class="fnum">ER DIAGRAMS</div>
+        <h3>The database as a graph</h3>
+        <p>An automatic relationship graph built from real foreign keys — pan, zoom, focus a table, and expand its neighbours.</p>
+        <ul>
+          <li>Table cards with foreign-key links</li><li>Pan &amp; zoom, focus on a selected table</li>
+          <li>Search and expand related tables</li><li>Open table data or definition</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SAFETY -->
+<section id="safety">
+  <div class="wrap">
+    <div class="feature">
+      <div class="fimg"><img src="shots/connection.png" alt="Connection editor with environment labels."></div>
+      <div>
+        <div class="fnum">PRODUCTION SAFETY</div>
+        <h3>Safety as a workflow</h3>
+        <p>Classify each connection, make production visually distinct, and let PostgreSQL itself enforce read-only when you ask for it.</p>
+        <ul>
+          <li>Environment classification and a production badge</li><li>Read-only session characteristic (server-enforced)</li>
+          <li>Destructive-statement detection and confirmation dialogs</li><li>Transaction-state visibility and tab ownership</li>
+          <li>Query timeout controls and clear warning language</li><li>Least-privilege guidance</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CONNECTIONS -->
+<section id="connections">
+  <div class="wrap">
+    <div class="kicker">Connection manager</div>
+    <h2>Connections you can trust</h2>
+    <div class="grid3">
+      <div class="card"><h4>Profiles</h4><ul><li>Saved profiles</li><li>Dev / staging / production grouping</li><li>Favourite &amp; recent connections</li></ul></div>
+      <div class="card"><h4>Transport</h4><ul><li>Four TLS modes</li><li>Custom CA certificate</li><li>SSH tunnels with host-key verification</li></ul></div>
+      <div class="card"><h4>Credentials</h4><ul><li>Keychain-backed passwords</li><li>Staged connection test (DNS → TCP → auth)</li><li>Connection timeout</li></ul></div>
+    </div>
+  </div>
+</section>
+
+<!-- IMPORT/EXPORT -->
+<section id="io">
+  <div class="wrap">
+    <div class="kicker">Import &amp; export</div>
+    <h2>Move data in and out, safely</h2>
+    <div class="grid2">
+      <div class="card"><h4>Import</h4><ul>
+        <li>CSV import with header mapping</li><li>Type &amp; error preview before you commit</li>
+        <li>Transaction mode with cancel support</li></ul></div>
+      <div class="card"><h4>Export</h4><ul>
+        <li>CSV, JSON, Markdown, clipboard</li><li>Spreadsheet-safe CSV on by default (formula-injection neutralized)</li>
+        <li>Raw-value mode when you need it; column selection</li></ul></div>
+    </div>
+    <div class="callout" style="margin-top:20px">Cells starting with <code class="inline">= + - @</code> (or tab/CR) are neutralized so Excel, Sheets, and LibreOffice treat them as text, not formulas. A toggle lets you opt into raw output.</div>
+  </div>
+</section>
+
+<!-- PRODUCTIVITY -->
+<section id="productivity">
+  <div class="wrap">
+    <div class="kicker">Keyboard-first productivity</div>
+    <h2>Hands on the keys</h2>
+    <div class="keys" style="margin-top:8px">
+      <div class="key"><span class="kbd">⌘K</span><span class="kl">Command palette</span></div>
+      <div class="key"><span class="kbd">⌘↵</span><span class="kl">Run query</span></div>
+      <div class="key"><span class="kbd">⇧⌘F</span><span class="kl">Format query</span></div>
+      <div class="key"><span class="kbd">⌘T</span><span class="kl">New tab</span></div>
+      <div class="key"><span class="kbd">⌘P</span><span class="kl">Global search</span></div>
+      <div class="key"><span class="kbd">⌘/</span><span class="kl">Toggle comments</span></div>
+      <div class="key"><span class="kbd">⌘O</span><span class="kl">Open connection</span></div>
+      <div class="key"><span class="kbd">⌘B</span><span class="kl">Toggle explorer</span></div>
+      <div class="key"><span class="kbd">Esc</span><span class="kl">Cancel query</span></div>
+      <div class="key"><span class="kbd">⌘⇧H</span><span class="kl">Query history</span></div>
+    </div>
+    <div class="callout info" style="margin-top:22px">A command palette fronts nearly every action, so most workflows never need the mouse. Shortcuts follow platform conventions (⌘ on macOS, Ctrl elsewhere).</div>
+  </div>
+</section>
+
+<!-- NATIVE -->
+<section id="native">
+  <div class="wrap">
+    <div class="kicker">Native performance</div>
+    <h2>A Rust core in a Tauri shell</h2>
+    <div class="grid4">
+      <div class="card"><h4>Rust backend</h4><p>Speaks the PostgreSQL wire protocol directly.</p></div>
+      <div class="card"><h4>Streaming architecture</h4><p>Rows flow through a bounded store, not one giant buffer.</p></div>
+      <div class="card"><h4>Bounded memory</h4><p>Row, byte, and per-cell limits keep RAM in check.</p></div>
+      <div class="card"><h4>Fast startup</h4><p>A native shell, not a bundled browser runtime.</p></div>
+    </div>
+    <div class="callout" style="margin-top:20px">We don't publish head-to-head throughput comparisons with other tools — we haven't benchmarked those, and we won't claim numbers we can't back up.</div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section>
+  <div class="wrap">
+    <div class="ctabanner">
+      <h2>See how TupleNest fits your PostgreSQL workflow.</h2>
+      <div class="cta" style="justify-content:center;margin-top:22px">
+        <a class="btn primary" data-download href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Download TupleNest</a>
+        <a class="btn ghost" href="docs.html">Read the docs</a>
+        <a class="btn ghost" href="roadmap.html">View the roadmap</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="site">
+  <div class="wrap">
+    <div class="cols">
+      <div class="fbrand"><img src="logo.png" alt=""><p>The PostgreSQL IDE that asks before it writes. Local-first, open-source, MIT.</p></div>
+      <div><h5>Product</h5><a href="features.html">Features</a><a href="security.html">Security</a><a href="download.html">Download</a><a href="roadmap.html">Roadmap</a><a href="changelog.html">Changelog</a></div>
+      <div><h5>Resources</h5><a href="docs.html">Documentation</a><a href="docs.html#getting-started">Getting Started</a><a href="docs.html#shortcuts">Keyboard Shortcuts</a><a href="docs.html#troubleshooting">Troubleshooting</a><a href="blog.html">Blog</a></div>
+      <div><h5>Community</h5><a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a><a href="https://github.com/talaatmagdyx/TupleNest/discussions">Discussions</a><a href="https://github.com/talaatmagdyx/TupleNest/issues">Issues</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a></div>
+      <div><h5>Legal</h5><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/LICENSE">MIT License</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/PRIVACY.md">Privacy</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/SECURITY.md">Security Policy</a><a href="security.html#supply-chain">Third-party notices</a></div>
+    </div>
+    <div class="base"><span>© <span data-year>2026</span> TupleNest · MIT licensed</span><span>Built with Rust &amp; Tauri · No cloud, no telemetry</span></div>
+  </div>
+</footer>
+
+<script src="site.js" defer></script>
+</body>
+</html>

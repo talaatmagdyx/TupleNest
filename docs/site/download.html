@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Download TupleNest — macOS, Windows, Linux</title>
+<meta name="description" content="Download TupleNest for macOS, Windows, and Linux. Verify with SHA-256 and minisign, read the install guides, or build from source. Free and MIT-licensed.">
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="logo.png" alt=""><b>TupleNest</b></a>
+    <nav>
+      <a class="link" href="index.html">Home</a><a class="link" href="features.html">Features</a>
+      <a class="link" href="security.html">Security</a><a class="link active" href="download.html">Download</a>
+      <a class="link" href="docs.html">Docs</a><a class="link" href="roadmap.html">Roadmap</a>
+      <a class="link" href="blog.html">Blog</a><a class="link" href="changelog.html">Changelog</a>
+      <a class="ghostbtn" href="https://github.com/talaatmagdyx/TupleNest"><span class="stars hidden" data-stars></span>GitHub</a>
+      <a class="navbtn" href="download.html">Download</a>
+    </nav>
+    <button class="menu-toggle" aria-label="Open menu">☰</button>
+  </div>
+  <div class="mobile-menu">
+    <a href="index.html">Home</a><a href="features.html">Features</a><a href="security.html">Security</a>
+    <a href="download.html">Download</a><a href="docs.html">Docs</a><a href="roadmap.html">Roadmap</a>
+    <a href="blog.html">Blog</a><a href="changelog.html">Changelog</a><a href="https://github.com/talaatmagdyx/TupleNest">GitHub ↗</a>
+  </div>
+</header>
+
+<!-- HERO -->
+<section class="hero sm">
+  <div class="glow g1"></div>
+  <div class="wrap">
+    <span class="tagpill"><span class="dot"></span> v0.1.0-beta.3 · Public Beta · July 2026</span>
+    <h1>Download TupleNest.<br><em>Free forever.</em></h1>
+    <p class="sub">macOS, Windows, and Linux. Your platform is highlighted below. Every asset lives on the GitHub Releases page next to its checksum and signature.</p>
+    <div class="cta">
+      <a class="btn primary" data-download href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Download</a>
+      <a class="btn ghost" href="changelog.html">Release notes</a>
+    </div>
+  </div>
+</section>
+
+<!-- PLATFORM DOWNLOADS -->
+<section>
+  <div class="wrap">
+    <div class="kicker">Platform downloads</div>
+    <h2>Pick your platform</h2>
+    <p class="lede">Downloads open the latest GitHub release, which lists the exact assets built for each platform in this release.</p>
+    <div class="oscards">
+      <div class="oscard hl"><div class="osico">🍎</div><h3>macOS</h3><div class="meta">Apple Silicon &amp; Intel · macOS 10.15+</div>
+        <ul><li>.dmg disk image</li><li>Ad-hoc signed, not notarized</li><li>First launch: right-click → Open</li></ul>
+        <a class="btn primary" data-download data-download-label="Download for %OS%" href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Download for macOS</a></div>
+      <div class="oscard"><div class="osico">🪟</div><h3>Windows</h3><div class="meta">64-bit · Windows 10/11 · WebView2</div>
+        <ul><li>.msi and .exe (NSIS)</li><li>Unsigned — SmartScreen warns once</li><li>“More info” → “Run anyway”</li></ul>
+        <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Download for Windows</a></div>
+      <div class="oscard"><div class="osico">🐧</div><h3>Linux</h3><div class="meta">x86_64 · webkit2gtk · Ubuntu 22.04+</div>
+        <ul><li>AppImage &amp; .deb</li><li><code class="inline">chmod +x</code> the AppImage to run</li><li>Or <code class="inline">sudo dpkg -i</code> the .deb</li></ul>
+        <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Download for Linux</a></div>
+    </div>
+    <div class="callout warn" style="margin-top:26px"><b>Why the warnings?</b> macOS notarization and a Windows code-signing certificate are a funding matter, not a trust matter. Until then, first launch needs one extra click on macOS and Windows — and every build is signed with minisign and checksummed so you can verify it yourself.</div>
+  </div>
+</section>
+
+<!-- SYSTEM REQUIREMENTS -->
+<section>
+  <div class="wrap">
+    <div class="kicker">System requirements</div>
+    <h2>What you need to run it</h2>
+    <table style="margin-top:20px">
+      <tr><th>Item</th><th>Requirement</th></tr>
+      <tr><td>Operating systems</td><td class="how">macOS 10.15+, Windows 10/11, Linux with webkit2gtk (Ubuntu 22.04+ or equivalent)</td></tr>
+      <tr><td>CPU architecture</td><td class="how">Apple Silicon &amp; Intel on macOS; x86_64 on Windows and Linux</td></tr>
+      <tr><td>Minimum RAM</td><td class="how">~256&nbsp;MB for the app; results are bounded, but very wide result sets use more</td></tr>
+      <tr><td>Recommended RAM</td><td class="how">4&nbsp;GB or more for comfortable large-result work</td></tr>
+      <tr><td>Disk usage</td><td class="how">Roughly 40–120&nbsp;MB installed, depending on platform</td></tr>
+      <tr><td>PostgreSQL versions</td><td class="how">Modern PostgreSQL; CI runs contract tests against 13, 15, and 17</td></tr>
+      <tr><td>Display</td><td class="how">Any modern resolution; layout is responsive and dense-friendly</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- VERIFY -->
+<section>
+  <div class="wrap">
+    <div class="kicker">Verify your download</div>
+    <h2>Trust, then verify</h2>
+    <p class="lede">Because the installers aren't OS-signed, the published signature and checksum are the real integrity signal. Both take one command.</p>
+    <div class="grid2">
+      <div>
+        <h3 style="margin-bottom:10px">SHA-256</h3>
+        <div class="term"><div class="tb"><i></i><i></i><i></i></div>
+<pre><span class="c"># compare against the SHA256SUMS file in the release</span>
+shasum -a 256 &lt;filename&gt;
+<span class="c"># or on Linux</span>
+sha256sum &lt;filename&gt;</pre></div>
+      </div>
+      <div>
+        <h3 style="margin-bottom:10px">minisign</h3>
+        <div class="term"><div class="tb"><i></i><i></i><i></i></div>
+<pre><span class="c"># verify the signature with the published public key</span>
+minisign -Vm &lt;artifact&gt; -P &lt;public-key&gt;</pre></div>
+      </div>
+    </div>
+    <div class="callout" style="margin-top:22px">Each release also carries a <code class="inline">SHA256SUMS</code> file, per-artifact signatures, the minisign public key, an SBOM (CycloneDX), and a GitHub build-provenance attestation you can check with <code class="inline">gh attestation verify</code>.</div>
+  </div>
+</section>
+
+<!-- INSTALL GUIDES -->
+<section>
+  <div class="wrap">
+    <div class="kicker">Installation</div>
+    <h2>Install &amp; first launch</h2>
+    <div class="grid3" style="margin-top:22px">
+      <div class="card"><h3>🍎 macOS</h3>
+        <ul><li>Open the .dmg, drag TupleNest to Applications</li><li>First launch: right-click the app → <b>Open</b>, then confirm</li><li>Gatekeeper only warns once per version</li><li>Uninstall: move the app to Trash</li></ul></div>
+      <div class="card"><h3>🪟 Windows</h3>
+        <ul><li>Run the .msi or .exe installer</li><li>SmartScreen: <b>More info</b> → <b>Run anyway</b></li><li>Requires WebView2 (bundled on Win 11, auto-installed otherwise)</li><li>Uninstall: Apps &amp; features</li></ul></div>
+      <div class="card"><h3>🐧 Linux</h3>
+        <ul><li>AppImage: <code class="inline">chmod +x</code> then run</li><li>.deb: <code class="inline">sudo dpkg -i tuplenest_*.deb</code></li><li>Needs webkit2gtk installed</li><li>Uninstall: <code class="inline">sudo apt remove tuplenest</code></li></ul></div>
+    </div>
+  </div>
+</section>
+
+<!-- BUILD FROM SOURCE -->
+<section id="build">
+  <div class="wrap">
+    <div class="kicker">Build from source</div>
+    <h2>Prefer to build it yourself?</h2>
+    <p class="lede">The whole thing compiles from a clean checkout. You'll need Rust (stable), Node 22, npm, and the Tauri prerequisites for your OS.</p>
+    <div class="term"><div class="tb"><i></i><i></i><i></i></div>
+<pre><span class="c"># clone</span>
+git clone https://github.com/talaatmagdyx/TupleNest
+cd TupleNest/apps/desktop
+
+<span class="c"># install frontend deps</span>
+npm install
+
+<span class="c"># run in development</span>
+npm run tauri dev
+
+<span class="c"># production build (installers land in src-tauri/target/release/bundle)</span>
+npm run tauri build</pre></div>
+    <div class="callout info" style="margin-top:20px">Tauri prerequisites differ per platform (Xcode CLT on macOS; MSVC + WebView2 on Windows; webkit2gtk + build-essential on Linux). See the Tauri docs linked from the repository README.</div>
+  </div>
+</section>
+
+<!-- UPDATE CHANNELS -->
+<section>
+  <div class="wrap">
+    <div class="kicker">Updates</div>
+    <h2>Update channels</h2>
+    <table style="margin-top:20px">
+      <tr><th>Channel</th><th>What it is</th><th>Auto-update</th></tr>
+      <tr><td>Stable</td><td class="how">Full releases marked “latest”. The updater targets these.</td><td class="how">Yes</td></tr>
+      <tr><td>Beta</td><td class="how">Pre-releases (a hyphen in the tag, e.g. <code class="inline">v0.1.0-beta.3</code>). Not “latest”, so stable users are never pushed a beta.</td><td class="how">Manual — download &amp; reinstall</td></tr>
+    </table>
+    <div class="callout" style="margin-top:20px">The app refuses an update advertised below a compiled-in minimum version (anti-rollback). During the beta, updates are delivered by downloading the newer build; the auto-updater targets stable “latest” releases only.</div>
+  </div>
+</section>
+
+<!-- PREVIOUS RELEASES -->
+<section>
+  <div class="wrap">
+    <div class="kicker">History</div>
+    <h2>Previous releases</h2>
+    <table style="margin-top:20px">
+      <tr><th>Version</th><th>Date</th><th>Notes</th><th>Downloads</th></tr>
+      <tr><td>v0.1.0-beta.3</td><td class="how">Jul 2026</td><td class="how">Security-review response: TLS, numeric DoS, CSV injection + data/local hardening</td><td class="how"><a href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.3">Release ↗</a></td></tr>
+      <tr><td>v0.1.0-beta.2</td><td class="how">Jul 2026</td><td class="how">Window-close fix; corrected signing docs; README rewrite</td><td class="how"><a href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.2">Release ↗</a></td></tr>
+      <tr><td>v0.1.0-beta.1</td><td class="how">Jul 2026</td><td class="how">First public beta</td><td class="how"><a href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.1">Release ↗</a></td></tr>
+    </table>
+    <p style="margin-top:16px"><a href="changelog.html">See the full changelog →</a></p>
+  </div>
+</section>
+
+<!-- DOWNLOAD FAQ -->
+<section>
+  <div class="wrap">
+    <div class="kicker center">Download FAQ</div>
+    <h2 class="center">Common install questions</h2>
+    <div class="faq" style="margin-top:40px">
+      <div class="qa"><button>Why does macOS show an unidentified developer message?<span class="plus">+</span></button><div class="a"><p>The macOS builds are ad-hoc signed, not notarized with an Apple Developer certificate. Right-click the app and choose Open the first time; macOS remembers your choice per version.</p></div></div>
+      <div class="qa"><button>Is the application notarized?<span class="plus">+</span></button><div class="a"><p>Not yet. Notarization requires a paid Apple Developer account. The pipeline is ready to notarize the moment a certificate is configured.</p></div></div>
+      <div class="qa"><button>Does Windows SmartScreen show a warning?<span class="plus">+</span></button><div class="a"><p>Yes, because the installer is unsigned. Click “More info” then “Run anyway”. A standard (OV) certificate wouldn't remove this — SmartScreen reputation is per-file and resets each release; only an EV certificate skips the wait.</p></div></div>
+      <div class="qa"><button>Is the Linux build sandboxed?<span class="plus">+</span></button><div class="a"><p>The AppImage runs as a normal user process. It is not additionally sandboxed beyond what your desktop provides.</p></div></div>
+      <div class="qa"><button>How do automatic updates work?<span class="plus">+</span></button><div class="a"><p>Stable releases are checked over HTTPS against signed artifacts with an embedded public key, and the app refuses a downgrade below its floor. Betas are installed manually.</p></div></div>
+      <div class="qa"><button>How can I verify the file?<span class="plus">+</span></button><div class="a"><p>Use the SHA-256 and minisign commands above, or verify build provenance with <code class="inline">gh attestation verify</code>.</p></div></div>
+      <div class="qa"><button>Can I install without admin permissions?<span class="plus">+</span></button><div class="a"><p>On macOS and Linux, yes — the .dmg/AppImage don't require admin. The Windows .msi may prompt for elevation depending on install scope.</p></div></div>
+      <div class="qa"><button>How do I uninstall it?<span class="plus">+</span></button><div class="a"><p>macOS: drag to Trash. Windows: Apps &amp; features. Linux: delete the AppImage or <code class="inline">apt remove tuplenest</code>.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<footer class="site">
+  <div class="wrap">
+    <div class="cols">
+      <div class="fbrand"><img src="logo.png" alt=""><p>The PostgreSQL IDE that asks before it writes. Local-first, open-source, MIT.</p></div>
+      <div><h5>Product</h5><a href="features.html">Features</a><a href="security.html">Security</a><a href="download.html">Download</a><a href="roadmap.html">Roadmap</a><a href="changelog.html">Changelog</a></div>
+      <div><h5>Resources</h5><a href="docs.html">Documentation</a><a href="docs.html#getting-started">Getting Started</a><a href="docs.html#shortcuts">Keyboard Shortcuts</a><a href="docs.html#troubleshooting">Troubleshooting</a><a href="blog.html">Blog</a></div>
+      <div><h5>Community</h5><a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a><a href="https://github.com/talaatmagdyx/TupleNest/discussions">Discussions</a><a href="https://github.com/talaatmagdyx/TupleNest/issues">Issues</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a></div>
+      <div><h5>Legal</h5><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/LICENSE">MIT License</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/PRIVACY.md">Privacy</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/SECURITY.md">Security Policy</a><a href="security.html#supply-chain">Third-party notices</a></div>
+    </div>
+    <div class="base"><span>© <span data-year>2026</span> TupleNest · MIT licensed</span><span>Built with Rust &amp; Tauri · No cloud, no telemetry</span></div>
+  </div>
+</footer>
+
+<script src="site.js" defer></script>
+</body>
+</html>

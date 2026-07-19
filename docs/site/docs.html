@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentation — TupleNest</title>
+<meta name="description" content="Learn TupleNest: install, create your first connection, run a query, explore a schema, enable read-only mode, configure SSH, and troubleshoot.">
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="logo.png" alt=""><b>TupleNest</b></a>
+    <nav>
+      <a class="link" href="index.html">Home</a><a class="link" href="features.html">Features</a>
+      <a class="link" href="security.html">Security</a><a class="link" href="download.html">Download</a>
+      <a class="link active" href="docs.html">Docs</a><a class="link" href="roadmap.html">Roadmap</a>
+      <a class="link" href="blog.html">Blog</a><a class="link" href="changelog.html">Changelog</a>
+      <a class="ghostbtn" href="https://github.com/talaatmagdyx/TupleNest"><span class="stars hidden" data-stars></span>GitHub</a>
+      <a class="navbtn" href="download.html">Download</a>
+    </nav>
+    <button class="menu-toggle" aria-label="Open menu">☰</button>
+  </div>
+  <div class="mobile-menu">
+    <a href="index.html">Home</a><a href="features.html">Features</a><a href="security.html">Security</a>
+    <a href="download.html">Download</a><a href="docs.html">Docs</a><a href="roadmap.html">Roadmap</a>
+    <a href="blog.html">Blog</a><a href="changelog.html">Changelog</a><a href="https://github.com/talaatmagdyx/TupleNest">GitHub ↗</a>
+  </div>
+</header>
+
+<section class="hero sm" style="padding-bottom:24px">
+  <div class="glow g1"></div>
+  <div class="wrap">
+    <span class="tagpill"><span class="dot"></span> Documentation</span>
+    <h1>Learn TupleNest.<br><em>Start querying in minutes.</em></h1>
+    <p class="sub">From installation to productive daily use. Quick links to the things people reach for first.</p>
+    <div class="chips" style="justify-content:center;margin-top:22px">
+      <a class="chip" href="#install">Install TupleNest</a><a class="chip" href="#first-connection">Create your first connection</a>
+      <a class="chip" href="#first-query">Run your first query</a><a class="chip" href="#read-only">Enable read-only mode</a>
+      <a class="chip" href="#ssh">Configure SSH</a><a class="chip" href="#schema">Explore a schema</a>
+    </div>
+  </div>
+</section>
+
+<section class="tight">
+  <div class="wrap docs">
+    <aside class="docside">
+      <h5>Getting Started</h5>
+      <a href="#getting-started">Introduction</a><a href="#install">Installation</a><a href="#first-connection">Create a connection</a><a href="#first-query">Run a query</a><a href="#schema">Explore schema</a>
+      <h5>Connections</h5>
+      <a href="#connections">Connection profiles</a><a href="#tls">TLS modes</a><a href="#ssh">SSH tunnels</a><a href="#credentials">Password storage</a>
+      <h5>Editor &amp; Results</h5>
+      <a href="#editor">SQL editor</a><a href="#results">Result grid</a><a href="#io">Import &amp; export</a><a href="#shortcuts">Keyboard shortcuts</a>
+      <h5>Safety &amp; Security</h5>
+      <a href="#read-only">Read-only mode</a><a href="#dangerous">Dangerous statements</a><a href="#privacy">Security &amp; privacy</a>
+      <h5>More</h5>
+      <a href="#settings">Settings</a><a href="#troubleshooting">Troubleshooting</a><a href="#faq">FAQ</a>
+    </aside>
+
+    <div class="doccontent">
+      <h2 id="getting-started">Introduction</h2>
+      <p>TupleNest is a local-first PostgreSQL IDE. It runs entirely on your machine, talks directly to your database over the PostgreSQL wire protocol, and stores credentials in your operating system's keychain. There is no account, no cloud, and no telemetry.</p>
+      <p>This page is a hub. Each section is a short, practical walkthrough; where a topic is broad, it links to the relevant Features or Security section for depth.</p>
+
+      <h2 id="install">Installation</h2>
+      <p>Download the build for your platform from the <a href="download.html">Download page</a>, then:</p>
+      <ul>
+        <li><b>macOS</b> — open the .dmg, drag to Applications, then right-click → Open on first launch.</li>
+        <li><b>Windows</b> — run the installer; on SmartScreen choose “More info” → “Run anyway”.</li>
+        <li><b>Linux</b> — <code class="inline">chmod +x</code> the AppImage and run it, or install the .deb.</li>
+      </ul>
+      <p>Prefer to build it yourself? The <a href="download.html#build">build-from-source</a> steps are on the Download page.</p>
+
+      <h2 id="first-connection">Create your first connection</h2>
+      <p>Open the connection editor and fill in host, port, database, and username. Choose an environment (development, staging, or production) — production connections are shown distinctly so you always know where a query will run.</p>
+      <p>Click <b>Test</b> to run a staged check (DNS → TCP → authentication) before you commit. When you save, the password goes to the OS keychain and the profile stores only an opaque reference.</p>
+      <div class="callout info">New profiles default to <b>verify-full</b> TLS — they fail closed until you deliberately relax them.</div>
+
+      <h2 id="first-query">Run your first query</h2>
+      <p>Type SQL in the editor and press <span class="kbd">⌘↵</span> (or Ctrl+Enter). Results stream into a virtualized grid below, with execution duration and true row count. Select part of the query to run only the selection.</p>
+
+      <h2 id="schema">Explore the schema</h2>
+      <p>The left explorer lazily loads schemas, tables, views, functions, indexes, and constraints. Use global search (<span class="kbd">⌘P</span>) to jump to any object, or open the ER diagram to see foreign-key relationships as a graph.</p>
+
+      <h2 id="connections">Connection profiles</h2>
+      <p>Profiles group by environment and remember TLS mode, optional custom CA, SSH settings, and the keychain reference for the password. Favourite and recent connections are one keystroke away.</p>
+
+      <h2 id="tls">TLS modes</h2>
+      <p>Four modes: Disabled, Prefer, Verify CA, and Verify Full. In the verify modes, TLS is required and a plaintext server is refused. See the <a href="security.html#tls">Security page</a> for exactly what each mode guarantees.</p>
+
+      <h2 id="ssh">SSH tunnels</h2>
+      <p>To reach a database behind a bastion, enable the SSH section and provide the host, user, and private key path. Host keys are verified; a changed key is rejected rather than silently trusted.</p>
+
+      <h2 id="credentials">Password storage</h2>
+      <p>Passwords are stored in the macOS Keychain, Windows Credential Manager, or the Linux Secret Service — never in a config file, and never returned to the UI layer. Details on the <a href="security.html#credentials">Security page</a>.</p>
+
+      <h2 id="editor">SQL editor</h2>
+      <p>Schema-aware completion, formatting, multiple tabs, query history, snippets, and parameter binding. The editor understands PostgreSQL literals (dollar-quoting, nested comments), which is what makes the safety guard reliable.</p>
+
+      <h2 id="results">Result grid</h2>
+      <p>Streaming rows, virtualized rendering, sort/filter/search, explicit NULLs, copy cell/row/selection, and export. Large results are bounded by row, byte, and per-cell limits, with clear truncation indicators.</p>
+
+      <h2 id="io">Import &amp; export</h2>
+      <p>Import CSV with header mapping and a type/error preview before committing. Export to CSV, JSON, or Markdown. CSV export is spreadsheet-safe by default (formula injection neutralized); a toggle enables raw output.</p>
+
+      <h2 id="shortcuts">Keyboard shortcuts</h2>
+      <div class="keys">
+        <div class="key"><span class="kbd">⌘K</span><span class="kl">Command palette</span></div>
+        <div class="key"><span class="kbd">⌘↵</span><span class="kl">Run query</span></div>
+        <div class="key"><span class="kbd">⇧⌘F</span><span class="kl">Format</span></div>
+        <div class="key"><span class="kbd">⌘T</span><span class="kl">New tab</span></div>
+        <div class="key"><span class="kbd">⌘P</span><span class="kl">Global search</span></div>
+        <div class="key"><span class="kbd">⌘/</span><span class="kl">Toggle comments</span></div>
+        <div class="key"><span class="kbd">⌘O</span><span class="kl">Open connection</span></div>
+        <div class="key"><span class="kbd">Esc</span><span class="kl">Cancel query</span></div>
+      </div>
+      <p style="margin-top:12px">On Windows and Linux, use Ctrl in place of ⌘.</p>
+
+      <h2 id="read-only">Read-only mode</h2>
+      <p>Turn on read-only for a connection and TupleNest issues a PostgreSQL read-only session characteristic — the <em>server</em> refuses writes, not just the UI. It's an accident guardrail; for strict enforcement, use a database role without write privileges.</p>
+
+      <h2 id="dangerous">Dangerous statements</h2>
+      <p>Statements like <code class="inline">DELETE</code>/<code class="inline">UPDATE</code> without a WHERE, or <code class="inline">DROP</code>/<code class="inline">TRUNCATE</code>, trigger a confirmation. The check masks comments and strings first, so a commented-out WHERE can't disarm it.</p>
+
+      <h2 id="privacy">Security &amp; privacy</h2>
+      <p>No telemetry, no account, no cloud. The only network destinations are your PostgreSQL host, your SSH host (if configured), and the GitHub update endpoint. The full model is on the <a href="security.html">Security page</a>.</p>
+
+      <h2 id="settings">Settings</h2>
+      <p>Configure appearance, editor and query preferences, history retention, export defaults, update behaviour, and keyboard shortcuts. Query-history retention and the production audit log are both under your control.</p>
+
+      <h2 id="troubleshooting">Troubleshooting</h2>
+      <ul>
+        <li><b>Cannot connect</b> — run Test to see which stage fails (DNS, TCP, or auth).</li>
+        <li><b>TLS certificate failure</b> — check the mode and, for a private CA, set the custom CA path.</li>
+        <li><b>SSH host-key failure</b> — the key changed; verify with your admin before trusting it.</li>
+        <li><b>Keychain access error</b> — grant TupleNest keychain permission when the OS prompts.</li>
+        <li><b>Query timeout / large result</b> — adjust the statement timeout or narrow the query; the grid caps are configurable.</li>
+        <li><b>Update failure</b> — betas update by manual download; the auto-updater targets stable releases.</li>
+        <li><b>Logs</b> — rotating log files live in the app-data directory (owner-only on Unix).</li>
+      </ul>
+
+      <h2 id="faq">FAQ</h2>
+      <p>Common product, security, compatibility, and licensing questions are answered on the <a href="index.html#faq">Home FAQ</a> and the <a href="download.html">Download page</a>. Anything missing? <a href="https://github.com/talaatmagdyx/TupleNest/discussions">Ask in Discussions</a>.</p>
+
+      <div class="callout" style="margin-top:34px">Docs are evolving alongside the beta. Spot something wrong or missing? Every page can be improved via a pull request — <a href="https://github.com/talaatmagdyx/TupleNest">the repository</a> is the source of truth.</div>
+    </div>
+  </div>
+</section>
+
+<footer class="site">
+  <div class="wrap">
+    <div class="cols">
+      <div class="fbrand"><img src="logo.png" alt=""><p>The PostgreSQL IDE that asks before it writes. Local-first, open-source, MIT.</p></div>
+      <div><h5>Product</h5><a href="features.html">Features</a><a href="security.html">Security</a><a href="download.html">Download</a><a href="roadmap.html">Roadmap</a><a href="changelog.html">Changelog</a></div>
+      <div><h5>Resources</h5><a href="docs.html">Documentation</a><a href="docs.html#getting-started">Getting Started</a><a href="docs.html#shortcuts">Keyboard Shortcuts</a><a href="docs.html#troubleshooting">Troubleshooting</a><a href="blog.html">Blog</a></div>
+      <div><h5>Community</h5><a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a><a href="https://github.com/talaatmagdyx/TupleNest/discussions">Discussions</a><a href="https://github.com/talaatmagdyx/TupleNest/issues">Issues</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a></div>
+      <div><h5>Legal</h5><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/LICENSE">MIT License</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/PRIVACY.md">Privacy</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/SECURITY.md">Security Policy</a><a href="security.html#supply-chain">Third-party notices</a></div>
+    </div>
+    <div class="base"><span>© <span data-year>2026</span> TupleNest · MIT licensed</span><span>Built with Rust &amp; Tauri · No cloud, no telemetry</span></div>
+  </div>
+</footer>
+
+<script src="site.js" defer></script>
+</body>
+</html>

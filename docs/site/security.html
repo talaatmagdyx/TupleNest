@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security &amp; Privacy — TupleNest</title>
+<meta name="description" content="TupleNest's security model: credentials in the OS keychain, TLS that fails closed, SSH host-key verification, no telemetry, signed releases, and honest known limitations.">
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="logo.png" alt=""><b>TupleNest</b></a>
+    <nav>
+      <a class="link" href="index.html">Home</a><a class="link" href="features.html">Features</a>
+      <a class="link active" href="security.html">Security</a><a class="link" href="download.html">Download</a>
+      <a class="link" href="docs.html">Docs</a><a class="link" href="roadmap.html">Roadmap</a>
+      <a class="link" href="blog.html">Blog</a><a class="link" href="changelog.html">Changelog</a>
+      <a class="ghostbtn" href="https://github.com/talaatmagdyx/TupleNest"><span class="stars hidden" data-stars></span>GitHub</a>
+      <a class="navbtn" href="download.html">Download</a>
+    </nav>
+    <button class="menu-toggle" aria-label="Open menu">☰</button>
+  </div>
+  <div class="mobile-menu">
+    <a href="index.html">Home</a><a href="features.html">Features</a><a href="security.html">Security</a>
+    <a href="download.html">Download</a><a href="docs.html">Docs</a><a href="roadmap.html">Roadmap</a>
+    <a href="blog.html">Blog</a><a href="changelog.html">Changelog</a><a href="https://github.com/talaatmagdyx/TupleNest">GitHub ↗</a>
+  </div>
+</header>
+
+<section class="hero sm">
+  <div class="glow g1"></div>
+  <div class="wrap">
+    <span class="tagpill"><span class="dot"></span> Security-review response shipped in beta.3</span>
+    <h1>Security is not a feature.<br><em>It is the foundation.</em></h1>
+    <p class="sub">TupleNest is designed to keep credentials, queries, and database data under your control — and to be honest about where its guarantees end.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/talaatmagdyx/TupleNest/blob/main/SECURITY.md">Security Policy</a>
+      <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest/security/advisories/new">Report a vulnerability</a>
+      <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest">View source</a>
+    </div>
+  </div>
+</section>
+
+<!-- THREAT MODEL -->
+<section id="threat-model">
+  <div class="wrap">
+    <div class="kicker">Threat model</div>
+    <h2>The trust boundaries</h2>
+    <p class="lede">TupleNest is a desktop client. Data crosses a handful of boundaries, and each is treated as a place where something can go wrong.</p>
+    <div class="grid3">
+      <div class="card"><h4>Desktop WebView</h4><p>The UI. Runs under a restrictive CSP with no remote content and a small, explicit command surface into the backend.</p></div>
+      <div class="card"><h4>Rust backend</h4><p>Owns the PostgreSQL wire protocol, credentials, TLS, and file writes. The WebView never touches the network or the keychain directly.</p></div>
+      <div class="card"><h4>PostgreSQL connection</h4><p>TLS with selectable verification. In the verify modes, plaintext is refused.</p></div>
+      <div class="card"><h4>SSH tunnel</h4><p>Optional. Host keys are verified; a changed key is rejected.</p></div>
+      <div class="card"><h4>Local disk</h4><p>App database, logs, crash reports — owner-only on Unix.</p></div>
+      <div class="card"><h4>Update channel</h4><p>HTTPS, signed artifacts, embedded public key, anti-rollback floor.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- CREDENTIALS -->
+<section id="credentials">
+  <div class="wrap">
+    <div class="kicker">Credential security</div>
+    <h2>Passwords live in the OS keychain</h2>
+    <div class="grid2" style="margin-top:8px">
+      <div class="card"><ul>
+        <li>Passwords are stored in the OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service)</li>
+        <li>The app database stores only an <b>opaque reference</b>, never the password</li>
+        <li>Passwords are never written to settings files</li>
+        <li>Passwords are never returned to the WebView</li>
+        <li>A held reference is reused on Test/connect so repeated attempts don't orphan keychain entries</li>
+        <li>In-memory password copies are zeroized where the platform allows</li>
+      </ul></div>
+      <div class="card"><h4>Honest boundary</h4><p>Once you open a database session, the credential must exist in process memory to authenticate. TupleNest minimizes and zeroizes that exposure but cannot make an in-use secret unreadable to code running as your own OS account. The keychain protects credentials at rest, not against a compromised local account.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- TLS -->
+<section id="tls">
+  <div class="wrap">
+    <div class="kicker">Transport security</div>
+    <h2>PostgreSQL TLS modes</h2>
+    <p class="lede">Four modes, from off to fully verified. New profiles default to <b>verify-full</b> — they fail closed until someone deliberately relaxes them.</p>
+    <table style="margin-top:8px">
+      <tr><th>Mode</th><th>Behaviour</th><th>Use</th></tr>
+      <tr><td>Disabled</td><td class="how">No TLS.</td><td class="how">Trusted local environments only</td></tr>
+      <tr><td>Prefer</td><td class="how">Attempts TLS, may fall back to plaintext.</td><td class="how">Not recommended for remote/production</td></tr>
+      <tr><td>Verify CA</td><td class="how">TLS required; certificate chain verified; hostname knowingly skipped.</td><td class="how">The mode SSH tunnels actually need</td></tr>
+      <tr><td>Verify Full</td><td class="how">TLS required; certificate <b>and</b> hostname verified.</td><td class="how">Recommended for production</td></tr>
+    </table>
+    <div class="callout ok" style="margin-top:22px"><b>Downgrade protection is implemented and tested.</b> The client previously never set the SSL mode, so it defaulted to <em>prefer</em> and could be stripped to plaintext even under verify-full. The verify modes now require TLS and refuse a plaintext server — proven against a real <code class="inline">ssl=off</code> server with a negative control. The form also warns when <em>prefer</em> is chosen for a remote host.</div>
+  </div>
+</section>
+
+<!-- SSH -->
+<section id="ssh">
+  <div class="wrap">
+    <div class="kicker">SSH security</div>
+    <h2>Tunnels that verify the host</h2>
+    <div class="grid2">
+      <div class="card"><ul>
+        <li>SSH tunnels to reach databases behind a bastion</li>
+        <li>Known-host verification with a fail-closed policy</li>
+        <li>A changed host key is rejected, not silently accepted</li>
+        <li>No silent trust-on-first-use — the fingerprint is recorded and enforced</li>
+      </ul></div>
+      <div class="card"><h4>Key handling</h4><p>Private keys are read from the path you configure and used to authenticate the tunnel. TupleNest does not enable agent forwarding. The SSH host is one of only three network destinations the app ever contacts.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- PRODUCTION SAFETY -->
+<section id="production">
+  <div class="wrap">
+    <div class="kicker">Production safety model</div>
+    <h2>An accident guardrail, stated honestly</h2>
+    <div class="grid2">
+      <div class="card"><ul>
+        <li>Connections are labelled development, staging, or production</li>
+        <li>Read-only mode issues a PostgreSQL read-only session characteristic</li>
+        <li>Destructive statements are detected and require confirmation</li>
+        <li>The open transaction is owned by a tab; another tab can't commit it</li>
+      </ul></div>
+      <div class="callout warn" style="margin:0"><b>TupleNest protects against accidental writes.</b> For strict enforcement, connect with a database role that has no write privileges. Database permissions remain the final authority — the app is a guardrail, not a replacement for least privilege.</div>
+    </div>
+  </div>
+</section>
+
+<!-- LOCAL STORAGE -->
+<section id="local-storage">
+  <div class="wrap">
+    <div class="kicker">Local data storage</div>
+    <h2>What's stored, and where</h2>
+    <table style="margin-top:8px">
+      <tr><th>Data</th><th>Storage</th></tr>
+      <tr><td>Passwords</td><td class="how">OS keychain</td></tr>
+      <tr><td>Connection metadata</td><td class="how">Local SQLite (owner-only on Unix)</td></tr>
+      <tr><td>Query history</td><td class="how">Local SQLite, configurable retention; secret literals scrubbed</td></tr>
+      <tr><td>Production SQL history</td><td class="how">A <code class="inline">-- tuplenest:no-history</code> directive drops a row; a production audit log records a redacted entry</td></tr>
+      <tr><td>Result rows</td><td class="how">Memory only — never written to disk</td></tr>
+      <tr><td>Reduced error history</td><td class="how">Local SQLite — title, SQLSTATE, category only; no row values</td></tr>
+      <tr><td>Logs</td><td class="how">Local rotating files (owner-only on Unix); chatty transport/crypto crates capped to warn in release</td></tr>
+      <tr><td>Crash reports</td><td class="how">Local only — never uploaded</td></tr>
+    </table>
+    <div class="callout info" style="margin-top:20px">On Unix, the app-data directory is <code class="inline">0700</code> and the SQLite databases (plus WAL/SHM) are <code class="inline">0600</code>, so another local user can't read your profiles, history, or logs. Windows relies on the user-profile ACL.</div>
+  </div>
+</section>
+
+<!-- PRIVACY -->
+<section id="privacy">
+  <div class="wrap">
+    <div class="kicker">Privacy</div>
+    <h2>Nothing leaves your machine unless you send it</h2>
+    <div class="grid2">
+      <div class="card"><h4>What TupleNest does not do</h4><ul>
+        <li>No telemetry</li><li>No account</li><li>No cloud sync</li><li>No advertising</li>
+        <li>No analytics SDK</li><li>No remote crash upload</li><li>No schema upload</li><li>No query upload</li>
+      </ul></div>
+      <div class="card"><h4>Every network destination</h4><ul>
+        <li>The PostgreSQL host you configure</li>
+        <li>The SSH host you configure (if you use a tunnel)</li>
+        <li>The GitHub endpoint used to check for updates</li>
+      </ul><p style="margin-top:12px">That list is exhaustive. There is no fourth destination.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- DESKTOP SECURITY -->
+<section id="desktop">
+  <div class="wrap">
+    <div class="kicker">Desktop application security</div>
+    <h2>A small, hardened surface</h2>
+    <div class="grid3">
+      <div class="card"><h4>Restrictive CSP</h4><p><code class="inline">object-src 'none'</code>, <code class="inline">base-uri 'none'</code>, <code class="inline">frame-ancestors 'none'</code>. No remote WebView content.</p></div>
+      <div class="card"><h4>No arbitrary shell</h4><p>The backend exposes a small, explicit set of commands — not a general shell bridge.</p></div>
+      <div class="card"><h4>Scoped filesystem</h4><p>The filesystem plugin was removed; exports run through a Rust command that owns a native save dialog. The WebView has no write permission.</p></div>
+      <div class="card"><h4>Escaped values</h4><p>Database values are escaped on the way to the UI; CSV export neutralizes spreadsheet formula injection by default.</p></div>
+      <div class="card"><h4>Native dialogs</h4><p>Save/open use the OS's own dialogs, driven from the backend.</p></div>
+      <div class="card"><h4>Limited command surface</h4><p>Each capability is granted explicitly in the Tauri capability file — nothing is on by default.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- UPDATE SECURITY -->
+<section id="updates">
+  <div class="wrap">
+    <div class="kicker">Update security</div>
+    <h2>Signed, checked, and anti-rollback</h2>
+    <div class="grid2">
+      <div class="card"><ul>
+        <li>HTTPS update source</li><li>Signed artifacts with an embedded public key</li>
+        <li>Published SHA-256 checksums</li><li>Anti-rollback: refuses an update below a compiled-in floor</li>
+        <li>Stable releases only for auto-update</li><li>Manual verification options for every download</li>
+      </ul></div>
+      <div class="callout" style="margin:0"><b>Residual, stated plainly.</b> The version manifest itself is not yet signed, so the strongest anchor today is the integrity of the GitHub account and release. Anti-rollback and per-artifact signatures reduce the risk; a signed manifest is the remaining hardening step.</div>
+    </div>
+  </div>
+</section>
+
+<!-- SUPPLY CHAIN -->
+<section id="supply-chain">
+  <div class="wrap">
+    <div class="kicker">Supply chain</div>
+    <h2>From dependency to download</h2>
+    <div class="grid4">
+      <div class="card"><h4>Lockfiles committed</h4><p>Cargo.lock and package-lock.json are in the repo.</p></div>
+      <div class="card"><h4>cargo-deny</h4><p>Advisory, license, and ban checks in CI.</p></div>
+      <div class="card"><h4>Actions SHA-pinned</h4><p>Every third-party GitHub Action is pinned to a commit SHA.</p></div>
+      <div class="card"><h4>Dependabot</h4><p>Automated dependency PRs, reviewed and landed deliberately.</p></div>
+      <div class="card"><h4>SBOM</h4><p>CycloneDX SBOMs generated and attached per release.</p></div>
+      <div class="card"><h4>Build provenance</h4><p>GitHub attestation over the release artifacts.</p></div>
+      <div class="card"><h4>Checksums</h4><p>SHA256SUMS published with every release.</p></div>
+      <div class="card"><h4>License review</h4><p>Third-party licenses reviewed via cargo-deny.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- SECURITY TESTING -->
+<section id="testing">
+  <div class="wrap">
+    <div class="kicker">Security testing</div>
+    <h2>Tests that can actually fail</h2>
+    <p class="lede">A recurring rule in this project: a test that can't fail is worthless. Security-relevant fixes ship with negative controls.</p>
+    <div class="chips">
+      <span class="chip">Unit tests</span><span class="chip">Integration tests (live PG 13/15/17)</span>
+      <span class="chip">TLS downgrade tests</span><span class="chip">Malformed numeric decoder tests</span>
+      <span class="chip">Deterministic fuzzing (300k+ inputs)</span><span class="chip">CSV injection tests</span>
+      <span class="chip">Filesystem-scope tests</span><span class="chip">Dependency scans</span>
+      <span class="chip">CodeQL</span><span class="chip">Manual security review</span>
+    </div>
+    <div class="callout info" style="margin-top:22px">beta.3 was the response to a full “Principal AppSec / red-team” review. The findings and fixes are recorded in the changelog and the repository.</div>
+  </div>
+</section>
+
+<!-- KNOWN LIMITATIONS -->
+<section id="limitations">
+  <div class="wrap">
+    <div class="kicker">Known limitations</div>
+    <h2>Where the guarantees end</h2>
+    <p class="lede">Stating limits is part of being trustworthy. None of these are hidden.</p>
+    <div class="grid2">
+      <div class="card"><ul>
+        <li>A local user with access to your OS account may reach local metadata</li>
+        <li>Clipboard content is controlled by the operating system, not by TupleNest</li>
+        <li>Read-only mode is an accident guardrail, not a substitute for database privileges</li>
+      </ul></div>
+      <div class="card"><ul>
+        <li>Raw CSV export (when you opt out of spreadsheet-safe mode) can be interpreted as formulas by spreadsheets</li>
+        <li>The update version manifest is not yet signed</li>
+        <li>This is beta software and may contain undiscovered vulnerabilities</li>
+      </ul></div>
+    </div>
+  </div>
+</section>
+
+<!-- DISCLOSURE -->
+<section id="disclosure">
+  <div class="wrap">
+    <div class="kicker">Responsible disclosure</div>
+    <h2>Reporting a vulnerability</h2>
+    <div class="grid2">
+      <div class="card"><ul>
+        <li>Report privately via GitHub Security Advisories</li>
+        <li>Please don't open a public issue for a security bug</li>
+        <li>You'll get an acknowledgement while it's triaged</li>
+      </ul></div>
+      <div class="card"><ul>
+        <li>Fixes are prioritized by severity and coordinated with you</li>
+        <li>Coordinated disclosure once a fix is available</li>
+        <li>The current beta line is the supported version</li>
+      </ul></div>
+    </div>
+    <div class="cta" style="margin-top:26px">
+      <a class="btn primary" href="https://github.com/talaatmagdyx/TupleNest/security/advisories/new">Report a vulnerability</a>
+      <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest/blob/main/SECURITY.md">Read the Security Policy</a>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section>
+  <div class="wrap">
+    <div class="ctabanner">
+      <h2>Security claims should be verifiable.</h2>
+      <p>The source, the tests, and the release artifacts are all public. Check any of it.</p>
+      <div class="cta" style="justify-content:center;margin-top:24px">
+        <a class="btn primary" href="https://github.com/talaatmagdyx/TupleNest/blob/main/SECURITY.md">View Security Policy</a>
+        <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest">Read the source</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="site">
+  <div class="wrap">
+    <div class="cols">
+      <div class="fbrand"><img src="logo.png" alt=""><p>The PostgreSQL IDE that asks before it writes. Local-first, open-source, MIT.</p></div>
+      <div><h5>Product</h5><a href="features.html">Features</a><a href="security.html">Security</a><a href="download.html">Download</a><a href="roadmap.html">Roadmap</a><a href="changelog.html">Changelog</a></div>
+      <div><h5>Resources</h5><a href="docs.html">Documentation</a><a href="docs.html#getting-started">Getting Started</a><a href="docs.html#shortcuts">Keyboard Shortcuts</a><a href="docs.html#troubleshooting">Troubleshooting</a><a href="blog.html">Blog</a></div>
+      <div><h5>Community</h5><a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a><a href="https://github.com/talaatmagdyx/TupleNest/discussions">Discussions</a><a href="https://github.com/talaatmagdyx/TupleNest/issues">Issues</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a></div>
+      <div><h5>Legal</h5><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/LICENSE">MIT License</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/PRIVACY.md">Privacy</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/SECURITY.md">Security Policy</a><a href="security.html#supply-chain">Third-party notices</a></div>
+    </div>
+    <div class="base"><span>© <span data-year>2026</span> TupleNest · MIT licensed</span><span>Built with Rust &amp; Tauri · No cloud, no telemetry</span></div>
+  </div>
+</footer>
+
+<script src="site.js" defer></script>
+</body>
+</html>

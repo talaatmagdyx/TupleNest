@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why TupleNest asks before it writes — TupleNest Blog</title>
+<meta name="description" content="The design philosophy behind read-only-by-default, server-enforced safety, and confirmation flows in TupleNest — and where those guardrails honestly end.">
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="logo.png" alt=""><b>TupleNest</b></a>
+    <nav>
+      <a class="link" href="index.html">Home</a><a class="link" href="features.html">Features</a>
+      <a class="link" href="security.html">Security</a><a class="link" href="download.html">Download</a>
+      <a class="link" href="docs.html">Docs</a><a class="link" href="roadmap.html">Roadmap</a>
+      <a class="link active" href="blog.html">Blog</a><a class="link" href="changelog.html">Changelog</a>
+      <a class="ghostbtn" href="https://github.com/talaatmagdyx/TupleNest"><span class="stars hidden" data-stars></span>GitHub</a>
+      <a class="navbtn" href="download.html">Download</a>
+    </nav>
+    <button class="menu-toggle" aria-label="Open menu">☰</button>
+  </div>
+  <div class="mobile-menu">
+    <a href="index.html">Home</a><a href="features.html">Features</a><a href="security.html">Security</a>
+    <a href="download.html">Download</a><a href="docs.html">Docs</a><a href="roadmap.html">Roadmap</a>
+    <a href="blog.html">Blog</a><a href="changelog.html">Changelog</a><a href="https://github.com/talaatmagdyx/TupleNest">GitHub ↗</a>
+  </div>
+</header>
+
+<section style="padding-top:72px">
+  <div class="wrap narrow">
+    <a href="blog.html" style="font-size:13.5px;color:var(--dim)">← Back to the blog</a>
+    <div class="cat" style="font-family:var(--mono);font-size:11.5px;color:var(--amber);letter-spacing:1px;text-transform:uppercase;margin-top:20px">Product · 6 min read</div>
+    <h1 style="font-size:clamp(30px,4.5vw,46px);letter-spacing:-1px;line-height:1.1;margin:10px 0 12px">Why TupleNest asks before it writes</h1>
+    <p style="color:var(--faint);font-family:var(--mono);font-size:13px">Published July 2026 · TupleNest team</p>
+
+    <div class="doccontent" style="margin-top:30px">
+      <p>Most database clients share one default: you type something, you hit run, and it happens. That's fine on a scratch database. On a production one, it means the distance between “inspecting a table” and “deleting a table” is a single keystroke and a moment of inattention. TupleNest is built around the opposite default — it asks first — and this post explains what that actually means in the product, and just as importantly, what it does <em>not</em> mean.</p>
+
+      <h2>Read-only is the server's job, not the button's</h2>
+      <p>A lot of tools implement “read-only mode” in the UI: they gray out the run button for anything that looks like a write. That's theater. The moment the detection is wrong — a CTE-led <code class="inline">UPDATE</code>, a function call that writes, a clever bit of SQL — the guarantee evaporates.</p>
+      <p>When you mark a TupleNest connection read-only, the session issues a real PostgreSQL <code class="inline">SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY</code>. Refusing the write becomes PostgreSQL's job, not ours to guess at. If a statement tries to write, the server rejects it — the same way it would reject anyone else. The guardrail is enforced at the layer that can't be fooled by clever syntax.</p>
+
+      <h2>Environments you can see</h2>
+      <p>Every connection is classified as development, staging, or production, and production is visually distinct. This sounds small, but the most common “oops” isn't running the wrong query — it's running the right query against the wrong database. If your production window doesn't look like your dev window, your eyes catch the mistake before your fingers commit it.</p>
+
+      <h2>The destructive-statement guard reads the real query</h2>
+      <p>For the statements that are dangerous by nature — <code class="inline">DELETE</code> or <code class="inline">UPDATE</code> without a <code class="inline">WHERE</code>, <code class="inline">DROP</code>, <code class="inline">TRUNCATE</code> — TupleNest asks for confirmation. The interesting part is <em>how</em> it decides.</p>
+      <p>An early version matched keywords against the raw text. That's exactly the kind of check that fails on the near-miss it exists for: <code class="inline">DELETE FROM users -- where</code> — a commented-out <code class="inline">WHERE</code> — would sail straight through. The guard now masks comments and string literals first (including PostgreSQL's dollar-quoting and nested comments), finds the real leading keyword past any comment, and understands CTE-led writes. It reasons about the query PostgreSQL will actually run, not the characters on screen.</p>
+
+      <h2>Transactions have an owner</h2>
+      <p>One subtle failure mode: a single database session serving several query tabs. Open a transaction in tab A, and tab B's statements join it — press commit in tab B and you've committed tab A's uncommitted work. TupleNest records the tab that opened a transaction; committing or rolling back from anywhere else is refused and names the owner. Safety isn't only about single statements; it's about not conflating two people's intentions into one connection.</p>
+
+      <h2>Where the guardrails end — and why we say so</h2>
+      <p>Here's the part a marketing page usually skips. Read-only mode, environment labels, and confirmations reduce the chance of an <em>accident</em>. They are not a security boundary against a determined or mistaken operator who turns them off.</p>
+      <div class="callout warn">If you need to <em>guarantee</em> a session can't write, connect with a database role that has no write privileges. That is the strongest boundary, and it lives in PostgreSQL, not in a desktop app. TupleNest makes least privilege easier to live with; it doesn't replace it.</div>
+      <p>We put that sentence in the app, in the docs, and on the security page on purpose. A safety feature that overstates itself is worse than none, because it invites the exact complacency it's supposed to prevent.</p>
+
+      <h2>Safety as a workflow, not a color</h2>
+      <p>Put together, the philosophy is simple: the safe path should be the default path, enforcement should live in the layer that can't be tricked, and the tool should be honest about the difference between “harder to do by accident” and “impossible to do.” That's why the tagline isn't “TupleNest is safe.” It's “the PostgreSQL IDE that asks before it writes” — a description of behavior you can check, not a promise you have to trust.</p>
+
+      <p style="margin-top:26px">Want the full technical model? The <a href="security.html">Security page</a> lays out the trust boundaries, the TLS and SSH story, local storage, and the known limitations — all of it verifiable against the <a href="https://github.com/talaatmagdyx/TupleNest">source</a>.</p>
+    </div>
+
+    <div class="cta" style="margin-top:40px">
+      <a class="btn primary" data-download href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Try TupleNest</a>
+      <a class="btn ghost" href="blog.html">More posts</a>
+    </div>
+  </div>
+</section>
+
+<footer class="site" style="margin-top:40px">
+  <div class="wrap">
+    <div class="cols">
+      <div class="fbrand"><img src="logo.png" alt=""><p>The PostgreSQL IDE that asks before it writes. Local-first, open-source, MIT.</p></div>
+      <div><h5>Product</h5><a href="features.html">Features</a><a href="security.html">Security</a><a href="download.html">Download</a><a href="roadmap.html">Roadmap</a><a href="changelog.html">Changelog</a></div>
+      <div><h5>Resources</h5><a href="docs.html">Documentation</a><a href="docs.html#getting-started">Getting Started</a><a href="docs.html#shortcuts">Keyboard Shortcuts</a><a href="docs.html#troubleshooting">Troubleshooting</a><a href="blog.html">Blog</a></div>
+      <div><h5>Community</h5><a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a><a href="https://github.com/talaatmagdyx/TupleNest/discussions">Discussions</a><a href="https://github.com/talaatmagdyx/TupleNest/issues">Issues</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a></div>
+      <div><h5>Legal</h5><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/LICENSE">MIT License</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/PRIVACY.md">Privacy</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/SECURITY.md">Security Policy</a><a href="security.html#supply-chain">Third-party notices</a></div>
+    </div>
+    <div class="base"><span>© <span data-year>2026</span> TupleNest · MIT licensed</span><span>Built with Rust &amp; Tauri · No cloud, no telemetry</span></div>
+  </div>
+</footer>
+
+<script src="site.js" defer></script>
+</body>
+</html>

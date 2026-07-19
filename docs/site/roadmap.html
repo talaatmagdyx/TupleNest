@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roadmap — TupleNest</title>
+<meta name="description" content="Where TupleNest is going: shipped, in progress, planned, under consideration, and explicitly not planned. Priorities, not fixed promises.">
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="logo.png" alt=""><b>TupleNest</b></a>
+    <nav>
+      <a class="link" href="index.html">Home</a><a class="link" href="features.html">Features</a>
+      <a class="link" href="security.html">Security</a><a class="link" href="download.html">Download</a>
+      <a class="link" href="docs.html">Docs</a><a class="link active" href="roadmap.html">Roadmap</a>
+      <a class="link" href="blog.html">Blog</a><a class="link" href="changelog.html">Changelog</a>
+      <a class="ghostbtn" href="https://github.com/talaatmagdyx/TupleNest"><span class="stars hidden" data-stars></span>GitHub</a>
+      <a class="navbtn" href="download.html">Download</a>
+    </nav>
+    <button class="menu-toggle" aria-label="Open menu">☰</button>
+  </div>
+  <div class="mobile-menu">
+    <a href="index.html">Home</a><a href="features.html">Features</a><a href="security.html">Security</a>
+    <a href="download.html">Download</a><a href="docs.html">Docs</a><a href="roadmap.html">Roadmap</a>
+    <a href="blog.html">Blog</a><a href="changelog.html">Changelog</a><a href="https://github.com/talaatmagdyx/TupleNest">GitHub ↗</a>
+  </div>
+</header>
+
+<section class="hero sm">
+  <div class="glow g1"></div>
+  <div class="wrap">
+    <span class="tagpill"><span class="dot"></span> Priorities, not promises</span>
+    <h1>Where TupleNest<br><em>is going.</em></h1>
+    <p class="sub">The roadmap reflects current priorities, not fixed commitments. Quality and safety come before feature count.</p>
+  </div>
+</section>
+
+<!-- PRINCIPLES -->
+<section class="tight">
+  <div class="wrap">
+    <div class="kicker">Product principles</div>
+    <h2>How we decide what to build</h2>
+    <div class="grid3" style="margin-top:20px">
+      <div class="card"><h4>PostgreSQL-first</h4><p>Depth for one engine beats shallow support for ten.</p></div>
+      <div class="card"><h4>Safety before convenience</h4><p>A feature that makes accidents easier doesn't ship.</p></div>
+      <div class="card"><h4>Local-first</h4><p>Your data and credentials stay on your machine.</p></div>
+      <div class="card"><h4>Native performance</h4><p>A Rust core, bounded memory, fast startup.</p></div>
+      <div class="card"><h4>Honest claims</h4><p>If it isn't built and tested, it's marked planned.</p></div>
+      <div class="card"><h4>Open development</h4><p>Built in public, decided in the open.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- SHIPPED -->
+<section class="tight">
+  <div class="wrap">
+    <div class="kicker">Shipped</div>
+    <h2 style="display:flex;align-items:center;gap:12px"><span class="pill ok">Done</span> Already in your hands</h2>
+    <p class="lede">Each of these is in the current beta. Follow the release links in the <a href="changelog.html">changelog</a> for when it landed.</p>
+    <div class="chips">
+      <span class="chip">Smart SQL editor</span><span class="chip">Schema explorer</span><span class="chip">ER diagrams</span>
+      <span class="chip">Read-only mode</span><span class="chip">SSH tunnels (host-key verified)</span><span class="chip">TLS verify modes</span>
+      <span class="chip">Keychain credentials</span><span class="chip">Streaming virtualized grid</span><span class="chip">CSV import</span>
+      <span class="chip">CSV / JSON / Markdown export</span><span class="chip">Spreadsheet-safe CSV</span><span class="chip">Query history &amp; snippets</span>
+      <span class="chip">Parameter binding</span><span class="chip">Global object search</span><span class="chip">Server monitoring &amp; terminate</span>
+      <span class="chip">EXPLAIN &amp; plan comparison</span><span class="chip">Schema diff</span><span class="chip">Find usages &amp; rename</span>
+      <span class="chip">Index / bloat / stat panels</span><span class="chip">Partition management</span><span class="chip">Signed releases + SBOM + provenance</span>
+    </div>
+  </div>
+</section>
+
+<!-- IN PROGRESS / PLANNED / CONSIDERING -->
+<section class="tight">
+  <div class="wrap">
+    <div class="grid3">
+      <div class="rmcol">
+        <h3><span class="pill beta">In progress</span></h3>
+        <p class="lede" style="font-size:14px;margin-bottom:18px">Current near-term focus. Stages and dates shift as we learn.</p>
+        <div class="card"><h4>Richer EXPLAIN ANALYZE view</h4><p>Visual plan with expensive-node highlighting and buffers.</p></div>
+        <div class="card"><h4>Connection diagnostics</h4><p>Clearer staged failures and actionable messages.</p></div>
+        <div class="card"><h4>Import improvements</h4><p>Streaming large CSVs instead of reading fully into memory.</p></div>
+        <div class="card"><h4>Accessibility</h4><p>Keyboard and screen-reader coverage across dialogs and the grid.</p></div>
+      </div>
+      <div class="rmcol">
+        <h3><span class="pill plan">Planned</span></h3>
+        <p class="lede" style="font-size:14px;margin-bottom:18px">Committed direction, not yet started or not yet finished.</p>
+        <div class="card"><h4>Saved workspaces</h4><p>Reopen tabs, connections, and layout as a set.</p></div>
+        <div class="card"><h4>Query bookmarks</h4><p>Pin and organize queries beyond raw history.</p></div>
+        <div class="card"><h4>Custom themes</h4><p>User-adjustable colours within the design system.</p></div>
+        <div class="card"><h4>Deeper schema diffing</h4><p>Object-level diffs with a review flow.</p></div>
+        <div class="card"><h4>More observability</h4><p>Additional PostgreSQL health &amp; activity views.</p></div>
+      </div>
+      <div class="rmcol">
+        <h3><span class="pill">Under consideration</span></h3>
+        <p class="lede" style="font-size:14px;margin-bottom:18px">Under consideration does not mean committed.</p>
+        <div class="card"><h4>Plugin architecture</h4><p>A safe extension surface — carefully, given the safety posture.</p></div>
+        <div class="card"><h4>Team connection templates</h4><p>Shareable profiles without shared secrets.</p></div>
+        <div class="card"><h4>Optional cloud sync</h4><p>Only if it can be done without weakening local-first.</p></div>
+        <div class="card"><h4>Additional databases</h4><p>Beyond PostgreSQL — only if it doesn't dilute focus.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- NOT PLANNED -->
+<section class="tight">
+  <div class="wrap">
+    <div class="kicker">Not planned</div>
+    <h2>What TupleNest won't become</h2>
+    <p class="lede">Saying no keeps the product focused. These are deliberate non-goals.</p>
+    <div class="grid2">
+      <div class="card"><ul>
+        <li>A full multi-engine database administration suite</li>
+        <li>Support for every database engine</li>
+        <li>Cloud-hosted query execution</li>
+      </ul></div>
+      <div class="card"><ul>
+        <li>Advertising-based monetization</li>
+        <li>Mandatory accounts</li>
+        <li>Telemetry or analytics of any kind</li>
+      </ul></div>
+    </div>
+    <div class="callout info" style="margin-top:20px">No AI assistant is promised. If one is ever built, it will appear here as planned first — not marketed before it exists.</div>
+  </div>
+</section>
+
+<!-- SUGGEST -->
+<section class="tight">
+  <div class="wrap">
+    <div class="ctabanner">
+      <h2>Suggest a feature</h2>
+      <p>Search existing requests first, then open a discussion or issue. Tell us the problem you're trying to solve, not just the feature — it helps us find the best fix.</p>
+      <div class="cta" style="justify-content:center;margin-top:22px">
+        <a class="btn primary" href="https://github.com/talaatmagdyx/TupleNest/discussions">Open a discussion</a>
+        <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest/issues">Browse issues</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="site">
+  <div class="wrap">
+    <div class="cols">
+      <div class="fbrand"><img src="logo.png" alt=""><p>The PostgreSQL IDE that asks before it writes. Local-first, open-source, MIT.</p></div>
+      <div><h5>Product</h5><a href="features.html">Features</a><a href="security.html">Security</a><a href="download.html">Download</a><a href="roadmap.html">Roadmap</a><a href="changelog.html">Changelog</a></div>
+      <div><h5>Resources</h5><a href="docs.html">Documentation</a><a href="docs.html#getting-started">Getting Started</a><a href="docs.html#shortcuts">Keyboard Shortcuts</a><a href="docs.html#troubleshooting">Troubleshooting</a><a href="blog.html">Blog</a></div>
+      <div><h5>Community</h5><a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a><a href="https://github.com/talaatmagdyx/TupleNest/discussions">Discussions</a><a href="https://github.com/talaatmagdyx/TupleNest/issues">Issues</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a></div>
+      <div><h5>Legal</h5><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/LICENSE">MIT License</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/PRIVACY.md">Privacy</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/SECURITY.md">Security Policy</a><a href="security.html#supply-chain">Third-party notices</a></div>
+    </div>
+    <div class="base"><span>© <span data-year>2026</span> TupleNest · MIT licensed</span><span>Built with Rust &amp; Tauri · No cloud, no telemetry</span></div>
+  </div>
+</footer>
+
+<script src="site.js" defer></script>
+</body>
+</html>

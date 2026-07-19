@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Changelog — TupleNest</title>
+<meta name="description" content="Features, fixes, security updates, and compatibility changes for every TupleNest release.">
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="logo.png" alt=""><b>TupleNest</b></a>
+    <nav>
+      <a class="link" href="index.html">Home</a><a class="link" href="features.html">Features</a>
+      <a class="link" href="security.html">Security</a><a class="link" href="download.html">Download</a>
+      <a class="link" href="docs.html">Docs</a><a class="link" href="roadmap.html">Roadmap</a>
+      <a class="link" href="blog.html">Blog</a><a class="link active" href="changelog.html">Changelog</a>
+      <a class="ghostbtn" href="https://github.com/talaatmagdyx/TupleNest"><span class="stars hidden" data-stars></span>GitHub</a>
+      <a class="navbtn" href="download.html">Download</a>
+    </nav>
+    <button class="menu-toggle" aria-label="Open menu">☰</button>
+  </div>
+  <div class="mobile-menu">
+    <a href="index.html">Home</a><a href="features.html">Features</a><a href="security.html">Security</a>
+    <a href="download.html">Download</a><a href="docs.html">Docs</a><a href="roadmap.html">Roadmap</a>
+    <a href="blog.html">Blog</a><a href="changelog.html">Changelog</a><a href="https://github.com/talaatmagdyx/TupleNest">GitHub ↗</a>
+  </div>
+</header>
+
+<section class="hero sm">
+  <div class="glow g1"></div>
+  <div class="wrap">
+    <span class="tagpill"><span class="dot"></span> Follows Keep a Changelog · SemVer</span>
+    <h1>What's new in TupleNest.</h1>
+    <p class="sub">Features, fixes, security updates, and compatibility changes for every release. Each version links to its GitHub release, checksums, and signatures.</p>
+  </div>
+</section>
+
+<!-- CURRENT RELEASE -->
+<section class="tight">
+  <div class="wrap">
+    <div class="kicker">Current release</div>
+    <div class="release" style="border-color:var(--line2)">
+      <div class="rhead">
+        <h3>v0.1.0-beta.3</h3><span class="pill beta">Public Beta</span><span class="date">July 2026</span>
+      </div>
+      <p style="color:var(--dim);margin-bottom:6px">The security-review response: the release blockers (TLS, numeric DoS, CSV injection), plus data/local/desktop hardening.</p>
+
+      <h4 class="sec">Security</h4>
+      <ul>
+        <li><b>TLS is now actually required in the verify modes (CRITICAL).</b> The client never set the SSL mode, defaulting to <em>prefer</em>; verify-ca/verify-full now map to <em>require</em> and refuse plaintext — proven against a real <code class="inline">ssl=off</code> server with a negative control.</li>
+        <li><b>A malicious server can no longer OOM the app via a <code class="inline">numeric</code> value (HIGH).</b> The wire display scale was read signed and cast to a huge loop bound; now read unsigned and clamped, with digit/render ceilings.</li>
+        <li><b>CSV export neutralizes spreadsheet formula injection (HIGH).</b> Cells starting with <code class="inline">= + - @</code> (or tab/CR) are neutralized by default; a toggle allows raw output.</li>
+        <li>On-disk stores, logs, and crash reports are now owner-only on Unix (0700 dir / 0600 files).</li>
+        <li>Stored SQL is scrubbed of secret literals; <code class="inline">-- tuplenest:no-history</code> skips a statement's history row.</li>
+        <li>A single huge cell can no longer spike memory — rendered values capped at 1&nbsp;MiB with a truncation marker.</li>
+        <li>Keychain entries are no longer orphaned on every Test/connect — a held reference is reused.</li>
+        <li>Exports go through a Rust command that owns the save dialog; the <code class="inline">fs</code> plugin was removed. CSP tightened (object-src/base-uri/frame-ancestors none).</li>
+        <li>Auto-update anti-rollback floor; release logging caps chatty crates to warn.</li>
+        <li>All third-party GitHub Actions pinned to commit SHAs; CI runs least-privilege.</li>
+        <li>Failed-query history no longer persists row values — only title, SQLSTATE, and category.</li>
+        <li>Deterministic fuzz (300k+ inputs) over the numeric and raw-value decoders.</li>
+      </ul>
+
+      <h4 class="fix">Fixed</h4>
+      <ul>
+        <li>A failed query now shows the server's full report (SQLSTATE, message, DETAIL, HINT, CONTEXT), not the bare “Database error”.</li>
+      </ul>
+
+      <div class="cta" style="margin-top:20px">
+        <a class="btn sm primary" href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.3">GitHub release ↗</a>
+        <a class="btn sm ghost" href="download.html">Download</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HISTORY -->
+<section class="tight">
+  <div class="wrap">
+    <div class="kicker">History</div>
+
+    <div class="release">
+      <div class="rhead"><h3>v0.1.0-beta.2</h3><span class="pill beta">Beta</span><span class="date">July 2026</span></div>
+      <p style="color:var(--dim);margin-bottom:6px">One real bug, found by the first macOS tester within an hour of beta.1 — which is exactly what betas are for.</p>
+      <h4 class="fix">Fixed</h4>
+      <ul>
+        <li><b>The window close button did nothing.</b> The close guard ended in <code class="inline">destroy()</code>, but the capability file granted only <code class="inline">core:default</code>, which doesn't include <code class="inline">allow-destroy</code>. One granted permission was the whole fix.</li>
+        <li>The same gap silently broke the open-transaction close prompt — “Commit &amp; quit” / “Rollback &amp; quit” could never actually quit. Both are now verified against a live database.</li>
+      </ul>
+      <h4 class="add">Added</h4>
+      <ul><li>A test that scans the frontend for every <code class="inline">getCurrentWindow()</code> call and asserts the capability grants it — verified by removing the permission and watching it fail.</li></ul>
+      <h4>Docs</h4>
+      <ul>
+        <li>README rewritten: sixty-second quick start, real keyboard map, honest “what TupleNest is not (yet)”.</li>
+        <li>Corrected what a Windows code-signing certificate actually buys (OV doesn't skip SmartScreen; only EV does).</li>
+      </ul>
+      <div class="cta" style="margin-top:16px"><a class="btn sm ghost" href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.2">GitHub release ↗</a></div>
+    </div>
+
+    <div class="release">
+      <div class="rhead"><h3>v0.1.0-beta.1</h3><span class="pill beta">Beta</span><span class="date">July 2026</span></div>
+      <p style="color:var(--dim);margin-bottom:6px">First public release — to put it in front of real users, because “is the UX intuitive” is a question no test suite can answer.</p>
+      <h4 class="fix">Fixed (pre-launch review)</h4>
+      <ul>
+        <li>The open transaction now has an owning tab; committing from another tab is refused and names the owner.</li>
+        <li>Row edits check <code class="inline">rowsAffected</code>; a statement must touch exactly one row or the set rolls back.</li>
+        <li>The destructive-statement guard masks comments/strings first — a commented-out WHERE no longer disarms it.</li>
+        <li>Read-only profiles issue a real read-only session characteristic instead of being hard-coded off.</li>
+        <li>Terminating a backend asks first; generated/identity columns are read-only; the grid footer counts the real total.</li>
+      </ul>
+      <h4 class="add">Added</h4>
+      <ul>
+        <li><code class="inline">SECURITY.md</code>, <code class="inline">PRIVACY.md</code>, the changelog.</li>
+        <li>CI runs contract tests against real PostgreSQL 13, 15, and 17 with TLS enabled.</li>
+        <li>Read-only connection profiles.</li>
+      </ul>
+      <h4>Known limitations</h4>
+      <ul>
+        <li>macOS builds not notarized; Windows installers unsigned — first launch needs one extra click.</li>
+        <li>CSV import reads the whole file into memory.</li>
+        <li>Nobody has lived with this yet. That's what the beta is for.</li>
+      </ul>
+      <div class="cta" style="margin-top:16px"><a class="btn sm ghost" href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.1">GitHub release ↗</a></div>
+    </div>
+  </div>
+</section>
+
+<!-- SUPPORT POLICY -->
+<section class="tight">
+  <div class="wrap">
+    <div class="kicker">Version support policy</div>
+    <h2>What's supported</h2>
+    <table style="margin-top:16px">
+      <tr><th>Topic</th><th>Policy</th></tr>
+      <tr><td>Supported versions</td><td class="how">The current beta line receives fixes.</td></tr>
+      <tr><td>Security fixes</td><td class="how">Prioritized by severity and shipped as a new beta/patch.</td></tr>
+      <tr><td>Beta support</td><td class="how">Best-effort during the public beta; report issues on GitHub.</td></tr>
+      <tr><td>Upgrade expectations</td><td class="how">Betas are installed by downloading the newer build; the auto-updater targets stable “latest”.</td></tr>
+      <tr><td>Compatibility</td><td class="how">The app version stays numeric (0.1.0); the beta lives in the release tag.</td></tr>
+    </table>
+    <div class="callout info" style="margin-top:20px">Prefer to follow along automatically? Watch the repository or the <a href="https://github.com/talaatmagdyx/TupleNest/releases.atom">Releases RSS feed</a> — there's no marketing signup.</div>
+  </div>
+</section>
+
+<footer class="site">
+  <div class="wrap">
+    <div class="cols">
+      <div class="fbrand"><img src="logo.png" alt=""><p>The PostgreSQL IDE that asks before it writes. Local-first, open-source, MIT.</p></div>
+      <div><h5>Product</h5><a href="features.html">Features</a><a href="security.html">Security</a><a href="download.html">Download</a><a href="roadmap.html">Roadmap</a><a href="changelog.html">Changelog</a></div>
+      <div><h5>Resources</h5><a href="docs.html">Documentation</a><a href="docs.html#getting-started">Getting Started</a><a href="docs.html#shortcuts">Keyboard Shortcuts</a><a href="docs.html#troubleshooting">Troubleshooting</a><a href="blog.html">Blog</a></div>
+      <div><h5>Community</h5><a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a><a href="https://github.com/talaatmagdyx/TupleNest/discussions">Discussions</a><a href="https://github.com/talaatmagdyx/TupleNest/issues">Issues</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a></div>
+      <div><h5>Legal</h5><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/LICENSE">MIT License</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/PRIVACY.md">Privacy</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/SECURITY.md">Security Policy</a><a href="security.html#supply-chain">Third-party notices</a></div>
+    </div>
+    <div class="base"><span>© <span data-year>2026</span> TupleNest · MIT licensed</span><span>Built with Rust &amp; Tauri · No cloud, no telemetry</span></div>
+  </div>
+</footer>
+
+<script src="site.js" defer></script>
+</body>
+</html>
