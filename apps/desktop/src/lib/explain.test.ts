@@ -470,6 +470,44 @@ describe("parsePlan — self-time", () => {
     expect(p.nodes[0].selfMs).toBeNull();
     expect(p.nodes[0].selfPct).toBe(0);
   });
+
+  it("does not bill parallel workers' concurrent time as wall clock", () => {
+    // The bug this fixes, from a real plan: a leaf under a Gather reported
+    // Actual Loops = 3 (two workers + the leader), and multiplying 9.9 ms by 3
+    // charged it 29.7 ms of a 21.4 ms query — more than the whole execution.
+    // Those three loops ran at the same time, so the wall-clock cost is 9.9 ms.
+    const p = parsePlan([
+      {
+        Plan: {
+          "Node Type": "Gather Merge",
+          "Actual Total Time": 21.1,
+          "Actual Loops": 1,
+          "Workers Launched": 2,
+          Plans: [
+            { "Node Type": "Seq Scan", "Relation Name": "big", "Actual Total Time": 9.9, "Actual Loops": 3 },
+          ],
+        },
+        "Execution Time": 21.4,
+      },
+    ]);
+    const leaf = p.nodes[1];
+    expect(leaf.selfMs).toBeCloseTo(9.9, 5);
+    expect(leaf.selfPct).toBeLessThan(100);
+    // The Gather keeps only what it did itself: 21.1 − 9.9.
+    expect(p.nodes[0].selfMs).toBeCloseTo(11.2, 5);
+  });
+
+  it("still multiplies sequential loops, which really do run one after another", () => {
+    // Negative control for the parallel fix: no Gather, so loops stay multiplied.
+    const p = parsePlan([
+      root({
+        "Node Type": "Nested Loop",
+        "Actual Total Time": 50,
+        Plans: [{ "Node Type": "Index Scan", "Relation Name": "a", "Actual Total Time": 2, "Actual Loops": 10 }],
+      }),
+    ]);
+    expect(p.nodes[1].selfMs).toBe(20);
+  });
 });
 
 describe("parsePlan — bottleneck", () => {
@@ -524,6 +562,20 @@ describe("parsePlan — bottleneck", () => {
     const p = parsePlan([root({ "Node Type": "Seq Scan", "Relation Name": "t", "Actual Total Time": 9 })]);
     expect(p.nodes[0].flags.includes("bottleneck")).toBe(false);
   });
+
+  it("does not call anything a bottleneck on a query that took no time", () => {
+    // Seen live: a short-circuited plan reported "busiest node — 50% (0.0 ms)",
+    // which is a percentage of nothing. A share needs an absolute floor too.
+    const p = parsePlan([
+      root({
+        "Node Type": "Nested Loop",
+        "Actual Total Time": 0.02,
+        Plans: [{ "Node Type": "Index Only Scan", "Relation Name": "big", "Actual Total Time": 0.01 }],
+      }),
+    ]);
+    expect(p.nodes.some((n) => n.flags.includes("bottleneck"))).toBe(false);
+    expect(p.insights.some((i) => /busiest node/.test(i.text))).toBe(false);
+  });
 });
 
 describe("parsePlan — resource call-outs", () => {
@@ -558,6 +610,120 @@ describe("parsePlan — resource call-outs", () => {
     const close = parsePlan([root({ "Node Type": "Seq Scan", "Relation Name": "t", "Plan Rows": 100, "Actual Rows": 120 })]);
     expect(close.nodes[0].flags).not.toContain("misestimate");
     expect(close.nodes[0].misestimate).toBeNull();
+  });
+
+  it("flags a filter that discards nearly everything it reads, but not a selective one", () => {
+    const waste = parsePlan([
+      root({
+        "Node Type": "Seq Scan",
+        "Relation Name": "events",
+        "Actual Total Time": 40,
+        "Actual Rows": 12,
+        "Rows Removed by Filter": 2_999_988,
+      }),
+    ]);
+    expect(waste.nodes[0].flags).toContain("wasteful-filter");
+    expect(waste.insights.some((i) => /discarded 2,999,988 rows to keep 12/.test(i.text))).toBe(true);
+
+    // Removes a few rows out of many kept — normal, not a problem.
+    const fine = parsePlan([
+      root({ "Node Type": "Seq Scan", "Relation Name": "events", "Actual Rows": 5000, "Rows Removed by Filter": 20 }),
+    ]);
+    expect(fine.nodes[0].flags).not.toContain("wasteful-filter");
+  });
+
+  it("flags heavy disk reads, and not a cache-served scan", () => {
+    const cold = parsePlan([
+      root({ "Node Type": "Seq Scan", "Relation Name": "t", "Shared Hit Blocks": 10, "Shared Read Blocks": 5000 }),
+    ]);
+    expect(cold.nodes[0].flags).toContain("heavy-read");
+    expect(cold.nodes[0].buffers?.read).toBe(5000);
+    expect(cold.insights.some((i) => /I\/O bound/.test(i.text))).toBe(true);
+
+    const warm = parsePlan([
+      root({ "Node Type": "Seq Scan", "Relation Name": "t", "Shared Hit Blocks": 5000, "Shared Read Blocks": 0 }),
+    ]);
+    expect(warm.nodes[0].flags).not.toContain("heavy-read");
+  });
+
+  it("blames the node that actually read, not every ancestor of it", () => {
+    // Seen live: PostgreSQL reports buffers cumulatively, so an Aggregate was
+    // credited with its child's 2,624 blocks and the insight named the wrong
+    // node. Only the node whose own reads cross the line should be flagged.
+    const p = parsePlan([
+      root({
+        "Node Type": "Aggregate",
+        "Actual Total Time": 30,
+        "Shared Read Blocks": 5000,
+        Plans: [
+          { "Node Type": "Seq Scan", "Relation Name": "big", "Actual Total Time": 25, "Shared Read Blocks": 5000 },
+        ],
+      }),
+    ]);
+    expect(p.nodes[0].flags).not.toContain("heavy-read");
+    expect(p.nodes[0].buffers?.selfRead).toBe(0);
+    expect(p.nodes[1].flags).toContain("heavy-read");
+    expect(p.insights.filter((i) => /I\/O bound/.test(i.text))[0].text).toContain("Seq Scan on big");
+  });
+
+  it("flags a node that ran very many times, and not a handful", () => {
+    const many = parsePlan([
+      root({
+        "Node Type": "Nested Loop",
+        "Actual Total Time": 100,
+        Plans: [{ "Node Type": "Index Scan", "Relation Name": "u", "Actual Total Time": 0.01, "Actual Loops": 500000 }],
+      }),
+    ]);
+    expect(many.nodes[1].flags).toContain("high-loops");
+    expect(many.insights.some((i) => /ran 500,000 times/.test(i.text))).toBe(true);
+
+    const few = parsePlan([
+      root({ "Node Type": "Index Scan", "Relation Name": "u", "Actual Total Time": 1, "Actual Loops": 12 }),
+    ]);
+    expect(few.nodes[0].flags).not.toContain("high-loops");
+  });
+
+  it("says a node was never executed instead of showing a blank timing", () => {
+    const p = parsePlan([
+      root({
+        "Node Type": "Append",
+        "Actual Total Time": 5,
+        Plans: [
+          { "Node Type": "Seq Scan", "Relation Name": "a", "Actual Total Time": 5, "Actual Loops": 1 },
+          { "Node Type": "Seq Scan", "Relation Name": "b", "Never Executed": true },
+        ],
+      }),
+    ]);
+    expect(p.nodes[2].flags).toContain("never-executed");
+    expect(p.nodes[2].selfMs).toBeNull();
+    expect(p.insights.some((i) => /never executed/.test(i.text))).toBe(true);
+  });
+
+  it("reports JIT time and warns only when it dominates", () => {
+    const heavy = parsePlan([
+      { Plan: { "Node Type": "Result", "Actual Total Time": 10 }, "Execution Time": 10, JIT: { Timing: { Total: 8 } } },
+    ]);
+    expect(heavy.stats).toContainEqual({ label: "JIT time", value: "8.0 ms" });
+    expect(heavy.insights.some((i) => /jit=off/.test(i.text))).toBe(true);
+
+    // 2 ms of a 200 ms query is noise, not a finding.
+    const light = parsePlan([
+      { Plan: { "Node Type": "Result", "Actual Total Time": 200 }, "Execution Time": 200, JIT: { Timing: { Total: 2 } } },
+    ]);
+    expect(light.stats).toContainEqual({ label: "JIT time", value: "2.0 ms" });
+    expect(light.insights.some((i) => /jit=off/.test(i.text))).toBe(false);
+  });
+
+  it("surfaces trigger time, which the plan tree never shows", () => {
+    const p = parsePlan([
+      {
+        Plan: { "Node Type": "Insert", "Actual Total Time": 5 },
+        "Execution Time": 20,
+        Triggers: [{ "Trigger Name": "audit", Time: 12.5, Calls: 1000 }],
+      },
+    ]);
+    expect(p.stats).toContainEqual({ label: "Trigger time", value: "12.5 ms" });
+    expect(p.insights.some((i) => /Triggers accounted for 12.5 ms/.test(i.text))).toBe(true);
   });
 
   it("orders insights: bottleneck first, then spills, then stale statistics", () => {

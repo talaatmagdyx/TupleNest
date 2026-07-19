@@ -160,7 +160,31 @@ const attrText = (n: RawPlan, key: string): string | null => {
 
 /** A per-node call-out. Each is something a reader would otherwise have to
  *  spot by eye in a wall of plan text. */
-export type NodeFlag = "bottleneck" | "seq-scan" | "disk-sort" | "spill" | "misestimate";
+export type NodeFlag =
+  | "bottleneck"
+  | "seq-scan"
+  | "disk-sort"
+  | "spill"
+  | "misestimate"
+  | "wasteful-filter"
+  | "heavy-read"
+  | "high-loops"
+  | "never-executed";
+
+/** Block counts for a node, as reported by BUFFERS.
+ *
+ *  PostgreSQL reports these cumulatively: a parent's counts include everything
+ *  its children read. `selfRead` is the part this node read itself, which is
+ *  the only number that identifies *which* node actually went to disk. */
+export type NodeBuffers = {
+  hit: number | null;
+  read: number | null;
+  dirtied: number | null;
+  written: number | null;
+  tempRead: number | null;
+  tempWritten: number | null;
+  selfRead: number | null;
+};
 
 /** A plan-level observation with a suggested next step. */
 export type Insight = { level: "tip" | "warn" | "info"; text: string };
@@ -191,6 +215,14 @@ export type ParsedPlanNode = {
   /** How far the estimate missed, as a ratio ≥ 1, when it missed badly enough
    *  to matter. Null when the estimate was close or rows are absent. */
   misestimate: number | null;
+  /** How many times the node ran. A large count on the inner side of a nested
+   *  loop is a classic pathology that inclusive time alone hides. */
+  loops: number | null;
+  /** Rows the node read and threw away. A scan that discards nearly everything
+   *  it reads is the clearest "this wants an index" signal in a plan. */
+  rowsRemoved: number | null;
+  /** Block counts from BUFFERS, when it was requested. */
+  buffers: NodeBuffers | null;
   /** Call-outs worth a badge next to the node. */
   flags: NodeFlag[];
 };
@@ -207,16 +239,87 @@ export type ParsedPlan = {
 /** An estimate this many times off (in either direction) is worth flagging —
  *  below it, planner noise, above it, a reason a good plan wasn't chosen. */
 const MISESTIMATE_RATIO = 10;
-/** A node holding at least this share of execution self-time is the bottleneck. */
+/** A node holding at least this share of execution self-time is the bottleneck.
+ *  It must also account for at least BOTTLENECK_MIN_MS — on a query that
+ *  finishes in microseconds, "busiest node, 0.0 ms" is noise, not a finding. */
 const BOTTLENECK_PCT = 20;
+const BOTTLENECK_MIN_MS = 1;
+/** A filter that throws away at least this many rows, and at least this many
+ *  times more than it keeps, is worth an index. */
+const WASTEFUL_FILTER_ROWS = 1000;
+const WASTEFUL_FILTER_RATIO = 10;
+/** Blocks read from disk (8 kB each) before it is worth mentioning — 1000
+ *  blocks is ~8 MB that did not come from cache. */
+const HEAVY_READ_BLOCKS = 1000;
+/** Loop counts above this are worth showing as a pathology in their own right. */
+const HIGH_LOOPS = 10_000;
+/** JIT costing more than this share of execution is usually not worth it. */
+const JIT_PCT = 25;
 
-/** Inclusive wall time for a node: PostgreSQL reports `Actual Total Time` per
- *  loop, so the real cost is that times the loop count. Null without ANALYZE. */
-function inclusiveMs(n: RawPlan): number | null {
+/**
+ * How many workers execute the children of this node concurrently.
+ *
+ * This is the correction that makes self-time honest on a parallel plan.
+ * PostgreSQL reports `Actual Loops` on a node beneath a Gather as the number
+ * of processes that ran it, and those processes run *at the same time*. So
+ * `Actual Total Time × Actual Loops` there is CPU time summed across workers,
+ * not wall-clock — which is how a leaf could otherwise be charged 29.7 ms of a
+ * 21.4 ms query. Dividing by the worker count turns it back into wall time.
+ *
+ * Loops from a Nested Loop's inner side are the opposite case: those really do
+ * run one after another, so they must stay multiplied. Only a Gather starts a
+ * concurrent region, so only a Gather changes the divisor.
+ */
+function workersUnder(n: RawPlan, current: number): number {
+  if (!/gather/i.test(attrText(n, "Node Type") ?? "")) return current;
+  const launched = attrNum(n, "Workers Launched") ?? attrNum(n, "Workers Planned") ?? 0;
+  // The leader participates too, so the concurrency is workers + 1.
+  return Math.max(1, launched + 1);
+}
+
+/** Inclusive wall time for a node. `Actual Total Time` is per loop; loops that
+ *  ran concurrently (parallel workers) are divided back out by `workers`. Null
+ *  without ANALYZE, and for a node the executor never reached. */
+function inclusiveMs(n: RawPlan, workers = 1): number | null {
+  if (isNeverExecuted(n)) return null;
   const t = attrNum(n, "Actual Total Time");
   if (t === null) return null;
   const loops = attrNum(n, "Actual Loops");
-  return t * (loops && loops > 0 ? loops : 1);
+  const raw = loops && loops > 0 ? loops : 1;
+  const effective = workers > 1 ? Math.max(1, raw / workers) : raw;
+  return t * effective;
+}
+
+/** A node the executor never reached — e.g. the far side of a short-circuited
+ *  branch. PostgreSQL says so explicitly; showing a blank timing reads as a bug. */
+function isNeverExecuted(n: RawPlan): boolean {
+  if (n["Never Executed"] === true) return true;
+  return attrNum(n, "Actual Loops") === 0;
+}
+
+/** BUFFERS block counts, or null when BUFFERS was not requested.
+ *
+ *  `selfRead` subtracts the children's reads, because PostgreSQL reports these
+ *  cumulatively. Without it every ancestor of a scan inherits its block count
+ *  and an Aggregate gets blamed for the disk reads its child actually did. */
+function buffersOf(n: RawPlan): NodeBuffers | null {
+  const read = attrNum(n, "Shared Read Blocks");
+  let selfRead: number | null = null;
+  if (read !== null) {
+    let childRead = 0;
+    for (const c of n.Plans ?? []) childRead += attrNum(c, "Shared Read Blocks") ?? 0;
+    selfRead = Math.max(0, read - childRead);
+  }
+  const b: NodeBuffers = {
+    hit: attrNum(n, "Shared Hit Blocks"),
+    read,
+    dirtied: attrNum(n, "Shared Dirtied Blocks"),
+    written: attrNum(n, "Shared Written Blocks"),
+    tempRead: attrNum(n, "Temp Read Blocks"),
+    tempWritten: attrNum(n, "Temp Written Blocks"),
+    selfRead,
+  };
+  return Object.values(b).some((v) => v !== null) ? b : null;
 }
 
 /** Ratio by which the row estimate missed, or null if it was close enough or
@@ -263,12 +366,35 @@ function nodeDetail(n: RawPlan): string {
   const filter = attrText(n, "Filter");
   const cond = attrText(n, "Hash Cond");
   const sort = attrText(n, "Sort Key");
+  // Everything below is appended only when the server sent it, so a plan
+  // without BUFFERS or a filter reads exactly as it did before.
+  const removed = attrNum(n, "Rows Removed by Filter");
+  const loops = attrNum(n, "Actual Loops");
+  const b = buffersOf(n);
+  const bufBits = b
+    ? [
+        b.hit ? `${b.hit.toLocaleString()} hit` : null,
+        b.read ? `${b.read.toLocaleString()} read` : null,
+        b.written ? `${b.written.toLocaleString()} written` : null,
+      ].filter(Boolean)
+    : [];
+  const temp = b && (b.tempRead || b.tempWritten)
+    ? `temp ${((b.tempRead ?? 0) + (b.tempWritten ?? 0)).toLocaleString()} blocks`
+    : null;
+  const space = attrNum(n, "Sort Space Used");
+  const spaceType = attrText(n, "Sort Space Type");
+
   return [
     idx ? `index: ${idx}` : null,
     filter ? `filter: ${filter}` : null,
     cond ? `cond: ${cond}` : null,
     sort ? `sort key: ${sort}` : null,
     rows,
+    removed ? `removed ${removed.toLocaleString()}` : null,
+    loops !== null && loops > 1 ? `loops ${loops.toLocaleString()}` : null,
+    bufBits.length ? `buffers: ${bufBits.join(", ")}` : null,
+    temp,
+    space !== null ? `${spaceType ? `${spaceType.toLowerCase()} ` : ""}${space.toLocaleString()} kB` : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -307,21 +433,23 @@ export function parsePlan(parsed: unknown): ParsedPlan {
   let hotIdx = 0;
   let hotVal = -1;
 
-  const walk = (n: RawPlan, depth: number) => {
+  const walk = (n: RawPlan, depth: number, workers: number) => {
     const ms = attrNum(n, "Actual Total Time");
     const metric = ms ?? attrNum(n, "Total Cost") ?? 0;
     const relation = attrText(n, "Relation Name");
     const rel = relation ? ` on ${relation}` : "";
     const nodeType = attrText(n, "Node Type") ?? "node";
+    // Children of a Gather run concurrently; everything else inherits.
+    const childWorkers = workersUnder(n, workers);
 
     // Self-time: this node's inclusive wall time minus its children's. A large
     // total on a Nested Loop or Gather is usually its child's; self-time is the
     // part that belongs to the node itself.
-    const incl = inclusiveMs(n);
+    const incl = inclusiveMs(n, workers);
     let selfMs: number | null = null;
     if (incl !== null) {
       let childIncl = 0;
-      for (const c of n.Plans ?? []) childIncl += inclusiveMs(c) ?? 0;
+      for (const c of n.Plans ?? []) childIncl += inclusiveMs(c, childWorkers) ?? 0;
       selfMs = Math.max(0, incl - childIncl);
     }
     const selfPct = selfMs !== null ? Math.min(100, (selfMs / selfDenom) * 100) : 0;
@@ -329,11 +457,27 @@ export function parsePlan(parsed: unknown): ParsedPlan {
     const rowsEst = attrNum(n, "Plan Rows");
     const rowsActual = attrNum(n, "Actual Rows");
     const misestimate = misestimateOf(rowsEst, rowsActual);
+    const loops = attrNum(n, "Actual Loops");
+    const rowsRemoved = attrNum(n, "Rows Removed by Filter");
+    const buffers = buffersOf(n);
 
     const flags: NodeFlag[] = [];
+    if (isNeverExecuted(n)) flags.push("never-executed");
     if (nodeType.includes("Seq Scan")) flags.push("seq-scan");
     if (isDiskSort(n)) flags.push("disk-sort");
     if (isHashSpill(n)) flags.push("spill");
+    // A filter that reads a lot and keeps almost none is the clearest index hint.
+    if (
+      rowsRemoved !== null &&
+      rowsRemoved >= WASTEFUL_FILTER_ROWS &&
+      rowsRemoved >= WASTEFUL_FILTER_RATIO * Math.max(1, rowsActual ?? 0)
+    ) {
+      flags.push("wasteful-filter");
+    }
+    // Self-read, not the cumulative count: only the node that actually went to
+    // disk should carry the badge.
+    if ((buffers?.selfRead ?? 0) >= HEAVY_READ_BLOCKS) flags.push("heavy-read");
+    if ((loops ?? 0) >= HIGH_LOOPS) flags.push("high-loops");
     if (misestimate !== null) flags.push("misestimate");
 
     const i = nodes.length;
@@ -350,15 +494,18 @@ export function parsePlan(parsed: unknown): ParsedPlan {
       rowsEst,
       rowsActual,
       misestimate,
+      loops,
+      rowsRemoved,
+      buffers,
       flags,
     });
     if ((n["Node Type"] as string)?.includes("Seq Scan") && metric > hotVal) {
       hotVal = metric;
       hotIdx = i;
     }
-    (n.Plans ?? []).forEach((c) => walk(c, depth + 1));
+    (n.Plans ?? []).forEach((c) => walk(c, depth + 1, childWorkers));
   };
-  walk(plan, 0);
+  walk(plan, 0, 1);
 
   // A lone Seq Scan is the whole plan — calling it the hot spot says nothing
   // and the suggestion that follows ("an index could avoid the full scan")
@@ -374,7 +521,7 @@ export function parsePlan(parsed: unknown): ParsedPlan {
   let botVal = -1;
   if (nodes.length > 1) {
     nodes.forEach((n, i) => {
-      if (n.selfMs !== null && n.selfMs > botVal && n.selfPct >= BOTTLENECK_PCT) {
+      if (n.selfMs !== null && n.selfMs > botVal && n.selfPct >= BOTTLENECK_PCT && n.selfMs >= BOTTLENECK_MIN_MS) {
         botVal = n.selfMs;
         botIdx = i;
       }
@@ -389,6 +536,12 @@ export function parsePlan(parsed: unknown): ParsedPlan {
   if (root?.["Execution Time"] !== undefined) {
     stats.push({ label: "Execution time", value: `${(root["Execution Time"] as number).toFixed(1)} ms` });
   }
+  // JIT and trigger time are reported outside the plan tree, so a query can
+  // spend most of its wall clock somewhere no node accounts for.
+  const jitMs = jitTotalMs(root);
+  if (jitMs !== null) stats.push({ label: "JIT time", value: `${jitMs.toFixed(1)} ms` });
+  const trigMs = triggerTotalMs(root);
+  if (trigMs !== null) stats.push({ label: "Trigger time", value: `${trigMs.toFixed(1)} ms` });
   stats.push({ label: "Plan nodes", value: String(nodes.length) });
 
   const hot = nodes.find((n) => n.hot);
@@ -396,13 +549,44 @@ export function parsePlan(parsed: unknown): ParsedPlan {
     ? `${hot.title} dominates this plan. An index matching its filter could avoid the full scan.`
     : null;
 
-  return { nodes, stats, suggestion, insights: buildInsights(nodes, hot ?? null) };
+  const execMs = attrNum(root as RawPlan, "Execution Time") ?? execTotal;
+  return { nodes, stats, suggestion, insights: buildInsights(nodes, hot ?? null, jitMs, trigMs, execMs) };
+}
+
+/** Total JIT compilation time, when the server compiled anything. */
+function jitTotalMs(root: Record<string, unknown> | null): number | null {
+  const jit = root?.["JIT"] as Record<string, unknown> | undefined;
+  const timing = jit?.["Timing"] as Record<string, unknown> | undefined;
+  const total = timing?.["Total"];
+  return typeof total === "number" ? total : null;
+}
+
+/** Total time spent in triggers — invisible in the plan tree itself. */
+function triggerTotalMs(root: Record<string, unknown> | null): number | null {
+  const trig = root?.["Triggers"];
+  if (!Array.isArray(trig) || trig.length === 0) return null;
+  let sum = 0;
+  let saw = false;
+  for (const t of trig) {
+    const time = (t as Record<string, unknown>)?.["Time"];
+    if (typeof time === "number") {
+      sum += time;
+      saw = true;
+    }
+  }
+  return saw ? sum : null;
 }
 
 /** Turn the flagged nodes into an ordered, de-duplicated list of observations.
  *  Ordering is deliberate: the bottleneck first (it's the reader's biggest
  *  lever), then resource spills, then a stale-statistics hint. */
-function buildInsights(nodes: ParsedPlanNode[], hot: ParsedPlanNode | null): Insight[] {
+function buildInsights(
+  nodes: ParsedPlanNode[],
+  hot: ParsedPlanNode | null,
+  jitMs: number | null,
+  triggerMs: number | null,
+  execMs: number | null,
+): Insight[] {
   const insights: Insight[] = [];
 
   const bottleneck = nodes.find((n) => n.flags.includes("bottleneck"));
@@ -419,11 +603,45 @@ function buildInsights(nodes: ParsedPlanNode[], hot: ParsedPlanNode | null): Ins
     });
   }
 
+  // The most actionable signal in a plan: read a lot, keep almost none.
+  const wasteful = nodes
+    .filter((n) => n.flags.includes("wasteful-filter"))
+    .sort((a, b) => (b.rowsRemoved as number) - (a.rowsRemoved as number))[0];
+  if (wasteful) {
+    const removed = (wasteful.rowsRemoved as number).toLocaleString();
+    const kept = (wasteful.rowsActual ?? 0).toLocaleString();
+    insights.push({
+      level: "tip",
+      text: `${wasteful.title} discarded ${removed} rows to keep ${kept}. An index on its filter would avoid reading them.`,
+    });
+  }
+
   if (nodes.some((n) => n.flags.includes("disk-sort"))) {
     insights.push({ level: "warn", text: "A sort spilled to disk. Raising work_mem can keep it in memory." });
   }
   if (nodes.some((n) => n.flags.includes("spill"))) {
     insights.push({ level: "warn", text: "A hash step used multiple batches (spilled). Raising work_mem can reduce this." });
+  }
+
+  const heavy = nodes
+    .filter((n) => n.flags.includes("heavy-read"))
+    .sort((a, b) => (b.buffers?.selfRead ?? 0) - (a.buffers?.selfRead ?? 0))[0];
+  if (heavy) {
+    const blocks = (heavy.buffers?.selfRead ?? 0).toLocaleString();
+    insights.push({
+      level: "warn",
+      text: `${heavy.title} read ${blocks} blocks from disk rather than cache — this query is I/O bound, not CPU bound.`,
+    });
+  }
+
+  const loopy = nodes
+    .filter((n) => n.flags.includes("high-loops"))
+    .sort((a, b) => (b.loops as number) - (a.loops as number))[0];
+  if (loopy) {
+    insights.push({
+      level: "warn",
+      text: `${loopy.title} ran ${(loopy.loops as number).toLocaleString()} times. A hash or merge join may beat repeating it.`,
+    });
   }
 
   const worst = nodes
@@ -433,6 +651,27 @@ function buildInsights(nodes: ParsedPlanNode[], hot: ParsedPlanNode | null): Ins
     insights.push({
       level: "warn",
       text: `Row estimate is off by ${Math.round(worst.misestimate as number)}× at ${worst.title}; its statistics may be stale (try ANALYZE on its table).`,
+    });
+  }
+
+  // Time the plan tree cannot account for, because it happens outside it.
+  if (jitMs !== null && execMs && execMs > 0 && (jitMs / execMs) * 100 >= JIT_PCT) {
+    insights.push({
+      level: "warn",
+      text: `JIT compilation took ${jitMs.toFixed(1)} ms of ${execMs.toFixed(1)} ms. For a short query, jit=off is often faster.`,
+    });
+  }
+  if (triggerMs !== null && triggerMs > 0) {
+    insights.push({
+      level: "info",
+      text: `Triggers accounted for ${triggerMs.toFixed(1)} ms, which the plan tree does not show.`,
+    });
+  }
+
+  if (nodes.some((n) => n.flags.includes("never-executed"))) {
+    insights.push({
+      level: "info",
+      text: "Some nodes were never executed — the executor short-circuited that branch.",
     });
   }
 

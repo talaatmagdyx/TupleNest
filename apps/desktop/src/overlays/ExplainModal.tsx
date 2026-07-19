@@ -24,8 +24,17 @@ export type PlanNode = {
   rowsEst?: number | null;
   rowsActual?: number | null;
   misestimate?: number | null;
+  loops?: number | null;
+  rowsRemoved?: number | null;
   flags?: NodeFlag[];
 };
+
+/** 300000 → "300k". Loop counts get long and the badge has to stay short. */
+function compact(n: number): string {
+  if (n >= 1_000_000) return `${Math.round(n / 100_000) / 10}M`;
+  if (n >= 1_000) return `${Math.round(n / 100) / 10}k`;
+  return String(n);
+}
 
 export type PlanStats = { label: string; value: string }[];
 
@@ -45,10 +54,22 @@ function nodeChips(n: PlanNode): { label: string; cls: string; title: string }[]
   const chips: { label: string; cls: string; title: string }[] = [];
   if (f.includes("bottleneck"))
     chips.push({ label: "BOTTLENECK", cls: "bottleneck", title: "Most of the execution self-time is spent here" });
+  if (f.includes("never-executed"))
+    chips.push({ label: "NEVER EXECUTED", cls: "", title: "The executor never reached this branch" });
+  if (f.includes("wasteful-filter") && n.rowsRemoved != null)
+    chips.push({
+      label: `DISCARDED ${compact(n.rowsRemoved)}`,
+      cls: "warn",
+      title: "Most of the rows this node read were thrown away by its filter",
+    });
   if (f.includes("disk-sort"))
     chips.push({ label: "DISK SORT", cls: "warn", title: "This sort spilled to disk — consider raising work_mem" });
   if (f.includes("spill"))
     chips.push({ label: "SPILLED", cls: "warn", title: "A hash step used multiple batches — consider raising work_mem" });
+  if (f.includes("heavy-read"))
+    chips.push({ label: "HEAVY READ", cls: "warn", title: "Read a lot of blocks from disk rather than cache" });
+  if (f.includes("high-loops") && n.loops != null)
+    chips.push({ label: `${compact(n.loops)} LOOPS`, cls: "info", title: "This node ran many times" });
   if (f.includes("misestimate") && n.misestimate != null)
     chips.push({
       label: `EST ×${Math.round(n.misestimate)} OFF`,
@@ -236,11 +257,13 @@ export default function ExplainModal(p: Props) {
                         </span>
                       ))}
                       <span className="pn-cost">
-                        {hasSelf
-                          ? `self ${(n.selfMs as number).toFixed(1)} ms`
-                          : n.ms !== null
-                            ? `${n.ms.toFixed(1)} ms`
-                            : ""}
+                        {(n.flags ?? []).includes("never-executed")
+                          ? "never executed"
+                          : hasSelf
+                            ? `self ${(n.selfMs as number).toFixed(1)} ms`
+                            : n.ms !== null
+                              ? `${n.ms.toFixed(1)} ms`
+                              : ""}
                       </span>
                     </div>
                     <div className="pn-bar" title={hasSelf ? "Share of execution self-time" : "Share of total cost"}>
