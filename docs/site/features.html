@@ -95,21 +95,26 @@
   <div class="wrap">
     <div class="kicker">Query performance</div>
     <h2>See why a query is slow</h2>
-    <p class="lede">EXPLAIN-based tooling to inspect plans and compare them, plus schema-level diffing for change review.</p>
+    <p class="lede">The plan view finds the node that actually costs you time, and names the specific problem — so you leave with a next step, not a wall of text.</p>
     <div class="grid2">
       <div class="card"><span class="pill ok">Available</span><ul style="margin-top:12px">
-        <li>Visual plan tree with <b>self-time bottleneck highlighting</b> (inclusive time minus children, loop-adjusted)</li>
-        <li>Disk-sort, hash-spill &amp; sequential-scan call-outs</li>
-        <li>Row-misestimation flags (estimate vs actual)</li>
-        <li>EXPLAIN / EXPLAIN ANALYZE, plan comparison between runs</li>
-        <li>Planning vs execution time; schema diff for change review</li>
+        <li><b>Self-time bottleneck highlighting</b> — the busy node, whatever its type</li>
+        <li><b>Correct parallel accounting</b> — worker time isn't double-counted as wall clock</li>
+        <li>Rows read then discarded by a filter</li>
+        <li>Disk sorts and hash spills</li>
+        <li>Blocks read from disk vs cache, attributed to the node that read them</li>
+        <li>Row estimates off by 10× or more</li>
+        <li>Nodes executed very many times; nodes never executed</li>
+        <li>JIT and trigger time — the work no plan node accounts for</li>
+        <li>EXPLAIN / EXPLAIN ANALYZE, plan comparison, schema diff</li>
       </ul></div>
       <div class="card"><span class="pill plan">Planned</span><ul style="margin-top:12px">
-        <li>BUFFERS-aware per-node view</li><li>Join/sort inspection panel</li>
+        <li>Join/sort inspection panel</li>
         <li>A dedicated standalone query profiler</li>
+        <li>Plan history across runs of the same query</li>
       </ul></div>
     </div>
-    <div class="callout info" style="margin-top:20px">The bottleneck highlighting and call-outs were verified against live PostgreSQL 18 plans, including parallel plans and an external-merge disk sort. What isn't built yet is listed as planned rather than shown as done — see the <a href="roadmap.html">Roadmap</a>.</div>
+    <div class="callout info" style="margin-top:20px"><b>Why parallel accounting matters.</b> Under a <code class="inline">Gather</code>, PostgreSQL reports one “loop” per worker, and those workers run simultaneously. Multiplying by loops — which is the obvious reading — can charge a single node more milliseconds than the entire query took. TupleNest divides workers back out, so self-times add up to the execution time. Verified against live PostgreSQL 18 across eight plans, including a parallel aggregate, an external-merge disk sort, a hash spill, and a trigger that consumed most of its statement's runtime.</div>
   </div>
 </section>
 

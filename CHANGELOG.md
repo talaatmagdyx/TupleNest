@@ -8,14 +8,42 @@ versions follow [Semantic Versioning](https://semver.org/).
 ### Added
 
 - **Richer EXPLAIN ANALYZE plan view.** The plan now highlights the real
-  bottleneck by *self-time* — a node's inclusive wall time minus its children's,
-  adjusted for loop count — rather than only the costliest sequential scan. This
-  correctly points at the busy node even when it's a sort or an index scan, not
-  just a table read. Sorts and hashes that spilled to disk, and row estimates
-  that missed by 10× or more, are called out with badges, and an ordered list of
-  insights explains what to do (add an index, raise `work_mem`, refresh
-  statistics). Verified against live PostgreSQL 18 plans, including parallel
-  plans and an external-merge disk sort.
+  bottleneck by *self-time* — a node's wall time minus its children's — rather
+  than only the costliest sequential scan. That points at the busy node whatever
+  its type: a sort, an index scan, or a table read.
+
+  Self-time is computed carefully, which is where most plan viewers go wrong.
+  A nested loop's inner side really does run once per outer row, so its loops
+  are multiplied; but a node under a `Gather` reports one "loop" per parallel
+  worker, and those run *at the same time*, so multiplying there would charge a
+  leaf more milliseconds than the whole query took. Workers are divided back
+  out, so the numbers add up to the execution time.
+
+  Each node is checked for the things you would otherwise hunt for by eye, and
+  badged when found:
+
+  - rows read and then thrown away by a filter — the clearest "this wants an
+    index" signal a plan can give
+  - sorts that spilled to disk and hashes that spilled to multiple batches
+  - blocks served from disk rather than cache, attributed to the node that
+    actually read them (PostgreSQL reports buffers cumulatively, so a naive
+    reading blames every parent of the scan)
+  - row estimates that missed by 10× or more
+  - nodes executed a very large number of times
+  - nodes the executor never reached, labelled instead of left blank
+
+  Time that no node accounts for is surfaced too: **JIT compilation** and
+  **trigger** time both sit outside the plan tree, and a statement can spend
+  most of its wall clock there. An ordered list of insights turns all of it into
+  next steps — add an index, raise `work_mem`, run `ANALYZE`, reconsider the
+  join.
+
+  Verified against live PostgreSQL 18 across eight plans: parallel aggregate,
+  a filter discarding 299,999 of 300,000 rows, a nested loop repeating 300,000
+  times, an external-merge disk sort, a hash spill, a never-executed branch, and
+  a trigger that took 8.2 ms of a 10.1 ms statement. JIT is covered by unit
+  tests only — the server used for verification reports `jit=on` but is built
+  without LLVM, so it never emits JIT timings.
 
 ### Changed
 

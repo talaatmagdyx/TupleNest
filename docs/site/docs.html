@@ -52,7 +52,7 @@
       <h5>Connections</h5>
       <a href="#connections">Connection profiles</a><a href="#tls">TLS modes</a><a href="#ssh">SSH tunnels</a><a href="#credentials">Password storage</a>
       <h5>Editor &amp; Results</h5>
-      <a href="#editor">SQL editor</a><a href="#results">Result grid</a><a href="#io">Import &amp; export</a><a href="#shortcuts">Keyboard shortcuts</a>
+      <a href="#editor">SQL editor</a><a href="#results">Result grid</a><a href="#plans">Query plans</a><a href="#io">Import &amp; export</a><a href="#shortcuts">Keyboard shortcuts</a>
       <h5>Safety &amp; Security</h5>
       <a href="#read-only">Read-only mode</a><a href="#dangerous">Dangerous statements</a><a href="#privacy">Security &amp; privacy</a>
       <h5>More</h5>
@@ -101,6 +101,24 @@
 
       <h2 id="results">Result grid</h2>
       <p>Streaming rows, virtualized rendering, sort/filter/search, explicit NULLs, copy cell/row/selection, and export. Large results are bounded by row, byte, and per-cell limits, with clear truncation indicators.</p>
+
+      <h2 id="plans">Query plans</h2>
+      <p>Run <code class="inline">EXPLAIN</code> on the current statement from the command palette. Toggle <b>ANALYZE</b> to execute it and get real timings, and <b>BUFFERS</b> to see which nodes read from disk. ANALYZE defaults on for a plain <code class="inline">SELECT</code> and off for anything that writes — it really runs the statement.</p>
+      <p>The plan is drawn as a tree. The node marked <b>BOTTLENECK</b> is where time is actually spent, measured as <em>self-time</em>: the node's wall time minus its children's. That matters because a Nested Loop or Gather often shows a large total that belongs entirely to a child.</p>
+      <h3>What the badges mean</h3>
+      <ul>
+        <li><b>BOTTLENECK</b> — most of the execution self-time is here.</li>
+        <li><b>DISCARDED n</b> — the node read those rows and threw them away. Usually the strongest sign an index would help.</li>
+        <li><b>DISK SORT</b> / <b>SPILLED</b> — a sort or hash exceeded <code class="inline">work_mem</code> and went to disk.</li>
+        <li><b>HEAVY READ</b> — blocks came from disk rather than cache, so the query is I/O bound.</li>
+        <li><b>n LOOPS</b> — the node ran that many times; a hash or merge join may beat repeating it.</li>
+        <li><b>EST ×n OFF</b> — the planner's row estimate missed by that factor; statistics may be stale.</li>
+        <li><b>NEVER EXECUTED</b> — the executor short-circuited that branch.</li>
+      </ul>
+      <h3>Time outside the plan</h3>
+      <p>JIT compilation and trigger time are reported separately by PostgreSQL and belong to no node, so a statement can spend most of its runtime somewhere the tree doesn't show. Both appear in the statistics panel when present.</p>
+      <div class="callout info">On a parallel plan, PostgreSQL reports one “loop” per worker and those workers run concurrently. TupleNest divides them back out, so self-times sum to the execution time rather than exceeding it.</div>
+      <p>Plans can be exported as JSON (which <a href="https://explain.dalibo.com">pev2</a> and explain.depesz.com both read), as an indented text tree, or as Markdown.</p>
 
       <h2 id="io">Import &amp; export</h2>
       <p>Import CSV with header mapping and a type/error preview before committing. Export to CSV, JSON, or Markdown. CSV export is spreadsheet-safe by default (formula injection neutralized); a toggle enables raw output.</p>
