@@ -158,25 +158,87 @@ const attrText = (n: RawPlan, key: string): string | null => {
   return cellText(v);
 };
 
+/** A per-node call-out. Each is something a reader would otherwise have to
+ *  spot by eye in a wall of plan text. */
+export type NodeFlag = "bottleneck" | "seq-scan" | "disk-sort" | "spill" | "misestimate";
+
+/** A plan-level observation with a suggested next step. */
+export type Insight = { level: "tip" | "warn" | "info"; text: string };
+
 export type ParsedPlanNode = {
   kind: string;
   title: string;
   detail: string;
-  /** Real measured time. Null unless ANALYZE ran — an estimate is not a timing
-   *  and must not be drawn as one. */
+  /** Real measured time (inclusive of children). Null unless ANALYZE ran — an
+   *  estimate is not a timing and must not be drawn as one. */
   ms: number | null;
   /** Share of the plan's total, for the bar. */
   pct: number;
   indent: number;
-  /** The costliest sequential scan, when there is one worth pointing at. */
+  /** The costliest sequential scan, when there is one worth pointing at.
+   *  Kept for the index suggestion; the visual bottleneck is `flags`. */
   hot: boolean;
+  /** Time spent *in this node itself* — inclusive minus the children, adjusted
+   *  for loops. This, not inclusive time, is where a plan actually spends its
+   *  time: a Nested Loop can show a large total that is entirely its child's.
+   *  Null unless ANALYZE ran. */
+  selfMs: number | null;
+  /** Self-time as a share of execution time, for the "time spent here" bar. */
+  selfPct: number;
+  /** Estimated and actual row counts (per loop), when the server gave them. */
+  rowsEst: number | null;
+  rowsActual: number | null;
+  /** How far the estimate missed, as a ratio ≥ 1, when it missed badly enough
+   *  to matter. Null when the estimate was close or rows are absent. */
+  misestimate: number | null;
+  /** Call-outs worth a badge next to the node. */
+  flags: NodeFlag[];
 };
 
 export type ParsedPlan = {
   nodes: ParsedPlanNode[];
   stats: { label: string; value: string }[];
+  /** The single index hint, kept for backward compatibility. */
   suggestion: string | null;
+  /** The richer, ordered set of observations shown under the plan. */
+  insights: Insight[];
 };
+
+/** An estimate this many times off (in either direction) is worth flagging —
+ *  below it, planner noise, above it, a reason a good plan wasn't chosen. */
+const MISESTIMATE_RATIO = 10;
+/** A node holding at least this share of execution self-time is the bottleneck. */
+const BOTTLENECK_PCT = 20;
+
+/** Inclusive wall time for a node: PostgreSQL reports `Actual Total Time` per
+ *  loop, so the real cost is that times the loop count. Null without ANALYZE. */
+function inclusiveMs(n: RawPlan): number | null {
+  const t = attrNum(n, "Actual Total Time");
+  if (t === null) return null;
+  const loops = attrNum(n, "Actual Loops");
+  return t * (loops && loops > 0 ? loops : 1);
+}
+
+/** Ratio by which the row estimate missed, or null if it was close enough or
+ *  the counts are absent. `+1` avoids dividing by zero and stops a 0-vs-1 row
+ *  difference from reading as an infinite miss. */
+function misestimateOf(est: number | null, act: number | null): number | null {
+  if (est === null || act === null) return null;
+  const e = est + 1;
+  const a = act + 1;
+  const r = a >= e ? a / e : e / a;
+  return r >= MISESTIMATE_RATIO ? r : null;
+}
+
+/** A sort or hash that ran out of `work_mem` and went to disk. */
+function isDiskSort(n: RawPlan): boolean {
+  const method = attrText(n, "Sort Method");
+  const space = attrText(n, "Sort Space Type");
+  return (!!method && /disk|external/i.test(method)) || (!!space && /disk/i.test(space));
+}
+function isHashSpill(n: RawPlan): boolean {
+  return (attrNum(n, "Hash Batches") ?? 1) > 1;
+}
 
 /**
  * Assemble the server's payload from the rows it came back in.
@@ -228,12 +290,18 @@ function nodeDetail(n: RawPlan): string {
 export function parsePlan(parsed: unknown): ParsedPlan {
   const root = (Array.isArray(parsed) ? parsed[0] : parsed) as Record<string, unknown> | null;
   const plan = root?.["Plan"] as RawPlan | undefined;
-  if (!plan || typeof plan !== "object") return { nodes: [], stats: [], suggestion: null };
+  if (!plan || typeof plan !== "object") return { nodes: [], stats: [], suggestion: null, insights: [] };
 
   // Guard the divisor: a plan with a zero total (a trivial statement, or COSTS
   // OFF with no ANALYZE) would otherwise make every pct NaN or Infinity.
   const rawTotal = (plan["Actual Total Time"] as number) ?? (plan["Total Cost"] as number) ?? 1;
   const total = rawTotal > 0 ? rawTotal : 1;
+
+  // Self-time is measured against the whole plan's inclusive wall time. Fall
+  // back to the reported Execution Time, then to 1 so the share never divides
+  // by zero.
+  const execTotal = inclusiveMs(plan) ?? attrNum(root as RawPlan, "Execution Time");
+  const selfDenom = execTotal && execTotal > 0 ? execTotal : 1;
 
   const nodes: ParsedPlanNode[] = [];
   let hotIdx = 0;
@@ -245,6 +313,29 @@ export function parsePlan(parsed: unknown): ParsedPlan {
     const relation = attrText(n, "Relation Name");
     const rel = relation ? ` on ${relation}` : "";
     const nodeType = attrText(n, "Node Type") ?? "node";
+
+    // Self-time: this node's inclusive wall time minus its children's. A large
+    // total on a Nested Loop or Gather is usually its child's; self-time is the
+    // part that belongs to the node itself.
+    const incl = inclusiveMs(n);
+    let selfMs: number | null = null;
+    if (incl !== null) {
+      let childIncl = 0;
+      for (const c of n.Plans ?? []) childIncl += inclusiveMs(c) ?? 0;
+      selfMs = Math.max(0, incl - childIncl);
+    }
+    const selfPct = selfMs !== null ? Math.min(100, (selfMs / selfDenom) * 100) : 0;
+
+    const rowsEst = attrNum(n, "Plan Rows");
+    const rowsActual = attrNum(n, "Actual Rows");
+    const misestimate = misestimateOf(rowsEst, rowsActual);
+
+    const flags: NodeFlag[] = [];
+    if (nodeType.includes("Seq Scan")) flags.push("seq-scan");
+    if (isDiskSort(n)) flags.push("disk-sort");
+    if (isHashSpill(n)) flags.push("spill");
+    if (misestimate !== null) flags.push("misestimate");
+
     const i = nodes.length;
     nodes.push({
       kind: nodeType,
@@ -254,6 +345,12 @@ export function parsePlan(parsed: unknown): ParsedPlan {
       pct: Math.min(100, (metric / total) * 100),
       indent: depth,
       hot: false,
+      selfMs,
+      selfPct,
+      rowsEst,
+      rowsActual,
+      misestimate,
+      flags,
     });
     if ((n["Node Type"] as string)?.includes("Seq Scan") && metric > hotVal) {
       hotVal = metric;
@@ -268,6 +365,23 @@ export function parsePlan(parsed: unknown): ParsedPlan {
   // would be advice to index a table the user asked to read end to end.
   if (hotVal > 0 && nodes.length > 1) nodes[hotIdx].hot = true;
 
+  // The bottleneck is the node with the most *self*-time, when that share is
+  // meaningful and there is more than one node to choose between. Unlike the
+  // Seq-Scan hot spot this can land on any node type — an Index Scan or Sort
+  // that genuinely dominates is where the time goes, even if there is no index
+  // to recommend.
+  let botIdx = -1;
+  let botVal = -1;
+  if (nodes.length > 1) {
+    nodes.forEach((n, i) => {
+      if (n.selfMs !== null && n.selfMs > botVal && n.selfPct >= BOTTLENECK_PCT) {
+        botVal = n.selfMs;
+        botIdx = i;
+      }
+    });
+    if (botIdx >= 0) nodes[botIdx].flags.unshift("bottleneck");
+  }
+
   const stats: ParsedPlan["stats"] = [];
   if (root?.["Planning Time"] !== undefined) {
     stats.push({ label: "Planning time", value: `${(root["Planning Time"] as number).toFixed(2)} ms` });
@@ -278,13 +392,51 @@ export function parsePlan(parsed: unknown): ParsedPlan {
   stats.push({ label: "Plan nodes", value: String(nodes.length) });
 
   const hot = nodes.find((n) => n.hot);
-  return {
-    nodes,
-    stats,
-    suggestion: hot
-      ? `${hot.title} dominates this plan. An index matching its filter could avoid the full scan.`
-      : null,
-  };
+  const suggestion = hot
+    ? `${hot.title} dominates this plan. An index matching its filter could avoid the full scan.`
+    : null;
+
+  return { nodes, stats, suggestion, insights: buildInsights(nodes, hot ?? null) };
+}
+
+/** Turn the flagged nodes into an ordered, de-duplicated list of observations.
+ *  Ordering is deliberate: the bottleneck first (it's the reader's biggest
+ *  lever), then resource spills, then a stale-statistics hint. */
+function buildInsights(nodes: ParsedPlanNode[], hot: ParsedPlanNode | null): Insight[] {
+  const insights: Insight[] = [];
+
+  const bottleneck = nodes.find((n) => n.flags.includes("bottleneck"));
+  if (bottleneck) {
+    const ms = bottleneck.selfMs !== null ? ` (${bottleneck.selfMs.toFixed(1)} ms)` : "";
+    let text = `${bottleneck.title} is the busiest node — ${bottleneck.selfPct.toFixed(0)}% of execution time${ms}.`;
+    if (bottleneck.flags.includes("seq-scan")) text += " An index matching its filter could avoid the full scan.";
+    insights.push({ level: "tip", text });
+  } else if (hot) {
+    // No measured bottleneck (ANALYZE off), but a dominant Seq Scan by cost.
+    insights.push({
+      level: "tip",
+      text: `${hot.title} dominates this plan. An index matching its filter could avoid the full scan.`,
+    });
+  }
+
+  if (nodes.some((n) => n.flags.includes("disk-sort"))) {
+    insights.push({ level: "warn", text: "A sort spilled to disk. Raising work_mem can keep it in memory." });
+  }
+  if (nodes.some((n) => n.flags.includes("spill"))) {
+    insights.push({ level: "warn", text: "A hash step used multiple batches (spilled). Raising work_mem can reduce this." });
+  }
+
+  const worst = nodes
+    .filter((n) => n.misestimate !== null)
+    .sort((a, b) => (b.misestimate as number) - (a.misestimate as number))[0];
+  if (worst) {
+    insights.push({
+      level: "warn",
+      text: `Row estimate is off by ${Math.round(worst.misestimate as number)}× at ${worst.title}; its statistics may be stale (try ANALYZE on its table).`,
+    });
+  }
+
+  return insights;
 }
 
 /* ------------------------------------------------------------------ export */

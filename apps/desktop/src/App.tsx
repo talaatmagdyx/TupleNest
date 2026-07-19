@@ -1799,6 +1799,7 @@ export default function App() {
           nodes={explain.nodes}
           stats={explain.stats}
           suggestion={explain.suggestion}
+          insights={explain.insights}
           error={explain.error}
           busy={explainBusy}
           onOptions={setExplainOpts}

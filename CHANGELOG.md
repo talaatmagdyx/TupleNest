@@ -3,6 +3,26 @@
 Notable changes to TupleNest. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Richer EXPLAIN ANALYZE plan view.** The plan now highlights the real
+  bottleneck by *self-time* — a node's inclusive wall time minus its children's,
+  adjusted for loop count — rather than only the costliest sequential scan. This
+  correctly points at the busy node even when it's a sort or an index scan, not
+  just a table read. Sorts and hashes that spilled to disk, and row estimates
+  that missed by 10× or more, are called out with badges, and an ordered list of
+  insights explains what to do (add an index, raise `work_mem`, refresh
+  statistics). Verified against live PostgreSQL 18 plans, including parallel
+  plans and an external-merge disk sort.
+
+### Changed
+
+- Development dependencies modernised: React 19, Vite 8, ESLint 10, and the
+  GitHub Actions group (including `tauri-action` v1, validated on a real
+  four-platform release build). No user-facing behaviour change.
+
 ## [0.1.0-beta.3] — 2026-07-19
 
 The security-review response: the release blockers (TLS, numeric DoS, CSV

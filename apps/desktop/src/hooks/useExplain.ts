@@ -9,6 +9,7 @@ import {
   parsePlan,
   readPlanPayload,
   type ExplainOptions,
+  type Insight,
   type ParsedPlanNode,
 } from "../lib/explain";
 
@@ -22,6 +23,8 @@ export type ExplainState = {
   nodes: ParsedPlanNode[] | null;
   stats: { label: string; value: string }[];
   suggestion: string | null;
+  /** The richer, ordered observations shown under the plan. */
+  insights: Insight[];
   error: string | null;
   raw: string;
   /** The options that produced *this* plan, as opposed to the ones now set in
@@ -96,6 +99,7 @@ export function useExplain(serverMajor?: number): Explain {
         nodes: x?.nodes ?? null,
         stats: x?.stats ?? [],
         suggestion: null,
+        insights: x?.insights ?? [],
         error: null,
         raw: x?.raw ?? "",
         ranOpts: x?.ranOpts ?? o,
@@ -111,7 +115,7 @@ export function useExplain(serverMajor?: number): Explain {
 
         // Only FORMAT JSON can be walked into a tree; the rest are shown raw.
         if (o.format !== "json") {
-          setExplain((x) => (x ? { ...x, raw, nodes: [], stats: [], error: null, ranOpts: o } : x));
+          setExplain((x) => (x ? { ...x, raw, nodes: [], stats: [], insights: [], error: null, ranOpts: o } : x));
           return { kind: "ok", root: null };
         }
 
@@ -120,8 +124,8 @@ export function useExplain(serverMajor?: number): Explain {
         // is documented to be an array of plan documents.
         const parsed: unknown = typeof cell === "string" ? (JSON.parse(cell) as unknown) : cell;
         const root = (Array.isArray(parsed) ? parsed[0] : parsed) as Record<string, unknown>;
-        const { nodes, stats, suggestion } = parsePlan(parsed);
-        setExplain({ title, sql, statement, nodes, stats, suggestion, error: null, raw, ranOpts: o });
+        const { nodes, stats, suggestion, insights } = parsePlan(parsed);
+        setExplain({ title, sql, statement, nodes, stats, suggestion, insights, error: null, raw, ranOpts: o });
         return { kind: "ok", root };
       } catch (e) {
         const message = String(e);

@@ -98,15 +98,18 @@
     <p class="lede">EXPLAIN-based tooling to inspect plans and compare them, plus schema-level diffing for change review.</p>
     <div class="grid2">
       <div class="card"><span class="pill ok">Available</span><ul style="margin-top:12px">
-        <li>EXPLAIN and EXPLAIN ANALYZE</li><li>Text plan inspection</li><li>Plan comparison between runs</li>
-        <li>Planning vs execution time</li><li>Schema diff for change review</li>
+        <li>Visual plan tree with <b>self-time bottleneck highlighting</b> (inclusive time minus children, loop-adjusted)</li>
+        <li>Disk-sort, hash-spill &amp; sequential-scan call-outs</li>
+        <li>Row-misestimation flags (estimate vs actual)</li>
+        <li>EXPLAIN / EXPLAIN ANALYZE, plan comparison between runs</li>
+        <li>Planning vs execution time; schema diff for change review</li>
       </ul></div>
       <div class="card"><span class="pill plan">Planned</span><ul style="margin-top:12px">
-        <li>Richer visual plan with expensive-node highlighting</li><li>Sequential-scan &amp; sort/join call-outs</li>
-        <li>BUFFERS-aware view</li><li>A dedicated query profiler</li>
+        <li>BUFFERS-aware per-node view</li><li>Join/sort inspection panel</li>
+        <li>A dedicated standalone query profiler</li>
       </ul></div>
     </div>
-    <div class="callout info" style="margin-top:20px">Where a richer visualization isn't built yet, it's listed here as planned rather than shown as done. See the <a href="roadmap.html">Roadmap</a>.</div>
+    <div class="callout info" style="margin-top:20px">The bottleneck highlighting and call-outs were verified against live PostgreSQL 18 plans, including parallel plans and an external-merge disk sort. What isn't built yet is listed as planned rather than shown as done — see the <a href="roadmap.html">Roadmap</a>.</div>
   </div>
 </section>
 

@@ -429,6 +429,149 @@ describe("parsePlan", () => {
       const p = parsePlan(input);
       expect(p.nodes).toEqual([]);
       expect(p.suggestion).toBeNull();
+      expect(p.insights).toEqual([]);
     },
   );
+});
+
+describe("parsePlan — self-time", () => {
+  const root = (plan: RawPlan, over: Record<string, unknown> = {}) => ({ Plan: plan, ...over });
+
+  it("charges a node only for the time not spent in its children", () => {
+    // A Nested Loop's total is mostly its child's; the loop itself is cheap.
+    const p = parsePlan([
+      root({
+        "Node Type": "Nested Loop",
+        "Actual Total Time": 100,
+        Plans: [
+          { "Node Type": "Index Scan", "Relation Name": "a", "Actual Total Time": 90 },
+          { "Node Type": "Seq Scan", "Relation Name": "b", "Actual Total Time": 5 },
+        ],
+      }),
+    ]);
+    expect(p.nodes.map((n) => n.selfMs)).toEqual([5, 90, 5]);
+  });
+
+  it("multiplies per-loop time by the loop count", () => {
+    // Postgres reports Actual Total Time per loop; 2 ms across 10 loops is 20 ms.
+    const p = parsePlan([
+      root({
+        "Node Type": "Nested Loop",
+        "Actual Total Time": 50,
+        Plans: [{ "Node Type": "Index Scan", "Relation Name": "a", "Actual Total Time": 2, "Actual Loops": 10 }],
+      }),
+    ]);
+    // loop self = 50 - (2*10) = 30; inner self = 2*10 = 20.
+    expect(p.nodes.map((n) => n.selfMs)).toEqual([30, 20]);
+  });
+
+  it("leaves self-time null without ANALYZE — an estimate is not a measurement", () => {
+    const p = parsePlan([root({ "Node Type": "Seq Scan", "Relation Name": "t", "Total Cost": 10 })]);
+    expect(p.nodes[0].selfMs).toBeNull();
+    expect(p.nodes[0].selfPct).toBe(0);
+  });
+});
+
+describe("parsePlan — bottleneck", () => {
+  const root = (plan: RawPlan) => ({ Plan: plan });
+
+  it("flags the node holding the most self-time, whatever its type", () => {
+    const p = parsePlan([
+      root({
+        "Node Type": "Limit",
+        "Actual Total Time": 100,
+        Plans: [{ "Node Type": "Index Scan", "Relation Name": "u", "Actual Total Time": 99 }],
+      }),
+    ]);
+    const bn = p.nodes.find((n) => n.flags.includes("bottleneck"));
+    expect(bn?.title).toBe("Index Scan on u");
+    // An index scan is where the time goes, but there is no index to suggest.
+    expect(p.insights[0].text).toMatch(/busiest node/);
+    expect(p.insights[0].text).not.toMatch(/index matching/);
+  });
+
+  it("appends index advice when the bottleneck is a Seq Scan", () => {
+    const p = parsePlan([
+      root({
+        "Node Type": "Aggregate",
+        "Actual Total Time": 100,
+        Plans: [{ "Node Type": "Seq Scan", "Relation Name": "big", "Actual Total Time": 92 }],
+      }),
+    ]);
+    const bn = p.nodes.find((n) => n.flags.includes("bottleneck"));
+    expect(bn?.title).toBe("Seq Scan on big");
+    expect(p.insights[0].text).toMatch(/index matching its filter/);
+  });
+
+  it("does not crown a bottleneck below the threshold (negative control)", () => {
+    // Five children at 18% each: real work, but no single dominant node.
+    const p = parsePlan([
+      root({
+        "Node Type": "Append",
+        "Actual Total Time": 100,
+        Plans: [1, 2, 3, 4, 5].map((i) => ({
+          "Node Type": "Seq Scan",
+          "Relation Name": `p${i}`,
+          "Actual Total Time": 18,
+        })),
+      }),
+    ]);
+    expect(p.nodes.some((n) => n.flags.includes("bottleneck"))).toBe(false);
+    expect(p.insights.some((i) => /busiest node/.test(i.text))).toBe(false);
+  });
+
+  it("does not crown a bottleneck on a single-node plan", () => {
+    const p = parsePlan([root({ "Node Type": "Seq Scan", "Relation Name": "t", "Actual Total Time": 9 })]);
+    expect(p.nodes[0].flags.includes("bottleneck")).toBe(false);
+  });
+});
+
+describe("parsePlan — resource call-outs", () => {
+  const root = (plan: RawPlan) => ({ Plan: plan });
+
+  it("flags a sort that spilled to disk, and not one that stayed in memory", () => {
+    const disk = parsePlan([
+      root({ "Node Type": "Sort", "Actual Total Time": 30, "Sort Method": "external merge  Disk: 2048kB" }),
+    ]);
+    expect(disk.nodes[0].flags).toContain("disk-sort");
+    expect(disk.insights.some((i) => /spilled to disk/.test(i.text))).toBe(true);
+
+    const mem = parsePlan([
+      root({ "Node Type": "Sort", "Actual Total Time": 30, "Sort Method": "quicksort  Memory: 25kB" }),
+    ]);
+    expect(mem.nodes[0].flags).not.toContain("disk-sort");
+  });
+
+  it("flags a hash that spilled to multiple batches, and not a single-batch one", () => {
+    const spill = parsePlan([root({ "Node Type": "Hash", "Actual Total Time": 5, "Hash Batches": 4 })]);
+    expect(spill.nodes[0].flags).toContain("spill");
+    const one = parsePlan([root({ "Node Type": "Hash", "Actual Total Time": 5, "Hash Batches": 1 })]);
+    expect(one.nodes[0].flags).not.toContain("spill");
+  });
+
+  it("flags a wildly wrong row estimate, and not a close one", () => {
+    const off = parsePlan([root({ "Node Type": "Seq Scan", "Relation Name": "t", "Plan Rows": 1, "Actual Rows": 10000 })]);
+    expect(off.nodes[0].flags).toContain("misestimate");
+    expect(off.nodes[0].misestimate).toBeGreaterThan(10);
+    expect(off.insights.some((i) => /estimate is off/.test(i.text))).toBe(true);
+
+    const close = parsePlan([root({ "Node Type": "Seq Scan", "Relation Name": "t", "Plan Rows": 100, "Actual Rows": 120 })]);
+    expect(close.nodes[0].flags).not.toContain("misestimate");
+    expect(close.nodes[0].misestimate).toBeNull();
+  });
+
+  it("orders insights: bottleneck first, then spills, then stale statistics", () => {
+    const p = parsePlan([
+      root({
+        "Node Type": "Sort",
+        "Actual Total Time": 100,
+        "Sort Method": "external merge  Disk: 4096kB",
+        Plans: [{ "Node Type": "Seq Scan", "Relation Name": "big", "Actual Total Time": 80, "Plan Rows": 1, "Actual Rows": 5000 }],
+      }),
+    ]);
+    expect(p.insights.map((i) => i.level)).toEqual(["tip", "warn", "warn"]);
+    expect(p.insights[0].text).toMatch(/busiest node/);
+    expect(p.insights[1].text).toMatch(/spilled to disk/);
+    expect(p.insights[2].text).toMatch(/estimate is off/);
+  });
 });

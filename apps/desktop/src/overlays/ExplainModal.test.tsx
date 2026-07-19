@@ -118,6 +118,48 @@ describe("ExplainModal — plan tree", () => {
   });
 });
 
+describe("ExplainModal — richer plan", () => {
+  it("shows self-time and the total when both are known", () => {
+    render(<ExplainModal {...base} nodes={[node({ ms: 30, selfMs: 12, selfPct: 40 })]} />);
+    expect(screen.getByText("self 12.0 ms")).toBeInTheDocument();
+    expect(screen.getByText(/30.0 ms total/)).toBeInTheDocument();
+  });
+
+  it("falls back to inclusive time when self-time is absent", () => {
+    render(<ExplainModal {...base} nodes={[node({ ms: 30 })]} />);
+    expect(screen.getByText("30.0 ms")).toBeInTheDocument();
+    expect(screen.queryByText(/self /)).not.toBeInTheDocument();
+  });
+
+  it("renders the call-out badges for a node's flags", () => {
+    render(
+      <ExplainModal
+        {...base}
+        nodes={[node({ flags: ["bottleneck", "disk-sort", "misestimate"], misestimate: 42 })]}
+      />,
+    );
+    expect(screen.getByText("BOTTLENECK")).toBeInTheDocument();
+    expect(screen.getByText("DISK SORT")).toBeInTheDocument();
+    expect(screen.getByText("EST ×42 OFF")).toBeInTheDocument();
+  });
+
+  it("shows the insights list and hides the legacy suggestion when insights exist", () => {
+    render(
+      <ExplainModal
+        {...base}
+        suggestion="legacy single suggestion"
+        insights={[
+          { level: "tip", text: "Seq Scan on big is the busiest node." },
+          { level: "warn", text: "A sort spilled to disk." },
+        ]}
+      />,
+    );
+    expect(screen.getByText(/busiest node/)).toBeInTheDocument();
+    expect(screen.getByText(/spilled to disk/)).toBeInTheDocument();
+    expect(screen.queryByText(/legacy single suggestion/)).not.toBeInTheDocument();
+  });
+});
+
 describe("ExplainModal — options", () => {
   it("toggles an option through to the caller", async () => {
     const onOptions = vi.fn();
