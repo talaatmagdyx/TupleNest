@@ -69,6 +69,7 @@ import MonitorModal from "./overlays/MonitorModal";
 import DiagramModal from "./overlays/DiagramModal";
 import AuditModal from "./overlays/AuditModal";
 import ExplainModal from "./overlays/ExplainModal";
+import PastePlanModal from "./overlays/PastePlanModal";
 import { UpdateToast } from "./overlays/Overlays";
 import { ParamPrompt } from "./overlays/Overlays";
 import {
@@ -100,6 +101,7 @@ type OverlayKind =
   | "connLost"
   | "settings"
   | "explain"
+  | "pastePlan"
   | "schema"
   | "cheatsheet"
   | "about"
@@ -1169,6 +1171,8 @@ export default function App() {
       { icon: "＋", label: "New query tab", type: "Action", kbd: kbd("mod", "T"), exec: newTab },
       { icon: "◐", label: "Toggle theme", type: "Action", kbd: kbd("mod", "shift", "L"), exec: () => applyTheme(theme === "dark" ? "light" : "dark") },
       { icon: "⛁", label: "Open connection…", type: "Action", kbd: kbd("mod", "O"), exec: () => setOverlay("connEditor") },
+      // Works with no connection at all: the plan came from somewhere else.
+      { icon: "📋", label: "Analyze a pasted plan…", type: "Action", exec: () => setOverlay("pastePlan") },
       { icon: "＋", label: "New connection…", type: "Action", exec: newProfile },
       { icon: "⌥", label: "Show EXPLAIN plan", type: "Action", exec: () => runExplain() },
       { icon: "⤓", label: "Import CSV…", type: "Action", exec: () => setOverlay("import") },
@@ -1789,6 +1793,8 @@ export default function App() {
           onDismiss={() => setUpdateInfo(null)}
         />
       )}
+      {overlay === "pastePlan" && <PastePlanModal onClose={() => setOverlay(null)} />}
+
       {overlay === "explain" && explain && (
         <ExplainModal
           title={explain.title}
