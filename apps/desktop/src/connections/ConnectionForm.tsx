@@ -3,6 +3,19 @@ import type { TestStage } from "../ipc/types";
 import { ModalHead, Overlay } from "../overlays/Overlays";
 
 /**
+ * Attributes for every field holding a machine identifier — hostname, database,
+ * role name, key path, fingerprint.
+ *
+ * Found by using the app: macOS "capitalize words automatically" rewrote a
+ * typed `talaatmagdyx` to `Talaatmagdyx` when the field lost focus. PostgreSQL
+ * role names are case-sensitive, so the connection then failed at the auth
+ * stage — presenting as a credentials problem, with nothing on screen to
+ * suggest the OS had edited the text. The same trap applies to a hostname or
+ * an SSH key path.
+ */
+const IDENT = { autoCapitalize: "none", autoCorrect: "off", spellCheck: false } as const;
+
+/**
  * Is this host the local machine, where "prefer" TLS is a defensible dev
  * default? Loopback names/addresses and the empty (not-yet-typed) field only.
  * Everything else is treated as remote, so the prefer warning shows — a false
@@ -124,12 +137,12 @@ export default function ConnectionForm(p: Props) {
           <div className="frow">
             <div className="field">
               <label htmlFor={f("host")}>Host</label>
-              <input id={f("host")} className="mono" value={p.host} onChange={(e) => p.onHost(e.target.value)} />
+              <input id={f("host")} className="mono" {...IDENT} value={p.host} onChange={(e) => p.onHost(e.target.value)} />
             </div>
             <div className="field w90">
               <label htmlFor={f("port")}>Port</label>
               <input id={f("port")}
-                className="mono"
+                className="mono" {...IDENT}
                 type="number"
                 value={p.port}
                 onChange={(e) => p.onPort(Number(e.target.value) || 5432)}
@@ -139,11 +152,11 @@ export default function ConnectionForm(p: Props) {
           <div className="frow">
             <div className="field">
               <label htmlFor={f("database")}>Database</label>
-              <input id={f("database")} className="mono" value={p.database} onChange={(e) => p.onDatabase(e.target.value)} />
+              <input id={f("database")} className="mono" {...IDENT} value={p.database} onChange={(e) => p.onDatabase(e.target.value)} />
             </div>
             <div className="field">
               <label htmlFor={f("username")}>Username</label>
-              <input id={f("username")} className="mono" value={p.username} onChange={(e) => p.onUsername(e.target.value)} />
+              <input id={f("username")} className="mono" {...IDENT} value={p.username} onChange={(e) => p.onUsername(e.target.value)} />
             </div>
           </div>
           <div className="field">
@@ -170,7 +183,7 @@ export default function ConnectionForm(p: Props) {
               <div className="field">
                 <label htmlFor={f("ca")}>CA file (optional)</label>
                 <input id={f("ca")}
-                  className="mono"
+                  className="mono" {...IDENT}
                   placeholder="/etc/ssl/ca.pem"
                   value={p.tlsCaPath}
                   onChange={(e) => p.onTlsCaPath(e.target.value)}
@@ -205,26 +218,26 @@ export default function ConnectionForm(p: Props) {
               <div className="frow">
                 <div className="field">
                   <label htmlFor={f("sshhost")}>SSH host</label>
-                  <input id={f("sshhost")} className="mono" placeholder="bastion.internal" value={p.sshHost} onChange={(e) => p.onSshHost(e.target.value)} />
+                  <input id={f("sshhost")} className="mono" {...IDENT} placeholder="bastion.internal" value={p.sshHost} onChange={(e) => p.onSshHost(e.target.value)} />
                 </div>
                 <div className="field w90">
                   <label htmlFor={f("sshport")}>Port</label>
-                  <input id={f("sshport")} className="mono" type="number" value={p.sshPort} onChange={(e) => p.onSshPort(Number(e.target.value) || 22)} />
+                  <input id={f("sshport")} className="mono" {...IDENT} type="number" value={p.sshPort} onChange={(e) => p.onSshPort(Number(e.target.value) || 22)} />
                 </div>
               </div>
               <div className="frow">
                 <div className="field">
                   <label htmlFor={f("sshuser")}>SSH user</label>
-                  <input id={f("sshuser")} className="mono" placeholder="deploy" value={p.sshUser} onChange={(e) => p.onSshUser(e.target.value)} />
+                  <input id={f("sshuser")} className="mono" {...IDENT} placeholder="deploy" value={p.sshUser} onChange={(e) => p.onSshUser(e.target.value)} />
                 </div>
                 <div className="field">
                   <label htmlFor={f("sshkey")}>Private key path</label>
-                  <input id={f("sshkey")} className="mono" placeholder="~/.ssh/id_ed25519" value={p.sshKeyPath} onChange={(e) => p.onSshKeyPath(e.target.value)} />
+                  <input id={f("sshkey")} className="mono" {...IDENT} placeholder="~/.ssh/id_ed25519" value={p.sshKeyPath} onChange={(e) => p.onSshKeyPath(e.target.value)} />
                 </div>
               </div>
               <div className="field">
                 <label htmlFor={f("sshfp")}>Host-key SHA256 fingerprint</label>
-                <input id={f("sshfp")} className="mono" placeholder="empty → known_hosts" value={p.sshFingerprint} onChange={(e) => p.onSshFingerprint(e.target.value)} />
+                <input id={f("sshfp")} className="mono" {...IDENT} placeholder="empty → known_hosts" value={p.sshFingerprint} onChange={(e) => p.onSshFingerprint(e.target.value)} />
               </div>
             </>
           )}
@@ -233,7 +246,7 @@ export default function ConnectionForm(p: Props) {
               <div className="tp-head">
                 <span className="tp-title">Connection test</span>
                 <span
-                  className="mono"
+                  className="mono" {...IDENT}
                   style={{
                     fontSize: 10.5,
                     fontWeight: 700,

@@ -227,6 +227,37 @@ describe("ConnectionForm — connection test", () => {
   });
 });
 
+describe("ConnectionForm — identifier fields resist OS text substitution", () => {
+  /* Found by using the app on macOS: with "capitalize words automatically" on,
+     a typed `postgres` became `Postgres` the moment the field lost focus.
+     PostgreSQL role names are case-sensitive, so the connection then failed at
+     the auth stage and looked for all the world like a wrong password — the OS
+     had quietly edited the text and nothing on screen said so. The same trap
+     applies to a hostname, a database name, and an SSH key path. */
+  const identifierFields = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll("input.mono")) as HTMLInputElement[];
+
+  it("turns off autocapitalise, autocorrect and spellcheck on every one", () => {
+    const { container } = render(<ConnectionForm {...base} sshEnabled />);
+    const fields = identifierFields(container);
+    // Host, port, database, username, and the SSH block at minimum.
+    expect(fields.length).toBeGreaterThanOrEqual(5);
+    for (const el of fields) {
+      expect(el.getAttribute("autocapitalize")).toBe("none");
+      expect(el.getAttribute("autocorrect")).toBe("off");
+      expect(el.getAttribute("spellcheck")).toBe("false");
+    }
+  });
+
+  it("leaves the free-text name field alone", () => {
+    // The profile name is prose a human picks — capitalising "Prod replica" is
+    // helpful there, and it is never sent to the server.
+    const { container } = render(<ConnectionForm {...base} />);
+    const name = container.querySelector("input:not(.mono):not([type=password])");
+    expect(name?.getAttribute("autocapitalize")).toBeNull();
+  });
+});
+
 /* Note for a follow-up: every `<label>` in this form is a sibling of its
    input rather than tied to it with htmlFor/id. Clicking a label does not
    focus its field, and a screen reader announces the inputs unlabelled. The
