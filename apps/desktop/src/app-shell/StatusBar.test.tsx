@@ -79,6 +79,19 @@ describe("StatusBar", () => {
     expect(screen.getByText("PostgreSQL 18.0")).toBeInTheDocument();
   });
 
+  it("identifies the build it is running", () => {
+    // Two copies of this app can run at once — an installed release and a
+    // local build — and they look identical. Without this, "which build is
+    // this?" is only answerable by killing processes and inspecting bundles.
+    render(<StatusBar {...base} buildLabel="a1b2c3d+ · 2026-07-20 03:45" />);
+    expect(screen.getByText("a1b2c3d+ · 2026-07-20 03:45")).toBeInTheDocument();
+  });
+
+  it("shows no build segment when there is nothing to identify", () => {
+    const { container } = render(<StatusBar {...base} />);
+    expect(container.querySelector(".build")).toBeNull();
+  });
+
   it("omits the version entirely when unknown", () => {
     render(<StatusBar {...base} serverVersion={null} />);
     expect(screen.queryByText(/PostgreSQL/)).not.toBeInTheDocument();

@@ -558,6 +558,8 @@ a { color: var(--tn-accent); text-decoration: none; }
 .statusbar .item { display: flex; align-items: center; gap: 6px; }
 .statusbar .bar-sep { color: var(--tn-bs); }
 .statusbar .lock { color: var(--tn-success); }
+/* Quiet by design: useful when identifying a build, invisible the rest of the time. */
+.statusbar .build { color: var(--tn-tf); }
 .statusbar .txwarn { color: var(--tn-warning); }
 
 /* ===== Overlays ===== */

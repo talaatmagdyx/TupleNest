@@ -70,7 +70,10 @@ export default function MonitorModal(p: {
 
   useEffect(() => {
     if (!auto) return;
-    const id = setInterval(refresh, 2500);
+    // `void` rather than passing `refresh` straight in: it is async, so the
+    // timer would drop a new promise every tick with nowhere for a rejection
+    // to surface.
+    const id = setInterval(() => void refresh(), 2500);
     return () => clearInterval(id);
   }, [auto, refresh]);
 

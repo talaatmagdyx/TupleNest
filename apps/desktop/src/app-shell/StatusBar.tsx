@@ -13,6 +13,10 @@ type Props = {
   now: number;
   serverVersion: string | null;
   osLabel: string;
+  /** Commit and time this bundle was built, so the window can identify itself.
+   *  Optional and hidden when empty — a checkout without git history has
+   *  nothing honest to put here. */
+  buildLabel?: string;
 };
 
 export default function StatusBar(p: Props) {
@@ -45,6 +49,14 @@ export default function StatusBar(p: Props) {
           PostgreSQL {p.serverVersion}
           {p.osLabel ? ` · ${p.osLabel}` : ""}
         </span>
+      )}
+      {p.buildLabel && (
+        <>
+          <span className="bar-sep">|</span>
+          <span className="item build" title="The build this window is running">
+            {p.buildLabel}
+          </span>
+        </>
       )}
     </footer>
   );

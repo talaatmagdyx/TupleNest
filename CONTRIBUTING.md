@@ -48,6 +48,33 @@ Some tests talk to a real database. Point them at a local PostgreSQL with the
 `TUPLENEST_TEST_PG_*` environment variables (host, port, db, user, password);
 tests that need a server skip cleanly when it isn't configured.
 
+### Building a real .app locally
+
+`npm run tauri dev` is for iterating: it serves the UI from a Vite dev server,
+so the app goes blank the moment that server stops. To get something you can
+actually launch and keep, build the bundle instead.
+
+One snag: releases ship signed updater artifacts, so the build asks for a
+signing key that only CI has. For a local build, generate a throwaway one —
+it signs an update nobody will install:
+
+```bash
+npx tauri signer generate -w /tmp/tn-local.key -p ""
+export TAURI_SIGNING_PRIVATE_KEY="$(cat /tmp/tn-local.key)"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+npm run tauri build -- --bundles app
+```
+
+The result lands in `target/release/bundle/`. Tauri warns that the key doesn't
+match the configured public key — expected, and irrelevant unless you are
+testing auto-update.
+
+**If two copies are installed, check the build stamp.** The status bar shows
+the commit and build time of the bundle that window is running (a trailing `+`
+means it was built with uncommitted changes). An installed release and a local
+build look identical otherwise, and chasing a fix in the wrong window is a
+genuinely expensive way to spend an afternoon.
+
 ## The gates a change has to pass
 
 CI runs these; run them locally before opening a PR so there are no surprises.

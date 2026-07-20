@@ -6,6 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { meetsUpdateFloor } from "./lib/version";
+import { buildLabel } from "./lib/build";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { ask } from "@tauri-apps/plugin-dialog";
 import Titlebar from "./app-shell/Titlebar";
@@ -1520,6 +1521,7 @@ export default function App() {
         now={now}
         serverVersion={serverVersion}
         osLabel={info?.os ?? ""}
+        buildLabel={buildLabel()}
       />
 
       {toast && <div className="toast">{toast}</div>}
