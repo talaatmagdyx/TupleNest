@@ -340,7 +340,11 @@ function isDiskSort(n: RawPlan): boolean {
   return (!!method && /disk|external/i.test(method)) || (!!space && /disk/i.test(space));
 }
 function isHashSpill(n: RawPlan): boolean {
-  return (attrNum(n, "Hash Batches") ?? 1) > 1;
+  // A Hash node and a spilling HashAggregate are both "the hash didn't fit",
+  // but the server files their batch counts under different keys — checking
+  // only the first missed every aggregate that spilled, which is the case most
+  // likely to be fixed by raising work_mem.
+  return (attrNum(n, "Hash Batches") ?? 1) > 1 || (attrNum(n, "HashAgg Batches") ?? 1) > 1;
 }
 
 /**

@@ -601,6 +601,16 @@ describe("parsePlan — resource call-outs", () => {
     expect(one.nodes[0].flags).not.toContain("spill");
   });
 
+  it("flags a HashAggregate that spilled, which files its batches under another key", () => {
+    // Found by comparing a text plan against the same plan in JSON: the text
+    // path saw the spill and this one did not, because the server reports an
+    // aggregate's batch count as "HashAgg Batches" rather than "Hash Batches".
+    const spill = parsePlan([root({ "Node Type": "Aggregate", "Actual Total Time": 5, "HashAgg Batches": 5, "Disk Usage": 200 })]);
+    expect(spill.nodes[0].flags).toContain("spill");
+    const one = parsePlan([root({ "Node Type": "Aggregate", "Actual Total Time": 5, "HashAgg Batches": 1 })]);
+    expect(one.nodes[0].flags).not.toContain("spill");
+  });
+
   it("flags a wildly wrong row estimate, and not a close one", () => {
     const off = parsePlan([root({ "Node Type": "Seq Scan", "Relation Name": "t", "Plan Rows": 1, "Actual Rows": 10000 })]);
     expect(off.nodes[0].flags).toContain("misestimate");

@@ -30,8 +30,13 @@ const NEVER_RE = /\(never executed\)/;
 
 /** Structural labels that own the `->` line beneath them. They are not nodes
  *  themselves; the child they introduce belongs to the enclosing node, which is
- *  where FORMAT JSON puts it too. */
+ *  where FORMAT JSON puts it too.
+ *
+ *  A real node can *begin* with one of these words — "CTE Scan on c" is a plan
+ *  node, not a label — so the measurement tuple is what tells them apart. A
+ *  label never carries one. */
 const CONTAINER_RE = /^(CTE|SubPlan|InitPlan)\b/;
+const MEASURED_RE = /\((?:cost=|actual|never executed)/;
 
 /** Per-worker repeats of a parent's own attributes. Counting them would double
  *  every measurement they echo. */
@@ -45,6 +50,86 @@ const num = (s: string | undefined): number | null => {
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
 };
+
+/** Aggregate strategies are part of the printed name in text but a separate
+ *  field in FORMAT JSON. */
+const AGG_STRATEGY: Record<string, string> = {
+  HashAggregate: "Hashed",
+  GroupAggregate: "Sorted",
+  MixedAggregate: "Mixed",
+  Aggregate: "Plain",
+};
+
+/** Likewise the join type: text prints "Hash Right Semi Join", JSON reports
+ *  node type "Hash Join" with `Join Type: "Right Semi"`. */
+const JOIN_RE = /^(Hash|Merge) (Left|Right|Full|Semi|Anti|Right Semi|Right Anti) Join$/;
+const NESTED_RE = /^Nested Loop (Left|Right|Full|Semi|Anti|Right Semi|Right Anti)$/;
+
+/** And the write operation: "Insert on t" is JSON's `ModifyTable` with
+ *  `Operation: "Insert"`. */
+const MODIFY_RE = /^(Insert|Update|Delete|Merge)$/;
+
+/**
+ * The text format packs several things into the node's printed name that
+ * FORMAT JSON keeps in separate fields — whether the node is parallel-aware,
+ * whether an aggregate is partial, which join type it is, which strategy an
+ * aggregate uses. Unpacking them here is what makes a pasted text plan and the
+ * same plan in JSON produce *identical* output rather than merely similar
+ * output: the analyzer downstream only ever sees JSON's vocabulary.
+ */
+function normalizeNodeType(out: Record<string, unknown>): void {
+  let type = (typeof out["Node Type"] === "string" ? out["Node Type"] : "").trim();
+
+  // Prefixes, which stack: "Finalize GroupAggregate", "Parallel Hash Join".
+  if (type.startsWith("Parallel ")) {
+    out["Parallel Aware"] = true;
+    type = type.slice("Parallel ".length);
+  }
+  for (const mode of ["Partial", "Finalize"]) {
+    if (type.startsWith(`${mode} `)) {
+      out["Partial Mode"] = mode;
+      type = type.slice(mode.length + 1);
+    }
+  }
+  if (out["Parallel Aware"] === undefined) out["Parallel Aware"] = false;
+
+  const join = JOIN_RE.exec(type) ?? NESTED_RE.exec(type);
+  if (join) {
+    out["Join Type"] = join[2];
+    type = join[1] === "Hash" || join[1] === "Merge" ? `${join[1]} Join` : "Nested Loop";
+  } else if (type === "Hash Join" || type === "Merge Join" || type === "Nested Loop") {
+    // An inner join prints no join word; JSON still names it.
+    out["Join Type"] = "Inner";
+  }
+
+  const strategy = AGG_STRATEGY[type];
+  if (strategy) {
+    out["Strategy"] = strategy;
+    type = "Aggregate";
+  }
+
+  if (MODIFY_RE.test(type)) {
+    out["Operation"] = type;
+    type = "ModifyTable";
+  }
+
+  // Several node types print "on <thing>" where the thing is not a table, and
+  // FORMAT JSON files each under its own key.
+  const notARelation: Record<string, string> = {
+    "Bitmap Index Scan": "Index Name",
+    "CTE Scan": "CTE Name",
+    "Function Scan": "Function Name",
+    "Named Tuplestore Scan": "Tuplestore Name",
+  };
+  const key = notARelation[type];
+  if (key && out["Relation Name"] !== undefined) {
+    out[key] = out["Relation Name"];
+    delete out["Relation Name"];
+    if (key !== "CTE Name") delete out["Alias"];
+  }
+
+  out["Node Type"] = type;
+}
 
 /** Split "Index Only Scan using ix on orders a" into its JSON-ish parts. */
 function splitLabel(label: string): Record<string, unknown> {
@@ -60,11 +145,21 @@ function splitLabel(label: string): Record<string, unknown> {
   // relation, matching what FORMAT JSON reports.
   const on = / on (\S+)(?:\s+(\S+))?\s*$/.exec(rest);
   if (on) {
-    out["Relation Name"] = on[1];
+    // VERBOSE qualifies the relation — "on public.orders" — where FORMAT JSON
+    // keeps the schema in its own field. Quoted identifiers can contain a dot,
+    // so only an unquoted single dot is treated as a qualifier.
+    const qualified = /^([^".]+)\.([^".]+)$/.exec(on[1]);
+    if (qualified) {
+      out["Schema"] = qualified[1];
+      out["Relation Name"] = qualified[2];
+    } else {
+      out["Relation Name"] = on[1];
+    }
     if (on[2]) out["Alias"] = on[2];
     rest = rest.replace(on[0], "");
   }
   out["Node Type"] = rest.trim();
+  normalizeNodeType(out);
   return out;
 }
 
@@ -119,12 +214,16 @@ function readAttribute(line: string, node: TextPlanNode): void {
   }
   if (key === "Buckets" || key === "Batches") {
     // "Buckets: 32768  Batches: 1  Memory Usage: 960kB" arrives as one line;
-    // a HashAggregate reports only "Batches: 1  Memory Usage: 32kB". Either
-    // way a batch count above one means it spilled.
-    for (const kv of `${key}: ${value}`.matchAll(/(Buckets|Batches|Memory Usage):\s*(\d+)/g)) {
+    // a HashAggregate reports only "Batches: 5  Memory Usage: 161kB  Disk
+    // Usage: 200kB". Either way a batch count above one means it spilled — but
+    // FORMAT JSON files the aggregate's count under a *different* key than the
+    // hash node's, so each has to land where the analyzer looks for it.
+    const batchKey = node["Node Type"] === "Aggregate" ? "HashAgg Batches" : "Hash Batches";
+    for (const kv of `${key}: ${value}`.matchAll(/(Buckets|Batches|Memory Usage|Disk Usage):\s*(\d+)/g)) {
       if (kv[1] === "Buckets") node["Hash Buckets"] = Number(kv[2]);
-      if (kv[1] === "Batches") node["Hash Batches"] = Number(kv[2]);
+      if (kv[1] === "Batches") node[batchKey] = Number(kv[2]);
       if (kv[1] === "Memory Usage") node["Peak Memory Usage"] = Number(kv[2]);
+      if (kv[1] === "Disk Usage") node["Disk Usage"] = Number(kv[2]);
     }
     return;
   }
@@ -209,6 +308,27 @@ function seedBuffers(root: TextPlanNode): void {
   }
 }
 
+/** A node with a filter that discarded nothing prints no "Rows Removed by
+ *  Filter" line, while FORMAT JSON prints a zero. Same reasoning as the buffer
+ *  seeding above: with ANALYZE on, silence means none were removed, not that
+ *  the number is unknown. */
+function seedRowsRemoved(root: TextPlanNode): void {
+  const pairs: [string, string][] = [
+    ["Filter", "Rows Removed by Filter"],
+    ["Join Filter", "Rows Removed by Join Filter"],
+  ];
+  const walk = (n: TextPlanNode) => {
+    // No ANALYZE means no removal counts at all, in either format.
+    if (n["Actual Loops"] !== undefined) {
+      for (const [cond, count] of pairs) {
+        if (n[cond] !== undefined && n[count] === undefined) n[count] = 0;
+      }
+    }
+    for (const c of n.Plans ?? []) walk(c);
+  };
+  walk(root);
+}
+
 /**
  * Turn a text plan into the array FORMAT JSON would have produced.
  *
@@ -248,7 +368,19 @@ export function parseTextPlan(input: string): TextPlanRoot[] | null {
 
     // A structural label — the child beneath it belongs to the enclosing node,
     // which is where FORMAT JSON puts it too.
-    if (CONTAINER_RE.test(text) && !text.startsWith("->")) continue;
+    //
+    // The label's children are indented past it, so left to itself the stack
+    // would hang them off whichever node happened to precede it. Recording the
+    // label's own column as a transparent barrier makes them attach to the node
+    // that *encloses* the label instead — which is where JSON puts them, and
+    // the difference is not cosmetic: a SubPlan hung off the wrong parent moves
+    // its time to the wrong node and badges the wrong one as the bottleneck.
+    if (CONTAINER_RE.test(text) && !text.startsWith("->") && !MEASURED_RE.test(text)) {
+      while (stack.length && stack[stack.length - 1].col >= indent) stack.pop();
+      const parent = stack.length ? stack[stack.length - 1].node : root;
+      if (parent) stack.push({ col: indent, node: parent });
+      continue;
+    }
 
     const isChild = text.startsWith("->");
     const body = isChild ? text.replace(/^->\s*/, "") : text;
@@ -277,6 +409,7 @@ export function parseTextPlan(input: string): TextPlanRoot[] | null {
   if (!root) return null;
   if (triggers.length) rootDoc["Triggers"] = triggers;
   seedBuffers(root);
+  seedRowsRemoved(root);
   return [{ ...rootDoc, Plan: root }];
 }
 

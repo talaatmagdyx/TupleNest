@@ -337,6 +337,135 @@ describe("parseTextPlan — feeds the analyzer unchanged", () => {
   });
 });
 
+/* The cases below were all found by capturing the same queries as TEXT and as
+   JSON from a live server and comparing the two parses. Each one is a place the
+   text format says something FORMAT JSON says differently — and every one of
+   them made the two disagree until it was handled. */
+describe("parseTextPlan — speaks JSON's vocabulary, not the text format's", () => {
+  it("treats a CTE Scan as a node, not as a CTE label", () => {
+    // "CTE Scan on c" begins with the word CTE, but it is a plan node. Only a
+    // bare label — no cost or actual tuple — introduces a container.
+    const n = root(
+      [
+        "CTE Scan on c  (cost=4.71..4.83 rows=333 width=12) (actual time=15.521..15.702 rows=1000.00 loops=1)",
+        "  CTE c",
+        "    ->  Aggregate  (cost=4.35..4.36 rows=1000 width=12) (actual time=15.519..15.622 rows=1000.00 loops=1)",
+      ].join("\n"),
+    );
+    expect(n["Node Type"]).toBe("CTE Scan");
+    // JSON files the name under CTE Name; there is no relation here.
+    expect(n["CTE Name"]).toBe("c");
+    expect(n["Relation Name"]).toBeUndefined();
+    expect((n.Plans ?? []).map((k) => k["Node Type"])).toEqual(["Aggregate"]);
+  });
+
+  it("attaches a SubPlan's body to the enclosing node, not to the preceding sibling", () => {
+    // The body is indented past the label, so without treating the label as a
+    // barrier it lands under whichever node came before it. That is not
+    // cosmetic: the misplaced subtree takes its time with it and the bottleneck
+    // badge ends up on the wrong node.
+    const n = root(
+      [
+        "Bitmap Heap Scan on small  (cost=4.42..75466.35 rows=19 width=12) (actual time=5.308..93.982 rows=19.00 loops=1)",
+        "  ->  Bitmap Index Scan on small_id_idx  (cost=0.00..4.42 rows=19 width=0) (actual time=0.004..0.004 rows=19.00 loops=1)",
+        "        Index Cond: (id < 20)",
+        "  SubPlan 1",
+        "    ->  Aggregate  (cost=3971.50..3971.51 rows=1 width=8) (actual time=4.944..4.944 rows=1.00 loops=19)",
+      ].join("\n"),
+    );
+    expect((n.Plans ?? []).map((k) => k["Node Type"])).toEqual(["Bitmap Index Scan", "Aggregate"]);
+    // Negative control on the shape: the Aggregate must NOT be a grandchild.
+    expect((n.Plans?.[0].Plans ?? []).length).toBe(0);
+  });
+
+  it("names the index of a Bitmap Index Scan as an index, not a relation", () => {
+    const n = root("Bitmap Index Scan on ix  (cost=0.00..4.42 rows=19 width=0) (actual time=0.004..0.004 rows=19.00 loops=1)");
+    expect(n["Index Name"]).toBe("ix");
+    expect(n["Relation Name"]).toBeUndefined();
+  });
+
+  it("unpacks parallel and partial-mode prefixes into their own fields", () => {
+    const n = root(
+      [
+        "Finalize GroupAggregate  (cost=1.00..2.00 rows=1 width=8) (actual time=1.000..1.000 rows=1.00 loops=1)",
+        "  ->  Partial HashAggregate  (cost=1.00..2.00 rows=1 width=8) (actual time=1.000..1.000 rows=1.00 loops=2)",
+        "        ->  Parallel Seq Scan on t  (cost=0.00..1.00 rows=1 width=4) (actual time=0.500..0.500 rows=1.00 loops=2)",
+      ].join("\n"),
+    );
+    expect(n["Node Type"]).toBe("Aggregate");
+    expect(n["Partial Mode"]).toBe("Finalize");
+    expect(n["Strategy"]).toBe("Sorted");
+    expect(n["Parallel Aware"]).toBe(false);
+
+    const mid = n.Plans?.[0] as TextPlanNode;
+    expect(mid["Node Type"]).toBe("Aggregate");
+    expect(mid["Partial Mode"]).toBe("Partial");
+    expect(mid["Strategy"]).toBe("Hashed");
+
+    const leaf = mid.Plans?.[0] as TextPlanNode;
+    expect(leaf["Node Type"]).toBe("Seq Scan");
+    expect(leaf["Parallel Aware"]).toBe(true);
+    expect(leaf["Relation Name"]).toBe("t");
+  });
+
+  it("splits the join type out of the node name", () => {
+    const n = root("Hash Right Semi Join  (cost=1.00..2.00 rows=1 width=4) (actual time=1.000..1.000 rows=1.00 loops=1)");
+    expect(n["Node Type"]).toBe("Hash Join");
+    expect(n["Join Type"]).toBe("Right Semi");
+
+    // An inner join prints no join word at all; JSON still names it.
+    const inner = root("Hash Join  (cost=1.00..2.00 rows=1 width=4) (actual time=1.000..1.000 rows=1.00 loops=1)");
+    expect(inner["Node Type"]).toBe("Hash Join");
+    expect(inner["Join Type"]).toBe("Inner");
+  });
+
+  it("reports a write as ModifyTable with an operation", () => {
+    const n = root("Insert on t  (cost=0.00..1.00 rows=0 width=0) (actual time=1.000..1.000 rows=0.00 loops=1)");
+    expect(n["Node Type"]).toBe("ModifyTable");
+    expect(n["Operation"]).toBe("Insert");
+    expect(n["Relation Name"]).toBe("t");
+  });
+
+  it("separates the schema VERBOSE prepends to the relation", () => {
+    const n = root("Seq Scan on public.t a  (cost=0.00..1.00 rows=1 width=4) (actual time=0.001..0.002 rows=1.00 loops=1)");
+    expect(n["Schema"]).toBe("public");
+    expect(n["Relation Name"]).toBe("t");
+    expect(n["Alias"]).toBe("a");
+  });
+
+  it("files a spilling aggregate's batches where the analyzer looks for them", () => {
+    // A Hash node and a HashAggregate report batches under different keys in
+    // FORMAT JSON, and both mean "it spilled".
+    const p = parsePlan(
+      parseTextPlan(
+        [
+          "Aggregate  (cost=4.35..4.36 rows=1000 width=12) (actual time=15.519..15.622 rows=1000.00 loops=1)",
+          "  Batches: 5  Memory Usage: 161kB  Disk Usage: 200kB",
+          "Execution Time: 16.000 ms",
+        ].join("\n"),
+      ),
+    );
+    expect(p.nodes[0].flags).toContain("spill");
+  });
+
+  it("reads a filter that discarded nothing as zero, not as unknown", () => {
+    // The text format prints the counter only when it is non-zero; JSON always
+    // prints it. Without seeding, "kept everything" and "no ANALYZE" look alike.
+    const n = root(
+      [
+        "Seq Scan on t  (cost=0.00..1.00 rows=1 width=4) (actual time=0.001..0.002 rows=1.00 loops=1)",
+        "  Filter: (n > 1)",
+      ].join("\n"),
+    );
+    expect(n["Rows Removed by Filter"]).toBe(0);
+
+    // Negative control: with no ANALYZE there are no removal counts at all, so
+    // seeding a zero would be inventing a measurement.
+    const noAnalyze = root(["Seq Scan on t  (cost=0.00..1.00 rows=1 width=4)", "  Filter: (n > 1)"].join("\n"));
+    expect(noAnalyze["Rows Removed by Filter"]).toBeUndefined();
+  });
+});
+
 describe("detectPlanFormat", () => {
   it("recognises JSON", () => {
     expect(detectPlanFormat('[{"Plan":{"Node Type":"Seq Scan"}}]')).toBe("json");
