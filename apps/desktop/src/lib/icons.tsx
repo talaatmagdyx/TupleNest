@@ -113,3 +113,14 @@ export const DiagramRailIcon = ({ size }: { size?: number }) => (
     <path d="M6.5 9v4a2 2 0 0 0 2 2h5" />
   </svg>
 );
+/** A clipboard holding an indented plan — the same stepped shape the plan tree
+ *  draws, so the icon says "a plan from somewhere else" rather than "a list". */
+export const PastePlanRailIcon = ({ size }: { size?: number }) => (
+  <svg {...S({ size: size ?? 20 })}>
+    <rect x="4" y="5" width="16" height="16" rx="2.5" />
+    <rect x="9" y="2.5" width="6" height="4" rx="1.5" />
+    <path d="M8 11h8" />
+    <path d="M10 14.5h6" />
+    <path d="M12 18h4" />
+  </svg>
+);

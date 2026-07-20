@@ -1346,6 +1346,7 @@ export default function App() {
           connected={connected}
           onView={handleRailView}
           onMonitor={() => setOverlay("monitor")}
+          onPastePlan={() => setOverlay("pastePlan")}
           onDiagram={() => setOverlay("diagram")}
           onSettings={() => setOverlay("settings")}
         />

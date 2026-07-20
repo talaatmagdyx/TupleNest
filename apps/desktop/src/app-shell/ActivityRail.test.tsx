@@ -10,6 +10,7 @@ const base = {
   onView: vi.fn(),
   onMonitor: vi.fn(),
   onDiagram: vi.fn(),
+  onPastePlan: vi.fn(),
   onSettings: vi.fn(),
 };
 
@@ -105,5 +106,22 @@ describe("ActivityRail — survives a re-render", () => {
       container: document.body.firstElementChild as HTMLElement,
     });
     expect(history).toHaveFocus();
+  });
+
+  it("offers the pasted-plan analyzer even with no connection", async () => {
+    // The feature exists for plans from servers this app cannot reach, so
+    // gating it on a live connection would defeat the point.
+    const onPastePlan = vi.fn();
+    render(<ActivityRail {...base} connected={false} onPastePlan={onPastePlan} />);
+    const b = btn(/Analyze a pasted plan/);
+    expect(b).toBeEnabled();
+    await userEvent.click(b);
+    expect(onPastePlan).toHaveBeenCalled();
+  });
+
+  it("still disables the tools that genuinely need a server", () => {
+    render(<ActivityRail {...base} connected={false} />);
+    expect(btn(/Server monitor/)).toBeDisabled();
+    expect(btn(/ER diagram/)).toBeDisabled();
   });
 });

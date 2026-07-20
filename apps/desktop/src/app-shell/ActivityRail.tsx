@@ -4,6 +4,7 @@ import {
   GearIcon,
   HistoryRailIcon,
   MonitorRailIcon,
+  PastePlanRailIcon,
 } from "../lib/icons";
 import { kbd } from "../lib/platform";
 
@@ -16,6 +17,7 @@ type Props = {
   onView: (v: RailView) => void;
   onMonitor: () => void;
   onDiagram: () => void;
+  onPastePlan: () => void;
   onSettings: () => void;
 };
 
@@ -74,6 +76,11 @@ export default function ActivityRail(p: Props) {
         </Item>
         <Item title="ER diagram" disabled={!p.connected} onClick={p.onDiagram}>
           <DiagramRailIcon />
+        </Item>
+        {/* Deliberately not gated on `connected`: the whole point is analysing
+            a plan from somewhere this app cannot reach. */}
+        <Item title="Analyze a pasted plan" onClick={p.onPastePlan}>
+          <PastePlanRailIcon />
         </Item>
       </div>
       <div className="rail-group bottom">
