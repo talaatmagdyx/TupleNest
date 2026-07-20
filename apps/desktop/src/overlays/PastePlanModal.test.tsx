@@ -108,4 +108,46 @@ describe("PastePlanModal", () => {
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalled();
   });
+
+  it("says what it found as you type, before anything is pressed", async () => {
+    const user = userEvent.setup();
+    render(<PastePlanModal onClose={vi.fn()} />);
+    await user.click(screen.getByLabelText(/paste a query plan/i));
+    await user.paste(TEXT_PLAN);
+    expect(screen.getByText("TEXT PLAN")).toBeInTheDocument();
+  });
+
+  it("warns as you type when the text is not a plan", async () => {
+    const user = userEvent.setup();
+    render(<PastePlanModal onClose={vi.fn()} />);
+    await user.click(screen.getByLabelText(/paste a query plan/i));
+    await user.paste("select 1");
+    expect(screen.getByText("NOT RECOGNISED")).toBeInTheDocument();
+  });
+
+  it("offers an example so the feature can be seen working", async () => {
+    const user = userEvent.setup();
+    render(<PastePlanModal onClose={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: /Try an example/ }));
+    await user.click(screen.getByRole("button", { name: "Analyze" }));
+    expect(screen.getByText("DISK SORT")).toBeInTheDocument();
+  });
+
+  it("analyzes on the keyboard shortcut", async () => {
+    const user = userEvent.setup();
+    render(<PastePlanModal onClose={vi.fn()} />);
+    const box = screen.getByLabelText(/paste a query plan/i);
+    await user.click(box);
+    await user.paste(TEXT_PLAN);
+    await user.keyboard("{Meta>}{Enter}{/Meta}");
+    expect(screen.getByText(/read as TEXT/)).toBeInTheDocument();
+  });
+
+  it("collapses the editor once a plan is drawn, and reopens on Edit", async () => {
+    // The plan is the thing worth the space; the box that produced it is not.
+    const user = await type(TEXT_PLAN);
+    expect(screen.queryByLabelText(/paste a query plan/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Edit plan/ }));
+    expect(screen.getByLabelText(/paste a query plan/i)).toBeInTheDocument();
+  });
 });

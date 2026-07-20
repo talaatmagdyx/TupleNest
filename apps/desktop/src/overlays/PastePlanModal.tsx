@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { ModalHead, Overlay } from "./Overlays";
 import PlanView from "./PlanView";
+import { PastePlanRailIcon } from "../lib/icons";
+import { kbd } from "../lib/platform";
 import { parsePlan, type ParsedPlan } from "../lib/explain";
 import { detectPlanFormat, parseTextPlan } from "../lib/explain-text";
 
@@ -36,13 +38,44 @@ export function analyzePasted(input: string): PasteResult {
   }
 }
 
+/** A small plan to show the thing working. Written here rather than lifted from
+ *  a database: an example that ships in the binary must not carry anyone's
+ *  table names. */
+const EXAMPLE = [
+  "Sort  (cost=92391.90..93141.90 rows=300000 width=85) (actual time=143.935..157.570 rows=300000.00 loops=1)",
+  "  Sort Key: created_at",
+  "  Sort Method: external merge  Disk: 27944kB",
+  "  Buffers: shared hit=383 read=4295, temp read=13953 written=14714",
+  "  ->  Seq Scan on events  (cost=0.00..7672.00 rows=300000 width=85) (actual time=0.055..24.336 rows=300000.00 loops=1)",
+  "        Filter: (kind = 'click'::text)",
+  "        Rows Removed by Filter: 120000",
+  "        Buffers: shared hit=377 read=4295",
+  "Planning Time: 1.319 ms",
+  "Execution Time: 168.402 ms",
+].join("\n");
+
 type Props = { onClose: () => void };
 
 export default function PastePlanModal(p: Props) {
   const [text, setText] = useState("");
   const [submitted, setSubmitted] = useState("");
+  const [editing, setEditing] = useState(true);
 
   const result = useMemo(() => analyzePasted(submitted), [submitted]);
+  // Detected as you type, so the answer to "will this work?" arrives before
+  // pressing anything.
+  const live = useMemo(() => (text.trim() ? detectPlanFormat(text) : null), [text]);
+  const lines = text.trim() ? text.trim().split("\n").length : 0;
+
+  const analyze = () => {
+    setSubmitted(text);
+    if (analyzePasted(text).kind === "ok") setEditing(false);
+  };
+  const reset = () => {
+    setText("");
+    setSubmitted("");
+    setEditing(true);
+  };
 
   return (
     <Overlay onClose={p.onClose}>
@@ -53,49 +86,94 @@ export default function PastePlanModal(p: Props) {
               <span className="chip" style={{ color: "var(--tn-accent)", background: "var(--tn-as)" }}>
                 ANALYZE A PASTED PLAN
               </span>
-              {result.kind === "ok" && (
-                <span className="mono" style={{ fontSize: 12, color: "var(--tn-tm)" }}>
-                  read as {result.format.toUpperCase()}
-                </span>
-              )}
+              <span className="mono" style={{ fontSize: 12, color: "var(--tn-tm)" }}>
+                no connection needed
+              </span>
             </span>
           }
           actions={
-            <>
-              <button className="btn" disabled={!text.trim()} onClick={() => { setText(""); setSubmitted(""); }}>
-                Clear
+            editing ? (
+              <>
+                <button className="btn" disabled={!text.trim()} onClick={reset}>
+                  Clear
+                </button>
+                <button className="btn primary" disabled={!text.trim()} onClick={analyze}>
+                  Analyze
+                </button>
+              </>
+            ) : (
+              <button className="btn" onClick={() => setEditing(true)}>
+                Edit plan
               </button>
-              <button className="btn primary" disabled={!text.trim()} onClick={() => setSubmitted(text)}>
-                Analyze
-              </button>
-            </>
+            )
           }
           onClose={p.onClose}
         />
 
-        <div className="ex-issue stale" style={{ background: "transparent" }}>
-          Paste the output of <code className="mono">EXPLAIN (ANALYZE, BUFFERS)</code> — the indented text from psql, or
-          FORMAT JSON. Nothing is sent anywhere; the plan is read on this machine.
-        </div>
-
-        <div style={{ padding: "0 16px 12px" }}>
-          <textarea
-            className="mono"
-            aria-label="Paste a query plan"
-            placeholder={"Sort  (cost=92391.90..93141.90 rows=300000 width=85) (actual time=143.935..157.570 rows=300000.00 loops=1)\n  Sort Method: external merge  Disk: 27944kB\n  ->  Seq Scan on orders  (cost=0.00..7672.00 …)"}
-            spellCheck={false}
-            autoCapitalize="none"
-            autoCorrect="off"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            style={{ width: "100%", minHeight: 120, resize: "vertical" }}
-          />
-          {submitted && result.kind === "unreadable" && (
-            <div className="ex-issue error" style={{ marginTop: 8 }}>
-              That doesn&apos;t look like a PostgreSQL plan. Paste the whole EXPLAIN output, including the first line.
+        {editing ? (
+          <div className="paste-wrap">
+            <div className={`paste-zone ${text ? "filled" : ""}`}>
+              <textarea
+                aria-label="Paste a query plan"
+                spellCheck={false}
+                autoCapitalize="none"
+                autoCorrect="off"
+                value={text}
+                autoFocus
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => {
+                  // The plan is multi-line, so Enter must stay Enter.
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && text.trim()) analyze();
+                }}
+              />
+              {!text && (
+                <div className="paste-hint">
+                  <span className="ph-icon">
+                    <PastePlanRailIcon size={26} />
+                  </span>
+                  <b>Paste a query plan</b>
+                  <span>
+                    Output of <code className="mono">EXPLAIN (ANALYZE, BUFFERS)</code> — psql text or FORMAT JSON
+                  </span>
+                  <span className="ph-priv">Read on this machine. Nothing is sent anywhere.</span>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+
+            <div className="paste-bar">
+              {live && <span className="fmt-chip ok">{live.toUpperCase()} PLAN</span>}
+              {text.trim() && !live && <span className="fmt-chip no">NOT RECOGNISED</span>}
+              {lines > 0 && <span className="pb-meta">{lines} lines</span>}
+              <span className="grow" />
+              {!text && (
+                <button className="btn" onClick={() => setText(EXAMPLE)}>
+                  Try an example
+                </button>
+              )}
+              <span className="pb-meta">{kbd("mod", "↵")} to analyze</span>
+            </div>
+
+            {submitted && result.kind === "unreadable" && (
+              <div className="ex-issue error" style={{ marginTop: 10 }}>
+                That doesn&apos;t look like a PostgreSQL plan. Paste the whole EXPLAIN output, starting from the first
+                node line.
+              </div>
+            )}
+          </div>
+        ) : (
+          result.kind === "ok" && (
+            <div className="paste-summary">
+              <span className="fmt-chip ok">read as {result.format.toUpperCase()}</span>
+              <span>
+                {result.plan.nodes.length} nodes · {lines} lines
+              </span>
+              <span className="grow" style={{ flex: 1 }} />
+              <button className="btn" onClick={reset}>
+                Clear
+              </button>
+            </div>
+          )
+        )}
 
         {result.kind === "ok" && (
           <PlanView
@@ -104,7 +182,7 @@ export default function PastePlanModal(p: Props) {
             suggestion={result.plan.suggestion}
             insights={result.plan.insights}
             error={null}
-            maxHeight="40vh"
+            maxHeight={editing ? "34vh" : "52vh"}
           />
         )}
       </div>
