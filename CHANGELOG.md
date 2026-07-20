@@ -7,6 +7,55 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Analyse a plan you paste — no connection, nothing leaves the machine.**
+  TupleNest now reads PostgreSQL's *text* EXPLAIN output, the indented tree
+  people actually copy out of psql, a ticket, or a colleague's message, as well
+  as `FORMAT JSON`. It detects which as you type and runs the same analysis it
+  runs on its own queries: self-time bottleneck, disk sorts, hash spills, rows
+  read and discarded, disk-vs-cache reads, row misestimates, loop counts, and
+  the JIT and trigger time that no plan node accounts for.
+
+  The reason to build it is privacy, not convenience. The usual way to get a
+  plan analysed is to paste it into a website — which hands a third party your
+  table names, index names, filter conditions and sometimes literal values out
+  of production. This does the same job locally, and works against a server this
+  app is not allowed to connect to at all.
+
+  Open it from the activity rail (the clipboard icon) or the command palette.
+  It is deliberately available while disconnected, unlike the monitor and
+  diagram beside it.
+
+  The text parser was validated against the server itself: the same ten queries
+  were captured as both `FORMAT TEXT` and `FORMAT JSON` from a live PostgreSQL
+  18 — a parallel scan, an external-merge disk sort, a hash spill, a nested loop
+  repeating 20,000 times, a never-executed branch, a CTE, a SubPlan/InitPlan, a
+  trigger, a filter discarding rows, and a plain scan — then both parsed and
+  compared. All ten agree on node count, tree depth, loops, rows, estimates,
+  rows removed, blocks touched, temp blocks, flags, statistics and insights.
+
+### Fixed
+
+- **Hostnames, role names and key paths are no longer rewritten by macOS.**
+  With "capitalize words automatically" on, a typed `postgres` became `Postgres`
+  the moment the field lost focus. PostgreSQL role names are case-sensitive, so
+  the connection then failed at the authentication stage and looked exactly like
+  a wrong password — with nothing on screen to say the text had been edited
+  after it was typed. Found by using the app, not by a test.
+- **The statistics panel says why it is empty.** Choosing a non-JSON EXPLAIN
+  format left a bare "—" where an explanation belonged.
+
+### Changed
+
+- **The status bar identifies the build it is running** — commit and build time,
+  with a trailing `+` when built from a tree with uncommitted changes. An
+  installed release and a local build are otherwise identical on screen, and
+  telling them apart had already cost an afternoon of debugging a fix inside a
+  window that could not have contained it.
+- `CONTRIBUTING.md` gains a "Building a real .app locally" section: `tauri dev`
+  serves the UI from a dev server and goes blank when that server stops, and
+  `tauri build` refuses without a signing key because releases always ship
+  updater artifacts. Both surprise a first-time clone.
+
 - **Richer EXPLAIN ANALYZE plan view.** The plan now highlights the real
   bottleneck by *self-time* — a node's wall time minus its children's — rather
   than only the costliest sequential scan. That points at the busy node whatever

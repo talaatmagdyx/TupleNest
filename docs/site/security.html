@@ -167,6 +167,7 @@
         <li>The GitHub endpoint used to check for updates</li>
       </ul><p style="margin-top:12px">That list is exhaustive. There is no fourth destination.</p></div>
     </div>
+    <div class="callout ok" style="margin-top:20px"><b>Query plans are analysed locally, including pasted ones.</b> A plan is not innocuous: it carries table names, index names, filter conditions and sometimes literal values straight out of production. The common habit of pasting one into an analysis website sends all of that to a third party. TupleNest reads pasted plans on your machine — in psql's text format or <code class="inline">FORMAT JSON</code> — so a plan from a locked-down production server never has to leave it. See <a href="features.html#paste">Paste a plan</a>.</div>
   </div>
 </section>
 

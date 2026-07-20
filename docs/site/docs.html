@@ -120,6 +120,11 @@
       <div class="callout info">On a parallel plan, PostgreSQL reports one “loop” per worker and those workers run concurrently. TupleNest divides them back out, so self-times sum to the execution time rather than exceeding it.</div>
       <p>Plans can be exported as JSON (which <a href="https://explain.dalibo.com">pev2</a> and explain.depesz.com both read), as an indented text tree, or as Markdown.</p>
 
+      <h3 id="paste-a-plan">Analysing a plan you didn't run</h3>
+      <p>You can analyse a plan from anywhere — psql on another machine, a ticket, a colleague's message — without connecting to anything. Open <b>Analyze a pasted plan</b> from the activity rail (the clipboard icon) or the command palette, paste, and press <span class="kbd">⌘↵</span>.</p>
+      <p>Both formats work: the indented text psql prints, and <code class="inline">FORMAT JSON</code>. TupleNest detects which as you type and says so before you press anything; text it doesn't recognise is called out rather than drawn as a misleading tree. Everything else — the badges, the self-time bars, the insights — behaves exactly as it does for a query you ran here.</p>
+      <div class="callout ok">The plan is read on your machine. Pasting a plan into a website means sending table names, index names, filter conditions and sometimes literal values from production to a third party; this exists so you don't have to.</div>
+
       <h2 id="io">Import &amp; export</h2>
       <p>Import CSV with header mapping and a type/error preview before committing. Export to CSV, JSON, or Markdown. CSV export is spreadsheet-safe by default (formula injection neutralized); a toggle enables raw output.</p>
 

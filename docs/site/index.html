@@ -72,7 +72,7 @@
       <div class="t"><div class="ico">🛡️</div><h4>PostgreSQL-enforced safety</h4><p>Read-only mode uses a real Postgres session characteristic — the server refuses writes, not just the UI.</p></div>
       <div class="t"><div class="ico">🔑</div><h4>Credentials in the OS keychain</h4><p>Passwords live in the macOS Keychain, Windows Credential Manager, or the Secret Service — never in a config file.</p></div>
       <div class="t"><div class="ico">✍️</div><h4>Signed releases</h4><p>Every build ships with a minisign signature, SHA-256 checksums, an SBOM, and GitHub build provenance.</p></div>
-      <div class="t"><div class="ico">🚫</div><h4>No telemetry</h4><p>No analytics SDK, no phone-home, no crash upload. The network destinations are only the ones you configure.</p></div>
+      <div class="t"><div class="ico">🚫</div><h4>No telemetry</h4><p>No analytics SDK, no phone-home, no crash upload. Even a pasted query plan is analysed locally, never uploaded.</p></div>
       <div class="t"><div class="ico">⚙️</div><h4>Native Rust backend</h4><p>A Rust core over the PostgreSQL wire protocol, in a Tauri shell. Streaming, bounded memory, fast start.</p></div>
     </div>
   </div>
@@ -102,7 +102,7 @@
     <h2>Every claim is checkable.</h2>
     <p class="lede">No invented adoption numbers. These are things you can verify in the repository or a release.</p>
     <div class="evband">
-      <div class="ev reveal"><div class="n">1,800+</div><div class="l">automated tests (1,661 frontend · 157 Rust)</div></div>
+      <div class="ev reveal"><div class="n">1,900+</div><div class="l">automated tests (1,744 frontend · 157 Rust)</div></div>
       <div class="ev reveal"><div class="n">0</div><div class="l">telemetry events sent, ever</div></div>
       <div class="ev reveal"><div class="n">100%</div><div class="l">local-first — no cloud dependency</div></div>
       <div class="ev reveal"><div class="n">3</div><div class="l">platforms: macOS, Windows, Linux</div></div>
@@ -129,8 +129,8 @@
         <div class="body"><h3>Fast results</h3><ul><li>Streaming rows</li><li>Virtualized grid</li><li>Sort &amp; filter</li><li>Copy &amp; export</li><li>Result metadata</li></ul></div></div>
       <div class="fcard reveal"><div class="cap"><img src="shots/explorer.png" alt="Schema explorer tree"></div>
         <div class="body"><h3>Secure by design</h3><ul><li>OS keychain credentials</li><li>TLS verification</li><li>SSH host-key verification</li><li>Signed updates</li><li>No telemetry</li></ul></div></div>
-      <div class="fcard reveal"><div class="cap"><img src="shots/hero.png" alt="Import and export flows in the full IDE"></div>
-        <div class="body"><h3>Import &amp; export</h3><ul><li>CSV import with preview</li><li>CSV / JSON / Markdown export</li><li>Spreadsheet-safe mode</li><li>Column selection</li><li>Copy as CSV / JSON</li></ul></div></div>
+      <div class="fcard reveal"><div class="cap"><img src="shots/hero.png" alt="Analysing a pasted query plan"></div>
+        <div class="body"><h3>Paste a plan</h3><ul><li>Analyse a plan from anywhere</li><li>psql text or FORMAT JSON</li><li>No connection required</li><li>Read locally — never uploaded</li><li>CSV / JSON / Markdown export too</li></ul></div></div>
     </div>
   </div>
 </section>

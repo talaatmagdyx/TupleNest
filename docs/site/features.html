@@ -47,7 +47,7 @@
   <div class="wrap" style="display:flex;gap:8px;flex-wrap:wrap">
     <a href="#editor">SQL Editor</a><a href="#results">Results</a><a href="#performance">Performance</a>
     <a href="#schema">Schema</a><a href="#er">ER Diagrams</a><a href="#safety">Safety</a>
-    <a href="#connections">Connections</a><a href="#io">Import &amp; Export</a><a href="#productivity">Productivity</a><a href="#native">Native</a>
+    <a href="#connections">Connections</a><a href="#paste">Paste a plan</a><a href="#io">Import &amp; Export</a><a href="#productivity">Productivity</a><a href="#native">Native</a>
   </div>
 </div>
 
@@ -184,6 +184,31 @@
       <div class="card"><h4>Transport</h4><ul><li>Four TLS modes</li><li>Custom CA certificate</li><li>SSH tunnels with host-key verification</li></ul></div>
       <div class="card"><h4>Credentials</h4><ul><li>Keychain-backed passwords</li><li>Staged connection test (DNS → TCP → auth)</li><li>Connection timeout</li></ul></div>
     </div>
+  </div>
+</section>
+
+<!-- PASTE A PLAN -->
+<section id="paste">
+  <div class="wrap">
+    <div class="kicker">Paste a plan</div>
+    <h2>Analyse a plan without handing it to a website.</h2>
+    <p class="lede">The usual way to get a query plan analysed is to paste it into someone else's server. That means sending your table names, index names, filter conditions — and sometimes literal values out of production — to a third party. TupleNest reads it locally instead.</p>
+    <div class="grid2">
+      <div class="card"><h4>Paste what you actually have</h4><ul>
+        <li>The indented text straight from psql</li>
+        <li>Or <code class="inline">FORMAT JSON</code></li>
+        <li>The format is detected as you type</li>
+        <li>Unrecognised text says so immediately, rather than drawing a misleading tree</li>
+      </ul></div>
+      <div class="card"><h4>The same analysis, no connection</h4><ul>
+        <li>Self-time bottleneck, disk sorts, hash spills</li>
+        <li>Rows read then discarded; disk-vs-cache reads</li>
+        <li>Row misestimates, loop counts, never-executed branches</li>
+        <li>JIT and trigger time — the work no node accounts for</li>
+      </ul></div>
+    </div>
+    <div class="callout ok" style="margin-top:20px"><b>Works against a server this app can't reach.</b> A plan from a locked-down production box, or one a colleague sent you, analyses exactly the same as one of your own queries — no credentials, no connection, and nothing sent anywhere. Open it from the activity rail or the command palette; it stays available while disconnected.</div>
+    <div class="callout info" style="margin-top:14px"><b>How the text reader was checked.</b> Ten queries were captured from a live PostgreSQL 18 as <em>both</em> text and JSON — a parallel scan, an external-merge disk sort, a hash spill, a nested loop repeating 20,000 times, a never-executed branch, a CTE, a SubPlan, a trigger, a discarding filter, and a plain scan — then both were parsed and compared. All ten agree on node count, tree depth, loops, rows, estimates, rows removed, blocks touched, flags and insights.</div>
   </div>
 </section>
 
