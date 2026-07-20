@@ -265,6 +265,7 @@ code.inline{font-family:var(--mono);font-size:.9em;background:var(--panel2);bord
 .release h4.sec{color:var(--red)}
 .release h4.add{color:var(--green)}
 .release h4.fix{color:var(--blue)}
+.release h4.chg{color:var(--amber)}
 .release ul{list-style:none;margin:0;padding:0}
 .release ul li{position:relative;padding-left:20px;font-size:14px;color:var(--dim);margin:7px 0}
 .release ul li::before{content:"—";position:absolute;left:0;color:var(--faint)}

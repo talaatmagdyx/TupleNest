@@ -45,7 +45,47 @@
     <div class="kicker">Current release</div>
     <div class="release" style="border-color:var(--line2)">
       <div class="rhead">
-        <h3>v0.1.0-beta.3</h3><span class="pill beta">Public Beta</span><span class="date">July 2026</span>
+        <h3>v0.1.0-beta.4</h3><span class="pill beta">Public Beta</span><span class="date">July 2026</span>
+      </div>
+      <p style="color:var(--dim);margin-bottom:6px">Query plans: understanding them, and analysing one you were sent.</p>
+
+      <h4 class="add">Added</h4>
+      <ul>
+        <li><b>Analyse a plan you paste — no connection, nothing leaves the machine.</b> TupleNest now reads PostgreSQL's <em>text</em> EXPLAIN output — the indented tree people actually copy out of psql, a ticket, or a colleague's message — as well as <code class="inline">FORMAT JSON</code>. It detects which as you type and runs the same analysis it runs on its own queries. The reason to build it is privacy, not convenience: the usual way to get a plan analysed is to paste it into a website, which hands a third party your table names, index names, filter conditions and sometimes literal values out of production. Open it from the activity rail or the command palette — deliberately available while disconnected, since the point is a server this app cannot reach.</li>
+        <li>The text parser was validated against the server itself: ten queries captured as both <code class="inline">FORMAT TEXT</code> and <code class="inline">FORMAT JSON</code> from a live PostgreSQL 18 — parallel scan, external-merge disk sort, hash spill, a nested loop repeating 20,000 times, a never-executed branch, a CTE, a SubPlan/InitPlan, a trigger, a discarding filter, and a plain scan — then both parsed and compared. All ten agree on node count, depth, loops, rows, estimates, rows removed, blocks, temp blocks, flags, statistics and insights.</li>
+        <li><b>Richer EXPLAIN ANALYZE plan view.</b> The plan highlights the real bottleneck by <em>self-time</em> — a node's wall time minus its children's — rather than only the costliest sequential scan. A nested loop's inner side really does run once per outer row, so its loops are multiplied; but a node under a <code class="inline">Gather</code> reports one “loop” per parallel worker and those run at the same time, so workers are divided back out and the numbers add up to the execution time.</li>
+        <li>Nodes are badged for rows read and then discarded by a filter, sorts that spilled to disk, hashes that spilled to multiple batches, blocks served from disk rather than cache (attributed to the node that actually read them, since PostgreSQL reports buffers cumulatively), estimates that missed by 10× or more, very high loop counts, and branches the executor never reached.</li>
+        <li>Time no node accounts for is surfaced: <b>JIT compilation</b> and <b>trigger</b> time both sit outside the plan tree, and a statement can spend most of its wall clock there. An ordered list of insights turns all of it into next steps.</li>
+      </ul>
+
+      <h4 class="fix">Fixed</h4>
+      <ul>
+        <li><b>Hostnames, role names and key paths are no longer rewritten by macOS.</b> With “capitalize words automatically” on, a typed <code class="inline">postgres</code> became <code class="inline">Postgres</code> the moment the field lost focus. PostgreSQL role names are case-sensitive, so the connection failed at authentication and looked exactly like a wrong password — with nothing on screen to say the text had been edited after it was typed.</li>
+        <li>The statistics panel says why it is empty. Choosing a non-JSON EXPLAIN format left a bare “—” where an explanation belonged.</li>
+      </ul>
+
+      <h4 class="chg">Changed</h4>
+      <ul>
+        <li><b>The status bar identifies the build it is running</b> — commit and build time, with a trailing <code class="inline">+</code> when built from a tree with uncommitted changes. An installed release and a local build are otherwise identical on screen, and telling them apart had already cost an afternoon of debugging a fix inside a window that could not have contained it.</li>
+        <li><code class="inline">CONTRIBUTING.md</code> gains a “Building a real .app locally” section: <code class="inline">tauri dev</code> serves the UI from a dev server and goes blank when that server stops, and <code class="inline">tauri build</code> refuses without a signing key because releases always ship updater artifacts.</li>
+      </ul>
+
+      <div class="cta" style="margin-top:20px">
+        <a class="btn sm primary" href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.4">GitHub release ↗</a>
+        <a class="btn sm ghost" href="download.html">Download</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HISTORY -->
+<section class="tight">
+  <div class="wrap">
+    <div class="kicker">History</div>
+
+    <div class="release">
+      <div class="rhead">
+        <h3>v0.1.0-beta.3</h3><span class="pill beta">Beta</span><span class="date">July 2026</span>
       </div>
       <p style="color:var(--dim);margin-bottom:6px">The security-review response: the release blockers (TLS, numeric DoS, CSV injection), plus data/local/desktop hardening.</p>
 
@@ -70,18 +110,8 @@
         <li>A failed query now shows the server's full report (SQLSTATE, message, DETAIL, HINT, CONTEXT), not the bare “Database error”.</li>
       </ul>
 
-      <div class="cta" style="margin-top:20px">
-        <a class="btn sm primary" href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.3">GitHub release ↗</a>
-        <a class="btn sm ghost" href="download.html">Download</a>
-      </div>
+      <p style="margin-top:14px"><a href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.3">GitHub release ↗</a></p>
     </div>
-  </div>
-</section>
-
-<!-- HISTORY -->
-<section class="tight">
-  <div class="wrap">
-    <div class="kicker">History</div>
 
     <div class="release">
       <div class="rhead"><h3>v0.1.0-beta.2</h3><span class="pill beta">Beta</span><span class="date">July 2026</span></div>
