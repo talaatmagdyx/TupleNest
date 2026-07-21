@@ -38,6 +38,10 @@ pub struct ConnectionInput {
     pub tls_ca_path: Option<String>,
     /// SSH tunnel config as JSON (secret-free: key path + fingerprint only).
     pub ssh_json: Option<String>,
+    /// Ceiling on one statement, in milliseconds; 0 means no limit. Defaulted
+    /// so a profile saved by an older frontend keeps working.
+    #[serde(default)]
+    pub statement_timeout_ms: u64,
 }
 
 #[tauri::command]
@@ -91,6 +95,7 @@ pub fn connection_save(
         tls_ca_path: input.tls_ca_path,
         ssh_json: input.ssh_json.filter(|s| !s.trim().is_empty()),
         options_json: None,
+        statement_timeout_ms: input.statement_timeout_ms,
     };
     store
         .connection_upsert(&record)

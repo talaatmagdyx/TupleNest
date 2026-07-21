@@ -39,6 +39,7 @@ type Props = {
   profileName: string;
   environment: string;
   readOnly: boolean;
+  statementTimeoutSec: number;
   host: string;
   port: number;
   database: string;
@@ -67,6 +68,7 @@ type Props = {
   onProfileName: (v: string) => void;
   onEnvironment: (v: string) => void;
   onReadOnly: (v: boolean) => void;
+  onStatementTimeoutSec: (v: number) => void;
   onHost: (v: string) => void;
   onPort: (v: number) => void;
   onDatabase: (v: string) => void;
@@ -134,6 +136,42 @@ export default function ConnectionForm(p: Props) {
               <span className="knob" />
             </button>
           </div>
+
+          {/* Beside read-only because both answer "what may this connection
+              do", and both are enforced by the server rather than by us. */}
+          <div className="frow">
+            <div className="field w160">
+              <label htmlFor={f("timeout")}>Query timeout</label>
+              <input
+                id={f("timeout")}
+                className="mono"
+                {...IDENT}
+                type="number"
+                min={0}
+                step={1}
+                value={p.statementTimeoutSec || ""}
+                placeholder="none"
+                onChange={(e) => p.onStatementTimeoutSec(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+              />
+            </div>
+            <div className="field" style={{ alignSelf: "end" }}>
+              <div className="sd" style={{ marginBottom: 6 }}>
+                {p.statementTimeoutSec > 0 ? (
+                  <>
+                    PostgreSQL cancels any statement still running after{" "}
+                    <b>{p.statementTimeoutSec}s</b>. The server's own timer, so it fires even if the
+                    app is busy or you have walked away.
+                  </>
+                ) : (
+                  <>
+                    Seconds. Empty or 0 means no limit — a query that is <em>meant</em> to take an
+                    hour is a normal thing to run from an IDE. Worth setting on production.
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
           <div className="frow">
             <div className="field">
               <label htmlFor={f("host")}>Host</label>

@@ -35,6 +35,10 @@ pub struct PgParams {
     pub environment: Option<String>,
     /// Ask the server to refuse writes for the whole session.
     pub read_only: Option<bool>,
+    /// Ceiling on a single statement, in milliseconds. 0 (the default) means
+    /// no limit — PostgreSQL's own meaning, and the right default for an IDE
+    /// where a query that takes an hour may be exactly what was intended.
+    pub statement_timeout_ms: Option<u64>,
     /// Optional SSH tunnel; DB traffic then flows through the tunnel.
     pub ssh: Option<SshParams>,
 }
@@ -111,7 +115,10 @@ impl PgParams {
             tls_mode: parse_tls_mode(self.tls_mode.as_deref())?,
             tls_ca_path: self.tls_ca_path.clone(),
             options: BTreeMap::new(),
-            default_statement_timeout_ms: 0,
+            // Was hard-coded to 0, which made the driver's statement_timeout
+            // support unreachable: the feature existed, was tested against a
+            // live server, and could not be switched on from the app.
+            default_statement_timeout_ms: self.statement_timeout_ms.unwrap_or(0),
         })
     }
 }

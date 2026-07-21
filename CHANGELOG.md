@@ -3,6 +3,26 @@
 Notable changes to TupleNest. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **A query timeout you can actually set.** PostgreSQL's `statement_timeout`
+  has been implemented in the driver since Phase 0, with a live test proving
+  the server cancels a five-second sleep after 250 ms — but the value was
+  hard-coded to 0 on the way through the app, so the feature existed and was
+  unreachable. It is now a per-connection setting, in seconds, next to the
+  read-only toggle.
+
+  Empty or 0 still means no limit, which is PostgreSQL's own meaning and the
+  right default for an IDE: a query that is *supposed* to take an hour is a
+  normal thing to run here. It is worth setting on a production profile, where
+  the alternative is noticing.
+
+  This is the server's own timer, so it fires even if the app is busy, the
+  webview is wedged, or you have walked away — which a client-side timeout
+  cannot do.
+
 ## [0.1.0-beta.5] — 2026-07-21
 
 The plan reader tells the truth about what it was given.

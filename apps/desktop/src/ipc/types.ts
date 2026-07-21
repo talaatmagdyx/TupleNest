@@ -24,6 +24,9 @@ export type PgParams = {
   /** Ask the server to refuse writes on this session. Enforced by PostgreSQL,
    *  not by us — see `pg_connect`. */
   readOnly?: boolean | null;
+  /** Server-side ceiling on one statement, in milliseconds. 0 or absent means
+   *  no limit, which is PostgreSQL's own meaning. */
+  statementTimeoutMs?: number | null;
   ssh?: SshParams | null;
 };
 
@@ -54,6 +57,7 @@ export type ConnectionRecord = {
   tlsMode: string;
   tlsCaPath: string | null;
   sshJson: string | null;
+  statementTimeoutMs: number;
 };
 
 export type MetadataOut<T> = {

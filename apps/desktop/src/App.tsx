@@ -49,7 +49,7 @@ import DetailsModal, { type ObjectDetails } from "./overlays/DetailsModal";
 import { useQueryTabs } from "./hooks/useQueryTabs";
 import { useSearch } from "./hooks/useSearch";
 import { useHealth } from "./hooks/useHealth";
-import { useConnectionForm } from "./hooks/useConnectionForm";
+import { useConnectionForm, timeoutMs } from "./hooks/useConnectionForm";
 import { useQuery } from "./hooks/useQuery";
 import { defaultSearchPath } from "./lib/nodes";
 import { useTransaction } from "./hooks/useTransaction";
@@ -451,6 +451,7 @@ export default function App() {
           tlsCaPath: c.tlsCaPath,
           environment: c.environment,
           readOnly: c.readOnly,
+          statementTimeoutMs: c.statementTimeoutMs ?? 0,
           ssh,
         },
         c.environment ?? "dev",
@@ -491,6 +492,7 @@ export default function App() {
           tlsMode,
           tlsCaPath: tlsCaPath || null,
           sshJson: form.ssh() ? JSON.stringify(form.ssh()) : null,
+          statementTimeoutMs: timeoutMs(form.statementTimeoutSec),
         },
       });
       form.set("password", "");
@@ -1589,6 +1591,8 @@ export default function App() {
           onProfileName={(v) => form.set("profileName", v)}
           onEnvironment={(v) => form.set("environment", v)}
           onReadOnly={(v) => form.set("readOnly", v)}
+          statementTimeoutSec={form.statementTimeoutSec}
+          onStatementTimeoutSec={(v) => form.set("statementTimeoutSec", v)}
           onHost={(v) => form.set("host", v)}
           onPort={(v) => form.set("port", v)}
           onDatabase={(v) => form.set("database", v)}

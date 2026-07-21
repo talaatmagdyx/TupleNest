@@ -25,6 +25,9 @@ export const BLANK = {
   sshUser: "",
   sshKeyPath: "",
   sshFingerprint: "",
+  // Seconds in the UI, milliseconds on the wire: nobody thinks about a query
+  // ceiling in milliseconds. 0 means no limit, as PostgreSQL does.
+  statementTimeoutSec: 0,
 };
 
 export type ConnectionFormState = typeof BLANK;
@@ -41,6 +44,16 @@ export type ConnectionForm = ConnectionFormState & {
    *  because only it knows whether the password was just re-saved. */
   toParams: (secretRef: string | null) => PgParams;
 };
+
+/** Seconds in the form to milliseconds on the wire.
+ *
+ *  A negative or non-finite value means "no limit" rather than something
+ *  strange: `SET statement_timeout = -1` is an error, and a NaN from an empty
+ *  input box must not become one. */
+export function timeoutMs(seconds: number): number {
+  if (!Number.isFinite(seconds) || seconds <= 0) return 0;
+  return Math.round(seconds) * 1000;
+}
 
 /** Parse `sshJson`, tolerating a row written by an older or broken build. */
 export function parseSsh(sshJson: string | null): SshParams | null {
@@ -87,6 +100,7 @@ export function useConnectionForm(initial: Partial<ConnectionFormState> = {}): C
       sshUser: ssh?.username ?? "",
       sshKeyPath: ssh?.keyPath ?? "",
       sshFingerprint: ssh?.fingerprint ?? "",
+      statementTimeoutSec: Math.round((c.statementTimeoutMs ?? 0) / 1000),
     });
   }, []);
 
@@ -115,6 +129,7 @@ export function useConnectionForm(initial: Partial<ConnectionFormState> = {}): C
       tlsCaPath: state.tlsCaPath || null,
       environment: state.environment,
       readOnly: state.readOnly,
+      statementTimeoutMs: timeoutMs(state.statementTimeoutSec),
       ssh: ssh(),
     }),
     [state, ssh],

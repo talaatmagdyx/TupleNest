@@ -17,7 +17,7 @@ pub enum StoreError {
     Json(#[from] serde_json::Error),
 }
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 const MIGRATION_V1: &str = r#"
 CREATE TABLE meta        (key TEXT PRIMARY KEY, value TEXT);
@@ -101,6 +101,18 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_conn ON audit_log(connection_key, at DESC);
 "#;
 
+/// Phase 6: a per-profile ceiling on how long one statement may run.
+///
+/// The driver has honoured `default_statement_timeout_ms` since Phase 0 and
+/// has a live test for it, but nothing ever set it: the value was hard-coded
+/// to 0 on the way through, so the feature existed and was unreachable. This
+/// column is what makes it reachable.
+///
+/// `ALTER TABLE ... ADD COLUMN` is not idempotent in SQLite, so this checks
+/// first — the lesson recorded above V5 is that a version number is a claim
+/// about the schema, and a migration should survive that claim being wrong.
+const MIGRATION_V6_COLUMN: &str = "statement_timeout_ms";
+
 pub struct Store {
     conn: Connection,
 }
@@ -176,6 +188,20 @@ impl Store {
         Ok(v.and_then(|s| s.parse().ok()).unwrap_or(0))
     }
 
+    /// Does `table` already have `column`? SQLite has no `ADD COLUMN IF NOT
+    /// EXISTS`, and re-running one is a hard error rather than a no-op.
+    fn column_exists(&self, table: &str, column: &str) -> Result<bool, StoreError> {
+        let mut stmt = self.conn.prepare(&format!("PRAGMA table_info({table})"))?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(1)?;
+            if name == column {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn migrate(&self) -> Result<(), StoreError> {
         let current = self.schema_version()?;
         if current > SCHEMA_VERSION {
@@ -199,6 +225,11 @@ impl Store {
         }
         if current < 5 {
             self.conn.execute_batch(MIGRATION_V5)?;
+        }
+        if current < 6 && !self.column_exists("connections", MIGRATION_V6_COLUMN)? {
+            self.conn.execute_batch(
+                "ALTER TABLE connections ADD COLUMN statement_timeout_ms INTEGER NOT NULL DEFAULT 0",
+            )?;
         }
         if current < SCHEMA_VERSION {
             self.conn.execute(
@@ -336,12 +367,13 @@ impl Store {
                (id, name, driver, environment, color, read_only,
                 host, port, database, username, secret_ref,
                 tls_mode, tls_ca_path, ssh_json, options_json,
-                created_at, updated_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,unixepoch(),unixepoch())
+                statement_timeout_ms, created_at, updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,unixepoch(),unixepoch())
              ON CONFLICT(id) DO UPDATE SET
                name=?2, driver=?3, environment=?4, color=?5, read_only=?6,
                host=?7, port=?8, database=?9, username=?10, secret_ref=?11,
                tls_mode=?12, tls_ca_path=?13, ssh_json=?14, options_json=?15,
+               statement_timeout_ms=?16,
                updated_at=unixepoch()",
             params![
                 record.id,
@@ -359,6 +391,7 @@ impl Store {
                 record.tls_ca_path,
                 record.ssh_json,
                 record.options_json,
+                record.statement_timeout_ms as i64,
             ],
         )?;
         Ok(())
@@ -588,13 +621,14 @@ impl Store {
             tls_ca_path: r.get(12)?,
             ssh_json: r.get(13)?,
             options_json: r.get(14)?,
+            statement_timeout_ms: r.get::<_, i64>(15)?.max(0) as u64,
         })
     }
 }
 
 const CONNECTION_SELECT: &str = "SELECT id, name, driver, environment, color, read_only,
         host, port, database, username, secret_ref,
-        tls_mode, tls_ca_path, ssh_json, options_json FROM connections";
+        tls_mode, tls_ca_path, ssh_json, options_json, statement_timeout_ms FROM connections";
 
 /// A saved connection profile. Never contains a secret value.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -616,6 +650,10 @@ pub struct ConnectionRecord {
     pub tls_ca_path: Option<String>,
     pub ssh_json: Option<String>,
     pub options_json: Option<String>,
+    /// Server-side ceiling on a single statement, in milliseconds. 0 means no
+    /// limit, matching PostgreSQL's own meaning for `statement_timeout`.
+    #[serde(default)]
+    pub statement_timeout_ms: u64,
 }
 
 /// A reusable SQL snippet (Phase 2).
@@ -674,6 +712,82 @@ mod tests {
     fn migrates_fresh_store_to_current() {
         let store = Store::open_in_memory().unwrap();
         assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+    }
+
+    /// An existing user's database must survive the upgrade with its profiles
+    /// intact. Built by hand at v5 rather than by calling `migrate` with the
+    /// current code, so this keeps testing the real upgrade path after v6 stops
+    /// being the newest version.
+    #[test]
+    fn upgrades_a_v5_database_without_losing_profiles() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATION_V1).unwrap();
+        conn.execute_batch(MIGRATION_V2).unwrap();
+        conn.execute_batch(MIGRATION_V3).unwrap();
+        conn.execute_batch(MIGRATION_V4).unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '5')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO connections (id, name, driver, environment, host, port, database,
+                                      username, tls_mode)
+             VALUES ('old', 'Existing profile', 'postgres', 'prod', 'db.internal', 5432,
+                     'app', 'reader', 'verify-full')",
+            [],
+        )
+        .unwrap();
+
+        // Sanity: the column really is absent before the upgrade, so the
+        // assertions below are about the migration and not about nothing.
+        let store = Store { conn };
+        assert!(!store.column_exists("connections", "statement_timeout_ms").unwrap());
+
+        let store = Store::init(store.conn).unwrap();
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+
+        let rec = store.connection_get("old").unwrap().unwrap();
+        assert_eq!(rec.name, "Existing profile");
+        assert_eq!(rec.host, "db.internal");
+        // Existing profiles keep PostgreSQL's own meaning of "no limit".
+        assert_eq!(rec.statement_timeout_ms, 0);
+    }
+
+    /// Opening twice must not try to add the column a second time — SQLite
+    /// treats a duplicate ADD COLUMN as an error, not a no-op.
+    #[test]
+    fn migrating_an_already_current_database_is_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tuplenest.db");
+        {
+            let store = Store::open(&path).unwrap();
+            store.connection_upsert(&sample_connection("c1", "One")).unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+        assert_eq!(store.connection_list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_timeout_survives_a_round_trip() {
+        let store = Store::open_in_memory().unwrap();
+        let mut rec = sample_connection("c1", "Prod");
+        rec.statement_timeout_ms = 30_000;
+        store.connection_upsert(&rec).unwrap();
+        assert_eq!(
+            store.connection_get("c1").unwrap().unwrap().statement_timeout_ms,
+            30_000
+        );
+
+        // And an edit back to "no limit" must stick, or a user could never
+        // remove a ceiling they had set.
+        rec.statement_timeout_ms = 0;
+        store.connection_upsert(&rec).unwrap();
+        assert_eq!(
+            store.connection_get("c1").unwrap().unwrap().statement_timeout_ms,
+            0
+        );
     }
 
     #[cfg(unix)]
@@ -818,6 +932,7 @@ mod tests {
             tls_ca_path: None,
             ssh_json: None,
             options_json: None,
+            statement_timeout_ms: 0,
         }
     }
 

@@ -218,6 +218,7 @@ describe("useConnectionForm — toParams", () => {
       tlsCaPath: "/etc/ssl/ca.pem",
       environment: "prod",
       readOnly: false,
+      statementTimeoutMs: 0,
       ssh: null,
     });
   });
@@ -245,5 +246,46 @@ describe("useConnectionForm — toParams", () => {
     const { result } = renderHook(() => useConnectionForm());
     act(() => result.current.set("password", "hunter2"));
     expect(JSON.stringify(result.current.toParams("ref"))).not.toContain("hunter2");
+  });
+});
+
+/* The driver has honoured `statement_timeout` since Phase 0 and has a live
+   test for it, but the value was hard-coded to 0 on the way through, so the
+   ceiling could never actually be set. These cover the path that was missing:
+   seconds in the form, milliseconds on the wire, and 0 meaning "no limit"
+   exactly as PostgreSQL means it. */
+describe("useConnectionForm — query timeout", () => {
+  it("defaults to no limit", () => {
+    const { result } = renderHook(() => useConnectionForm());
+    expect(result.current.statementTimeoutSec).toBe(0);
+    expect(result.current.toParams(null).statementTimeoutMs).toBe(0);
+  });
+
+  it("sends seconds as milliseconds", () => {
+    const { result } = renderHook(() => useConnectionForm());
+    act(() => result.current.set("statementTimeoutSec", 30));
+    expect(result.current.toParams(null).statementTimeoutMs).toBe(30_000);
+  });
+
+  it("reads a saved profile's ceiling back as seconds", () => {
+    const { result } = renderHook(() => useConnectionForm());
+    act(() => result.current.load(rec({ statementTimeoutMs: 45_000 })));
+    expect(result.current.statementTimeoutSec).toBe(45);
+  });
+
+  it("treats a profile saved before the column existed as no limit", () => {
+    const { result } = renderHook(() => useConnectionForm());
+    act(() => result.current.load(rec({ statementTimeoutMs: undefined as unknown as number })));
+    expect(result.current.statementTimeoutSec).toBe(0);
+  });
+
+  it("never emits a negative or NaN timeout", () => {
+    // `SET statement_timeout = -1` is an error, and an empty number input
+    // yields NaN — either would break the connection rather than the query.
+    const { result } = renderHook(() => useConnectionForm());
+    act(() => result.current.set("statementTimeoutSec", -5));
+    expect(result.current.toParams(null).statementTimeoutMs).toBe(0);
+    act(() => result.current.set("statementTimeoutSec", Number.NaN));
+    expect(result.current.toParams(null).statementTimeoutMs).toBe(0);
   });
 });

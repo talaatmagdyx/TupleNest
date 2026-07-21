@@ -10,6 +10,8 @@ const base = {
   environment: "dev",
   readOnly: false,
   onReadOnly: vi.fn(),
+  statementTimeoutSec: 0,
+  onStatementTimeoutSec: vi.fn(),
   host: "localhost",
   port: 5432,
   database: "appdb",
