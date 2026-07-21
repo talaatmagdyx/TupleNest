@@ -3,7 +3,9 @@
 Notable changes to TupleNest. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.1.0-beta.5] — 2026-07-21
+
+The plan reader tells the truth about what it was given.
 
 ### Fixed
 
@@ -350,6 +352,7 @@ First public release. PostgreSQL only.
 - ER diagrams, find-usages and rename, schema diff, EXPLAIN plan comparison.
 - CSV import, SQL snippets, signed auto-update.
 
+[0.1.0-beta.5]: https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.5
 [0.1.0-beta.4]: https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.4
 [0.1.0-beta.3]: https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.3
 [0.1.0-beta.2]: https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.2
