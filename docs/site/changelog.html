@@ -45,7 +45,38 @@
     <div class="kicker">Current release</div>
     <div class="release" style="border-color:var(--line2)">
       <div class="rhead">
-        <h3>v0.1.0-beta.5</h3><span class="pill beta">Public Beta</span><span class="date">July 2026</span>
+        <h3>v0.1.0-beta.6</h3><span class="pill beta">Public Beta</span><span class="date">July 2026</span>
+      </div>
+      <p style="color:var(--dim);margin-bottom:6px">The editor grows the two things it was missing, and a safety feature that existed but could not be switched on.</p>
+
+      <h4 class="add">Added</h4>
+      <ul>
+        <li><b>A query timeout you can actually set.</b> PostgreSQL's <code class="inline">statement_timeout</code> has worked in the driver since Phase 0, with a live test proving the server cancels a five-second sleep after 250&nbsp;ms — but the value was hard-coded to 0 on the way through the app, so the feature existed and was unreachable. Now a per-connection setting in seconds, beside the read-only toggle. Empty or 0 still means no limit, which is PostgreSQL's own meaning and the right default for an IDE. It is the server's own timer, so it fires even if the app is busy or you have walked away.</li>
+        <li><b>Find and replace (<code class="inline">⌘F</code>).</b> Match count as you type, Enter and Shift+Enter to step, a case toggle, replace and replace all. Literal text rather than a regular expression: half the characters people search for in SQL — <code class="inline">(</code> <code class="inline">)</code> <code class="inline">.</code> <code class="inline">*</code> <code class="inline">$</code> <code class="inline">[</code> — are regex syntax, so a pattern box would need escaping for the common case and serve the rare one.</li>
+        <li><b>Comment and uncomment lines (<code class="inline">⌘/</code>).</b> Line comments, not block comments, because PostgreSQL nests block comments. The marker goes in at the shallowest indentation so a block keeps its shape, and a half-commented block comments fully rather than half-uncommenting — so pressing twice returns exactly what you started with.</li>
+      </ul>
+
+      <h4 class="chg">Changed</h4>
+      <ul>
+        <li><b>The keyboard shortcuts are described in one place.</b> The key handler, the in-app cheatsheet and this website each kept their own list, and all three disagreed: the app bound <code class="inline">⌘⇧L</code>, <code class="inline">⌘O</code>, <code class="inline">⌘B</code> and <code class="inline">⌘P</code> while the cheatsheet mentioned none of them, and the site listed two that were never bound to anything. Press <code class="inline">?</code> and you now see all of them. A test reads the handler's source and fails if it finds a key comparison of its own, because the failure that matters is a binding added somewhere the cheatsheet never hears about.</li>
+      </ul>
+
+      <div class="cta" style="margin-top:20px">
+        <a class="btn sm primary" href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.6">GitHub release ↗</a>
+        <a class="btn sm ghost" href="download.html">Download</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HISTORY -->
+<section class="tight">
+  <div class="wrap">
+    <div class="kicker">History</div>
+
+    <div class="release">
+      <div class="rhead">
+        <h3>v0.1.0-beta.5</h3><span class="pill beta">Beta</span><span class="date">July 2026</span>
       </div>
       <p style="color:var(--dim);margin-bottom:6px">The plan reader tells the truth about what it was given.</p>
 
@@ -62,18 +93,8 @@
         <li>The File menu reaches the plan analyser — the one feature that works with no connection, and so the one nobody thinks to look for in a sidebar built around a database. (macOS and Windows; the platform default has no File menu on Linux, where the activity rail and command palette still reach it.)</li>
       </ul>
 
-      <div class="cta" style="margin-top:20px">
-        <a class="btn sm primary" href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.5">GitHub release ↗</a>
-        <a class="btn sm ghost" href="download.html">Download</a>
-      </div>
+      <p style="margin-top:14px"><a href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.5">GitHub release ↗</a></p>
     </div>
-  </div>
-</section>
-
-<!-- HISTORY -->
-<section class="tight">
-  <div class="wrap">
-    <div class="kicker">History</div>
 
     <div class="release">
       <div class="rhead">
