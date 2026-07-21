@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { tokenizeSQL } from "../lib/sql";
+import { tokenizeSQL, toggleLineComment } from "../lib/sql";
+import { matchShortcut } from "../lib/shortcuts";
 import { caretPosition, offsetAt } from "../lib/caret";
 import {
   getCompletions,
@@ -206,6 +207,23 @@ export default function SqlEditor(p: Props) {
     if (e.key === " " && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       openAt(true);
+      return;
+    }
+    // Editor-scoped bindings still come from lib/shortcuts, so the cheatsheet
+    // knows about them. Everything below this point is popup navigation, which
+    // is not a shortcut anyone needs told about.
+    const mod = e.metaKey || e.ctrlKey;
+    if (matchShortcut(e.nativeEvent, mod, false) === "toggleComment") {
+      e.preventDefault();
+      const ta = taRef.current;
+      if (!ta) return;
+      const next = toggleLineComment(ta.value, ta.selectionStart, ta.selectionEnd);
+      p.onChange(next.sql);
+      // The value arrives on the next render, so the selection has to be put
+      // back after it — setting it now would apply to the old text.
+      requestAnimationFrame(() => {
+        ta.setSelectionRange(next.selectionStart, next.selectionEnd);
+      });
       return;
     }
     if (!pop) return;

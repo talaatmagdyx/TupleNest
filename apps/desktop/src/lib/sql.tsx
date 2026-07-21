@@ -204,3 +204,83 @@ export const ENV_COLORS: Record<string, { color: string; bg: string }> = {
 export function envMeta(env: string | null | undefined) {
   return ENV_COLORS[env ?? "dev"] ?? ENV_COLORS.dev;
 }
+
+/* ------------------------------------------------------------ commenting */
+
+export type EditResult = { sql: string; selectionStart: number; selectionEnd: number };
+
+/** The `--` prefix, and how much whitespace precedes it, on one line. */
+const COMMENT_RE = /^(\s*)--( ?)/;
+
+/**
+ * Comment or uncomment the lines the selection touches.
+ *
+ * Line comments, not block comments: PostgreSQL nests block comments, so
+ * toggling them correctly means tracking depth, while `--` is unambiguous on
+ * every line it appears. Editors offering both are often wrong about nesting.
+ *
+ * Commenting inserts at the *shallowest* indentation in the range, so a block
+ * keeps its shape rather than having every line's comment land at a different
+ * column. Uncommenting only happens when every non-blank line is already
+ * commented — a half-commented block toggles to fully commented first, which
+ * is the behaviour that lets you press it twice and know what you have.
+ */
+export function toggleLineComment(sql: string, start: number, end: number): EditResult {
+  const lines = sql.split("\n");
+
+  // Which lines the selection covers, by character offset.
+  const offsets: number[] = [];
+  let at = 0;
+  for (const l of lines) {
+    offsets.push(at);
+    at += l.length + 1;
+  }
+  let first = 0;
+  let last = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (offsets[i] <= start) first = i;
+    if (offsets[i] <= end) last = i;
+  }
+  // A selection ending exactly at a line start does not include that line —
+  // otherwise selecting a whole line by dragging comments the one below too.
+  if (last > first && end === offsets[last]) last--;
+
+  const span = lines.slice(first, last + 1);
+  const meaningful = span.filter((l) => l.trim() !== "");
+  // A selection of nothing but blank lines: comment them, so the keystroke is
+  // never a no-op the user has to wonder about.
+  const allCommented = meaningful.length > 0 && meaningful.every((l) => COMMENT_RE.test(l));
+
+  let delta = 0;
+  let firstDelta = 0;
+  const out = span.map((line, i) => {
+    if (allCommented) {
+      const m = COMMENT_RE.exec(line);
+      if (!m) return line;
+      const removed = m[0].length - m[1].length;
+      if (i === 0) firstDelta = -removed;
+      delta -= removed;
+      return m[1] + line.slice(m[0].length);
+    }
+    if (line.trim() === "") return line; // never indent an empty line
+    const indent = Math.min(
+      ...meaningful.map((l) => (/^\s*/.exec(l) as RegExpExecArray)[0].length),
+    );
+    if (i === 0) firstDelta = 3;
+    delta += 3;
+    return line.slice(0, indent) + "-- " + line.slice(indent);
+  });
+
+  const next = [...lines.slice(0, first), ...out, ...lines.slice(last + 1)].join("\n");
+  // Keep the selection over the same text, with one exception: a selection
+  // that began at the start of a line stays there, so selecting whole lines
+  // and commenting them leaves whole lines selected rather than everything
+  // except the marker just inserted. A caret (start === end) rides with its
+  // line so typing continues where it was.
+  const startedAtLineStart = start === offsets[first];
+  return {
+    sql: next,
+    selectionStart: startedAtLineStart ? offsets[first] : Math.max(offsets[first], start + firstDelta),
+    selectionEnd: Math.max(offsets[first], end + delta),
+  };
+}

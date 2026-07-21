@@ -25,6 +25,7 @@ export type ShortcutId =
   | "newTab"
   | "copyCell"
   | "cheatsheet"
+  | "toggleComment"
   | "escape";
 
 export type Shortcut = {
@@ -37,6 +38,10 @@ export type Shortcut = {
   note?: string;
   /** True when the binding does nothing while a text field has focus. */
   needsNotTyping?: boolean;
+  /** Handled by the editor rather than the window, and only when it has
+   *  focus. Listed all the same: a key that works somewhere is a key people
+   *  need to be told about. */
+  scope?: "editor";
   match: (e: KeyboardEvent, mod: boolean) => boolean;
 };
 
@@ -69,6 +74,14 @@ export const SHORTCUTS: Shortcut[] = [
     note: "when nothing else is selected",
     needsNotTyping: true,
     match: letter("c"),
+  },
+  {
+    id: "toggleComment",
+    label: "Comment or uncomment the selected lines",
+    keys: ["mod", "/"],
+    note: "in the editor",
+    scope: "editor",
+    match: (e, mod) => mod && e.key === "/",
   },
   {
     id: "escape",

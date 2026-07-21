@@ -17,6 +17,7 @@ import {
   toJSONExport,
   toMarkdown,
   tokenizeSQL,
+  toggleLineComment,
 } from "./sql";
 
 const invokeMock = vi.mocked(invoke);
@@ -427,5 +428,86 @@ describe("rowCountNote", () => {
     // The flag can be set while the export still got every row — claiming a
     // loss that did not happen sends people looking for missing data.
     expect(rowCountNote(50, res({ totalRows: 50, truncated: true }))).toBe("50 rows");
+  });
+});
+
+describe("toggleLineComment", () => {
+  /** Render the result with the selection marked, so a test failure shows
+   *  where the caret ended up rather than only what the text became. */
+  const show = (r: { sql: string; selectionStart: number; selectionEnd: number }) =>
+    r.sql.slice(0, r.selectionStart) + "[" + r.sql.slice(r.selectionStart, r.selectionEnd) + "]" + r.sql.slice(r.selectionEnd);
+
+  it("comments the line the caret sits on", () => {
+    const r = toggleLineComment("select 1", 3, 3);
+    expect(r.sql).toBe("-- select 1");
+  });
+
+  it("uncomments it again — pressing twice returns the original", () => {
+    const once = toggleLineComment("select 1", 3, 3);
+    const twice = toggleLineComment(once.sql, once.selectionStart, once.selectionEnd);
+    expect(twice.sql).toBe("select 1");
+  });
+
+  it("comments every line the selection touches", () => {
+    const sql = "select a\nfrom t\nwhere x";
+    const r = toggleLineComment(sql, 0, sql.length);
+    expect(r.sql).toBe("-- select a\n-- from t\n-- where x");
+  });
+
+  it("comments at the shallowest indent so the block keeps its shape", () => {
+    const sql = "select a\n  from t\n    where x";
+    const r = toggleLineComment(sql, 0, sql.length);
+    expect(r.sql).toBe("-- select a\n--   from t\n--     where x");
+  });
+
+  it("comments a half-commented block rather than uncommenting part of it", () => {
+    // Pressing twice from here must give back exactly this, which only works
+    // if the first press commits to one direction for the whole range.
+    const sql = "-- select a\nfrom t";
+    const r = toggleLineComment(sql, 0, sql.length);
+    expect(r.sql).toBe("-- -- select a\n-- from t");
+    const back = toggleLineComment(r.sql, r.selectionStart, r.selectionEnd);
+    expect(back.sql).toBe(sql);
+  });
+
+  it("leaves blank lines blank instead of indenting them", () => {
+    const sql = "select a\n\nfrom t";
+    expect(toggleLineComment(sql, 0, sql.length).sql).toBe("-- select a\n\n-- from t");
+  });
+
+  it("does not swallow the line below when a whole line is selected", () => {
+    // Dragging across one line ends the selection at the start of the next.
+    const sql = "select a\nfrom t";
+    const r = toggleLineComment(sql, 0, 9);
+    expect(r.sql).toBe("-- select a\nfrom t");
+  });
+
+  it("keeps the selection over the same text", () => {
+    const r = toggleLineComment("select a\nfrom t", 0, 15);
+    expect(show(r)).toBe("[-- select a\n-- from t]");
+  });
+
+  it("removes only one comment marker per press", () => {
+    expect(toggleLineComment("-- -- x", 0, 7).sql).toBe("-- x");
+  });
+
+  it("handles a comment with no space after the dashes", () => {
+    expect(toggleLineComment("--select 1", 0, 10).sql).toBe("select 1");
+  });
+});
+
+describe("toggleLineComment — where the selection ends up", () => {
+  const show = (r: { sql: string; selectionStart: number; selectionEnd: number }) =>
+    r.sql.slice(0, r.selectionStart) + "[" + r.sql.slice(r.selectionStart, r.selectionEnd) + "]" + r.sql.slice(r.selectionEnd);
+
+  it("keeps a mid-line selection on the same characters", () => {
+    // "a" in "select a" — the marker goes in front, so the offset moves with it.
+    const r = toggleLineComment("select a", 7, 8);
+    expect(show(r)).toBe("-- select [a]");
+  });
+
+  it("leaves a caret inside the text it was in", () => {
+    const r = toggleLineComment("select a", 7, 7);
+    expect(show(r)).toBe("-- select []a");
   });
 });

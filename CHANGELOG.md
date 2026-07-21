@@ -23,6 +23,13 @@ versions follow [Semantic Versioning](https://semver.org/).
   webview is wedged, or you have walked away — which a client-side timeout
   cannot do.
 
+- **Comment and uncomment lines with ⌘/.** Line comments rather than block
+  comments, because PostgreSQL nests block comments and toggling those
+  correctly means tracking depth. The marker goes in at the shallowest
+  indentation in the selection so a block keeps its shape, a half-commented
+  block comments fully rather than half-uncommenting, and a selection that
+  started at a line start still covers whole lines afterwards.
+
 ### Changed
 
 - **The keyboard shortcuts are described in one place now.** The key handler,

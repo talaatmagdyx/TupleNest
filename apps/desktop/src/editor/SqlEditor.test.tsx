@@ -430,3 +430,39 @@ describe("SqlEditor — unmounting", () => {
     }
   });
 });
+
+describe("SqlEditor — comment toggling", () => {
+  it("comments the selected lines on ⌘/ and reports the new SQL", async () => {
+    const onChange = vi.fn();
+    render(<SqlEditor sql={"select a\nfrom t"} disabled={false} height={200} onChange={onChange} />);
+    const ta = screen.getByRole("textbox") as HTMLTextAreaElement;
+    // Focus first: userEvent sends keys to the active element, and a selection
+    // range on a blurred field goes nowhere.
+    await userEvent.click(ta);
+    ta.setSelectionRange(0, ta.value.length);
+    await userEvent.keyboard("{Meta>}/{/Meta}");
+    expect(onChange).toHaveBeenCalledWith("-- select a\n-- from t");
+  });
+
+  it("uncomments when everything in range is already commented", async () => {
+    const onChange = vi.fn();
+    render(<SqlEditor sql={"-- select a\n-- from t"} disabled={false} height={200} onChange={onChange} />);
+    const ta = screen.getByRole("textbox") as HTMLTextAreaElement;
+    // Focus first: userEvent sends keys to the active element, and a selection
+    // range on a blurred field goes nowhere.
+    await userEvent.click(ta);
+    ta.setSelectionRange(0, ta.value.length);
+    await userEvent.keyboard("{Meta>}/{/Meta}");
+    expect(onChange).toHaveBeenCalledWith("select a\nfrom t");
+  });
+
+  it("leaves a plain / alone, or the key could never be typed", async () => {
+    const onChange = vi.fn();
+    render(<SqlEditor sql={"select 1"} disabled={false} height={200} onChange={onChange} />);
+    const ta = screen.getByRole("textbox");
+    await userEvent.click(ta);
+    await userEvent.keyboard("/");
+    // The change that arrives is the typed character, not a comment toggle.
+    for (const [value] of onChange.mock.calls) expect(value).not.toContain("--");
+  });
+});
