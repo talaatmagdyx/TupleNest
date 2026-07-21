@@ -606,6 +606,10 @@ a { color: var(--tn-accent); text-decoration: none; }
 .frow { display: flex; gap: 12px; }
 .frow .field { flex: 1; min-width: 0; }
 .frow .field.w90 { flex: 0 0 90px; }
+/* Wide enough for the label above it ("Query timeout") rather than for the
+   value inside it — a seconds box only ever holds a few digits, and a field
+   stretched to half the row reads as though a long value is expected. */
+.frow .field.w160 { flex: 0 0 160px; }
 .seg { display: flex; gap: 2px; background: var(--tn-bg); border: 1px solid var(--tn-bs); border-radius: 7px; padding: 3px; }
 .seg button {
   flex: 1; height: 26px; border: none; border-radius: 5px; cursor: pointer;
