@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectPlanFormat, parseTextPlan, type TextPlanNode } from "./explain-text";
+import { detectPlanFormat, parseTextPlan, planCaveats, type TextPlanNode } from "./explain-text";
 import { parsePlan } from "./explain";
 
 /* Every plan here is written by hand against the documented text format, not
@@ -463,6 +463,48 @@ describe("parseTextPlan — speaks JSON's vocabulary, not the text format's", ()
     // seeding a zero would be inventing a measurement.
     const noAnalyze = root(["Seq Scan on t  (cost=0.00..1.00 rows=1 width=4)", "  Filter: (n > 1)"].join("\n"));
     expect(noAnalyze["Rows Removed by Filter"]).toBeUndefined();
+  });
+});
+
+describe("parseTextPlan — a paste that is only part of a plan", () => {
+  const FULL = [
+    "Nested Loop  (cost=0.42..100.00 rows=10 width=8) (actual time=0.100..90.000 rows=10.00 loops=1)",
+    "  ->  Seq Scan on a  (cost=0.00..10.00 rows=10 width=4) (actual time=0.010..1.000 rows=10.00 loops=1)",
+    "  ->  Index Scan using ix on b  (cost=0.42..9.00 rows=1 width=4) (actual time=8.000..8.500 rows=1.00 loops=10)",
+    "Execution Time: 90.500 ms",
+  ].join("\n");
+
+  it("does not adopt orphaned siblings into the first one", () => {
+    // With the root cut away, the nodes that were under it are left level with
+    // each other. Making the first their parent would invent a relationship the
+    // paste never showed — and hand it their time.
+    const headless = FULL.split("\n").slice(1).join("\n");
+    const docs = parseTextPlan(headless);
+    expect(docs).toHaveLength(2);
+    expect(docs?.[0].Plan["Node Type"]).toBe("Seq Scan");
+    expect(docs?.[1].Plan["Node Type"]).toBe("Index Scan");
+    expect(docs?.[0].Plan.Plans).toBeUndefined();
+  });
+
+  it("reports a missing root, and says nothing about a whole plan", () => {
+    expect(planCaveats(FULL.split("\n").slice(1).join("\n"))).toEqual(["missing-root"]);
+    // Negative control: the complete plan must produce no caveat at all, or the
+    // warning becomes noise everyone learns to ignore.
+    expect(planCaveats(FULL)).toEqual([]);
+  });
+
+  it("reports a paste cut off in the middle of a line", () => {
+    const cut = FULL.slice(0, FULL.indexOf("Index Scan") + 30);
+    expect(planCaveats(cut)).toEqual(["cut-short"]);
+    // Cut at a line boundary instead: the tree is short but nothing on screen
+    // is wrong, and claiming otherwise would be guessing.
+    expect(planCaveats(FULL.split("\n").slice(0, 2).join("\n"))).toEqual([]);
+  });
+
+  it("still parses the fragment, because a partial answer beats none", () => {
+    const cut = FULL.slice(0, FULL.indexOf("Index Scan") + 30);
+    const p = parsePlan(parseTextPlan(cut));
+    expect(p.nodes.length).toBeGreaterThan(0);
   });
 });
 

@@ -361,6 +361,21 @@ describe("App — the macOS menu bar's About", () => {
     await waitFor(() => expect(screen.getByText("About TupleNest")).toBeInTheDocument());
     expect(screen.getByText("github.com/talaatmagdyx")).toBeInTheDocument();
   });
+
+  it("opens the pasted-plan analyser from the File menu", async () => {
+    // The Rust side only emits; if nothing listens, the menu item does nothing
+    // at all and the failure is silent.
+    const { listen } = await import("@tauri-apps/api/event");
+    await mount();
+
+    const call = vi.mocked(listen).mock.calls.find(([name]) => name === "menu:paste-plan");
+    expect(call, "App never subscribed to menu:paste-plan").toBeDefined();
+
+    const handler = call![1] as (e: unknown) => void;
+    handler({ event: "menu:paste-plan", id: 1, payload: undefined });
+
+    await waitFor(() => expect(screen.getByLabelText(/paste a query plan/i)).toBeInTheDocument());
+  });
 });
 
 describe("App — one session, many tabs: the transaction has an owner", () => {

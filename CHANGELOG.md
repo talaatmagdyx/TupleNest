@@ -3,6 +3,38 @@
 Notable changes to TupleNest. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **A pasted plan and the same plan in `FORMAT JSON` now produce identical
+  results.** Cross-validating against a second PostgreSQL major found five
+  disagreements between the two, two of them structural. A `SubPlan`'s body was
+  attaching to whichever node happened to precede it rather than to the node
+  enclosing it — which moved its time to the wrong node and badged the wrong one
+  as the bottleneck. A `CTE Scan` at the top of a plan was swallowed as if it
+  were a `CTE` label. A `HashAggregate` that spilled to disk was never flagged
+  at all on the JSON path — the one used for every query run inside the app —
+  because the server files an aggregate's batch count under a different key than
+  a hash node's. The text format also packs parallel-awareness, partial mode,
+  join type and the write operation into the printed node name where JSON keeps
+  each in its own field, so the same plan drew different node names depending on
+  which format it arrived in.
+
+### Added
+
+- **A pasted plan that is only *part* of a plan now says so.** A fragment parses
+  perfectly well, and that is the danger: the analysis looks exactly as
+  confident as one from a whole plan while its percentages are measured against
+  the wrong total. Two cases are detected — a paste whose top was cut off, and
+  one that stops mid-line — and each is explained in terms of what it does to
+  the numbers on screen. Orphaned nodes are no longer adopted into the first one
+  either; inventing a parent hands it their time.
+- The File menu reaches the plan analyser. It is the one feature that works with
+  no connection at all, so it is also the one nobody thinks to look for in a
+  sidebar built around a database. (macOS and Windows; the platform default has
+  no File menu on Linux, and the rail and palette reach it everywhere.)
+
 ## [0.1.0-beta.4] — 2026-07-20
 
 Query plans: understanding them, and analysing one you were sent.

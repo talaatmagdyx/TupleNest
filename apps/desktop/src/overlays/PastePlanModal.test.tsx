@@ -28,6 +28,16 @@ const JSON_PLAN = JSON.stringify([
   },
 ]);
 
+/** A join, so that cutting the first line leaves two orphaned siblings — which
+ *  is what a paste taken from the middle of a plan actually looks like. */
+const JOIN_PLAN = [
+  "Nested Loop  (cost=0.42..100.00 rows=10 width=8) (actual time=0.100..90.000 rows=10.00 loops=1)",
+  "  ->  Seq Scan on a  (cost=0.00..10.00 rows=10 width=4) (actual time=0.010..1.000 rows=10.00 loops=1)",
+  "  ->  Index Scan using ix on b  (cost=0.42..9.00 rows=1 width=4) (actual time=8.000..8.500 rows=1.00 loops=10)",
+  "Execution Time: 90.500 ms",
+].join("\n");
+const HEADLESS = JOIN_PLAN.split("\n").slice(1).join("\n");
+
 describe("analyzePasted", () => {
   it("reads a text plan", () => {
     const r = analyzePasted(TEXT_PLAN);
@@ -58,6 +68,20 @@ describe("analyzePasted", () => {
 
   it("does not throw on truncated JSON", () => {
     expect(analyzePasted('[{"Plan": {').kind).toBe("unreadable");
+  });
+
+  it("reports a fragment as a fragment", () => {
+    // Truncated JSON simply fails to parse. A truncated *text* plan is the
+    // dangerous one: it parses cleanly and the analysis looks just as
+    // confident, while being measured against the wrong whole.
+    const r = analyzePasted(HEADLESS);
+    expect(r.kind).toBe("ok");
+    if (r.kind !== "ok") return;
+    expect(r.caveats).toContain("missing-root");
+
+    // Negative control: a whole plan carries no caveat.
+    const whole = analyzePasted(TEXT_PLAN);
+    expect(whole.kind === "ok" && whole.caveats).toEqual([]);
   });
 });
 
@@ -95,6 +119,19 @@ describe("PastePlanModal", () => {
   it("explains itself rather than drawing an empty tree", async () => {
     await type("select 1");
     expect(screen.getByText(/doesn't look like a PostgreSQL plan/i)).toBeInTheDocument();
+  });
+
+  it("says on screen when it was only given part of a plan", async () => {
+    // The fragment still gets analysed — a partial answer is useful — but the
+    // reader is told the percentages are shares of the fragment.
+    await type(HEADLESS);
+    expect(screen.getByText(/looks like part of a plan/i)).toBeInTheDocument();
+    expect(screen.getByText(/not of the whole query/i)).toBeInTheDocument();
+  });
+
+  it("stays quiet about a plan that is whole", async () => {
+    await type(TEXT_PLAN);
+    expect(screen.queryByText(/looks like part of a plan/i)).not.toBeInTheDocument();
   });
 
   it("promises the paste stays on the machine, because that is the point", () => {

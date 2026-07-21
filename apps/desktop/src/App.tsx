@@ -290,6 +290,16 @@ export default function App() {
     };
   }, []);
 
+  /* The File menu reaches the pasted-plan analyser. It is the only feature that
+     works with no connection, so it is also the one nobody thinks to look for
+     in a sidebar built around a database. */
+  useEffect(() => {
+    const stop = listen("menu:paste-plan", () => setOverlay("pastePlan"));
+    return () => {
+      void stop.then((off) => off());
+    };
+  }, []);
+
   useEffect(() => {
     if (!txOpenSince) return;
     const id = setInterval(() => setNow(Date.now()), 1000);

@@ -1375,6 +1375,10 @@ body { background: var(--tn-desk); background-image: none; }
 .ex-issue.warn strong { color: var(--tn-brand-a, #FFC24B); }
 .ex-issue.stale { background: var(--tn-as); color: var(--tn-ts); }
 .ex-issue.stale strong { color: var(--tn-accent); }
+/* A fragment's numbers are measured against the wrong whole, so the caveat sits
+   directly above the tree it applies to rather than in a corner. */
+.ex-issue.paste-caveat { border-top: 1px solid var(--tn-bs); }
+.ex-issue.paste-caveat b { color: var(--tn-brand-a, #FFC24B); }
 /* Raw server output (FORMAT TEXT/YAML/XML) — shown as the plan itself. */
 .ex-raw {
   margin: 0; padding: 12px 14px; border-radius: 6px;

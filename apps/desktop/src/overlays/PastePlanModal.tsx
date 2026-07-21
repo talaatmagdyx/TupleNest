@@ -4,7 +4,7 @@ import PlanView from "./PlanView";
 import { PastePlanRailIcon } from "../lib/icons";
 import { kbd } from "../lib/platform";
 import { parsePlan, type ParsedPlan } from "../lib/explain";
-import { detectPlanFormat, parseTextPlan } from "../lib/explain-text";
+import { detectPlanFormat, parseTextPlan, planCaveats, type PlanCaveat } from "../lib/explain-text";
 
 /**
  * Analyse a plan someone pasted — from psql, a ticket, a colleague's message.
@@ -18,7 +18,7 @@ import { detectPlanFormat, parseTextPlan } from "../lib/explain-text";
 export type PasteResult =
   | { kind: "empty" }
   | { kind: "unreadable" }
-  | { kind: "ok"; format: "json" | "text"; plan: ParsedPlan };
+  | { kind: "ok"; format: "json" | "text"; plan: ParsedPlan; caveats: PlanCaveat[]; fragments: number };
 
 /** Read a pasted plan in either format. Exported for testing: the decision of
  *  what a blob of text is deserves its own assertions. */
@@ -28,14 +28,28 @@ export function analyzePasted(input: string): PasteResult {
   if (!format) return { kind: "unreadable" };
 
   try {
-    const root: unknown = format === "json" ? JSON.parse(input) : parseTextPlan(input);
+    const roots = format === "json" ? null : parseTextPlan(input);
+    const root: unknown = format === "json" ? JSON.parse(input) : roots;
     const plan = parsePlan(root);
     // A document we could read but found no nodes in is not a plan we can show.
     if (plan.nodes.length === 0) return { kind: "unreadable" };
-    return { kind: "ok", format, plan };
+    // Truncated JSON never parses, so it is already handled above; only a text
+    // paste can be a convincing-looking fragment.
+    const caveats = format === "text" ? planCaveats(input) : [];
+    return { kind: "ok", format, plan, caveats, fragments: roots?.length ?? 1 };
   } catch {
     return { kind: "unreadable" };
   }
+}
+
+/** What each caveat means for the numbers on screen. The point is not to scold
+ *  the paste but to stop the reader trusting a share-of-total that was measured
+ *  against the wrong total. */
+function caveatText(c: PlanCaveat, fragments: number): string {
+  if (c === "missing-root") {
+    return `The top of this plan is missing — ${fragments} nodes sit at the outermost level, so whatever joined them was cut off. Only the first is shown, and its percentages are shares of that fragment, not of the whole query.`;
+  }
+  return "The paste stops part-way through a line, so the last node was dropped. A node missing its children is charged their time as its own, which can make it look like the bottleneck when it isn't.";
 }
 
 /** A small plan to show the thing working. Written here rather than lifted from
@@ -53,6 +67,8 @@ const EXAMPLE = [
   "Planning Time: 1.319 ms",
   "Execution Time: 168.402 ms",
 ].join("\n");
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 type Props = { onClose: () => void };
 
@@ -165,7 +181,7 @@ export default function PastePlanModal(p: Props) {
             <div className="paste-summary">
               <span className="fmt-chip ok">read as {result.format.toUpperCase()}</span>
               <span>
-                {result.plan.nodes.length} nodes · {lines} lines
+                {plural(result.plan.nodes.length, "node")} · {plural(lines, "line")}
               </span>
               <span className="grow" style={{ flex: 1 }} />
               <button className="btn" onClick={reset}>
@@ -174,6 +190,13 @@ export default function PastePlanModal(p: Props) {
             </div>
           )
         )}
+
+        {result.kind === "ok" &&
+          result.caveats.map((c) => (
+            <div key={c} className="ex-issue warn paste-caveat" role="status">
+              <b>This looks like part of a plan.</b> {caveatText(c, result.fragments)}
+            </div>
+          ))}
 
         {result.kind === "ok" && (
           <PlanView

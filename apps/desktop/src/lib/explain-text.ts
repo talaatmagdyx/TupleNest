@@ -339,6 +339,8 @@ export function parseTextPlan(input: string): TextPlanRoot[] | null {
   const lines = input.replace(/\r\n?/g, "\n").split("\n");
 
   let root: TextPlanNode | null = null;
+  // Top-level nodes after the first. Only a truncated paste produces these.
+  const extraRoots: TextPlanNode[] = [];
   const rootDoc: Record<string, unknown> = {};
   const triggers: Record<string, unknown>[] = [];
   // Nodes still open for children, with the column their own text starts at.
@@ -399,18 +401,64 @@ export function parseTextPlan(input: string): TextPlanRoot[] | null {
       stack.push({ col, node });
     } else {
       while (stack.length && stack[stack.length - 1].col >= col) stack.pop();
-      const parent = stack.length ? stack[stack.length - 1].node : root;
-      (parent.Plans ??= []).push(node);
-      stack.push({ col, node });
+      if (!stack.length) {
+        // Nothing is open above this node, so it is not anyone's child. In
+        // well-formed output that cannot happen — a plan has one root. It
+        // happens when the top of the plan was cut off the paste, and the
+        // siblings that were under the missing root are now level with it.
+        // Adopting them into the first one would invent a parent-child
+        // relationship the paste never showed, and hand the fake parent their
+        // time; keeping them as separate roots says what was actually pasted.
+        extraRoots.push(node);
+        stack.push({ col, node });
+      } else {
+        (stack[stack.length - 1].node.Plans ??= []).push(node);
+        stack.push({ col, node });
+      }
     }
     last = node;
   }
 
   if (!root) return null;
   if (triggers.length) rootDoc["Triggers"] = triggers;
-  seedBuffers(root);
-  seedRowsRemoved(root);
-  return [{ ...rootDoc, Plan: root }];
+  const roots = [root, ...extraRoots];
+  for (const r of roots) {
+    seedBuffers(r);
+    seedRowsRemoved(r);
+  }
+  // The trailer describes the statement as a whole, so it belongs to the first
+  // document — the same place FORMAT JSON puts it.
+  return roots.map((r, i) => (i === 0 ? { ...rootDoc, Plan: r } : { Plan: r }));
+}
+
+/** Reasons to doubt that a paste is a whole plan.
+ *
+ *  A fragment still parses, and that is the danger: the analysis it produces
+ *  looks exactly as confident as one from a complete plan while being measured
+ *  against the wrong whole. Saying so is the difference between a useful
+ *  partial answer and a wrong one. */
+export type PlanCaveat = "missing-root" | "cut-short";
+
+export function planCaveats(input: string): PlanCaveat[] {
+  const out: PlanCaveat[] = [];
+  const lines = input.replace(/\r\n?/g, "\n").split("\n").filter((l) => l.trim());
+  if (!lines.length) return out;
+
+  // More than one top-level node means the node that joined them is missing.
+  const parsed = parseTextPlan(input);
+  if (parsed && parsed.length > 1) out.push("missing-root");
+
+  // The paste stops part-way through a line. Every line the server prints has
+  // balanced parentheses — the cost and actual tuples, a Filter's expression —
+  // so an unclosed one means the text was cut mid-line rather than at a line
+  // ending. The cut can land anywhere, including inside a word like "cost=",
+  // which is why this counts brackets instead of matching a prefix.
+  const lastLine = lines[lines.length - 1];
+  const opens = (lastLine.match(/\(/g) ?? []).length;
+  const closes = (lastLine.match(/\)/g) ?? []).length;
+  if (opens > closes) out.push("cut-short");
+
+  return out;
 }
 
 /** Does this look like a plan we can read, in either format? */

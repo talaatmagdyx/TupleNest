@@ -271,6 +271,41 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<tau
         }
     }
 
+    // Analysing a pasted plan is the one thing here that works with no
+    // connection at all, so it is also the one thing a new user has no reason
+    // to go looking for in the sidebar. The menu bar is where people look for
+    // "what can this app do".
+    //
+    // The submenu is found by its text rather than its position: unlike the
+    // application menu above, File's index is not something to rely on. No
+    // accelerator — the obvious one, ⌘⇧V, is macOS's Paste and Match Style,
+    // and taking it would break pasting inside the app's own text fields.
+    //
+    // `Menu::default` builds no File submenu at all on Linux and the BSDs, so
+    // there the loop finds nothing and does nothing. That is the right outcome
+    // rather than a bug to work around: the activity rail and the command
+    // palette both reach the analyser on every platform, and inventing a File
+    // menu where the platform's own default has none would be out of place.
+    {
+        use tauri::menu::{MenuItem, MenuItemKind};
+
+        for item in menu.items()? {
+            if let MenuItemKind::Submenu(submenu) = item {
+                if submenu.text()? == "File" {
+                    let paste = MenuItem::with_id(
+                        app,
+                        "paste-plan",
+                        "Analyze a Pasted Plan…",
+                        true,
+                        None::<&str>,
+                    )?;
+                    submenu.prepend(&paste)?;
+                    break;
+                }
+            }
+        }
+    }
+
     Ok(menu)
 }
 
@@ -278,12 +313,18 @@ fn main() {
     tauri::Builder::default()
         .menu(build_menu)
         .on_menu_event(|app, event| {
-            if event.id() == "about" {
-                // The frontend owns the About box, so the menu only announces
-                // the intent. Failing to emit is not worth killing the app
-                // over — the palette still reaches it.
-                use tauri::Emitter;
-                let _ = app.emit("menu:about", ());
+            // The frontend owns these windows, so the menu only announces the
+            // intent. Failing to emit is not worth killing the app over — the
+            // palette still reaches both.
+            use tauri::Emitter;
+            match event.id().0.as_str() {
+                "about" => {
+                    let _ = app.emit("menu:about", ());
+                }
+                "paste-plan" => {
+                    let _ = app.emit("menu:paste-plan", ());
+                }
+                _ => {}
             }
         })
         // Auto-update. Payloads are verified against the minisign public key in
