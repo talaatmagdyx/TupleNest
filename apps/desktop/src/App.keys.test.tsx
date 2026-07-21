@@ -158,3 +158,60 @@ describe("App — exporting a plan", () => {
     expect(String(write.mock.calls[0][0])).toContain("Seq Scan");
   });
 });
+
+/* The cheatsheet and the key handler used to be two hand-written lists of the
+   same thing, and they drifted: the app bound ⌘⇧L, ⌘O, ⌘B and ⌘P while the
+   screen whose job is naming the keys mentioned none of them. They now share
+   lib/shortcuts. The risk left is someone adding a binding straight into the
+   handler, where the cheatsheet would never hear about it — so this reads the
+   source and says no. */
+describe("App — the cheatsheet opens and closes", () => {
+  it("opens on ? and closes on Escape", async () => {
+    // Both halves matter: ? is the only way in, and an overlay that will not
+    // close on Escape traps a keyboard user in it.
+    //
+    // Which layer does the closing: `Overlay` handles Escape itself and stops
+    // propagation, so this still passes with App's own escape case removed.
+    // The case is not dead — it cancels a running query and closes the
+    // connection and export menus when no overlay is open — but the overlay
+    // half of it is belt and braces, and this test does not prove it.
+    const user = await connected();
+    await user.click(screen.getByRole("textbox", { name: /sql editor/i }));
+    await user.click(document.body);
+    await user.keyboard("?");
+    await waitFor(() => expect(screen.getByText("Keyboard shortcuts")).toBeInTheDocument());
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByText("Keyboard shortcuts")).not.toBeInTheDocument());
+  });
+
+  it("does not open while typing, because ? is an ordinary character", async () => {
+    const user = await connected();
+    await type(user, "select '?'");
+    expect(screen.queryByText("Keyboard shortcuts")).not.toBeInTheDocument();
+  });
+});
+
+describe("App — one list of shortcuts, not two", () => {
+  it("compares no keys of its own; matching belongs to lib/shortcuts", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    // vitest runs with apps/desktop as the working directory.
+    const src = readFileSync(resolve(process.cwd(), "src/App.tsx"), "utf8");
+
+    // Anything of the shape `e.key === "x"` or `event.key.toLowerCase() === …`
+    // inside App means a binding that lib/shortcuts does not know about.
+    const strays = [...src.matchAll(/\w+\.key(?:\.toLowerCase\(\))?\s*===/g)];
+    expect(
+      strays.map((m) => src.slice(Math.max(0, m.index - 40), m.index + 40)),
+      "add the binding to lib/shortcuts instead, so the cheatsheet shows it",
+    ).toEqual([]);
+  });
+
+  it("shows every binding on the cheatsheet, including the ones it used to omit", async () => {
+    const { SHORTCUTS } = await import("./lib/shortcuts");
+    const ids = SHORTCUTS.map((s) => s.id);
+    // The four the old hand-written list forgot.
+    expect(ids).toEqual(expect.arrayContaining(["theme", "openConnection", "toggleExplorer", "search"]));
+  });
+});

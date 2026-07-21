@@ -50,6 +50,7 @@ import { useQueryTabs } from "./hooks/useQueryTabs";
 import { useSearch } from "./hooks/useSearch";
 import { useHealth } from "./hooks/useHealth";
 import { useConnectionForm, timeoutMs } from "./hooks/useConnectionForm";
+import { matchShortcut } from "./lib/shortcuts";
 import { useQuery } from "./hooks/useQuery";
 import { defaultSearchPath } from "./lib/nodes";
 import { useTransaction } from "./hooks/useTransaction";
@@ -1113,52 +1114,74 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       const tag = (e.target as HTMLElement | null)?.tagName ?? "";
       const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
-      if (mod && e.key === "Enter") {
-        e.preventDefault();
-        void doRun();
-      } else if (mod && e.shiftKey && (e.key === "f" || e.key === "F")) {
-        e.preventDefault();
-        doFormat();
-      } else if (mod && e.shiftKey && (e.key === "l" || e.key === "L")) {
-        e.preventDefault();
-        void applyTheme(theme === "dark" ? "light" : "dark");
-      } else if (mod && (e.key === "o" || e.key === "O")) {
-        e.preventDefault();
-        setOverlay("connEditor");
-      } else if (mod && (e.key === "b" || e.key === "B")) {
-        e.preventDefault();
-        setSidebarCollapsed((v) => !v);
-      } else if (mod && (e.key === "k" || e.key === "K")) {
-        e.preventDefault();
-        setPaletteQ("");
-        setPaletteIdx(0);
-        setOverlay("palette");
-      } else if (mod && (e.key === "p" || e.key === "P")) {
-        // Only useful against a live server: the search reads pg_catalog.
-        e.preventDefault();
-        if (connected) {
-          search.reset();
-          setOverlay("search");
+      // What was pressed is decided by lib/shortcuts; this only says what each
+      // one does. Adding a binding here without adding it there would make the
+      // cheatsheet lie, which is the bug this arrangement exists to prevent.
+      switch (matchShortcut(e, mod, typing)) {
+        case "run":
+          e.preventDefault();
+          void doRun();
+          break;
+        case "format":
+          e.preventDefault();
+          doFormat();
+          break;
+        case "theme":
+          e.preventDefault();
+          void applyTheme(theme === "dark" ? "light" : "dark");
+          break;
+        case "openConnection":
+          e.preventDefault();
+          setOverlay("connEditor");
+          break;
+        case "toggleExplorer":
+          e.preventDefault();
+          setSidebarCollapsed((v) => !v);
+          break;
+        case "palette":
+          e.preventDefault();
+          setPaletteQ("");
+          setPaletteIdx(0);
+          setOverlay("palette");
+          break;
+        case "search":
+          // Only useful against a live server: the search reads pg_catalog.
+          e.preventDefault();
+          if (connected) {
+            search.reset();
+            setOverlay("search");
+          }
+          break;
+        case "newTab":
+          e.preventDefault();
+          newTab();
+          break;
+        case "copyCell": {
+          // Deliberately no preventDefault: with a real selection this must
+          // stay the browser's own copy.
+          const noSel = !window.getSelection || String(window.getSelection()) === "";
+          if (copyable.current !== null && noSel) {
+            navigator.clipboard.writeText(copyable.current).catch(() => {});
+            showToast(`Copied cell: ${copyable.current.slice(0, 48)}`);
+          }
+          break;
         }
-      } else if (mod && (e.key === "t" || e.key === "T")) {
-        e.preventDefault();
-        newTab();
-      } else if (mod && (e.key === "c" || e.key === "C")) {
-        const noSel = !window.getSelection || String(window.getSelection()) === "";
-        if (copyable.current !== null && noSel && !typing) {
-          navigator.clipboard.writeText(copyable.current).catch(() => {});
-          showToast(`Copied cell: ${copyable.current.slice(0, 48)}`);
-        }
-      } else if (e.key === "?" && !typing) {
-        e.preventDefault();
-        setOverlay("cheatsheet");
-      } else if (e.key === "Escape") {
-        if (overlay) setOverlay(null);
-        else if (running) void doCancel();
-        else {
-          setConnMenu(false);
-          setExportMenu(false);
-        }
+        case "cheatsheet":
+          e.preventDefault();
+          setOverlay("cheatsheet");
+          break;
+        case "escape":
+          // Overlay handles Escape itself and stops propagation, so this arm
+          // rarely runs for a dialog. It stays because the other two cases
+          // have no other owner: cancelling a running query, and closing the
+          // connection and export menus, which are not overlays.
+          if (overlay) setOverlay(null);
+          else if (running) void doCancel();
+          else {
+            setConnMenu(false);
+            setExportMenu(false);
+          }
+          break;
       }
     };
     document.addEventListener("keydown", onKey);

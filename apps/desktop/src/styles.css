@@ -729,6 +729,9 @@ a { color: var(--tn-accent); text-decoration: none; }
 .kv-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--tn-bs); }
 .kv-row:last-child { border-bottom: none; }
 .kv-row .kl { font-size: 12.5px; color: var(--tn-ts); }
+/* The condition on a shortcut — "while connected" — belongs with its name but
+   should not compete with it. */
+.kv-row .kn { color: var(--tn-tm); }
 
 /* Schema modal */
 .schema-modal { width: 640px; }

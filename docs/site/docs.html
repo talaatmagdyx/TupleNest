@@ -132,14 +132,17 @@
       <div class="keys">
         <div class="key"><span class="kbd">⌘K</span><span class="kl">Command palette</span></div>
         <div class="key"><span class="kbd">⌘↵</span><span class="kl">Run query</span></div>
-        <div class="key"><span class="kbd">⇧⌘F</span><span class="kl">Format</span></div>
-        <div class="key"><span class="kbd">⌘T</span><span class="kl">New tab</span></div>
-        <div class="key"><span class="kbd">⌘P</span><span class="kl">Global search</span></div>
-        <div class="key"><span class="kbd">⌘B</span><span class="kl">Toggle explorer</span></div>
+        <div class="key"><span class="kbd">⌘T</span><span class="kl">New query tab</span></div>
+        <div class="key"><span class="kbd">⇧⌘F</span><span class="kl">Format SQL</span></div>
+        <div class="key"><span class="kbd">⌘P</span><span class="kl">Search database objects (connected)</span></div>
         <div class="key"><span class="kbd">⌘O</span><span class="kl">Open connection</span></div>
-        <div class="key"><span class="kbd">Esc</span><span class="kl">Cancel query</span></div>
+        <div class="key"><span class="kbd">⌘B</span><span class="kl">Show or hide the sidebar</span></div>
+        <div class="key"><span class="kbd">⇧⌘L</span><span class="kl">Switch light / dark</span></div>
+        <div class="key"><span class="kbd">⌘C</span><span class="kl">Copy the selected cell</span></div>
+        <div class="key"><span class="kbd">Esc</span><span class="kl">Close the overlay, else cancel the query</span></div>
+        <div class="key"><span class="kbd">?</span><span class="kl">This cheatsheet</span></div>
       </div>
-      <p style="margin-top:12px">On Windows and Linux, use Ctrl in place of ⌘.</p>
+      <p style="margin-top:12px">On Windows and Linux, use Ctrl in place of ⌘. This is the same list the app shows for <code class="inline">?</code>; both come from one table in the source, so a binding cannot exist without appearing in both.</p>
 
       <h2 id="read-only">Read-only mode</h2>
       <p>Turn on read-only for a connection and TupleNest issues a PostgreSQL read-only session characteristic — the <em>server</em> refuses writes, not just the UI. It's an accident guardrail; for strict enforcement, use a database role without write privileges.</p>

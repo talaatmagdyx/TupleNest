@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { enterKey, kbd } from "../lib/platform";
+import { SHORTCUTS } from "../lib/shortcuts";
 import { BrandMark } from "../lib/icons";
 
 /* ---------- shared ---------- */
@@ -579,19 +580,9 @@ export function About(p: { version: string; os: string; onClose: () => void }) {
 
 /* ---------- keyboard cheatsheet ---------- */
 
-/** Built per-platform: this is the screen whose whole job is telling people
- *  which keys to press, so it is the last place that should name a key the
- *  keyboard does not have. */
-const shortcuts = (): [string, string][] => [
-  ["Run query", kbd("mod", "enter")],
-  ["Command palette", kbd("mod", "K")],
-  ["New query tab", kbd("mod", "T")],
-  ["Format SQL", kbd("mod", "shift", "F")],
-  ["Copy selected cell", kbd("mod", "C")],
-  ["Cancel running query", "Esc"],
-  ["Close overlay", "Esc"],
-  ["This cheatsheet", "?"],
-];
+/* The list itself lives in lib/shortcuts, next to the matching that decides
+   what each key does. This screen's whole job is saying which keys exist, so
+   it is the last place that should keep its own copy of the answer. */
 
 export function Cheatsheet(p: { onClose: () => void }) {
   return (
@@ -599,10 +590,13 @@ export function Cheatsheet(p: { onClose: () => void }) {
       <div className="modal" style={{ width: 420 }}>
         <ModalHead title="Keyboard shortcuts" onClose={p.onClose} />
         <div className="modal-body">
-          {shortcuts().map(([label, keys]) => (
-            <div key={label} className="kv-row">
-              <span className="kl">{label}</span>
-              <span className="kbd">{keys}</span>
+          {SHORTCUTS.map((sc) => (
+            <div key={sc.id} className="kv-row">
+              <span className="kl">
+                {sc.label}
+                {sc.note && <span className="kn"> — {sc.note}</span>}
+              </span>
+              <span className="kbd">{kbd(...sc.keys)}</span>
             </div>
           ))}
         </div>
