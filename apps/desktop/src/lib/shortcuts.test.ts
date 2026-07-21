@@ -21,6 +21,8 @@ describe("matchShortcut", () => {
     ["copy cell", "c", { metaKey: true }, "copyCell"],
     ["escape", "Escape", {}, "escape"],
     ["cheatsheet", "?", {}, "cheatsheet"],
+    ["find", "f", { metaKey: true }, "find"],
+    ["toggle comment", "/", { metaKey: true }, "toggleComment"],
   ];
   for (const [name, key, mods, id] of cases) {
     it(`matches ${name}`, () => expect(hit(key, mods)).toBe(id));
@@ -36,10 +38,14 @@ describe("matchShortcut", () => {
   });
 
   it("does not confuse a shifted binding with its unshifted one", () => {
-    // ⌘⇧F is Format and ⌘F is nothing; matching loosely would make the two
-    // trade places depending on the order of this list.
-    expect(hit("f", { metaKey: true })).toBeNull();
+    // ⌘F is Find and ⌘⇧F is Format — two different things one Shift apart.
+    // Matching loosely would make them trade places depending on the order of
+    // the list, which is exactly the kind of bug nobody reports clearly.
+    expect(hit("f", { metaKey: true })).toBe("find");
+    expect(hit("f", { metaKey: true, shiftKey: true })).toBe("format");
+    // ⌘L is still unbound; ⌘⇧L switches the theme.
     expect(hit("l", { metaKey: true })).toBeNull();
+    expect(hit("l", { metaKey: true, shiftKey: true })).toBe("theme");
   });
 
   it("ignores a bare letter with no modifier", () => {

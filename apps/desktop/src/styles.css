@@ -419,6 +419,27 @@ a { color: var(--tn-accent); text-decoration: none; }
 }
 .gutter div { padding-right: 11px; height: 20px; }
 .editor-rel { position: relative; flex: 1; min-width: 0; }
+
+/* Find & replace, floating over the top-right of the editor rather than
+   pushing it down: the line the caret is on must not move when the bar opens,
+   or you lose your place at the moment you were trying to find it. */
+.findbar {
+  position: absolute; top: 6px; right: 14px; z-index: 6;
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border-radius: 8px;
+  background: var(--tn-s1); border: 1px solid var(--tn-bs);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .35);
+}
+.findbar input {
+  width: 150px; height: 24px; padding: 0 8px; border-radius: 6px;
+  border: 1px solid var(--tn-bs); background: var(--tn-bg); color: var(--tn-tp);
+  font: 11.5px var(--tn-mono); outline: none;
+}
+.findbar input:focus { border-color: var(--tn-accent); box-shadow: 0 0 0 3px var(--tn-as); }
+/* Fixed width so the bar does not jitter as the count changes while typing. */
+.fb-count { min-width: 74px; text-align: center; font: 10.5px var(--tn-mono); color: var(--tn-tm); }
+.btn.xs { height: 24px; padding: 0 8px; gap: 4px; font-size: 11px; border-radius: 6px; }
+.btn.xs.on { color: var(--tn-accent); border-color: var(--tn-accent); background: var(--tn-as); }
 /* `pre`, not `pre-wrap`: one logical line must occupy exactly one 20px row or
    it drifts out of step with the fixed-height gutter. Long lines scroll
    horizontally instead, as in any SQL IDE. */

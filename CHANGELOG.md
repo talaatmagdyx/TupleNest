@@ -23,6 +23,13 @@ versions follow [Semantic Versioning](https://semver.org/).
   webview is wedged, or you have walked away — which a client-side timeout
   cannot do.
 
+- **Find and replace in the editor (⌘F).** Match count as you type, step with
+  Enter or the arrows, Shift+Enter to go back, a case toggle, replace, and
+  replace all. The needle is literal text rather than a regular expression:
+  half the characters people search for in SQL — `(`, `)`, `.`, `*`, `$`, `[`
+  — are regex syntax, so a pattern box would need escaping for the common case
+  and serve the rare one.
+
 - **Comment and uncomment lines with ⌘/.** Line comments rather than block
   comments, because PostgreSQL nests block comments and toggling those
   correctly means tracking depth. The marker goes in at the shallowest

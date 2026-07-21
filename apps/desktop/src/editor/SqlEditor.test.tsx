@@ -466,3 +466,101 @@ describe("SqlEditor — comment toggling", () => {
     for (const [value] of onChange.mock.calls) expect(value).not.toContain("--");
   });
 });
+
+describe("SqlEditor — find and replace", () => {
+  const openFind = async (sql: string) => {
+    const onChange = vi.fn();
+    render(<SqlEditor sql={sql} disabled={false} height={200} onChange={onChange} />);
+    await userEvent.click(screen.getByRole("textbox", { name: /sql editor/i }));
+    await userEvent.keyboard("{Meta>}f{/Meta}");
+    return onChange;
+  };
+
+  it("opens on ⌘F and counts the matches as you type", async () => {
+    await openFind("select a from a join a");
+    await userEvent.type(screen.getByLabelText("Find"), "a");
+    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+  });
+
+  it("says so plainly when nothing matches", async () => {
+    await openFind("select 1");
+    await userEvent.type(screen.getByLabelText("Find"), "zzz");
+    expect(screen.getByText("no matches")).toBeInTheDocument();
+  });
+
+  it("steps through matches and wraps around", async () => {
+    await openFind("a a a");
+    await userEvent.type(screen.getByLabelText("Find"), "a");
+    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText("Next match"));
+    expect(screen.getByText("2 of 3")).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText("Next match"));
+    await userEvent.click(screen.getByLabelText("Next match"));
+    // Wrapping beats stopping at the end: the text is a loop, not a list.
+    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+  });
+
+  it("matches case only when asked", async () => {
+    await openFind("Select select");
+    await userEvent.type(screen.getByLabelText("Find"), "select");
+    expect(screen.getByText("1 of 2")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Aa" }));
+    expect(screen.getByText("1 of 1")).toBeInTheDocument();
+  });
+
+  it("replaces the current match", async () => {
+    const onChange = await openFind("select a from t");
+    await userEvent.type(screen.getByLabelText("Find"), "a");
+    await userEvent.type(screen.getByLabelText("Replace with"), "b");
+    await userEvent.click(screen.getByRole("button", { name: "Replace" }));
+    expect(onChange).toHaveBeenLastCalledWith("select b from t");
+  });
+
+  it("replaces every match at once", async () => {
+    const onChange = await openFind("a and a and a");
+    await userEvent.type(screen.getByLabelText("Find"), "a ");
+    await userEvent.type(screen.getByLabelText("Replace with"), "z ");
+    await userEvent.click(screen.getByRole("button", { name: "All" }));
+    // Only two matches: the trailing "a" has no space after it, and "and"
+    // does not contain "a " either.
+    expect(onChange).toHaveBeenLastCalledWith("z and z and a");
+  });
+
+  it("seeds the box from the selection, which is usually what you want to find", async () => {
+    const onChange = vi.fn();
+    render(<SqlEditor sql="select column_name from t" disabled={false} height={200} onChange={onChange} />);
+    const ta = screen.getByRole("textbox", { name: /sql editor/i }) as HTMLTextAreaElement;
+    await userEvent.click(ta);
+    ta.setSelectionRange(7, 18);
+    await userEvent.keyboard("{Meta>}f{/Meta}");
+    expect((screen.getByLabelText("Find") as HTMLInputElement).value).toBe("column_name");
+  });
+
+  it("steps with Enter, and back with Shift+Enter", async () => {
+    await openFind("a a a");
+    const box = screen.getByLabelText("Find");
+    await userEvent.type(box, "a");
+    await userEvent.keyboard("{Enter}");
+    expect(screen.getByText("2 of 3")).toBeInTheDocument();
+    await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
+    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+  });
+
+  it("keeps the whole typed query when the box is opened and typed into at once", async () => {
+    // Regression: focusing the box happened in a requestAnimationFrame, so a
+    // frame landing mid-typing selected what was there and the next character
+    // replaced it. The count is the visible symptom.
+    await openFind("alpha alpha");
+    await userEvent.type(screen.getByLabelText("Find"), "alpha");
+    expect((screen.getByLabelText("Find") as HTMLInputElement).value).toBe("alpha");
+    expect(screen.getByText("1 of 2")).toBeInTheDocument();
+  });
+
+  it("closes on Escape and gives focus back to the editor", async () => {
+    await openFind("select 1");
+    await userEvent.type(screen.getByLabelText("Find"), "1");
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByLabelText("Find")).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: /sql editor/i }));
+  });
+});

@@ -284,3 +284,57 @@ export function toggleLineComment(sql: string, start: number, end: number): Edit
     selectionEnd: Math.max(offsets[first], end + delta),
   };
 }
+
+/* --------------------------------------------------------------- find */
+
+export type Match = { start: number; end: number };
+
+/**
+ * Every occurrence of `needle`, left to right.
+ *
+ * Literal text, not a regular expression. A regex box in a SQL editor is a
+ * trap: half the characters people search for here — `(`, `)`, `.`, `*`, `$`,
+ * `[` — are regex syntax, so the common case would need escaping and the
+ * uncommon case is served by the query itself. If regex search is ever added
+ * it should be a deliberate toggle, not the default reading of what was typed.
+ *
+ * Overlapping matches are not returned: after a hit, scanning resumes at its
+ * end, so searching `aa` in `aaa` finds one match rather than two. That is
+ * what "replace all" needs to be sane.
+ */
+export function findMatches(text: string, needle: string, caseSensitive = false): Match[] {
+  if (!needle) return [];
+  const hay = caseSensitive ? text : text.toLowerCase();
+  const pin = caseSensitive ? needle : needle.toLowerCase();
+  const out: Match[] = [];
+  let from = 0;
+  for (;;) {
+    const at = hay.indexOf(pin, from);
+    if (at === -1) return out;
+    out.push({ start: at, end: at + pin.length });
+    from = at + pin.length;
+  }
+}
+
+/** Replace one match, returning the new text and where the caret should land. */
+export function replaceMatch(text: string, m: Match, replacement: string): EditResult {
+  return {
+    sql: text.slice(0, m.start) + replacement + text.slice(m.end),
+    selectionStart: m.start,
+    selectionEnd: m.start + replacement.length,
+  };
+}
+
+/** Replace every match in one pass.
+ *
+ *  Built right to left so earlier offsets stay valid — the obvious left-to-right
+ *  loop has to keep adjusting for the length difference, and gets it wrong the
+ *  moment the replacement is shorter than the needle. */
+export function replaceAllMatches(text: string, needle: string, replacement: string, caseSensitive = false): string {
+  const ms = findMatches(text, needle, caseSensitive);
+  let out = text;
+  for (let i = ms.length - 1; i >= 0; i--) {
+    out = out.slice(0, ms[i].start) + replacement + out.slice(ms[i].end);
+  }
+  return out;
+}

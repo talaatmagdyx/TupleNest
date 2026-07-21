@@ -1,5 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { tokenizeSQL, toggleLineComment } from "../lib/sql";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  findMatches,
+  replaceAllMatches,
+  replaceMatch,
+  tokenizeSQL,
+  toggleLineComment,
+  type Match,
+} from "../lib/sql";
 import { matchShortcut } from "../lib/shortcuts";
 import { caretPosition, offsetAt } from "../lib/caret";
 import {
@@ -21,6 +28,15 @@ type Props = {
   onPrefetchTables?: (tables: { schema: string; name: string }[]) => void;
   /** Asked to load the object list for a schema the user just qualified. */
   onPrefetchSchema?: (schema: string) => void;
+};
+
+type FindState = {
+  query: string;
+  replace: string;
+  caseSensitive: boolean;
+  /** Which match is current. Kept as an index rather than an offset so it
+   *  survives the text changing under it during replace. */
+  at: number;
 };
 
 type PopupState = {
@@ -45,6 +61,10 @@ export default function SqlEditor(p: Props) {
   const gutterRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [pop, setPop] = useState<PopupState | null>(null);
+  const [find, setFind] = useState<FindState | null>(null);
+  const findRef = useRef<HTMLInputElement>(null);
+  /** Set when the bar is opened, cleared once its box has been focused. */
+  const justOpened = useRef(false);
   const lines = p.sql.split("\n");
 
   /** The textarea is the only scroller; the highlight layer and the gutter are
@@ -203,6 +223,88 @@ export default function SqlEditor(p: Props) {
     [pop, p, close]
   );
 
+  /* ---- find & replace ---- */
+
+  // Memoised, and not only to save the scan: `step` and the replace handlers
+  // close over this list, so a new array every render gives them stale
+  // callbacks and the bar starts skipping presses.
+  const matches: Match[] = useMemo(
+    () => (find ? findMatches(p.sql, find.query, find.caseSensitive) : []),
+    [find, p.sql],
+  );
+  const current = matches.length ? (((find?.at ?? 0) % matches.length) + matches.length) % matches.length : 0;
+
+  /** Select a match in the textarea and scroll it into view.
+   *
+   *  Deliberately does not take focus: pressing Enter in the find box moves to
+   *  the next match, and stealing focus after the first press means the second
+   *  Enter goes to the editor and inserts a newline instead. Focus returns to
+   *  the text when the bar is closed. */
+  const revealMatch = useCallback((m: Match | undefined) => {
+    const ta = taRef.current;
+    if (!ta || !m) return;
+    ta.setSelectionRange(m.start, m.end);
+    // Textareas do not scroll a programmatic selection into view. Approximate
+    // it by the line the match starts on rather than leaving it off-screen.
+    const before = ta.value.slice(0, m.start).split("\n").length - 1;
+    const lineHeight = ta.clientHeight / Math.max(1, Math.round(ta.clientHeight / 20));
+    ta.scrollTop = Math.max(0, before * lineHeight - ta.clientHeight / 2);
+  }, []);
+
+  const step = useCallback(
+    (by: number) => {
+      if (!matches.length) return;
+      const next = (current + by + matches.length) % matches.length;
+      setFind((f) => (f ? { ...f, at: next } : f));
+      revealMatch(matches[next]);
+    },
+    [matches, current, revealMatch],
+  );
+
+  const doReplace = useCallback(() => {
+    const m = matches[current];
+    if (!m || !find) return;
+    const r = replaceMatch(p.sql, m, find.replace);
+    p.onChange(r.sql);
+    // Stay on the same index: after replacing, the match that followed has
+    // shifted into this slot, so the next press continues down the file.
+    setFind((f) => (f ? { ...f, at: current } : f));
+  }, [matches, current, find, p]);
+
+  const doReplaceAll = useCallback(() => {
+    if (!find || !find.query) return;
+    p.onChange(replaceAllMatches(p.sql, find.query, find.replace, find.caseSensitive));
+    setFind((f) => (f ? { ...f, at: 0 } : f));
+  }, [find, p]);
+
+  const openFind = useCallback(() => {
+    const ta = taRef.current;
+    // Seed from the selection, which is what you have just after finding
+    // something by eye.
+    const selected = ta ? ta.value.slice(ta.selectionStart, ta.selectionEnd) : "";
+    setFind((f) => ({
+      query: selected && !selected.includes("\n") ? selected : (f?.query ?? ""),
+      replace: f?.replace ?? "",
+      caseSensitive: f?.caseSensitive ?? false,
+      at: 0,
+    }));
+    justOpened.current = true;
+  }, []);
+
+  /* Focus and select the find box once, on the commit that opened the bar.
+   *
+   * This was a `requestAnimationFrame` and that was a real bug, not just a
+   * flaky test: if the frame landed between two keystrokes, `select()` picked
+   * out everything typed so far and the next character replaced it. An effect
+   * runs before paint and before any further input, so the selection can only
+   * happen when there is nothing yet to lose. */
+  useEffect(() => {
+    if (!find || !justOpened.current) return;
+    justOpened.current = false;
+    findRef.current?.focus();
+    findRef.current?.select();
+  }, [find]);
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === " " && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
@@ -213,7 +315,13 @@ export default function SqlEditor(p: Props) {
     // knows about them. Everything below this point is popup navigation, which
     // is not a shortcut anyone needs told about.
     const mod = e.metaKey || e.ctrlKey;
-    if (matchShortcut(e.nativeEvent, mod, false) === "toggleComment") {
+    const shortcut = matchShortcut(e.nativeEvent, mod, false);
+    if (shortcut === "find") {
+      e.preventDefault();
+      openFind();
+      return;
+    }
+    if (shortcut === "toggleComment") {
       e.preventDefault();
       const ta = taRef.current;
       if (!ta) return;
@@ -290,6 +398,82 @@ export default function SqlEditor(p: Props) {
         ))}
       </div>
       <div className="editor-rel">
+        {find && (
+          <div className="findbar" role="search" aria-label="Find and replace">
+            <input
+              ref={findRef}
+              className="mono"
+              aria-label="Find"
+              placeholder="Find"
+              value={find.query}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              onChange={(e) => setFind((f) => (f ? { ...f, query: e.target.value, at: 0 } : f))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  step(e.shiftKey ? -1 : 1);
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  const m = matches[current];
+                  setFind(null);
+                  const ta = taRef.current;
+                  ta?.focus();
+                  // Leave the caret on the match you stopped at, so closing
+                  // the bar puts you where you were looking.
+                  if (ta && m) ta.setSelectionRange(m.start, m.end);
+                }
+              }}
+            />
+            <span className="fb-count" aria-live="polite">
+              {find.query === "" ? "" : matches.length === 0 ? "no matches" : `${current + 1} of ${matches.length}`}
+            </span>
+            <button className="btn xs" onClick={() => step(-1)} disabled={!matches.length} aria-label="Previous match">
+              ↑
+            </button>
+            <button className="btn xs" onClick={() => step(1)} disabled={!matches.length} aria-label="Next match">
+              ↓
+            </button>
+            <button
+              className={`btn xs ${find.caseSensitive ? "on" : ""}`}
+              aria-pressed={find.caseSensitive}
+              onClick={() => setFind((f) => (f ? { ...f, caseSensitive: !f.caseSensitive, at: 0 } : f))}
+              title="Match case"
+            >
+              Aa
+            </button>
+            <input
+              className="mono"
+              aria-label="Replace with"
+              placeholder="Replace"
+              value={find.replace}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              onChange={(e) => setFind((f) => (f ? { ...f, replace: e.target.value } : f))}
+            />
+            <button className="btn xs" onClick={doReplace} disabled={!matches.length}>
+              Replace
+            </button>
+            <button className="btn xs" onClick={doReplaceAll} disabled={!matches.length}>
+              All
+            </button>
+            <button
+              className="btn xs"
+              onClick={() => {
+                const m = matches[current];
+                setFind(null);
+                const ta = taRef.current;
+                ta?.focus();
+                if (ta && m) ta.setSelectionRange(m.start, m.end);
+              }}
+              aria-label="Close find"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         <pre className="editor-pre" ref={preRef}>
           {tokenizeSQL(p.sql)}
         </pre>

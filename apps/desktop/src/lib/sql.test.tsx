@@ -18,6 +18,9 @@ import {
   toMarkdown,
   tokenizeSQL,
   toggleLineComment,
+  findMatches,
+  replaceMatch,
+  replaceAllMatches,
 } from "./sql";
 
 const invokeMock = vi.mocked(invoke);
@@ -509,5 +512,58 @@ describe("toggleLineComment — where the selection ends up", () => {
   it("leaves a caret inside the text it was in", () => {
     const r = toggleLineComment("select a", 7, 7);
     expect(show(r)).toBe("-- select []a");
+  });
+});
+
+describe("findMatches", () => {
+  it("finds every occurrence", () => {
+    expect(findMatches("a b a b a", "a")).toEqual([
+      { start: 0, end: 1 },
+      { start: 4, end: 5 },
+      { start: 8, end: 9 },
+    ]);
+  });
+
+  it("ignores case by default and respects it when asked", () => {
+    expect(findMatches("Select select SELECT", "select")).toHaveLength(3);
+    expect(findMatches("Select select SELECT", "select", true)).toHaveLength(1);
+  });
+
+  it("treats the needle as literal text, not a pattern", () => {
+    // Every one of these is regex syntax; all of them are ordinary SQL.
+    expect(findMatches("count(*)", "(*)")).toEqual([{ start: 5, end: 8 }]);
+    expect(findMatches("a.b", ".")).toEqual([{ start: 1, end: 2 }]);
+    expect(findMatches("$1 = $2", "$1")).toEqual([{ start: 0, end: 2 }]);
+  });
+
+  it("returns nothing for an empty needle rather than a match per character", () => {
+    expect(findMatches("select 1", "")).toEqual([]);
+  });
+
+  it("does not return overlapping matches", () => {
+    expect(findMatches("aaa", "aa")).toEqual([{ start: 0, end: 2 }]);
+  });
+});
+
+describe("replaceMatch / replaceAllMatches", () => {
+  it("replaces one and selects what it wrote", () => {
+    const r = replaceMatch("select a from t", { start: 7, end: 8 }, "b");
+    expect(r.sql).toBe("select b from t");
+    expect(r.sql.slice(r.selectionStart, r.selectionEnd)).toBe("b");
+  });
+
+  it("replaces all, including when the replacement is shorter", () => {
+    // The right-to-left pass matters here: left to right, the second match's
+    // offsets would be stale by the length difference.
+    expect(replaceAllMatches("aaa bbb aaa", "aaa", "x")).toBe("x bbb x");
+    expect(replaceAllMatches("x y x", "x", "longer")).toBe("longer y longer");
+  });
+
+  it("replaces case-insensitively but writes the replacement as given", () => {
+    expect(replaceAllMatches("Select SELECT", "select", "pick")).toBe("pick pick");
+  });
+
+  it("leaves the text alone when nothing matches", () => {
+    expect(replaceAllMatches("select 1", "zzz", "x")).toBe("select 1");
   });
 });

@@ -26,6 +26,7 @@ export type ShortcutId =
   | "copyCell"
   | "cheatsheet"
   | "toggleComment"
+  | "find"
   | "escape";
 
 export type Shortcut = {
@@ -74,6 +75,14 @@ export const SHORTCUTS: Shortcut[] = [
     note: "when nothing else is selected",
     needsNotTyping: true,
     match: letter("c"),
+  },
+  {
+    id: "find",
+    label: "Find and replace",
+    keys: ["mod", "F"],
+    note: "in the editor",
+    scope: "editor",
+    match: letter("f"),
   },
   {
     id: "toggleComment",
