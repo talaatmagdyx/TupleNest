@@ -61,10 +61,12 @@
         <h3>Smart SQL editor</h3>
         <p>Built for PostgreSQL specifically — the literal masking understands dollar-quoting, nested comments, and <code class="inline">E''</code> escapes, so features like the destructive-statement guard read the real query rather than raw text.</p>
         <ul>
-          <li>PostgreSQL syntax highlighting</li><li>Schema-aware completion: tables, columns, functions, keywords</li>
-          <li>Formatting and selected-query execution</li><li>Multiple editor tabs with unsaved-change indicators</li>
-          <li>Line and block comments, find and replace</li><li>Query history and reusable snippets</li>
-          <li>Query parameters (<code class="inline">$1..$n</code>) with binding</li>
+          <li>PostgreSQL syntax highlighting</li>
+          <li>Completion from the live catalog: schemas, tables, and the columns of tables in scope — including through aliases</li>
+          <li>Keyword and built-in function completion from a static list</li>
+          <li>One-key formatting</li><li>Multiple editor tabs with unsaved-change indicators</li>
+          <li>Query history and reusable snippets</li>
+          <li>Query parameters (<code class="inline">$1..$n</code>) with real bind parameters, never string interpolation</li>
         </ul>
       </div>
     </div>
@@ -81,8 +83,10 @@
         <h3>Results that stay responsive</h3>
         <p>Rows stream from a bounded store into a virtualized grid, so large or wide results don't freeze the window — and the footer counts the real total, not the cap.</p>
         <ul>
-          <li>Streaming result loading, virtualized rows</li><li>Column resizing, sorting, filtering, search</li>
-          <li>Explicit NULL representation</li><li>Copy cell, row, or selection</li>
+          <li>Streaming result loading, virtualized rows</li>
+          <li>Column sorting, client-side, up to 50,000 rows — past that it says so rather than hanging the window</li>
+          <li>NULL rendered as a distinct <code class="inline">null</code>, never as an empty cell</li>
+          <li>Copy the selected cell, or the whole result as CSV or Markdown</li>
           <li>Export (CSV / JSON / Markdown)</li><li>Query duration, row count, truncation indicators</li>
         </ul>
       </div>
@@ -114,7 +118,7 @@
         <li>Plan history across runs of the same query</li>
       </ul></div>
     </div>
-    <div class="callout info" style="margin-top:20px"><b>Why parallel accounting matters.</b> Under a <code class="inline">Gather</code>, PostgreSQL reports one “loop” per worker, and those workers run simultaneously. Multiplying by loops — which is the obvious reading — can charge a single node more milliseconds than the entire query took. TupleNest divides workers back out, so self-times add up to the execution time. Verified against live PostgreSQL 18 across eight plans, including a parallel aggregate, an external-merge disk sort, a hash spill, and a trigger that consumed most of its statement's runtime.</div>
+    <div class="callout info" style="margin-top:20px"><b>Why parallel accounting matters.</b> Under a <code class="inline">Gather</code>, PostgreSQL reports one “loop” per worker, and those workers run simultaneously. Multiplying by loops — which is the obvious reading — can charge a single node more milliseconds than the entire query took. TupleNest divides workers back out, so self-times add up to the execution time. Checked against live PostgreSQL 15 and 18 across eleven plan shapes, including a parallel aggregate, an external-merge disk sort, a hash spill, a nested loop repeating 20,000 times, a never-executed branch, and a trigger that consumed most of its statement's runtime. JIT timing is covered by unit tests only: the servers used report <code class="inline">jit=on</code> but are built without LLVM, so they never emit JIT timings.</div>
   </div>
 </section>
 
@@ -128,8 +132,8 @@
         <h3>Browse the whole catalog</h3>
         <p>A lazy tree that loads schemas, objects, and columns on demand and serves from a local cache when you're offline.</p>
         <ul>
-          <li>Databases, schemas, tables, views, materialized views</li><li>Functions, enums, indexes, constraints, triggers</li>
-          <li>Foreign keys and dependencies</li><li>Global object search and refresh</li>
+          <li>Schemas, tables, views, materialized views, foreign tables, sequences</li><li>Columns, indexes, constraints, partitions, types and enums, functions</li>
+          <li>Foreign keys, and a sequence's owning column</li><li>Global object search and refresh</li>
           <li>Open an object straight into the editor</li>
         </ul>
       </div>
@@ -145,10 +149,11 @@
       <div>
         <div class="fnum">ER DIAGRAMS</div>
         <h3>The database as a graph</h3>
-        <p>An automatic relationship graph built from real foreign keys — pan, zoom, focus a table, and expand its neighbours.</p>
+        <p>A relationship map generated from the real foreign keys in the catalog — a picture of how the tables actually join, without drawing it yourself.</p>
         <ul>
-          <li>Table cards with foreign-key links</li><li>Pan &amp; zoom, focus on a selected table</li>
-          <li>Search and expand related tables</li><li>Open table data or definition</li>
+          <li>Table cards laid out with foreign-key links drawn between them</li>
+          <li>Every relationship also listed in full underneath, so nothing depends on reading the picture</li>
+          <li><span class="pill plan">Planned</span> Pan, zoom, focusing a table and expanding its neighbours — the diagram is currently a static view</li>
         </ul>
       </div>
     </div>
@@ -167,7 +172,7 @@
         <ul>
           <li>Environment classification and a production badge</li><li>Read-only session characteristic (server-enforced)</li>
           <li>Destructive-statement detection and confirmation dialogs</li><li>Transaction-state visibility and tab ownership</li>
-          <li>Query timeout controls and clear warning language</li><li>Least-privilege guidance</li>
+          <li>Cancel a running query from the toolbar or with Esc</li><li>Clear warning language, and least-privilege guidance</li>
         </ul>
       </div>
     </div>
@@ -180,9 +185,9 @@
     <div class="kicker">Connection manager</div>
     <h2>Connections you can trust</h2>
     <div class="grid3">
-      <div class="card"><h4>Profiles</h4><ul><li>Saved profiles</li><li>Dev / staging / production grouping</li><li>Favourite &amp; recent connections</li></ul></div>
+      <div class="card"><h4>Profiles</h4><ul><li>Saved profiles</li><li>Dev / test / staging / production classification</li><li>Passwords never stored in the profile itself</li></ul></div>
       <div class="card"><h4>Transport</h4><ul><li>Four TLS modes</li><li>Custom CA certificate</li><li>SSH tunnels with host-key verification</li></ul></div>
-      <div class="card"><h4>Credentials</h4><ul><li>Keychain-backed passwords</li><li>Staged connection test (DNS → TCP → auth)</li><li>Connection timeout</li></ul></div>
+      <div class="card"><h4>Credentials</h4><ul><li>Keychain-backed passwords</li><li>Staged connection test: DNS → TCP → SSH → auth, stopping at the first failure</li><li>Each test stage bounded by its own timeout</li></ul></div>
     </div>
   </div>
 </section>
@@ -199,6 +204,7 @@
         <li>Or <code class="inline">FORMAT JSON</code></li>
         <li>The format is detected as you type</li>
         <li>Unrecognised text says so immediately, rather than drawing a misleading tree</li>
+        <li>A paste that is only <em>part</em> of a plan is called out as one</li>
       </ul></div>
       <div class="card"><h4>The same analysis, no connection</h4><ul>
         <li>Self-time bottleneck, disk sorts, hash spills</li>
@@ -207,8 +213,10 @@
         <li>JIT and trigger time — the work no node accounts for</li>
       </ul></div>
     </div>
-    <div class="callout ok" style="margin-top:20px"><b>Works against a server this app can't reach.</b> A plan from a locked-down production box, or one a colleague sent you, analyses exactly the same as one of your own queries — no credentials, no connection, and nothing sent anywhere. Open it from the activity rail or the command palette; it stays available while disconnected.</div>
-    <div class="callout info" style="margin-top:14px"><b>How the text reader was checked.</b> Ten queries were captured from a live PostgreSQL 18 as <em>both</em> text and JSON — a parallel scan, an external-merge disk sort, a hash spill, a nested loop repeating 20,000 times, a never-executed branch, a CTE, a SubPlan, a trigger, a discarding filter, and a plain scan — then both were parsed and compared. All ten agree on node count, tree depth, loops, rows, estimates, rows removed, blocks touched, flags and insights.</div>
+    <div class="callout ok" style="margin-top:20px"><b>Works against a server this app can't reach.</b> A plan from a locked-down production box, or one a colleague sent you, analyses exactly the same as one of your own queries — no credentials, no connection, and nothing sent anywhere. Open it from the activity rail, the command palette, or the File menu; it stays available while disconnected.</div>
+    <div class="callout info" style="margin-top:14px"><b>How the text reader was checked — and what that check missed the first time.</b> Eleven query shapes are captured from a live server as <em>both</em> text and JSON, then both are parsed and compared: node count, tree depth, loops, rows, estimates, rows removed, blocks, flags, statistics and the wording of every insight must match. Run against PostgreSQL 18 alone, that check passed. Run again against PostgreSQL 15 — plain and <code class="inline">VERBOSE</code> — it failed five ways, because the first set of plans happened to contain no <code class="inline">CTE Scan</code> at the top of a tree and no <code class="inline">SubPlan</code> in a target list. One of those bugs put the bottleneck badge on the wrong node. All five are fixed and each has a test that was confirmed to fail beforehand. The honest lesson is about the check, not the parser: a suite that only sees one server's output only proves things about that server.</div>
+
+    <div class="callout warn" style="margin-top:14px"><b>A fragment is analysed, and labelled.</b> Half a plan parses perfectly well, which is the danger — the analysis looks exactly as confident as one from a whole plan while its percentages are measured against the wrong total. A paste whose top was cut off, or one that stops mid-line, is analysed anyway and marked, in terms of what it does to the numbers on screen.</div>
   </div>
 </section>
 
@@ -219,11 +227,12 @@
     <h2>Move data in and out, safely</h2>
     <div class="grid2">
       <div class="card"><h4>Import</h4><ul>
-        <li>CSV import with header mapping</li><li>Type &amp; error preview before you commit</li>
-        <li>Transaction mode with cancel support</li></ul></div>
+        <li>CSV import with header mapping</li><li>Inferred column types and a preview of the first rows, with the generated <code class="inline">CREATE TABLE</code> shown before you commit</li>
+        <li>Runs in a transaction and rolls back on failure</li>
+        <li><span class="pill plan">Planned</span> Cancelling a running import, and streaming files larger than memory</li></ul></div>
       <div class="card"><h4>Export</h4><ul>
-        <li>CSV, JSON, Markdown, clipboard</li><li>Spreadsheet-safe CSV on by default (formula-injection neutralized)</li>
-        <li>Raw-value mode when you need it; column selection</li></ul></div>
+        <li>CSV, JSON and Markdown to a file; CSV or Markdown to the clipboard</li><li>Spreadsheet-safe CSV on by default (formula-injection neutralized)</li>
+        <li>Raw-value mode when you need it</li></ul></div>
     </div>
     <div class="callout" style="margin-top:20px">Cells starting with <code class="inline">= + - @</code> (or tab/CR) are neutralized so Excel, Sheets, and LibreOffice treat them as text, not formulas. A toggle lets you opt into raw output.</div>
   </div>
@@ -239,14 +248,15 @@
       <div class="key"><span class="kbd">⌘↵</span><span class="kl">Run query</span></div>
       <div class="key"><span class="kbd">⇧⌘F</span><span class="kl">Format query</span></div>
       <div class="key"><span class="kbd">⌘T</span><span class="kl">New tab</span></div>
-      <div class="key"><span class="kbd">⌘P</span><span class="kl">Global search</span></div>
-      <div class="key"><span class="kbd">⌘/</span><span class="kl">Toggle comments</span></div>
+      <div class="key"><span class="kbd">⌘P</span><span class="kl">Global object search (connected)</span></div>
+      <div class="key"><span class="kbd">⌘C</span><span class="kl">Copy the selected cell</span></div>
       <div class="key"><span class="kbd">⌘O</span><span class="kl">Open connection</span></div>
       <div class="key"><span class="kbd">⌘B</span><span class="kl">Toggle explorer</span></div>
-      <div class="key"><span class="kbd">Esc</span><span class="kl">Cancel query</span></div>
-      <div class="key"><span class="kbd">⌘⇧H</span><span class="kl">Query history</span></div>
+      <div class="key"><span class="kbd">Esc</span><span class="kl">Close overlay, then cancel query</span></div>
+      <div class="key"><span class="kbd">⇧⌘L</span><span class="kl">Switch theme</span></div>
+      <div class="key"><span class="kbd">?</span><span class="kl">Shortcut cheatsheet</span></div>
     </div>
-    <div class="callout info" style="margin-top:22px">A command palette fronts nearly every action, so most workflows never need the mouse. Shortcuts follow platform conventions (⌘ on macOS, Ctrl elsewhere).</div>
+    <div class="callout info" style="margin-top:22px">A command palette fronts nearly every action, so most workflows never need the mouse. Shortcuts follow platform conventions (⌘ on macOS, Ctrl elsewhere). Press <code class="inline">?</code> in the app for its own cheatsheet.</div>
   </div>
 </section>
 
