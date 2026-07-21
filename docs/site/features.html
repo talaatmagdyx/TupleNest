@@ -110,7 +110,7 @@
         <li>Row estimates off by 10× or more</li>
         <li>Nodes executed very many times; nodes never executed</li>
         <li>JIT and trigger time — the work no plan node accounts for</li>
-        <li>EXPLAIN / EXPLAIN ANALYZE, plan comparison, schema diff</li>
+        <li>Plan comparison between two runs, and schema diff</li>
       </ul></div>
       <div class="card"><span class="pill plan">Planned</span><ul style="margin-top:12px">
         <li>Join/sort inspection panel</li>
@@ -118,6 +118,21 @@
         <li>Plan history across runs of the same query</li>
       </ul></div>
     </div>
+    <div class="grid2" style="margin-top:20px">
+      <div class="card"><h4>Build the EXPLAIN, don't type it</h4><ul>
+        <li>Every option the server takes, as a toggle: <code class="inline">ANALYZE</code>, <code class="inline">BUFFERS</code>, <code class="inline">VERBOSE</code>, <code class="inline">COSTS</code>, <code class="inline">TIMING</code>, <code class="inline">WAL</code>, <code class="inline">SETTINGS</code>, <code class="inline">MEMORY</code>, <code class="inline">SERIALIZE</code>, <code class="inline">GENERIC_PLAN</code></li>
+        <li>The statement it will send is shown before you send it</li>
+        <li>Output as JSON, text, YAML or XML — the tree is drawn from JSON, and the panel says so plainly when you pick another</li>
+        <li>Save the plan as JSON, text or Markdown to attach to a ticket</li>
+      </ul></div>
+      <div class="card"><h4>It refuses combinations the server would reject</h4><ul>
+        <li><code class="inline">TIMING</code>, <code class="inline">WAL</code> and <code class="inline">SERIALIZE</code> each require <code class="inline">ANALYZE</code></li>
+        <li><code class="inline">ANALYZE</code> and <code class="inline">GENERIC_PLAN</code> cannot be used together</li>
+        <li>Options newer than the server you're on are disabled and named — <code class="inline">MEMORY</code> and <code class="inline">SERIALIZE</code> need 17, <code class="inline">GENERIC_PLAN</code> 16, <code class="inline">SETTINGS</code> 12</li>
+        <li><b>And it warns before the dangerous one:</b> <code class="inline">EXPLAIN ANALYZE</code> on an <code class="inline">INSERT</code>, <code class="inline">UPDATE</code> or <code class="inline">DELETE</code> really executes it. The statement is parsed with the same literal-masking the destructive-statement guard uses, so a <code class="inline">DELETE</code> hiding inside a comment or a string doesn't trip it and a real one doesn't slip through</li>
+      </ul></div>
+    </div>
+
     <div class="callout info" style="margin-top:20px"><b>Why parallel accounting matters.</b> Under a <code class="inline">Gather</code>, PostgreSQL reports one “loop” per worker, and those workers run simultaneously. Multiplying by loops — which is the obvious reading — can charge a single node more milliseconds than the entire query took. TupleNest divides workers back out, so self-times add up to the execution time. Checked against live PostgreSQL 15 and 18 across eleven plan shapes, including a parallel aggregate, an external-merge disk sort, a hash spill, a nested loop repeating 20,000 times, a never-executed branch, and a trigger that consumed most of its statement's runtime. JIT timing is covered by unit tests only: the servers used report <code class="inline">jit=on</code> but are built without LLVM, so they never emit JIT timings.</div>
   </div>
 </section>
