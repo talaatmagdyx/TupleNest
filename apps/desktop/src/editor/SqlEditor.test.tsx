@@ -588,3 +588,38 @@ describe("SqlEditor — find and replace", () => {
     expect(document.activeElement).toBe(screen.getByRole("textbox", { name: /sql editor/i }));
   });
 });
+
+describe("SqlEditor — the editor shortcuts while the completion popup is open", () => {
+  /* Found by hand: in the packaged app, pressing ⌘F did nothing while the
+     suggestion list was showing. These say whether that is real. */
+  const typeInto = async (text: string) => {
+    const onChange = vi.fn();
+    const view = render(<SqlEditor {...base} sql="" onChange={onChange} />);
+    let cur = "";
+    for (const ch of text) {
+      await userEvent.type(ta(), ch);
+      const calls = onChange.mock.calls;
+      cur = calls.length ? (calls[calls.length - 1][0] as string) : cur;
+      view.rerender(<SqlEditor {...base} sql={cur} onChange={onChange} />);
+    }
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    return { onChange, cur, view };
+  };
+
+  it("opens find even when the suggestion list is showing", async () => {
+    const { container } = (await typeInto("select * from us")).view;
+    expect(container.querySelector(".cmp-pop"), "popup should be open").not.toBeNull();
+    await userEvent.keyboard("{Meta>}f{/Meta}");
+    expect(screen.queryByLabelText("Find"), "find bar should open over the popup").not.toBeNull();
+  });
+
+  it("toggles a comment even when the suggestion list is showing", async () => {
+    const { onChange, view } = await typeInto("select * from us");
+    expect(view.container.querySelector(".cmp-pop")).not.toBeNull();
+    onChange.mockClear();
+    await userEvent.keyboard("{Meta>}/{/Meta}");
+    expect(onChange).toHaveBeenCalledWith("-- select * from us");
+  });
+});
