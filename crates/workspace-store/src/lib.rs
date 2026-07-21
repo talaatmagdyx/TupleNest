@@ -742,7 +742,9 @@ mod tests {
         // Sanity: the column really is absent before the upgrade, so the
         // assertions below are about the migration and not about nothing.
         let store = Store { conn };
-        assert!(!store.column_exists("connections", "statement_timeout_ms").unwrap());
+        assert!(!store
+            .column_exists("connections", "statement_timeout_ms")
+            .unwrap());
 
         let store = Store::init(store.conn).unwrap();
         assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
@@ -762,7 +764,9 @@ mod tests {
         let path = dir.path().join("tuplenest.db");
         {
             let store = Store::open(&path).unwrap();
-            store.connection_upsert(&sample_connection("c1", "One")).unwrap();
+            store
+                .connection_upsert(&sample_connection("c1", "One"))
+                .unwrap();
         }
         let store = Store::open(&path).unwrap();
         assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
@@ -776,7 +780,11 @@ mod tests {
         rec.statement_timeout_ms = 30_000;
         store.connection_upsert(&rec).unwrap();
         assert_eq!(
-            store.connection_get("c1").unwrap().unwrap().statement_timeout_ms,
+            store
+                .connection_get("c1")
+                .unwrap()
+                .unwrap()
+                .statement_timeout_ms,
             30_000
         );
 
@@ -785,7 +793,11 @@ mod tests {
         rec.statement_timeout_ms = 0;
         store.connection_upsert(&rec).unwrap();
         assert_eq!(
-            store.connection_get("c1").unwrap().unwrap().statement_timeout_ms,
+            store
+                .connection_get("c1")
+                .unwrap()
+                .unwrap()
+                .statement_timeout_ms,
             0
         );
     }

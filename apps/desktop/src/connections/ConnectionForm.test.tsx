@@ -260,6 +260,54 @@ describe("ConnectionForm — identifier fields resist OS text substitution", () 
   });
 });
 
+describe("ConnectionForm — query timeout", () => {
+  const box = () => screen.getByLabelText(/query timeout/i);
+
+  it("shows nothing rather than a 0 when there is no limit", () => {
+    // A literal 0 in the box reads like a setting; an empty box with a
+    // "none" placeholder reads like the absence of one.
+    render(<ConnectionForm {...base} statementTimeoutSec={0} />);
+    expect((box() as HTMLInputElement).value).toBe("");
+    expect(screen.getByText(/means no limit/i)).toBeInTheDocument();
+  });
+
+  it("says what the server will do once a limit is set", () => {
+    render(<ConnectionForm {...base} statementTimeoutSec={30} />);
+    expect((box() as HTMLInputElement).value).toBe("30");
+    expect(screen.getByText(/cancels any statement still running/i)).toBeInTheDocument();
+  });
+
+  it("reports whole seconds as the user types", async () => {
+    // The field is controlled and `base` holds the value at 0, so each
+    // keystroke starts from an empty box — assert per keystroke rather than
+    // pretending the digits accumulate.
+    const onStatementTimeoutSec = vi.fn();
+    render(<ConnectionForm {...base} onStatementTimeoutSec={onStatementTimeoutSec} />);
+    await userEvent.type(box(), "9");
+    expect(onStatementTimeoutSec).toHaveBeenLastCalledWith(9);
+  });
+
+  it("rounds a fractional entry to whole seconds", async () => {
+    const onStatementTimeoutSec = vi.fn();
+    render(<ConnectionForm {...base} statementTimeoutSec={0} onStatementTimeoutSec={onStatementTimeoutSec} />);
+    await userEvent.type(box(), "2.7");
+    for (const [v] of onStatementTimeoutSec.mock.calls) {
+      expect(Number.isInteger(v)).toBe(true);
+    }
+  });
+
+  it("never reports a negative timeout", async () => {
+    // `SET statement_timeout = -1` is an error: it would break the connection
+    // rather than the query.
+    const onStatementTimeoutSec = vi.fn();
+    render(<ConnectionForm {...base} onStatementTimeoutSec={onStatementTimeoutSec} />);
+    await userEvent.type(box(), "-5");
+    for (const call of onStatementTimeoutSec.mock.calls) {
+      expect(call[0]).toBeGreaterThanOrEqual(0);
+    }
+  });
+});
+
 /* Note for a follow-up: every `<label>` in this form is a sibling of its
    input rather than tied to it with htmlFor/id. Clicking a label does not
    focus its field, and a screen reader announces the inputs unlabelled. The
