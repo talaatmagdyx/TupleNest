@@ -23,6 +23,19 @@ versions follow [Semantic Versioning](https://semver.org/).
   webview is wedged, or you have walked away — which a client-side timeout
   cannot do.
 
+### Changed
+
+- **The keyboard shortcuts are described in one place now.** The key handler,
+  the in-app cheatsheet and the website each kept their own list, and all three
+  disagreed: the app bound ⌘⇧L, ⌘O, ⌘B and ⌘P while the cheatsheet — the screen
+  whose whole job is saying which keys exist — mentioned none of them, and the
+  website listed two that were never bound to anything. Press `?` and you now
+  see all eleven, with the conditions attached to the two that have them.
+
+  A test reads the handler's source and fails if it finds a key comparison of
+  its own, because the failure that matters is not a wrong row in the table —
+  it is a binding added somewhere else that the cheatsheet never hears about.
+
 ## [0.1.0-beta.5] — 2026-07-21
 
 The plan reader tells the truth about what it was given.
