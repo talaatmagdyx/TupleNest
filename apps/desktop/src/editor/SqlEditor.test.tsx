@@ -556,6 +556,30 @@ describe("SqlEditor — find and replace", () => {
     expect(screen.getByText("1 of 2")).toBeInTheDocument();
   });
 
+  it("goes backwards with the up arrow, wrapping to the end", async () => {
+    await openFind("a a a");
+    await userEvent.type(screen.getByLabelText("Find"), "a");
+    await userEvent.click(screen.getByLabelText("Previous match"));
+    expect(screen.getByText("3 of 3")).toBeInTheDocument();
+  });
+
+  it("closes with the button and leaves the caret on the match you stopped at", async () => {
+    await openFind("select a from t");
+    await userEvent.type(screen.getByLabelText("Find"), "from");
+    await userEvent.click(screen.getByLabelText("Close find"));
+    expect(screen.queryByLabelText("Find")).not.toBeInTheDocument();
+    const ta = screen.getByRole("textbox", { name: /sql editor/i }) as HTMLTextAreaElement;
+    expect(ta.value.slice(ta.selectionStart, ta.selectionEnd)).toBe("from");
+  });
+
+  it("does nothing on the arrows when there is nothing to step through", async () => {
+    await openFind("select 1");
+    // Disabled rather than silently doing nothing: a button that looks live
+    // and is not is worse than one that admits it.
+    expect(screen.getByLabelText("Next match")).toBeDisabled();
+    expect(screen.getByLabelText("Previous match")).toBeDisabled();
+  });
+
   it("closes on Escape and gives focus back to the editor", async () => {
     await openFind("select 1");
     await userEvent.type(screen.getByLabelText("Find"), "1");
