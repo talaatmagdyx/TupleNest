@@ -71,6 +71,15 @@ describe("QueryPanel — toolbar", () => {
     expect(onRun).toHaveBeenCalled();
   });
 
+  it("lets you write in the editor while disconnected", () => {
+    // Drafting, ⌘F and ⌘/ are pre-connection work. The editor used to be
+    // disabled until a connection was up, which put two shipped features out
+    // of reach in exactly the state you would use them.
+    render(<QueryPanel {...base} connected={false} />);
+    const editor = screen.getByRole("textbox", { name: /sql editor/i });
+    expect(editor).not.toBeDisabled();
+  });
+
   it("cannot run while disconnected or already running", () => {
     const { rerender } = render(<QueryPanel {...base} connected={false} />);
     expect(screen.getByRole("button", { name: /Run/ })).toBeDisabled();

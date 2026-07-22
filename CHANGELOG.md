@@ -3,6 +3,17 @@
 Notable changes to TupleNest. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **The SQL editor is usable before you connect.** It was disabled until a
+  connection was up, which meant drafting a query, searching it with ⌘F,
+  commenting it with ⌘/ or formatting it were all impossible in exactly the
+  state where you would do them — including two features shipped one release
+  earlier. Only running a query needs a server now; the Run button and the
+  "Not connected" note already say so.
+
 ## [0.1.0-beta.6] — 2026-07-21
 
 The editor grows the two things it was missing, and a safety feature that

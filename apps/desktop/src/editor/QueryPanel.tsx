@@ -155,7 +155,13 @@ export default function QueryPanel(p: Props) {
       <div className="editor-zone">
         <SqlEditor
           sql={p.sql}
-          disabled={!p.connected}
+          /* Editable whether or not a connection is up. Drafting a query,
+             searching it (⌘F), commenting it (⌘/) and formatting it are all
+             things you do *before* you connect — and disabling the editor made
+             two of those, shipped in beta.6, unreachable in exactly the state
+             where you would reach for them. Running is what needs a server, and
+             the Run button and the "Not connected" note already say so. */
+          disabled={false}
           height={p.editorH}
           onChange={p.onSqlChange}
           catalog={p.catalog}
