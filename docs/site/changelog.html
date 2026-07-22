@@ -45,7 +45,32 @@
     <div class="kicker">Current release</div>
     <div class="release" style="border-color:var(--line2)">
       <div class="rhead">
-        <h3>v0.1.0-beta.6</h3><span class="pill beta">Public Beta</span><span class="date">July 2026</span>
+        <h3>v0.1.0-beta.7</h3><span class="pill beta">Public Beta</span><span class="date">July 2026</span>
+      </div>
+      <p style="color:var(--dim);margin-bottom:6px">The editor works before you connect, and two controls a screen reader could not name now have names.</p>
+
+      <h4 class="fix">Fixed</h4>
+      <ul>
+        <li><b>The SQL editor is usable before you connect.</b> It was disabled until a connection was up, which made drafting a query, searching it with <code class="inline">⌘F</code>, commenting it with <code class="inline">⌘/</code> and formatting it all impossible in exactly the state where you would do them — two of those shipped in the release before this one. Only running a query needs a server now; the Run button and the "Not connected" note already say so.</li>
+        <li><b>Two controls a screen reader read as unlabelled now have names.</b> The command palette's search box announced only as "text box", and each query-parameter field (<code class="inline">$1</code>, <code class="inline">$2</code>, …) had a visible label that was not tied to it. Both fixed; an audit confirmed these were the only two controls in the app lacking an accessible name, and a stale note claiming the connection form was unlabelled — it is fully labelled — was corrected.</li>
+      </ul>
+
+      <div class="cta" style="margin-top:20px">
+        <a class="btn sm primary" href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.7">GitHub release ↗</a>
+        <a class="btn sm ghost" href="download.html">Download</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HISTORY -->
+<section class="tight">
+  <div class="wrap">
+    <div class="kicker">History</div>
+
+    <div class="release">
+      <div class="rhead">
+        <h3>v0.1.0-beta.6</h3><span class="pill beta">Beta</span><span class="date">July 2026</span>
       </div>
       <p style="color:var(--dim);margin-bottom:6px">The editor grows the two things it was missing, and a safety feature that existed but could not be switched on.</p>
 
@@ -61,18 +86,8 @@
         <li><b>The keyboard shortcuts are described in one place.</b> The key handler, the in-app cheatsheet and this website each kept their own list, and all three disagreed: the app bound <code class="inline">⌘⇧L</code>, <code class="inline">⌘O</code>, <code class="inline">⌘B</code> and <code class="inline">⌘P</code> while the cheatsheet mentioned none of them, and the site listed two that were never bound to anything. Press <code class="inline">?</code> and you now see all of them. A test reads the handler's source and fails if it finds a key comparison of its own, because the failure that matters is a binding added somewhere the cheatsheet never hears about.</li>
       </ul>
 
-      <div class="cta" style="margin-top:20px">
-        <a class="btn sm primary" href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.6">GitHub release ↗</a>
-        <a class="btn sm ghost" href="download.html">Download</a>
-      </div>
+      <p style="margin-top:14px"><a href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.6">GitHub release ↗</a></p>
     </div>
-  </div>
-</section>
-
-<!-- HISTORY -->
-<section class="tight">
-  <div class="wrap">
-    <div class="kicker">History</div>
 
     <div class="release">
       <div class="rhead">
