@@ -78,12 +78,21 @@ describe("ConnectionForm — shape", () => {
   });
 
   it("reports edits to each field", async () => {
-    // The labels are not tied to their inputs (no htmlFor/id), so they cannot
-    // be used as queries — see the note at the bottom of this file.
+    // Reached by its label, not by position — which only works because the
+    // label is tied to the input, and is the point of the association.
     const onHost = vi.fn();
     render(<ConnectionForm {...base} host="" onHost={onHost} />);
-    await userEvent.type(screen.getAllByRole("textbox")[1], "d");
+    await userEvent.type(screen.getByLabelText("Host"), "d");
     expect(onHost).toHaveBeenCalledWith("d");
+  });
+
+  it("gives every field a label its input is tied to", () => {
+    // Regression guard for the accessibility pass: a screen reader should read
+    // each of these by name, and clicking the label should focus the field.
+    render(<ConnectionForm {...base} />);
+    for (const name of ["Host", "Port", "Database", "Username", "Password"]) {
+      expect(screen.getByLabelText(name), name).toBeInTheDocument();
+    }
   });
 
   it("closes and saves", async () => {
@@ -308,9 +317,3 @@ describe("ConnectionForm — query timeout", () => {
   });
 });
 
-/* Note for a follow-up: every `<label>` in this form is a sibling of its
-   input rather than tied to it with htmlFor/id. Clicking a label does not
-   focus its field, and a screen reader announces the inputs unlabelled. The
-   tests above have to select fields positionally because of it, which is
-   exactly the smell. It is the app-wide `.field` pattern, so fixing it is a
-   broader change than this file. */

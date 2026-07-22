@@ -179,6 +179,11 @@ describe("Palette", () => {
     expect(screen.getByPlaceholderText(/Type a command/)).toHaveFocus();
   });
 
+  it("names its input, so a screen reader does not just say \"text box\"", () => {
+    render(<Palette {...base} />);
+    expect(screen.getByLabelText("Search commands and tables")).toBeInTheDocument();
+  });
+
   it("lists everything with no query", () => {
     render(<Palette {...base} />);
     expect(screen.getByText("Open connection")).toBeInTheDocument();
@@ -307,6 +312,14 @@ describe("ParamPrompt", () => {
     onRun: vi.fn(),
     onCancel: vi.fn(),
   };
+
+  it("ties each value box to its $n label", () => {
+    // The label was a sibling with no htmlFor: the field read as unlabelled
+    // and clicking the label did not focus it.
+    render(<ParamPrompt {...base} count={2} values={["", ""]} />);
+    expect(screen.getByLabelText("$1")).toBeInTheDocument();
+    expect(screen.getByLabelText("$2")).toBeInTheDocument();
+  });
 
   it("renders one field per placeholder, labelled $n", () => {
     render(<ParamPrompt {...base} />);

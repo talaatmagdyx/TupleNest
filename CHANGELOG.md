@@ -7,6 +7,14 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Two controls a screen reader read as unlabelled now have names.** The
+  command palette's search box announced only as "text box", and each query
+  parameter field (`$1`, `$2`, …) had a visible label that was not tied to it,
+  so a screen reader missed it and clicking the label did not focus the field.
+  Both are fixed; an audit confirmed these were the only two controls in the
+  app lacking an accessible name, and a stale note claiming the connection form
+  was unlabelled — it is fully labelled — was corrected.
+
 - **The SQL editor is usable before you connect.** It was disabled until a
   connection was up, which meant drafting a query, searching it with ⌘F,
   commenting it with ⌘/ or formatting it were all impossible in exactly the

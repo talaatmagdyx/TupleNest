@@ -172,6 +172,9 @@ export function Palette(p: {
           <span className="muted">⌕</span>
           <input
             ref={inputRef}
+            // The ⌕ glyph beside it is decorative, so without this a screen
+            // reader announces the palette's only control as "text box".
+            aria-label="Search commands and tables"
             value={p.q}
             placeholder="Type a command or search tables…"
             onChange={(e) => {
@@ -266,8 +269,11 @@ export function ParamPrompt(p: {
         </p>
         {Array.from({ length: p.count }).map((_, i) => (
           <div key={i} className="field">
-            <label>${i + 1}</label>
+            {/* The label was a sibling with no htmlFor, so a screen reader read
+                the box as unlabelled and clicking `$1` did not focus it. */}
+            <label htmlFor={`param-${i}`}>${i + 1}</label>
             <input
+              id={`param-${i}`}
               className="mono"
               autoFocus={i === 0}
               value={p.values[i] ?? ""}
