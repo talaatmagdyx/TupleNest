@@ -1,4 +1,6 @@
+import { useState } from "react";
 import type { Insight, NodeFlag } from "../lib/explain";
+import type { IndexSuggestion } from "../lib/index-advisor";
 
 /** One drawable plan node. The richer fields are optional so a plain fixture —
  *  or a plan from a server that reported less — still types. */
@@ -76,6 +78,9 @@ type Props = {
   suggestion: string | null;
   /** Richer, ordered observations. When present, shown instead of `suggestion`. */
   insights?: Insight[];
+  /** Runnable CREATE INDEX statements the plan implies, shown with a copy
+   *  button. Independent of `insights` — the two can appear together. */
+  indexSuggestions?: IndexSuggestion[];
   error: string | null;
   busy?: boolean;
   /** A format we cannot draw as a tree — show the server's own output instead. */
@@ -185,6 +190,54 @@ export default function PlanView(p: Props) {
             </div>
           )
         )}
+        {p.indexSuggestions && p.indexSuggestions.length > 0 && (
+          <IndexSuggestions items={p.indexSuggestions} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The runnable index statements a plan implies, each with a copy button.
+ *
+ * The heading is deliberately hedged — "candidate", "verify with EXPLAIN" —
+ * because the advisor reads a filter's columns, not the table's data
+ * distribution: an index on a column that is 90% one value helps nothing, and
+ * only running EXPLAIN after building it tells you the planner will use it. The
+ * statement is a strong starting point, not a verdict.
+ */
+function IndexSuggestions({ items }: { items: IndexSuggestion[] }) {
+  const [copied, setCopied] = useState<number | null>(null);
+
+  const copy = (ddl: string, i: number) => {
+    // jsdom and locked-down webviews can both reject clipboard writes; a failed
+    // copy should do nothing visible rather than throw into the render.
+    void navigator.clipboard?.writeText(ddl).then(
+      () => {
+        setCopied(i);
+        setTimeout(() => setCopied((c) => (c === i ? null : c)), 1500);
+      },
+      () => {},
+    );
+  };
+
+  return (
+    <div className="ex-indexes">
+      <div className="sect-label">Candidate indexes</div>
+      {items.map((s, i) => (
+        <div key={s.ddl} className="idx-card">
+          <div className="idx-row">
+            <code className="idx-ddl">{s.ddl}</code>
+            <button className="btn xs" onClick={() => copy(s.ddl, i)} title="Copy this statement">
+              {copied === i ? "Copied" : "Copy"}
+            </button>
+          </div>
+          <div className="idx-why">{s.reason}</div>
+        </div>
+      ))}
+      <div className="idx-note muted">
+        Candidates from the plan's filters — verify each helps by re-running EXPLAIN after building it.
       </div>
     </div>
   );

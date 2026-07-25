@@ -1846,6 +1846,7 @@ export default function App() {
           stats={explain.stats}
           suggestion={explain.suggestion}
           insights={explain.insights}
+          indexSuggestions={explain.indexSuggestions}
           error={explain.error}
           busy={explainBusy}
           onOptions={setExplainOpts}

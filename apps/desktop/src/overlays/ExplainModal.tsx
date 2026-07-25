@@ -10,6 +10,7 @@ import {
   type ExplainOptions,
   type Insight,
 } from "../lib/explain";
+import type { IndexSuggestion } from "../lib/index-advisor";
 
 /** Re-exported so callers keep importing the node shape from here. The drawing
  *  itself lives in PlanView, which the paste-a-plan window shares. */
@@ -32,6 +33,8 @@ type Props = {
   suggestion: string | null;
   /** Richer, ordered observations. When present, shown instead of `suggestion`. */
   insights?: Insight[];
+  /** Runnable CREATE INDEX statements the plan implies. */
+  indexSuggestions?: IndexSuggestion[];
   error: string | null;
   busy: boolean;
   onOptions: (o: ExplainOptions) => void;
@@ -161,6 +164,7 @@ export default function ExplainModal(p: Props) {
           stats={p.stats}
           suggestion={p.suggestion}
           insights={p.insights}
+          indexSuggestions={p.indexSuggestions}
           error={p.error}
           busy={p.busy}
           rawOnly={rawOnly}

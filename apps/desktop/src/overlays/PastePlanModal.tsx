@@ -204,6 +204,7 @@ export default function PastePlanModal(p: Props) {
             stats={result.plan.stats}
             suggestion={result.plan.suggestion}
             insights={result.plan.insights}
+            indexSuggestions={result.plan.indexSuggestions}
             error={null}
             maxHeight={editing ? "34vh" : "52vh"}
           />

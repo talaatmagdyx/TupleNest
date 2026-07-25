@@ -12,6 +12,7 @@
  */
 
 import { maskLiterals } from "./complete";
+import { suggestIndexes, type IndexSuggestion } from "./index-advisor";
 import { cellText, mdCell } from "./text";
 
 export type ExplainFormat = "json" | "text" | "yaml" | "xml";
@@ -234,6 +235,10 @@ export type ParsedPlan = {
   suggestion: string | null;
   /** The richer, ordered set of observations shown under the plan. */
   insights: Insight[];
+  /** Concrete CREATE INDEX statements the plan's scans imply — the actionable
+   *  form of the seq-scan and wasteful-filter insights. Empty when nothing in
+   *  the plan warrants one, or when the advisor could not be sure. */
+  indexSuggestions: IndexSuggestion[];
 };
 
 /** An estimate this many times off (in either direction) is worth flagging —
@@ -420,7 +425,8 @@ function nodeDetail(n: RawPlan): string {
 export function parsePlan(parsed: unknown): ParsedPlan {
   const root = (Array.isArray(parsed) ? parsed[0] : parsed) as Record<string, unknown> | null;
   const plan = root?.["Plan"] as RawPlan | undefined;
-  if (!plan || typeof plan !== "object") return { nodes: [], stats: [], suggestion: null, insights: [] };
+  if (!plan || typeof plan !== "object")
+    return { nodes: [], stats: [], suggestion: null, insights: [], indexSuggestions: [] };
 
   // Guard the divisor: a plan with a zero total (a trivial statement, or COSTS
   // OFF with no ANALYZE) would otherwise make every pct NaN or Infinity.
@@ -554,7 +560,15 @@ export function parsePlan(parsed: unknown): ParsedPlan {
     : null;
 
   const execMs = attrNum(root as RawPlan, "Execution Time") ?? execTotal;
-  return { nodes, stats, suggestion, insights: buildInsights(nodes, hot ?? null, jitMs, trigMs, execMs) };
+  return {
+    nodes,
+    stats,
+    suggestion,
+    insights: buildInsights(nodes, hot ?? null, jitMs, trigMs, execMs),
+    // Reads the same raw payload for the columns behind each filter. Kept
+    // separate from `insights` because these are runnable statements, not prose.
+    indexSuggestions: suggestIndexes(parsed),
+  };
 }
 
 /** Total JIT compilation time, when the server compiled anything. */

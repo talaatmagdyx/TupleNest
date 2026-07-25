@@ -3,6 +3,22 @@
 Notable changes to TupleNest. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **The plan analyzer now writes the index, not just the advice.** When a plan
+  scans a table sequentially to apply a filter, or an already-indexed scan
+  discards a lot of rows to a residual filter, the analyzer reads that filter's
+  columns and produces a runnable `CREATE INDEX` statement with a copy button —
+  equality columns first, then a single range column, the one ordering a btree
+  can actually seek on. It stays silent where a plain composite index is the
+  wrong answer rather than guessing: an `OR` between predicates, a cast on the
+  column, a join condition, or an inequality. The heading is hedged on purpose —
+  these are candidates to verify by re-running EXPLAIN after building them, not
+  a promise the planner will use them, because the advisor reads the filter, not
+  the table's data distribution.
+
 ## [0.1.0-beta.7] — 2026-07-21
 
 The editor works before you connect, and two controls a screen reader could

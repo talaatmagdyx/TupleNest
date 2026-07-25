@@ -12,6 +12,7 @@ import {
   type Insight,
   type ParsedPlanNode,
 } from "../lib/explain";
+import type { IndexSuggestion } from "../lib/index-advisor";
 
 /** The plan currently on screen, and the statement that produced it. */
 export type ExplainState = {
@@ -25,6 +26,8 @@ export type ExplainState = {
   suggestion: string | null;
   /** The richer, ordered observations shown under the plan. */
   insights: Insight[];
+  /** Runnable CREATE INDEX statements the plan's scans imply. */
+  indexSuggestions: IndexSuggestion[];
   error: string | null;
   raw: string;
   /** The options that produced *this* plan, as opposed to the ones now set in
@@ -100,6 +103,7 @@ export function useExplain(serverMajor?: number): Explain {
         stats: x?.stats ?? [],
         suggestion: null,
         insights: x?.insights ?? [],
+        indexSuggestions: x?.indexSuggestions ?? [],
         error: null,
         raw: x?.raw ?? "",
         ranOpts: x?.ranOpts ?? o,
@@ -115,7 +119,9 @@ export function useExplain(serverMajor?: number): Explain {
 
         // Only FORMAT JSON can be walked into a tree; the rest are shown raw.
         if (o.format !== "json") {
-          setExplain((x) => (x ? { ...x, raw, nodes: [], stats: [], insights: [], error: null, ranOpts: o } : x));
+          setExplain((x) =>
+            x ? { ...x, raw, nodes: [], stats: [], insights: [], indexSuggestions: [], error: null, ranOpts: o } : x,
+          );
           return { kind: "ok", root: null };
         }
 
@@ -124,8 +130,20 @@ export function useExplain(serverMajor?: number): Explain {
         // is documented to be an array of plan documents.
         const parsed: unknown = typeof cell === "string" ? (JSON.parse(cell) as unknown) : cell;
         const root = (Array.isArray(parsed) ? parsed[0] : parsed) as Record<string, unknown>;
-        const { nodes, stats, suggestion, insights } = parsePlan(parsed);
-        setExplain({ title, sql, statement, nodes, stats, suggestion, insights, error: null, raw, ranOpts: o });
+        const { nodes, stats, suggestion, insights, indexSuggestions } = parsePlan(parsed);
+        setExplain({
+          title,
+          sql,
+          statement,
+          nodes,
+          stats,
+          suggestion,
+          insights,
+          indexSuggestions,
+          error: null,
+          raw,
+          ranOpts: o,
+        });
         return { kind: "ok", root };
       } catch (e) {
         const message = String(e);
