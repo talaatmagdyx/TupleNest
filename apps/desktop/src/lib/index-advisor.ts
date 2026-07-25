@@ -198,6 +198,111 @@ export function extractPredicates(raw: string): Pred[] | null {
   return preds;
 }
 
+/** Operators that put a value on the right; shared by the predicate and
+ *  expression scanners. */
+const OP = String.raw`(?:>=|<=|<>|!=|=|>|<)`;
+
+/** Function names that are really SQL keywords wearing parentheses. A btree
+ *  expression index over `not (…)` or `in (…)` is nonsense, so they are never
+ *  read as a function-on-a-column. */
+const NOT_A_FUNCTION = new Set([
+  "not", "and", "or", "in", "exists", "case", "when", "then", "else", "end",
+  "between", "like", "ilike", "similar", "all", "any", "some",
+]);
+
+/**
+ * Expression predicates a *plain* column index cannot serve — a function on a
+ * column (`lower(email)`) or a cast (`(created_at)::date`). Each returned string
+ * is the expression text exactly as the plan wrote it, ready to drop inside the
+ * double parens an expression index needs: `CREATE INDEX ON t ((expr))`.
+ *
+ * The text is preserved verbatim on purpose. PostgreSQL uses an expression
+ * index only when the indexed expression matches the query's character for
+ * character after its own normalisation — reformatting it, or losing a literal
+ * argument like the `'day'` in `date_trunc('day', ts)`, yields an index the
+ * planner silently ignores. So literals are masked only to *find* structure,
+ * never to build the suggestion.
+ *
+ * Conservative like the column path: nothing when the filter contains `OR`,
+ * only expressions over exactly one column, and only against a value (not
+ * another column).
+ */
+export function extractExpressionIndexes(raw: string): string[] {
+  const masked = raw.replace(/'(?:[^']|'')*'/g, "§");
+  if (/\bor\b/i.test(masked)) return [];
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (expr: string) => {
+    const e = expr.trim();
+    if (e && !seen.has(e)) {
+      seen.add(e);
+      out.push(e);
+    }
+  };
+
+  // A cast on a column: `(col)::type`, `col::type`, `t.col::type`, with an
+  // optional type modifier `(n[,m])` and array markers. The column part is
+  // matched as a balanced pair — either `(col)` or a bare `col`, never a lone
+  // `(col` — so the filter's own wrapping parenthesis is not swept into the
+  // expression.
+  const colTarget = String.raw`(?:\(\s*(?:${IDENT}\.)?${IDENT}\s*\)|(?:${IDENT}\.)?${IDENT})`;
+  const castExpr = String.raw`${colTarget}::\s*[a-z_][a-z0-9_ ]*(?:\(\s*\d+(?:\s*,\s*\d+)?\s*\))?(?:\s*\[\s*\])*`;
+  const castRe = new RegExp(String.raw`(${castExpr})\s*${OP}\s*(\S+)`, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = castRe.exec(raw)) !== null) {
+    if (!isColumnReference(m[2])) add(m[1]);
+  }
+
+  // A function call whose argument list references exactly one column. `[^()]*`
+  // keeps the match to a single, un-nested call — enough for the common
+  // `lower(col)` / `date_trunc('day', col)` cases without trying to parse
+  // arbitrary nesting.
+  const fnRe = new RegExp(String.raw`([a-z_][a-z0-9_]*\s*\([^()]*\))\s*${OP}\s*(\S+)`, "gi");
+  while ((m = fnRe.exec(raw)) !== null) {
+    const expr = m[1];
+    const name = (/^[a-z_][a-z0-9_]*/.exec(expr)?.[0] ?? "").toLowerCase();
+    if (NOT_A_FUNCTION.has(name)) continue;
+    if (isColumnReference(m[2])) continue;
+    if (exprColumnCount(expr) !== 1) continue;
+    add(expr);
+  }
+
+  return out;
+}
+
+/** How many distinct columns a function-call expression references. Literals
+ *  are masked, and numbers, keywords and the function name never count — so
+ *  `lower(email)` is 1, `date_trunc('day', ts)` is 1, `coalesce(a, b)` is 2,
+ *  and a type modifier like `numeric(10,2)` is 0. Used to hold expression-index
+ *  suggestions to the unambiguous single-column case. */
+function exprColumnCount(fnCall: string): number {
+  const open = fnCall.indexOf("(");
+  const args = fnCall.slice(open + 1, fnCall.lastIndexOf(")"));
+  // Mask literals, then strip casts, so the *type* name in `'day'::text` is not
+  // miscounted as a column. Bounded by the comma/end of each argument.
+  const masked = args
+    .replace(/'(?:[^']|'')*'/g, "§")
+    .replace(/::\s*"?[a-z_][a-z0-9_ ]*"?(\s*\(\s*\d+(?:\s*,\s*\d+)?\s*\))?(\s*\[\s*\])*/gi, "");
+  const cols = new Set<string>();
+  // Match qualified references as one token so `t.email` counts as a single
+  // column, not two.
+  const idRe = new RegExp(`${IDENT}(?:\\.${IDENT})*`, "g");
+  let m: RegExpExecArray | null;
+  while ((m = idRe.exec(masked)) !== null) {
+    const tok = m[0];
+    if (
+      /^(true|false|null|current_date|current_timestamp|current_time|localtime|localtimestamp|interval|distinct)$/i.test(
+        tok,
+      )
+    ) {
+      continue;
+    }
+    cols.add(bareColumn(tok).toLowerCase());
+  }
+  return cols.size;
+}
+
 /** True when `col` appears cast in the (literal-masked) source, i.e. followed
  *  by `::`. A qualified `t.col::date` and a parenthesised `(col)::date` both
  *  count. */
@@ -260,6 +365,13 @@ function reasonFor(nodeType: string, table: string, rowsRemoved: number | null):
   return `${nodeType} on ${table} applies a residual filter that discards ${removed} rows the index did not narrow.`;
 }
 
+function reasonForExpr(nodeType: string, table: string, expr: string): string {
+  if (/^seq scan$/i.test(nodeType)) {
+    return `Seq Scan on ${table} filters on ${expr}; a plain column index cannot serve an expression — an expression index can.`;
+  }
+  return `${nodeType} on ${table} applies a residual filter on ${expr}; only an expression index can serve it.`;
+}
+
 /**
  * Walk a raw FORMAT JSON plan and return the index statements its scans imply.
  *
@@ -274,7 +386,14 @@ export function suggestIndexes(parsed: unknown): IndexSuggestion[] {
   if (!plan || typeof plan !== "object") return [];
 
   const out: IndexSuggestion[] = [];
-  const seen = new Set<string>(); // dedupe identical table+columns across nodes
+  const seen = new Set<string>(); // dedupe identical statements across nodes, by DDL
+
+  const emit = (s: IndexSuggestion) => {
+    if (!seen.has(s.ddl)) {
+      seen.add(s.ddl);
+      out.push(s);
+    }
+  };
 
   const walk = (n: RawPlan) => {
     const nodeType = attrText(n, "Node Type") ?? "";
@@ -284,24 +403,31 @@ export function suggestIndexes(parsed: unknown): IndexSuggestion[] {
     if (SCAN_WITH_FILTER.test(nodeType) && relation && filter) {
       const rowsRemoved = attrNum(n, "Rows Removed by Filter");
       if (filterWorthIndexing(nodeType, rowsRemoved)) {
+        const table = qualify(attrText(n, "Schema"), relation);
+
+        // Plain columns → one composite btree.
         const preds = extractPredicates(filter);
         if (preds) {
           const columns = orderColumns(preds);
           if (columns.length > 0) {
-            const schema = attrText(n, "Schema");
-            const table = qualify(schema, relation);
             const cols = columns.map(quoteIdent).join(", ");
-            const key = `${table}(${cols})`;
-            if (!seen.has(key)) {
-              seen.add(key);
-              out.push({
-                table,
-                columns,
-                ddl: `CREATE INDEX ON ${table} (${cols});`,
-                reason: reasonFor(nodeType, relation, rowsRemoved),
-              });
-            }
+            emit({
+              table,
+              columns,
+              ddl: `CREATE INDEX ON ${table} (${cols});`,
+              reason: reasonFor(nodeType, relation, rowsRemoved),
+            });
           }
+        }
+
+        // Function/cast expressions → one expression index each.
+        for (const expr of extractExpressionIndexes(filter)) {
+          emit({
+            table,
+            columns: [expr],
+            ddl: `CREATE INDEX ON ${table} ((${expr}));`,
+            reason: reasonForExpr(nodeType, relation, expr),
+          });
         }
       }
     }

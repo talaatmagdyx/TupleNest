@@ -19,6 +19,15 @@ versions follow [Semantic Versioning](https://semver.org/).
   a promise the planner will use them, because the advisor reads the filter, not
   the table's data distribution.
 
+- **Expression indexes for filters a plain column index can't serve.** When the
+  filter tests a function of a column (`lower(email) = …`) or a cast
+  (`(created_at)::date = …`), the advisor now emits the matching
+  `CREATE INDEX ON t ((expression))`, preserving the expression exactly — down
+  to a literal argument like the `'day'` in `date_trunc('day', ts)` — because
+  the planner uses an expression index only when it matches the query verbatim.
+  It stays conservative: only single-column expressions, only against a value,
+  and nothing across an `OR`.
+
 ## [0.1.0-beta.7] — 2026-07-21
 
 The editor works before you connect, and two controls a screen reader could

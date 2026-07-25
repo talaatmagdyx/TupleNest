@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { extractPredicates, suggestIndexes, type IndexSuggestion } from "./index-advisor";
+import {
+  extractPredicates,
+  extractExpressionIndexes,
+  suggestIndexes,
+  type IndexSuggestion,
+} from "./index-advisor";
 
 /** All plans below are hand-authored, not captured from a live database — the
  *  filter strings are written to exercise the parser's rules, not to mirror any
@@ -215,5 +220,105 @@ describe("suggestIndexes — the statement a plan implies", () => {
   it("accepts the bare array form the server returns", () => {
     const s = suggestIndexes([{ Plan: { "Node Type": "Seq Scan", "Relation Name": "orders", Filter: "(status = 'active'::text)" } }]);
     expect(ddl(s)).toEqual(["CREATE INDEX ON orders (status);"]);
+  });
+});
+
+describe("extractExpressionIndexes — expressions a plain index can't serve", () => {
+  it("reads a function on a column", () => {
+    expect(extractExpressionIndexes("(lower(email) = 'x'::text)")).toEqual(["lower(email)"]);
+  });
+
+  it("reads a cast on a column, parenthesised or not", () => {
+    expect(extractExpressionIndexes("((created_at)::date = '2024-01-01'::date)")).toEqual(["(created_at)::date"]);
+    expect(extractExpressionIndexes("(created_at::date = '2024-01-01'::date)")).toEqual(["created_at::date"]);
+  });
+
+  it("preserves a literal argument verbatim so the index matches the query", () => {
+    const e = extractExpressionIndexes("(date_trunc('day'::text, created_at) = '2024-01-01'::timestamp)");
+    expect(e).toEqual(["date_trunc('day'::text, created_at)"]);
+  });
+
+  it("counts a qualified column inside the call as one column", () => {
+    expect(extractExpressionIndexes("(lower(o.email) = 'x'::text)")).toEqual(["lower(o.email)"]);
+  });
+
+  it("declines a two-column expression (ambiguous)", () => {
+    expect(extractExpressionIndexes("(coalesce(first_name, last_name) = 'x'::text)")).toEqual([]);
+  });
+
+  it("declines when the right-hand side is a column (a join on an expression)", () => {
+    expect(extractExpressionIndexes("(lower(a) = b)")).toEqual([]);
+  });
+
+  it("declines a keyword-with-parens that only looks like a function", () => {
+    expect(extractExpressionIndexes("(not (flag) = true)")).toEqual([]);
+  });
+
+  it("declines everything when the filter contains OR", () => {
+    expect(extractExpressionIndexes("((lower(a) = 'x'::text) OR (b = 1))")).toEqual([]);
+  });
+
+  it("ignores a keyword argument when counting columns", () => {
+    // `null` is not a column, so coalesce(email, null) is still single-column.
+    expect(extractExpressionIndexes("(coalesce(email, null) = 'x'::text)")).toEqual([
+      "coalesce(email, null)",
+    ]);
+  });
+
+  it("handles a quoted column with a doubled quote inside the call", () => {
+    expect(extractExpressionIndexes('(lower("a""b") = \'x\'::text)')).toEqual(['lower("a""b")']);
+  });
+});
+
+describe("suggestIndexes — expression indexes", () => {
+  const ddl = (s: IndexSuggestion[]) => s.map((x) => x.ddl);
+
+  it("wraps an expression in the double parens an expression index needs", () => {
+    const s = suggestIndexes(seqScan("users", "(lower(email) = 'x'::text)"));
+    expect(ddl(s)).toEqual(["CREATE INDEX ON users ((lower(email)));"]);
+    expect(s[0].reason).toContain("expression index");
+  });
+
+  it("emits both a plain composite and an expression index from one filter", () => {
+    const s = suggestIndexes(
+      seqScan("users", "((lower(email) = 'x'::text) AND (status = 'active'::text))"),
+    );
+    expect(ddl(s)).toEqual([
+      "CREATE INDEX ON users (status);",
+      "CREATE INDEX ON users ((lower(email)));",
+    ]);
+  });
+
+  it("dedupes the same expression suggested by two nodes", () => {
+    const plan = {
+      Plan: {
+        "Node Type": "Nested Loop",
+        Plans: [
+          { "Node Type": "Seq Scan", "Relation Name": "users", Filter: "(lower(email) = 'a'::text)" },
+          { "Node Type": "Seq Scan", "Relation Name": "users", Filter: "(lower(email) = 'b'::text)" },
+        ],
+      },
+    };
+    expect(ddl(suggestIndexes(plan))).toEqual(["CREATE INDEX ON users ((lower(email)));"]);
+  });
+
+  it("qualifies the expression index's table with its schema", () => {
+    const s = suggestIndexes(seqScan("users", "(lower(email) = 'x'::text)", { Schema: "app" }));
+    expect(ddl(s)).toEqual(["CREATE INDEX ON app.users ((lower(email)));"]);
+  });
+
+  it("suggests an expression index from a heavy residual filter on an indexed scan", () => {
+    const plan = {
+      Plan: {
+        "Node Type": "Bitmap Heap Scan",
+        "Relation Name": "users",
+        "Recheck Cond": "(team_id = 3)",
+        Filter: "(lower(email) = 'x'::text)",
+        "Rows Removed by Filter": 80000,
+      },
+    };
+    const s = suggestIndexes(plan);
+    expect(ddl(s)).toEqual(["CREATE INDEX ON users ((lower(email)));"]);
+    expect(s[0].reason).toContain("residual filter on");
   });
 });
