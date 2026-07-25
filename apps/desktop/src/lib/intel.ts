@@ -152,6 +152,156 @@ export function diffSchemas(
   return out;
 }
 
+/* --------------------------------------------------------- migration script */
+
+export type MigrationRisk = "safe" | "review" | "destructive";
+
+export type MigrationStatement = {
+  /** The statement. A destructive one is returned already commented out. */
+  sql: string;
+  risk: MigrationRisk;
+  /** Why it carries that risk, in one line, for display beside it. */
+  note: string;
+};
+
+const q = (id: string) => `"${id.replace(/"/g, '""')}"`;
+const qt = (schema: string, table: string) => `${q(schema)}.${q(table)}`;
+
+/** Comment a statement out so it cannot be run by pasting the script whole. */
+const commented = (sql: string) => sql.split("\n").map((l) => `-- ${l}`).join("\n");
+
+/**
+ * Turn a schema diff into DDL a human can read, edit, and decide about.
+ *
+ * This deliberately does not execute anything, and never offers to. The whole
+ * category of harm here is a statement that runs before someone has understood
+ * it, so the output is text and only text.
+ *
+ * Three risk levels, and the distinction is the point:
+ *
+ *  - **safe** — additive and reversible: a new nullable column, a dropped NOT
+ *    NULL constraint.
+ *  - **review** — will run, but can fail or change data depending on what is
+ *    already in the table: a type change, adding NOT NULL, adding a column
+ *    declared NOT NULL without a default.
+ *  - **destructive** — loses data if it succeeds. `DROP TABLE`, `DROP COLUMN`.
+ *    These come back **commented out**, so pasting the whole script cannot
+ *    execute them; you have to uncomment each one deliberately.
+ *
+ * Adds are emitted before drops so a script that is run top to bottom never
+ * removes something a later statement needed.
+ */
+export function generateMigration(
+  diffs: TableDiff[],
+  schema: string,
+  /** Columns of the *target* schema, so a newly added table can be written out
+   *  in full. Without it, a new table is reported but not defined — the diff
+   *  alone does not carry its shape. */
+  target?: Record<string, DbColumn[]>,
+): MigrationStatement[] {
+  const adds: MigrationStatement[] = [];
+  const drops: MigrationStatement[] = [];
+
+  for (const d of diffs) {
+    if (d.kind === "added") {
+      const cols = target?.[d.table];
+      if (cols?.length) {
+        const body = cols
+          .map((c) => `  ${q(c.name)} ${c.dbType}${c.nullable ? "" : " NOT NULL"}`)
+          .join(",\n");
+        adds.push({
+          sql: `CREATE TABLE ${qt(schema, d.table)} (\n${body}\n);`,
+          risk: "review",
+          note: "New table. Primary keys, defaults, indexes and constraints are not part of a column diff — add them before running.",
+        });
+      } else {
+        adds.push({
+          sql: commented(`CREATE TABLE ${qt(schema, d.table)} ( ... );`),
+          risk: "review",
+          note: "New table, but its columns were not loaded, so the definition cannot be written for you.",
+        });
+      }
+      continue;
+    }
+
+    if (d.kind === "removed") {
+      drops.push({
+        sql: commented(`DROP TABLE ${qt(schema, d.table)};`),
+        risk: "destructive",
+        note: "Drops the table and everything in it. Commented out deliberately.",
+      });
+      continue;
+    }
+
+    for (const c of d.columns) {
+      const t = qt(schema, d.table);
+      switch (c.kind) {
+        case "added":
+          adds.push({
+            sql: `ALTER TABLE ${t} ADD COLUMN ${q(c.column)} ${c.type};`,
+            risk: "safe",
+            note: "Adds a nullable column. Existing rows get NULL.",
+          });
+          break;
+        case "removed":
+          drops.push({
+            sql: commented(`ALTER TABLE ${t} DROP COLUMN ${q(c.column)};`),
+            risk: "destructive",
+            note: "Discards every value in that column. Commented out deliberately.",
+          });
+          break;
+        case "type-changed":
+          adds.push({
+            sql: `ALTER TABLE ${t} ALTER COLUMN ${q(c.column)} TYPE ${c.to} USING ${q(c.column)}::${c.to};`,
+            risk: "review",
+            note: `${c.from} → ${c.to}. The cast can fail on existing rows, or silently lose precision; PostgreSQL rewrites the whole table and holds an ACCESS EXCLUSIVE lock while it does.`,
+          });
+          break;
+        case "nullability-changed":
+          adds.push(
+            c.to
+              ? {
+                  sql: `ALTER TABLE ${t} ALTER COLUMN ${q(c.column)} DROP NOT NULL;`,
+                  risk: "safe",
+                  note: "Relaxes a constraint; cannot fail on existing data.",
+                }
+              : {
+                  sql: `ALTER TABLE ${t} ALTER COLUMN ${q(c.column)} SET NOT NULL;`,
+                  risk: "review",
+                  note: "Fails if any existing row holds NULL in that column.",
+                },
+          );
+          break;
+        case "pk-changed":
+          adds.push({
+            sql: commented(
+              c.to
+                ? `ALTER TABLE ${t} ADD PRIMARY KEY (${q(c.column)});`
+                : `ALTER TABLE ${t} DROP CONSTRAINT <name>;  -- the diff does not carry the constraint's name`,
+            ),
+            risk: "review",
+            note: "Primary keys are named constraints and a column diff does not carry the name, so this is a sketch rather than a statement. Commented out.",
+          });
+          break;
+      }
+    }
+  }
+
+  return [...adds, ...drops];
+}
+
+/** The script as one pasteable block, with a header saying what it is not. */
+export function migrationScript(statements: MigrationStatement[]): string {
+  if (statements.length === 0) return "-- No differences.\n";
+  const header = [
+    "-- Generated from a schema comparison by TupleNest.",
+    "-- Review every line before running any of it. Nothing here has been executed.",
+    "-- Destructive statements are commented out on purpose; uncomment deliberately.",
+    "",
+  ];
+  return [...header, ...statements.map((s) => `-- [${s.risk}] ${s.note}\n${s.sql}\n`)].join("\n");
+}
+
 /* ---------------------------------------------------------- plan comparison */
 
 export type PlanSummary = {

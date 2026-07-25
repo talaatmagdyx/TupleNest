@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   diffPlanTrees,
+  generateMigration,
+  migrationScript,
   comparePlans,
   diffSchemas,
   findUsages,
@@ -281,6 +283,100 @@ describe("findUsages — unicode identifiers", () => {
   it("keeps ASCII behaviour unchanged", () => {
     expect(findUsages("select users_archive from t", "users")).toHaveLength(0);
     expect(findUsages("select users from users", "users")).toHaveLength(2);
+  });
+});
+
+describe("generateMigration — DDL to read, not to run", () => {
+  const gen = (l: Record<string, ReturnType<typeof col>[]>, r: Record<string, ReturnType<typeof col>[]>) =>
+    generateMigration(diffSchemas(l, r), "public", r);
+
+  it("adds a nullable column as a safe statement", () => {
+    const s = gen({ t: [col("a", "int4")] }, { t: [col("a", "int4"), col("b", "text")] });
+    expect(s).toHaveLength(1);
+    expect(s[0].sql).toBe('ALTER TABLE "public"."t" ADD COLUMN "b" text;');
+    expect(s[0].risk).toBe("safe");
+  });
+
+  it("comments out a dropped column and calls it destructive", () => {
+    const s = gen({ t: [col("a", "int4"), col("b", "text")] }, { t: [col("a", "int4")] });
+    expect(s[0].risk).toBe("destructive");
+    // Every line commented: pasting the script whole must not drop anything.
+    expect(s[0].sql.split("\n").every((l) => l.startsWith("-- "))).toBe(true);
+    expect(s[0].sql).toContain('DROP COLUMN "b"');
+  });
+
+  it("comments out a dropped table", () => {
+    const s = gen({ gone: [col("a", "int4")] }, {});
+    expect(s[0].risk).toBe("destructive");
+    expect(s[0].sql.startsWith("-- ")).toBe(true);
+  });
+
+  it("writes a new table out in full when the target columns are known", () => {
+    const s = gen({}, { fresh: [col("id", "int8", true, false), col("name", "text")] });
+    expect(s[0].sql).toContain('CREATE TABLE "public"."fresh"');
+    expect(s[0].sql).toContain('"id" int8 NOT NULL');
+    expect(s[0].sql).toContain('"name" text');
+    // Not "safe": a column diff has no keys, defaults or indexes in it.
+    expect(s[0].risk).toBe("review");
+    expect(s[0].note).toMatch(/primary keys/i);
+  });
+
+  it("says so rather than inventing a definition it does not have", () => {
+    const s = generateMigration(diffSchemas({}, { fresh: [col("a", "int4")] }), "public");
+    expect(s[0].sql.startsWith("-- ")).toBe(true);
+    expect(s[0].note).toMatch(/not loaded/i);
+  });
+
+  it("flags a type change as needing review, with the lock warning", () => {
+    const s = gen({ t: [col("a", "text")] }, { t: [col("a", "int4")] });
+    expect(s[0].risk).toBe("review");
+    expect(s[0].sql).toBe('ALTER TABLE "public"."t" ALTER COLUMN "a" TYPE int4 USING "a"::int4;');
+    expect(s[0].note).toMatch(/ACCESS EXCLUSIVE/);
+  });
+
+  it("treats relaxing NOT NULL as safe and adding it as review", () => {
+    const relax = gen({ t: [col("a", "int4", false, false)] }, { t: [col("a", "int4", false, true)] });
+    expect(relax[0].risk).toBe("safe");
+    expect(relax[0].sql).toContain("DROP NOT NULL");
+
+    const tighten = gen({ t: [col("a", "int4", false, true)] }, { t: [col("a", "int4", false, false)] });
+    expect(tighten[0].risk).toBe("review");
+    expect(tighten[0].sql).toContain("SET NOT NULL");
+    expect(tighten[0].note).toMatch(/NULL/);
+  });
+
+  it("will not pretend to know a constraint name it was never given", () => {
+    const s = gen({ t: [col("a", "int4", false, false)] }, { t: [col("a", "int4", true, false)] });
+    expect(s[0].sql.startsWith("-- ")).toBe(true);
+    expect(s[0].note).toMatch(/does not carry the name/i);
+  });
+
+  it("puts additive statements before removals", () => {
+    const s = gen({ t: [col("a", "int4"), col("old", "text")] }, { t: [col("a", "int4"), col("new", "text")] });
+    expect(s[0].sql).toContain("ADD COLUMN");
+    expect(s[1].risk).toBe("destructive");
+  });
+
+  it("escapes a quote in an identifier", () => {
+    const s = gen({ 'ev"il': [col("a", "int4")] }, { 'ev"il': [col("a", "int4"), col("b", "text")] });
+    expect(s[0].sql).toContain('"ev""il"');
+  });
+
+  it("produces nothing for identical schemas", () => {
+    expect(gen({ t: [col("a", "int4")] }, { t: [col("a", "int4")] })).toEqual([]);
+  });
+});
+
+describe("migrationScript", () => {
+  it("says plainly that nothing has been run", () => {
+    const s = migrationScript([{ sql: "ALTER TABLE x ADD COLUMN y text;", risk: "safe", note: "n" }]);
+    expect(s).toMatch(/Nothing here has been executed/);
+    expect(s).toMatch(/Destructive statements are commented out/);
+    expect(s).toContain("-- [safe] n");
+  });
+
+  it("has a distinct output for no differences", () => {
+    expect(migrationScript([])).toBe("-- No differences.\n");
   });
 });
 

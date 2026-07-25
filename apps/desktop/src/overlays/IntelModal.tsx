@@ -7,6 +7,8 @@ import {
   comparePlans,
   diffPlanTrees,
   diffSchemas,
+  generateMigration,
+  migrationScript,
   findUsages,
   renameIdentifier,
   type PlanSummary,
@@ -63,6 +65,10 @@ export default function IntelModal(p: Props) {
   const [diff, setDiff] = useState<TableDiff[] | null>(null);
   const [diffBusy, setDiffBusy] = useState(false);
   const [diffNote, setDiffNote] = useState<string | null>(null);
+  /** Right-hand column map, kept so a newly added table can be written out in
+   *  full — the diff alone does not carry a new table's shape. */
+  const [rightCols, setRightCols] = useState<Record<string, DbColumn[]>>({});
+  const [showDdl, setShowDdl] = useState(false);
 
   const loadSchema = async (schema: string): Promise<Record<string, DbColumn[]>> => {
     const objs = await invoke<MetadataOut<DbObject[]>>("pg_metadata", {
@@ -90,6 +96,8 @@ export default function IntelModal(p: Props) {
     try {
       const [l, r] = [await loadSchema(left), await loadSchema(right)];
       setDiff(diffSchemas(l, r));
+      setRightCols(r);
+      setShowDdl(false);
     } catch (e) {
       setDiffNote(String(e).slice(0, 120));
     } finally {
@@ -236,6 +244,45 @@ export default function IntelModal(p: Props) {
                   </div>
                 ))}
               </div>
+
+              {diff && diff.length > 0 && (
+                <>
+                  <div className="mig-head">
+                    <button className="btn xs" onClick={() => setShowDdl((v) => !v)}>
+                      {showDdl ? "Hide migration" : "Generate migration"}
+                    </button>
+                    <span className="note muted">
+                      Generated for you to read. TupleNest never runs it.
+                    </span>
+                  </div>
+                  {showDdl && (
+                    <>
+                      <div className="intel-list">
+                        {generateMigration(diff, right, rightCols).map((m, i) => (
+                          <div key={i} className={`mig-row mig-${m.risk}`}>
+                            <span className={`mig-badge mig-${m.risk}`}>{m.risk}</span>
+                            <div className="mig-body">
+                              <code className="mig-sql">{m.sql}</code>
+                              <div className="mig-note">{m.note}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        className="btn xs"
+                        style={{ marginTop: 10 }}
+                        onClick={() => {
+                          void navigator.clipboard
+                            ?.writeText(migrationScript(generateMigration(diff, right, rightCols)))
+                            .catch(() => {});
+                        }}
+                      >
+                        Copy script
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
             </>
           )}
 

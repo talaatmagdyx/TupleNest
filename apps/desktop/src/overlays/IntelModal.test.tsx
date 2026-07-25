@@ -273,6 +273,85 @@ describe("IntelModal — schema diff", () => {
   });
 });
 
+describe("IntelModal — generated migration", () => {
+  const column = (name: string, dbType: string, nullable = true) => ({
+    name,
+    dbType,
+    nullable,
+    primaryKey: false,
+    comment: null,
+  });
+
+  /** `public` has an extra column; `analytics` has one `public` lacks. */
+  const mockTwoSchemas = () => {
+    // `InvokeArgs` also allows an array form, so read the request defensively
+    // rather than typing the parameter as a record.
+    invokeMock.mockImplementation(async (_cmd, args) => {
+      const req = (args as { request?: { kind: string; schema: string } } | undefined)?.request;
+      if (!req) return { payload: [], fetchedAt: null, source: "live" };
+      if (req.kind === "list_objects") {
+        return { payload: [{ name: "t", kind: "table" }], fetchedAt: null, source: "live" };
+      }
+      return {
+        payload: {
+          columns:
+            req.schema === "public"
+              ? [column("id", "int8", false), column("gone", "text")]
+              : [column("id", "int8", false), column("added", "text")],
+        },
+        fetchedAt: null,
+        source: "live",
+      };
+    });
+  };
+
+  const openDiff = async () => {
+    mockTwoSchemas();
+    render(<IntelModal {...base} />);
+    await userEvent.click(screen.getByRole("button", { name: /Schema diff/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Compare" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Generate migration" }));
+  };
+
+  it("promises up front that nothing will be run", async () => {
+    mockTwoSchemas();
+    render(<IntelModal {...base} />);
+    await userEvent.click(screen.getByRole("button", { name: /Schema diff/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Compare" }));
+    expect(await screen.findByText(/TupleNest never runs it/)).toBeInTheDocument();
+  });
+
+  it("shows an additive statement as safe and runnable", async () => {
+    await openDiff();
+    const add = await screen.findByText(/ADD COLUMN/);
+    expect(add.textContent).not.toMatch(/^-- /);
+    expect(add.closest(".mig-row")!.querySelector(".mig-badge")).toHaveTextContent("safe");
+  });
+
+  it("returns a dropped column commented out, so pasting cannot run it", async () => {
+    await openDiff();
+    const drop = await screen.findByText(/DROP COLUMN/);
+    // The whole statement is a comment — that is the safety property.
+    expect(drop.textContent!.trim().startsWith("-- ")).toBe(true);
+    expect(drop.closest(".mig-row")!.querySelector(".mig-badge")).toHaveTextContent("destructive");
+  });
+
+  it("hides the migration again on request", async () => {
+    await openDiff();
+    await userEvent.click(screen.getByRole("button", { name: "Hide migration" }));
+    expect(screen.queryByText(/ADD COLUMN/)).not.toBeInTheDocument();
+  });
+
+  it("copies a script that states nothing has been executed", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    await openDiff();
+    await userEvent.click(screen.getByRole("button", { name: "Copy script" }));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("Nothing here has been executed"));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("-- ALTER TABLE"));
+  });
+});
+
 describe("IntelModal — node-by-node plan diff", () => {
   /** A plan entry carrying a real tree, which is what the node diff needs. */
   const withRoot = (label: string, root: Record<string, unknown>) => ({
