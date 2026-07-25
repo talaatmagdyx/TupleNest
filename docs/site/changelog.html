@@ -45,18 +45,21 @@
     <div class="kicker">Current release</div>
     <div class="release" style="border-color:var(--line2)">
       <div class="rhead">
-        <h3>v0.1.0-beta.7</h3><span class="pill beta">Public Beta</span><span class="date">July 2026</span>
+        <h3>v0.1.0-beta.8</h3><span class="pill beta">Public Beta</span><span class="date">July 2026</span>
       </div>
-      <p style="color:var(--dim);margin-bottom:6px">The editor works before you connect, and two controls a screen reader could not name now have names.</p>
+      <p style="color:var(--dim);margin-bottom:6px">The plan analyzer stops describing the problem and writes the statement that fixes it.</p>
 
-      <h4 class="fix">Fixed</h4>
+      <h4 class="add">Added</h4>
       <ul>
-        <li><b>The SQL editor is usable before you connect.</b> It was disabled until a connection was up, which made drafting a query, searching it with <code class="inline">⌘F</code>, commenting it with <code class="inline">⌘/</code> and formatting it all impossible in exactly the state where you would do them — two of those shipped in the release before this one. Only running a query needs a server now; the Run button and the "Not connected" note already say so.</li>
-        <li><b>Two controls a screen reader read as unlabelled now have names.</b> The command palette's search box announced only as "text box", and each query-parameter field (<code class="inline">$1</code>, <code class="inline">$2</code>, …) had a visible label that was not tied to it. Both fixed; an audit confirmed these were the only two controls in the app lacking an accessible name, and a stale note claiming the connection form was unlabelled — it is fully labelled — was corrected.</li>
+        <li><b>The plan analyzer now writes the index, not just the advice.</b> When a plan scans a table sequentially to apply a filter — or an already-indexed scan throws away a lot of rows to a residual filter — the analyzer reads that filter's columns and produces a runnable <code class="inline">CREATE INDEX</code> with a copy button. Equality columns first, then a single range column: the one ordering a btree can actually seek on.</li>
+        <li><b>Expression indexes, decided from the column's real type.</b> A filter on <code class="inline">lower(email)</code> or <code class="inline">date_trunc('day', booked_at)</code> gets the matching <code class="inline">CREATE INDEX ON t ((expression))</code>, with the expression preserved character for character — the planner only uses one that matches the query verbatim. <code class="inline">CREATE INDEX</code> rejects anything not <code class="inline">IMMUTABLE</code>, and volatility depends on the argument type, so the advisor reads the type from the catalog: <code class="inline">date_trunc</code> on a <code class="inline">timestamp</code> is offered, the same call on a <code class="inline">timestamptz</code> is not.</li>
+        <li><b>It stays silent when a plain composite btree is the wrong answer</b> — an <code class="inline">OR</code> between predicates, a join condition, an inequality, or an expression it has no volatility evidence for. A suggestion that errors out costs more than no suggestion.</li>
       </ul>
 
+      <p style="color:var(--dim);margin-top:14px">Every suggestion was verified end to end against a live PostgreSQL 18 on a 600k-row table: build what the advisor proposes, re-run <code class="inline">EXPLAIN</code>, confirm the planner abandons the sequential scan. 17 of 17 cases behaved as designed — 1.9× to 1461× faster where an index is offered, silence where one cannot be built. These are candidates to verify, not promises: the advisor reads the filter, not the table's data distribution.</p>
+
       <div class="cta" style="margin-top:20px">
-        <a class="btn sm primary" href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.7">GitHub release ↗</a>
+        <a class="btn sm primary" href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.8">GitHub release ↗</a>
         <a class="btn sm ghost" href="download.html">Download</a>
       </div>
     </div>
@@ -67,6 +70,19 @@
 <section class="tight">
   <div class="wrap">
     <div class="kicker">History</div>
+
+    <div class="release">
+      <div class="rhead">
+        <h3>v0.1.0-beta.7</h3><span class="pill beta">Beta</span><span class="date">July 2026</span>
+      </div>
+      <p style="color:var(--dim);margin-bottom:6px">The editor works before you connect, and two controls a screen reader could not name now have names.</p>
+
+      <h4 class="fix">Fixed</h4>
+      <ul>
+        <li><b>The SQL editor is usable before you connect.</b> It was disabled until a connection was up, which made drafting a query, searching it with <code class="inline">⌘F</code>, commenting it with <code class="inline">⌘/</code> and formatting it all impossible in exactly the state where you would do them — two of those shipped in the release before this one. Only running a query needs a server now; the Run button and the "Not connected" note already say so.</li>
+        <li><b>Two controls a screen reader read as unlabelled now have names.</b> The command palette's search box announced only as "text box", and each query-parameter field (<code class="inline">$1</code>, <code class="inline">$2</code>, …) had a visible label that was not tied to it. Both fixed; an audit confirmed these were the only two controls in the app lacking an accessible name, and a stale note claiming the connection form was unlabelled — it is fully labelled — was corrected.</li>
+      </ul>
+    </div>
 
     <div class="release">
       <div class="rhead">
