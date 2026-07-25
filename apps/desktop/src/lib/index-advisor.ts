@@ -509,8 +509,12 @@ function isColumnReference(rhs: string): boolean {
   if (/^(any|all|array)\b/i.test(t)) return false;
   if (/\(/.test(rhs)) return false; // now(), coalesce(...), etc.
   if (/^(true|false|null|current_date|current_timestamp|current_time|localtime|localtimestamp)$/i.test(t)) return false;
-  // What's left — `other_col`, `b.id` — is a column reference.
-  return /^[a-z_"][a-z0-9_$.".]*$/i.test(t);
+  // What's left — `other_col`, `b.id`, `"s"."col"` — is a column reference.
+  // The tail allows identifier characters plus `.` (the qualifier separator)
+  // and `"` (a quoted identifier). `.` appeared twice here until CodeQL said
+  // so; a duplicate inside a character class is inert, but it is also the
+  // shape a genuine mistake takes, so it is worth not leaving lying around.
+  return /^[a-z_"][a-z0-9_$."]*$/i.test(t);
 }
 
 /* ------------------------------------------------------------ column ordering */
