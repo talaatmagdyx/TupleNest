@@ -130,7 +130,7 @@
       <div class="fcard reveal"><div class="cap"><img src="shots/explorer.png" alt="Schema explorer tree"></div>
         <div class="body"><h3>Secure by design</h3><ul><li>OS keychain credentials</li><li>TLS verification</li><li>SSH host-key verification</li><li>Signed updates</li><li>No telemetry</li></ul></div></div>
       <div class="fcard reveal"><div class="cap"><img src="shots/hero.png" alt="Analysing a pasted query plan"></div>
-        <div class="body"><h3>Paste a plan</h3><ul><li>Analyse a plan from anywhere</li><li>psql text or FORMAT JSON</li><li>No connection required</li><li>Read locally — never uploaded</li><li>CSV / JSON / Markdown export too</li></ul></div></div>
+        <div class="body"><h3>Query plans</h3><ul><li><b>Candidate <code class="inline">CREATE INDEX</code> statements</b></li><li>Self-time bottleneck, disk sorts, spills</li><li>Or paste a plan — psql text or JSON</li><li>No connection required to read one</li><li>Analysed locally — never uploaded</li></ul></div></div>
     </div>
   </div>
 </section>
@@ -223,6 +223,16 @@
         <h3>Understand the database, not just its tables.</h3>
         <p>A lazy schema tree plus an ER diagram built from real foreign keys. Follow relationships, inspect indexes and constraints, and jump straight into the editor.</p>
         <ul><li>Foreign-key map generated from the catalog</li><li>Tables, views, indexes, constraints, partitions</li><li>Global object search</li></ul>
+      </div>
+    </div>
+
+    <div class="feature" style="margin-top:56px">
+      <div class="fimg"><img src="shots/hero.png" alt="Query plan view with the bottleneck node highlighted."></div>
+      <div>
+        <div class="fnum">QUERY PERFORMANCE</div>
+        <h3>A plan that ends in a statement, not a shrug.</h3>
+        <p>The plan view finds the node that actually costs you time — then writes the <code class="inline">CREATE INDEX</code> that fixes it, with a copy button. Equality columns first, then one range column: the only ordering a btree can seek on.</p>
+        <ul><li>Expression indexes too, decided from the column's real type</li><li>Silent on an <code class="inline">OR</code>, a join condition, or anything PostgreSQL would refuse to index</li><li>Every suggestion round-tripped against a live server before shipping</li></ul>
       </div>
     </div>
   </div>

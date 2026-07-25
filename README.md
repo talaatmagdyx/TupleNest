@@ -123,6 +123,16 @@ connect"*.
 <sub>The grid is virtualized and backpressured: bounded batches, a row cap <i>and</i> a byte budget, and a footer that tells the truth about truncation. A checksum test pins that nothing is lost or duplicated in transit.<br/><br/>One decoding rule with teeth: values are decoded from what the type <b>is</b>, never guessed from what the bytes look like. A <code>money</code> value renders as money or as visibly-raw hex — <b>never as a plausible wrong number</b>.</sub>
 </td>
 </tr>
+<tr>
+<td width="50%" valign="top">
+<p align="center"><br/><b>The plan writes the fix, not just the diagnosis</b></p>
+<sub>A sequential scan applying a filter gets you a runnable <code>CREATE INDEX</code> with a copy button — equality columns first, then one range column, the only ordering a btree can seek on. Filters a plain index can't serve get an expression index, preserved character for character because the planner only uses one that matches verbatim.<br/><br/>It reads the column's <i>real type</i> to decide: <code>date_trunc('day', ts)</code> is offered on a <code>timestamp</code> and declined on a <code>timestamptz</code>, which reads the session time zone and so <b>cannot be indexed at all</b>.</sub>
+</td>
+<td width="50%" valign="top">
+<p align="center"><br/><b>…and it shuts up when it isn't sure</b></p>
+<sub>Silence on an <code>OR</code> (the planner wants an index per branch), a join condition, an inequality a btree can't seek, or an expression it has no volatility evidence for. <b>A suggestion that errors out costs more than no suggestion</b> — it costs the time to run it and the trust to read the next one.<br/><br/>Every case is round-tripped against a live server: build it, re-run <code>EXPLAIN</code>, confirm the planner actually abandons the seq scan. That round trip caught a statement PostgreSQL refuses outright. 17/17 now, 1.9×–1461× faster where an index is offered.</sub>
+</td>
+</tr>
 </table>
 
 <br/>
@@ -166,7 +176,7 @@ respected.
 
 | | |
 |---|---|
-| **📝 Query work** | Format SQL · EXPLAIN / ANALYZE plan tab · `$1..$n` parameter binding · searchable history · **prod audit log** (full SQL of everything run on prod) · snippets in the palette · CSV/JSON export with an honest truncation note · one-click charts |
+| **📝 Query work** | Format SQL · EXPLAIN / ANALYZE plan tab · **candidate `CREATE INDEX` statements from the plan** · find & replace (`⌘F`) and comment toggling (`⌘/`) · a per-connection query timeout the *server* enforces · `$1..$n` parameter binding · searchable history · **prod audit log** (full SQL of everything run on prod) · snippets in the palette · CSV/JSON export with an honest truncation note · one-click charts |
 | **🗺 Schema work** | Global object search · column-by-column schema diff · find-usages & rename across tabs (unicode-aware) · EXPLAIN comparison with cost deltas + a *"new sequential scan"* regression flag · partition tree browsing |
 | **🩺 Health** | Index health report · vacuum & bloat panel · `pg_stat_statements` top queries |
 | **📥 Data in** | CSV import wizard — RFC-4180 parsing, type inference **you review before anything runs**, batched inserts in one transaction |

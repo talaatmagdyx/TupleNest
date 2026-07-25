@@ -115,6 +115,17 @@
         <li><b>EST ×n OFF</b> — the planner's row estimate missed by that factor; statistics may be stale.</li>
         <li><b>NEVER EXECUTED</b> — the executor short-circuited that branch.</li>
       </ul>
+      <h3 id="candidate-indexes">Candidate indexes</h3>
+      <p>Under the statistics, the panel lists <b>Candidate indexes</b>: runnable <code class="inline">CREATE INDEX</code> statements derived from the filters in the plan, each with a copy button and a line saying which node earned it. Columns are ordered the one way a btree can use them — every equality column first, then a single range column, because nothing after the first range boundary can be seeked on.</p>
+      <p>Filters a plain column index cannot serve get an expression index instead: <code class="inline">lower(email) = …</code> yields <code class="inline">CREATE INDEX ON t ((lower(email)))</code>. The expression is reproduced character for character, because PostgreSQL only uses an expression index that matches the query's expression exactly.</p>
+      <p>You will see nothing at all in several cases, and that is deliberate:</p>
+      <ul>
+        <li>An <code class="inline">OR</code> between predicates — the planner wants a separate index per branch, not one composite.</li>
+        <li>A join condition (column against column), an inequality, or an expression over more than one column.</li>
+        <li>Anything <code class="inline">CREATE INDEX</code> would reject. Index expressions must be <code class="inline">IMMUTABLE</code>, and volatility depends on the argument type: <code class="inline">date_trunc('day', ts)</code> is immutable on a <code class="inline">timestamp</code> but stable on a <code class="inline">timestamptz</code>, which reads the session time zone. TupleNest checks the column's real type before offering one.</li>
+      </ul>
+      <div class="callout">These are candidates to verify, not promises. The advisor reads the plan's filter, not the table's data distribution — an index on a column that is 90&nbsp;% one value helps nothing. Build it, re-run <code class="inline">EXPLAIN</code>, and confirm the scan changed. Remove it with <code class="inline">DROP INDEX</code> if it did not.</div>
+
       <h3>Time outside the plan</h3>
       <p>JIT compilation and trigger time are reported separately by PostgreSQL and belong to no node, so a statement can spend most of its runtime somewhere the tree doesn't show. Both appear in the statistics panel when present.</p>
       <div class="callout info">On a parallel plan, PostgreSQL reports one “loop” per worker and those workers run concurrently. TupleNest divides them back out, so self-times sum to the execution time rather than exceeding it.</div>
