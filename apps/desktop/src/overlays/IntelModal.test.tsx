@@ -376,11 +376,11 @@ describe("IntelModal — node-by-node plan diff", () => {
     await openWith([withRoot("before", before), withRoot("after", after)]);
 
     expect(await screen.findByText("Node by node")).toBeInTheDocument();
-    const scan = screen.getByText("Seq Scan on orders").closest(".nd-row")!;
-    expect(scan.querySelector(".nd-badge")).toHaveTextContent("slower");
+    const scan = screen.getByText("Seq Scan on orders").closest(".pdiff-row")!;
+    expect(scan.querySelector(".pdiff-badge")).toHaveTextContent("slower");
     expect(scan).toHaveTextContent("2.0 → 30.0 ms");
-    const sort = screen.getByText("Sort").closest(".nd-row")!;
-    expect(sort.querySelector(".nd-badge")).toHaveTextContent("faster");
+    const sort = screen.getByText("Sort").closest(".pdiff-row")!;
+    expect(sort.querySelector(".pdiff-badge")).toHaveTextContent("faster");
   });
 
   it("marks a node that appeared and one that vanished", async () => {
@@ -388,10 +388,10 @@ describe("IntelModal — node-by-node plan diff", () => {
     const after = node("Gather", 10, {}, node("Seq Scan", 9, { "Relation Name": "t" }));
     await openWith([withRoot("before", before), withRoot("after", after)]);
 
-    expect(screen.getByText("Index Scan on t").closest(".nd-row")!.querySelector(".nd-badge")).toHaveTextContent(
+    expect(screen.getByText("Index Scan on t").closest(".pdiff-row")!.querySelector(".pdiff-badge")).toHaveTextContent(
       "gone",
     );
-    expect(screen.getByText("Seq Scan on t").closest(".nd-row")!.querySelector(".nd-badge")).toHaveTextContent("new");
+    expect(screen.getByText("Seq Scan on t").closest(".pdiff-row")!.querySelector(".pdiff-badge")).toHaveTextContent("new");
   });
 
   it("labels a pairing it had to guess rather than showing it as fact", async () => {
@@ -404,8 +404,8 @@ describe("IntelModal — node-by-node plan diff", () => {
   it("shows an unchanged node without a delta", async () => {
     const same = node("Sort", 10);
     await openWith([withRoot("before", same), withRoot("after", same)]);
-    const row = screen.getByText("Sort").closest(".nd-row")!;
-    expect(row.querySelector(".nd-badge")).toHaveTextContent("—");
+    const row = screen.getByText("Sort").closest(".pdiff-row")!;
+    expect(row.querySelector(".pdiff-badge")).toHaveTextContent("—");
     expect(row).not.toHaveTextContent("%");
   });
 
@@ -419,7 +419,7 @@ describe("IntelModal — node-by-node plan diff", () => {
   it("renders a plan with no timings without inventing any", async () => {
     const bare = { "Node Type": "Seq Scan", "Plan Rows": 10, "Total Cost": 5 };
     await openWith([withRoot("before", bare), withRoot("after", bare)]);
-    const row = screen.getByText("Seq Scan").closest(".nd-row")!;
+    const row = screen.getByText("Seq Scan").closest(".pdiff-row")!;
     expect(row).toHaveTextContent("—");
   });
 });

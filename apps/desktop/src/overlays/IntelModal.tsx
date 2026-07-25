@@ -341,8 +341,8 @@ export default function IntelModal(p: Props) {
                       </div>
                       <div className="intel-list">
                         {nodeDiff.map((d, i) => (
-                          <div key={i} className={`nd-row nd-${d.kind}`} style={{ paddingLeft: 8 + d.depth * 16 }}>
-                            <span className={`nd-badge nd-${d.kind}`}>
+                          <div key={i} className={`pdiff-row pdiff-${d.kind}`} style={{ paddingLeft: 8 + d.depth * 16 }}>
+                            <span className={`pdiff-badge pdiff-${d.kind}`}>
                               {d.kind === "slower"
                                 ? "slower"
                                 : d.kind === "faster"
@@ -353,16 +353,16 @@ export default function IntelModal(p: Props) {
                                       ? "gone"
                                       : "—"}
                             </span>
-                            <span className="nd-name">{d.label}</span>
+                            <span className="pdiff-name">{d.label}</span>
                             {d.ambiguous && (
                               <span
-                                className="nd-amb"
+                                className="pdiff-amb"
                                 title="Several siblings look identical here, so which one this matches is a guess — treat the delta with suspicion."
                               >
                                 ambiguous
                               </span>
                             )}
-                            <span className="nd-nums">
+                            <span className="pdiff-nums">
                               {d.msLeft !== null && d.msRight !== null
                                 ? `${d.msLeft.toFixed(1)} → ${d.msRight.toFixed(1)} ms`
                                 : d.msRight !== null
