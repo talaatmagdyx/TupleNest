@@ -116,7 +116,7 @@
         <li><b>NEVER EXECUTED</b> — the executor short-circuited that branch.</li>
       </ul>
       <h3 id="candidate-indexes">Candidate indexes</h3>
-      <p>Under the statistics, the panel lists <b>Candidate indexes</b>: runnable <code class="inline">CREATE INDEX</code> statements derived from the filters in the plan, each with a copy button and a line saying which node earned it. Columns are ordered the one way a btree can use them — every equality column first, then a single range column, because nothing after the first range boundary can be seeked on.</p>
+      <p>Under the statistics, the panel lists <b>Candidate indexes</b>: runnable <code class="inline">CREATE INDEX</code> statements derived from the filters in the plan, each with a copy button and a line saying which node earned it. Columns are ordered the one way a btree can use them — every equality column first, then a single range column, because an index cannot narrow any further once it passes the first range boundary.</p>
       <p>Filters a plain column index cannot serve get an expression index instead: <code class="inline">lower(email) = …</code> yields <code class="inline">CREATE INDEX ON t ((lower(email)))</code>. The expression is reproduced character for character, because PostgreSQL only uses an expression index that matches the query's expression exactly.</p>
       <p>You will see nothing at all in several cases, and that is deliberate:</p>
       <ul>
