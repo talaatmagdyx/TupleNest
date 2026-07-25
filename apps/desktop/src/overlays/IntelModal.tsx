@@ -5,6 +5,7 @@ import type { Catalog } from "../lib/complete";
 import { ModalHead } from "./Overlays";
 import {
   comparePlans,
+  diffPlanTrees,
   diffSchemas,
   findUsages,
   renameIdentifier,
@@ -18,7 +19,7 @@ type Props = {
   tabs: Tab[];
   catalog?: Catalog;
   /** The two most recent EXPLAIN summaries, oldest first. */
-  plans: { label: string; summary: PlanSummary }[];
+  plans: { label: string; summary: PlanSummary; root?: Record<string, unknown> }[];
   onJump: (tabIndex: number, offset: number) => void;
   onRename: (tabIndex: number, sql: string) => void;
   onClose: () => void;
@@ -101,6 +102,12 @@ export default function IntelModal(p: Props) {
     p.plans.length >= 2
       ? comparePlans(p.plans[p.plans.length - 2].summary, p.plans[p.plans.length - 1].summary)
       : null;
+
+  // Node-by-node, when both roots were kept. The whole-plan numbers above say
+  // *that* the query changed; this says *where*.
+  const prev = p.plans[p.plans.length - 2];
+  const curr = p.plans[p.plans.length - 1];
+  const nodeDiff = prev?.root && curr?.root ? diffPlanTrees(prev.root, curr.root) : [];
 
   // The catalog usually arrives after this mounts, so the pair starts empty and
   // is filled here. Done during render, not in an effect: an effect paints the
@@ -279,6 +286,54 @@ export default function IntelModal(p: Props) {
                       <div className="center-note">Same plan shape — only the numbers moved.</div>
                     )}
                   </div>
+
+                  {nodeDiff.length > 0 && (
+                    <>
+                      <div className="sect-label" style={{ marginTop: 16 }}>
+                        Node by node
+                      </div>
+                      <div className="intel-list">
+                        {nodeDiff.map((d, i) => (
+                          <div key={i} className={`nd-row nd-${d.kind}`} style={{ paddingLeft: 8 + d.depth * 16 }}>
+                            <span className={`nd-badge nd-${d.kind}`}>
+                              {d.kind === "slower"
+                                ? "slower"
+                                : d.kind === "faster"
+                                  ? "faster"
+                                  : d.kind === "added"
+                                    ? "new"
+                                    : d.kind === "removed"
+                                      ? "gone"
+                                      : "—"}
+                            </span>
+                            <span className="nd-name">{d.label}</span>
+                            {d.ambiguous && (
+                              <span
+                                className="nd-amb"
+                                title="Several siblings look identical here, so which one this matches is a guess — treat the delta with suspicion."
+                              >
+                                ambiguous
+                              </span>
+                            )}
+                            <span className="nd-nums">
+                              {d.msLeft !== null && d.msRight !== null
+                                ? `${d.msLeft.toFixed(1)} → ${d.msRight.toFixed(1)} ms`
+                                : d.msRight !== null
+                                  ? `${d.msRight.toFixed(1)} ms`
+                                  : d.msLeft !== null
+                                    ? `${d.msLeft.toFixed(1)} ms`
+                                    : "—"}
+                              {d.msPercent !== null && d.kind !== "same" && ` (${pct(d.msPercent)})`}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="note muted" style={{ marginTop: 8 }}>
+                        Nodes are paired by type and relation. Where two siblings look identical, the pairing is a
+                        guess and is labelled as one.
+                      </div>
+                    </>
+                  )}
                 </>
               )}
             </>

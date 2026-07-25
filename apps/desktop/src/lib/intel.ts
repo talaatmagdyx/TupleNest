@@ -203,6 +203,148 @@ export type PlanDelta = {
   newSeqScan: boolean;
 };
 
+/* ------------------------------------------------------- per-node plan diff */
+
+export type NodeDiffKind = "same" | "slower" | "faster" | "added" | "removed";
+
+export type PlanNodeDiff = {
+  /** Indent level in the tree, for drawing. */
+  depth: number;
+  /** `Seq Scan on orders` — node type plus relation when there is one. */
+  label: string;
+  kind: NodeDiffKind;
+  msLeft: number | null;
+  msRight: number | null;
+  msDelta: number | null;
+  msPercent: number | null;
+  costLeft: number | null;
+  costRight: number | null;
+  rowsLeft: number | null;
+  rowsRight: number | null;
+  /** True when this subtree could not be matched confidently — several
+   *  siblings of the same shape, so which one is "the same node" is a guess.
+   *  Shown rather than hidden: a wrong attribution reads exactly like a real
+   *  regression, and that is the failure worth avoiding. */
+  ambiguous: boolean;
+};
+
+/** A node is "changed" only past both floors: below them the difference is
+ *  measurement noise, and flagging it trains people to ignore the flag. */
+const DIFF_MIN_MS = 1;
+const DIFF_MIN_PCT = 10;
+
+const num = (n: RawPlan, k: string): number | null => {
+  const v = n[k];
+  return typeof v === "number" ? v : null;
+};
+
+/** What identifies a node for matching: its type and, when it has one, the
+ *  relation it reads. Costs and timings are deliberately excluded — those are
+ *  what we are trying to compare, so they cannot also decide identity. */
+function nodeKey(n: RawPlan): string {
+  const str = (k: string): string | null => {
+    const v = n[k];
+    return typeof v === "string" ? v : null;
+  };
+  const t = str("Node Type") ?? "node";
+  const rel = str("Relation Name");
+  const idx = str("Index Name");
+  return rel ? `${t} on ${rel}${idx ? ` using ${idx}` : ""}` : t;
+}
+
+const kids = (n: RawPlan): RawPlan[] => (Array.isArray(n["Plans"]) ? (n["Plans"] as RawPlan[]) : []);
+
+/**
+ * Align two plan trees and report what changed at each node.
+ *
+ * Children are paired by `nodeKey` in order: the first unclaimed right-hand
+ * child with the same key matches. Anything left over on one side is reported
+ * as added or removed rather than force-matched to something it is not.
+ *
+ * The ambiguity this cannot resolve is two siblings with the *same* key — say
+ * a join with two `Seq Scan on orders` children. Position is then the only
+ * signal and it may be wrong, so those pairs are flagged `ambiguous` instead of
+ * being presented with the same confidence as the rest. Guessing silently here
+ * is how the bottleneck badge ended up on the wrong node in beta.5.
+ */
+export function diffPlanTrees(leftRoot: RawPlan, rightRoot: RawPlan): PlanNodeDiff[] {
+  const out: PlanNodeDiff[] = [];
+
+  const entry = (n: RawPlan, depth: number, kind: "added" | "removed"): void => {
+    const ms = num(n, "Actual Total Time");
+    const cost = num(n, "Total Cost");
+    const rows = num(n, "Actual Rows") ?? num(n, "Plan Rows");
+    out.push({
+      depth,
+      label: nodeKey(n),
+      kind,
+      msLeft: kind === "removed" ? ms : null,
+      msRight: kind === "added" ? ms : null,
+      msDelta: null,
+      msPercent: null,
+      costLeft: kind === "removed" ? cost : null,
+      costRight: kind === "added" ? cost : null,
+      rowsLeft: kind === "removed" ? rows : null,
+      rowsRight: kind === "added" ? rows : null,
+      ambiguous: false,
+    });
+    for (const c of kids(n)) entry(c, depth + 1, kind);
+  };
+
+  const walk = (a: RawPlan, b: RawPlan, depth: number, ambiguous: boolean): void => {
+    const msLeft = num(a, "Actual Total Time");
+    const msRight = num(b, "Actual Total Time");
+    const msDelta = msLeft !== null && msRight !== null ? msRight - msLeft : null;
+    const msPercent = msLeft !== null && msRight !== null && msLeft !== 0 ? ((msRight - msLeft) / msLeft) * 100 : null;
+
+    let kind: NodeDiffKind = "same";
+    if (msDelta !== null && msPercent !== null) {
+      const big = Math.abs(msDelta) >= DIFF_MIN_MS && Math.abs(msPercent) >= DIFF_MIN_PCT;
+      if (big) kind = msDelta > 0 ? "slower" : "faster";
+    }
+
+    out.push({
+      depth,
+      label: nodeKey(a),
+      kind,
+      msLeft,
+      msRight,
+      msDelta,
+      msPercent,
+      costLeft: num(a, "Total Cost"),
+      costRight: num(b, "Total Cost"),
+      rowsLeft: num(a, "Actual Rows") ?? num(a, "Plan Rows"),
+      rowsRight: num(b, "Actual Rows") ?? num(b, "Plan Rows"),
+      ambiguous,
+    });
+
+    // Pair children by key, first-unclaimed-wins, preserving order.
+    const bKids = kids(b);
+    const claimed = new Set<number>();
+    for (const ac of kids(a)) {
+      const key = nodeKey(ac);
+      const matches = bKids.map((n, i) => ({ n, i })).filter(({ n, i }) => !claimed.has(i) && nodeKey(n) === key);
+      if (matches.length === 0) {
+        entry(ac, depth + 1, "removed");
+        continue;
+      }
+      claimed.add(matches[0].i);
+      // More than one candidate means position was the tie-breaker, which is
+      // not evidence. Mark the whole subtree rather than the single node.
+      const sameKeySiblings = kids(a).filter((s) => nodeKey(s) === key).length > 1;
+      walk(ac, matches[0].n, depth + 1, ambiguous || sameKeySiblings);
+    }
+    bKids.forEach((bc, i) => {
+      if (!claimed.has(i)) entry(bc, depth + 1, "added");
+    });
+  };
+
+  const a = (leftRoot["Plan"] as RawPlan) ?? leftRoot;
+  const b = (rightRoot["Plan"] as RawPlan) ?? rightRoot;
+  walk(a, b, 0, false);
+  return out;
+}
+
 export function comparePlans(left: PlanSummary, right: PlanSummary): PlanDelta {
   const pct = (a: number | null, b: number | null) =>
     a === null || b === null || a === 0 ? null : ((b - a) / a) * 100;

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  diffPlanTrees,
   comparePlans,
   diffSchemas,
   findUsages,
@@ -280,5 +281,111 @@ describe("findUsages — unicode identifiers", () => {
   it("keeps ASCII behaviour unchanged", () => {
     expect(findUsages("select users_archive from t", "users")).toHaveLength(0);
     expect(findUsages("select users from users", "users")).toHaveLength(2);
+  });
+});
+
+describe("diffPlanTrees — which node actually changed", () => {
+  /** A plan node. `ms` is `Actual Total Time`, the inclusive wall time. */
+  const n = (type: string, ms: number, extra: Record<string, unknown> = {}, ...children: unknown[]) => ({
+    "Node Type": type,
+    "Actual Total Time": ms,
+    ...extra,
+    ...(children.length ? { Plans: children } : {}),
+  });
+
+  it("matches a tree against itself and calls nothing changed", () => {
+    const p = n("Hash Join", 10, {}, n("Seq Scan", 6, { "Relation Name": "orders" }));
+    const d = diffPlanTrees({ Plan: p }, { Plan: p });
+    expect(d.map((x) => x.kind)).toEqual(["same", "same"]);
+    expect(d[1].label).toBe("Seq Scan on orders");
+  });
+
+  it("names the node that got slower, not just the whole query", () => {
+    const before = n("Hash Join", 10, {}, n("Seq Scan", 2, { "Relation Name": "orders" }));
+    const after = n("Hash Join", 30, {}, n("Seq Scan", 22, { "Relation Name": "orders" }));
+    const d = diffPlanTrees({ Plan: before }, { Plan: after });
+    const scan = d.find((x) => x.label === "Seq Scan on orders")!;
+    expect(scan.kind).toBe("slower");
+    expect(scan.msDelta).toBe(20);
+    expect(scan.msPercent).toBeCloseTo(1000);
+  });
+
+  it("reports a node that got faster", () => {
+    const d = diffPlanTrees({ Plan: n("Sort", 50) }, { Plan: n("Sort", 5) });
+    expect(d[0].kind).toBe("faster");
+    expect(d[0].msDelta).toBe(-45);
+  });
+
+  it("ignores differences below the noise floor", () => {
+    // 0.4 ms is under the millisecond floor even though it is a big percentage.
+    expect(diffPlanTrees({ Plan: n("Sort", 0.1) }, { Plan: n("Sort", 0.5) })[0].kind).toBe("same");
+    // 5% is over the millisecond floor but under the percentage one.
+    expect(diffPlanTrees({ Plan: n("Sort", 100) }, { Plan: n("Sort", 105) })[0].kind).toBe("same");
+  });
+
+  it("calls out a scan that appeared and one that vanished", () => {
+    const before = n("Hash Join", 10, {}, n("Index Scan", 1, { "Relation Name": "orders" }));
+    const after = n("Hash Join", 10, {}, n("Seq Scan", 9, { "Relation Name": "orders" }));
+    const d = diffPlanTrees({ Plan: before }, { Plan: after });
+    expect(d.find((x) => x.label === "Index Scan on orders")!.kind).toBe("removed");
+    expect(d.find((x) => x.label === "Seq Scan on orders")!.kind).toBe("added");
+  });
+
+  it("carries a removed subtree's children too", () => {
+    const before = n("Gather", 10, {}, n("Hash Join", 8, {}, n("Seq Scan", 4, { "Relation Name": "a" })));
+    const after = n("Gather", 10, {}, n("Index Scan", 1, { "Relation Name": "a" }));
+    const d = diffPlanTrees({ Plan: before }, { Plan: after });
+    expect(d.filter((x) => x.kind === "removed").map((x) => x.label)).toEqual(["Hash Join", "Seq Scan on a"]);
+  });
+
+  it("distinguishes two scans of different tables", () => {
+    const before = n("Hash Join", 10, {}, n("Seq Scan", 2, { "Relation Name": "a" }), n("Seq Scan", 3, { "Relation Name": "b" }));
+    const after = n("Hash Join", 10, {}, n("Seq Scan", 2, { "Relation Name": "a" }), n("Seq Scan", 30, { "Relation Name": "b" }));
+    const d = diffPlanTrees({ Plan: before }, { Plan: after });
+    expect(d.find((x) => x.label === "Seq Scan on a")!.kind).toBe("same");
+    expect(d.find((x) => x.label === "Seq Scan on b")!.kind).toBe("slower");
+    expect(d.every((x) => !x.ambiguous)).toBe(true);
+  });
+
+  it("flags a pairing it had to guess at rather than presenting it as fact", () => {
+    // Two identical-looking siblings: position is the only thing separating
+    // them, and position is not evidence.
+    const before = n("Append", 10, {}, n("Seq Scan", 2, { "Relation Name": "part" }), n("Seq Scan", 3, { "Relation Name": "part" }));
+    const after = n("Append", 10, {}, n("Seq Scan", 20, { "Relation Name": "part" }), n("Seq Scan", 3, { "Relation Name": "part" }));
+    const d = diffPlanTrees({ Plan: before }, { Plan: after });
+    const scans = d.filter((x) => x.label === "Seq Scan on part");
+    expect(scans).toHaveLength(2);
+    expect(scans.every((s) => s.ambiguous)).toBe(true);
+  });
+
+  it("does not mark unambiguous nodes as ambiguous", () => {
+    const d = diffPlanTrees({ Plan: n("Sort", 5) }, { Plan: n("Sort", 5) });
+    expect(d[0].ambiguous).toBe(false);
+  });
+
+  it("separates an index scan by which index it used", () => {
+    const before = n("Index Scan", 5, { "Relation Name": "t", "Index Name": "t_a_idx" });
+    const after = n("Index Scan", 5, { "Relation Name": "t", "Index Name": "t_b_idx" });
+    const d = diffPlanTrees({ Plan: before }, { Plan: after });
+    // A different index is a different access path, so this is a swap.
+    expect(d.map((x) => x.kind).sort()).toEqual(["same"]);
+    expect(d[0].label).toContain("t_a_idx");
+  });
+
+  it("falls back to estimated rows when the plan was not ANALYZEd", () => {
+    const d = diffPlanTrees(
+      { Plan: { "Node Type": "Seq Scan", "Plan Rows": 100, "Total Cost": 12 } },
+      { Plan: { "Node Type": "Seq Scan", "Plan Rows": 900, "Total Cost": 80 } },
+    );
+    expect(d[0].rowsLeft).toBe(100);
+    expect(d[0].rowsRight).toBe(900);
+    expect(d[0].costLeft).toBe(12);
+    expect(d[0].msDelta).toBeNull(); // no timings to compare
+    expect(d[0].kind).toBe("same");
+  });
+
+  it("accepts a bare plan object as well as the { Plan } wrapper", () => {
+    const d = diffPlanTrees(n("Sort", 1), n("Sort", 1));
+    expect(d).toHaveLength(1);
   });
 });

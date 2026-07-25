@@ -272,3 +272,75 @@ describe("IntelModal — schema diff", () => {
     expect(await screen.findByText(/permission denied/)).toBeInTheDocument();
   });
 });
+
+describe("IntelModal — node-by-node plan diff", () => {
+  /** A plan entry carrying a real tree, which is what the node diff needs. */
+  const withRoot = (label: string, root: Record<string, unknown>) => ({
+    ...plan(label),
+    root: { Plan: root, "Execution Time": 100 },
+  });
+  const node = (type: string, ms: number, extra: Record<string, unknown> = {}, ...children: unknown[]) => ({
+    "Node Type": type,
+    "Actual Total Time": ms,
+    ...extra,
+    ...(children.length ? { Plans: children } : {}),
+  });
+
+  const openWith = async (plans: unknown[]) => {
+    render(<IntelModal {...base} plans={plans as ReturnType<typeof plan>[]} />);
+    await userEvent.click(screen.getByRole("button", { name: /Plan compare/ }));
+  };
+
+  it("names the node that slowed down and the one that sped up", async () => {
+    const before = node("Hash Join", 20, {}, node("Seq Scan", 2, { "Relation Name": "orders" }), node("Sort", 15));
+    const after = node("Hash Join", 40, {}, node("Seq Scan", 30, { "Relation Name": "orders" }), node("Sort", 3));
+    await openWith([withRoot("before", before), withRoot("after", after)]);
+
+    expect(await screen.findByText("Node by node")).toBeInTheDocument();
+    const scan = screen.getByText("Seq Scan on orders").closest(".nd-row")!;
+    expect(scan.querySelector(".nd-badge")).toHaveTextContent("slower");
+    expect(scan).toHaveTextContent("2.0 → 30.0 ms");
+    const sort = screen.getByText("Sort").closest(".nd-row")!;
+    expect(sort.querySelector(".nd-badge")).toHaveTextContent("faster");
+  });
+
+  it("marks a node that appeared and one that vanished", async () => {
+    const before = node("Gather", 10, {}, node("Index Scan", 1, { "Relation Name": "t" }));
+    const after = node("Gather", 10, {}, node("Seq Scan", 9, { "Relation Name": "t" }));
+    await openWith([withRoot("before", before), withRoot("after", after)]);
+
+    expect(screen.getByText("Index Scan on t").closest(".nd-row")!.querySelector(".nd-badge")).toHaveTextContent(
+      "gone",
+    );
+    expect(screen.getByText("Seq Scan on t").closest(".nd-row")!.querySelector(".nd-badge")).toHaveTextContent("new");
+  });
+
+  it("labels a pairing it had to guess rather than showing it as fact", async () => {
+    const before = node("Append", 9, {}, node("Seq Scan", 2, { "Relation Name": "p" }), node("Seq Scan", 3, { "Relation Name": "p" }));
+    const after = node("Append", 9, {}, node("Seq Scan", 40, { "Relation Name": "p" }), node("Seq Scan", 3, { "Relation Name": "p" }));
+    await openWith([withRoot("before", before), withRoot("after", after)]);
+    expect(screen.getAllByText("ambiguous").length).toBeGreaterThan(0);
+  });
+
+  it("shows an unchanged node without a delta", async () => {
+    const same = node("Sort", 10);
+    await openWith([withRoot("before", same), withRoot("after", same)]);
+    const row = screen.getByText("Sort").closest(".nd-row")!;
+    expect(row.querySelector(".nd-badge")).toHaveTextContent("—");
+    expect(row).not.toHaveTextContent("%");
+  });
+
+  it("says nothing node-by-node when the trees were not kept", async () => {
+    // Older entries in the ring have no root; the summary comparison still
+    // works and the node section simply does not appear.
+    await openWith([plan("before"), plan("after")]);
+    expect(screen.queryByText("Node by node")).not.toBeInTheDocument();
+  });
+
+  it("renders a plan with no timings without inventing any", async () => {
+    const bare = { "Node Type": "Seq Scan", "Plan Rows": 10, "Total Cost": 5 };
+    await openWith([withRoot("before", bare), withRoot("after", bare)]);
+    const row = screen.getByText("Seq Scan").closest(".nd-row")!;
+    expect(row).toHaveTextContent("—");
+  });
+});

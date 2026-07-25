@@ -146,7 +146,9 @@ export default function App() {
   const { running, result, lastError, ranSql } = query;
   const queryEpoch = query.epoch;
   /** Recent EXPLAIN summaries, oldest first — Phase 3 plan comparison. */
-  const [plans, setPlans] = useState<{ label: string; summary: PlanSummary }[]>([]);
+  // The raw root is kept beside the summary: a node-by-node diff needs the tree,
+  // and the summary deliberately throws the tree away.
+  const [plans, setPlans] = useState<{ label: string; summary: PlanSummary; root: Record<string, unknown> }[]>([]);
   /** Server major version, so options the server is too old for are disabled
    *  rather than offered and rejected. */
   const serverMajor = useMemo(() => {
@@ -940,7 +942,9 @@ export default function App() {
       // Phase 3: keep the last few summaries so two runs can be compared.
       if (out.root) {
         const summary = summarizePlan(out.root);
-        setPlans((ps) => [...ps, { label: `${title} · ${new Date().toLocaleTimeString()}`, summary }].slice(-6));
+        setPlans((ps) =>
+          [...ps, { label: `${title} · ${new Date().toLocaleTimeString()}`, summary, root: out.root! }].slice(-6),
+        );
       }
     },
     [tabs, activeTab, connected, runExplainRaw, query, catalog],
