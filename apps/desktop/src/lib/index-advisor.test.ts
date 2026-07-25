@@ -228,14 +228,34 @@ describe("extractExpressionIndexes — expressions a plain index can't serve", (
     expect(extractExpressionIndexes("(lower(email) = 'x'::text)")).toEqual(["lower(email)"]);
   });
 
-  it("reads a cast on a column, parenthesised or not", () => {
-    expect(extractExpressionIndexes("((created_at)::date = '2024-01-01'::date)")).toEqual(["(created_at)::date"]);
-    expect(extractExpressionIndexes("(created_at::date = '2024-01-01'::date)")).toEqual(["created_at::date"]);
+  it("declines a cast on a column — it may not be IMMUTABLE, so it may not be indexable", () => {
+    // A live PostgreSQL 18 rejects `CREATE INDEX ON orders (((created_at)::date))`
+    // with "functions in index expression must be marked IMMUTABLE", because
+    // timestamptz→date depends on the session TimeZone. The plan does not say
+    // whether the column is timestamptz or timestamp, so this is declined.
+    expect(extractExpressionIndexes("((created_at)::date = '2024-01-01'::date)")).toEqual([]);
+    expect(extractExpressionIndexes("(created_at::date = '2024-01-01'::date)")).toEqual([]);
+  });
+
+  it("declines date_trunc — its timestamptz overload is STABLE, not IMMUTABLE", () => {
+    expect(extractExpressionIndexes("(date_trunc('day'::text, created_at) = '2024-01-01'::timestamp)")).toEqual([]);
+  });
+
+  it("declines length, whose two-argument encoding form is not immutable", () => {
+    // Deliberately kept as a case: `length` looks obviously pure, and only
+    // asking pg_proc reveals that not every overload of it is IMMUTABLE.
+    expect(extractExpressionIndexes("(length(email) = 20)")).toEqual([]);
   });
 
   it("preserves a literal argument verbatim so the index matches the query", () => {
-    const e = extractExpressionIndexes("(date_trunc('day'::text, created_at) = '2024-01-01'::timestamp)");
-    expect(e).toEqual(["date_trunc('day'::text, created_at)"]);
+    const e = extractExpressionIndexes("(split_part(email, '@'::text, 1) = 'bob'::text)");
+    expect(e).toEqual(["split_part(email, '@'::text, 1)"]);
+  });
+
+  it("allows other functions that are immutable in every overload", () => {
+    expect(extractExpressionIndexes("(upper(country) = 'EG'::text)")).toEqual(["upper(country)"]);
+    expect(extractExpressionIndexes("(md5(email) = 'abc'::text)")).toEqual(["md5(email)"]);
+    expect(extractExpressionIndexes("(abs(amount) = 10)")).toEqual(["abs(amount)"]);
   });
 
   it("counts a qualified column inside the call as one column", () => {
@@ -243,7 +263,9 @@ describe("extractExpressionIndexes — expressions a plain index can't serve", (
   });
 
   it("declines a two-column expression (ambiguous)", () => {
-    expect(extractExpressionIndexes("(coalesce(first_name, last_name) = 'x'::text)")).toEqual([]);
+    // An allowlisted function on purpose, so this proves the column-count rule
+    // rather than passing because the name was rejected first.
+    expect(extractExpressionIndexes("(replace(email, country, 'x'::text) = 'y'::text)")).toEqual([]);
   });
 
   it("declines when the right-hand side is a column (a join on an expression)", () => {
@@ -259,9 +281,9 @@ describe("extractExpressionIndexes — expressions a plain index can't serve", (
   });
 
   it("ignores a keyword argument when counting columns", () => {
-    // `null` is not a column, so coalesce(email, null) is still single-column.
-    expect(extractExpressionIndexes("(coalesce(email, null) = 'x'::text)")).toEqual([
-      "coalesce(email, null)",
+    // `null` is not a column, so this is still a single-column expression.
+    expect(extractExpressionIndexes("(replace(email, 'a'::text, null) = 'x'::text)")).toEqual([
+      "replace(email, 'a'::text, null)",
     ]);
   });
 
