@@ -74,6 +74,33 @@ if (!navigator.clipboard) {
 /* jsdom's File predates Blob.text(). Every browser the app ships in has had it
    for years — the import wizard reads the picked file with it — so this is a
    gap in the test environment, not a shim for the app. */
+/* jsdom has no `Blob.stream()` either, and the CSV import reads files through
+   it so a large file never has to be held in memory. The chunk size here is
+   deliberately tiny: it makes every test that imports a file exercise the
+   parser's chunk-boundary handling — a quoted field split across reads — which
+   is the part that a single-shot `text()` could never reach. */
+if (!Blob.prototype.stream) {
+  const CHUNK = 16;
+  Blob.prototype.stream = function (this: Blob) {
+    const read = (b: Blob) =>
+      new Promise<ArrayBuffer>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result as ArrayBuffer);
+        r.onerror = () => reject(r.error);
+        r.readAsArrayBuffer(b);
+      });
+    // Bound before the stream starts, so the callback never needs `this`.
+    const pending = read(this);
+    return new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const buf = await pending;
+        const bytes = new Uint8Array(buf);
+        for (let i = 0; i < bytes.length; i += CHUNK) controller.enqueue(bytes.subarray(i, i + CHUNK));
+        controller.close();
+      },
+    }) as unknown as ReturnType<Blob["stream"]>;
+  };
+}
 if (!File.prototype.text) {
   File.prototype.text = function (this: File) {
     return new Promise<string>((resolve, reject) => {

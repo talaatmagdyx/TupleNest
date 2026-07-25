@@ -8,74 +8,143 @@
 export type CsvTable = { header: string[]; rows: string[][] };
 
 /** Parse RFC-4180 CSV. `delimiter` is usually "," but TSV works too. */
-export function parseCsv(text: string, delimiter = ","): CsvTable {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = "";
-  let i = 0;
-  let inQuotes = false;
-  let fieldWasQuoted = false;
+/**
+ * An RFC-4180 reader that can be fed the file a piece at a time.
+ *
+ * The whole-string parser this replaces could not be used on a file larger
+ * than memory, and the naive fix — split on newlines, parse each piece — is
+ * wrong: a quoted field may legally contain the delimiter, a newline, or both,
+ * so a chunk boundary can fall inside a value. Keeping the state machine's
+ * `field` / `row` / `inQuotes` across calls is what makes chunking safe, and
+ * it is the same machine as before so behaviour is unchanged.
+ *
+ * `push` returns only the rows that were *completed* by that chunk; a row half
+ * seen is retained until the rest arrives. `end` flushes the last row, which
+ * matters because a file need not end with a newline.
+ */
+export class CsvStreamParser {
+  private row: string[] = [];
+  private field = "";
+  private inQuotes = false;
+  private fieldWasQuoted = false;
+  private atStart = true;
+  /** A chunk can end on `"` while the escape `""` straddles the boundary. */
+  private pendingQuote = false;
 
-  // Strip a UTF-8 BOM — Excel loves emitting one and it corrupts the first header.
-  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  constructor(private readonly delimiter = ",") {}
 
-  const endField = () => {
-    row.push(field);
-    field = "";
-    fieldWasQuoted = false;
-  };
-  const endRow = () => {
-    endField();
-    rows.push(row);
-    row = [];
-  };
+  push(chunk: string): string[][] {
+    const rows: string[][] = [];
+    let text = chunk;
 
-  while (i < text.length) {
-    const c = text[i];
+    // Strip a UTF-8 BOM — Excel loves emitting one and it corrupts the first
+    // header. Only ever at the very beginning of the file, not of each chunk.
+    // The `length` guard matters: an empty first chunk is not the start of any
+    // content, and clearing the flag on one left a real BOM in the *next*
+    // chunk unstripped. A reader handing over a zero-length chunk is perfectly
+    // legal, so this is not hypothetical.
+    if (this.atStart && text.length > 0) {
+      if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+      this.atStart = false;
+    }
 
-    if (inQuotes) {
-      if (c === '"') {
-        if (text[i + 1] === '"') {
-          field += '"'; // escaped quote
-          i += 2;
+    let i = 0;
+    // Resolve a quote left dangling by the previous chunk before anything else.
+    if (this.pendingQuote) {
+      this.pendingQuote = false;
+      if (text[0] === '"') {
+        this.field += '"'; // it was an escaped quote after all
+        i = 1;
+      } else {
+        this.inQuotes = false; // it really did close the field
+      }
+    }
+
+    const endField = () => {
+      this.row.push(this.field);
+      this.field = "";
+      this.fieldWasQuoted = false;
+    };
+    const endRow = () => {
+      endField();
+      rows.push(this.row);
+      this.row = [];
+    };
+
+    while (i < text.length) {
+      const c = text[i];
+
+      if (this.inQuotes) {
+        if (c === '"') {
+          if (i + 1 >= text.length) {
+            // Cannot tell `""` from a closing quote yet — wait for more input.
+            this.pendingQuote = true;
+            i++;
+            continue;
+          }
+          if (text[i + 1] === '"') {
+            this.field += '"'; // escaped quote
+            i += 2;
+            continue;
+          }
+          this.inQuotes = false;
+          i++;
           continue;
         }
-        inQuotes = false;
+        this.field += c;
         i++;
         continue;
       }
-      field += c;
+
+      if (c === '"' && this.field === "") {
+        this.inQuotes = true;
+        this.fieldWasQuoted = true;
+        i++;
+        continue;
+      }
+      if (c === this.delimiter) {
+        endField();
+        i++;
+        continue;
+      }
+      if (c === "\r") {
+        i++;
+        continue;
+      }
+      if (c === "\n") {
+        endRow();
+        i++;
+        continue;
+      }
+      this.field += c;
       i++;
-      continue;
     }
 
-    if (c === '"' && field === "") {
-      inQuotes = true;
-      fieldWasQuoted = true;
-      i++;
-      continue;
-    }
-    if (c === delimiter) {
-      endField();
-      i++;
-      continue;
-    }
-    if (c === "\r") {
-      i++;
-      continue;
-    }
-    if (c === "\n") {
-      endRow();
-      i++;
-      continue;
-    }
-    field += c;
-    i++;
+    return rows;
   }
 
-  // Trailing field/row, unless the file simply ended with a newline.
-  if (field !== "" || fieldWasQuoted || row.length > 0) endRow();
+  /** The final row, when the file did not end with a newline. */
+  end(): string[][] {
+    // A chunk that ended mid-escape closed the field; nothing more is coming.
+    this.pendingQuote = false;
+    if (this.field !== "" || this.fieldWasQuoted || this.row.length > 0) {
+      this.row.push(this.field);
+      const last = this.row;
+      this.field = "";
+      this.fieldWasQuoted = false;
+      this.row = [];
+      return [last];
+    }
+    return [];
+  }
+}
 
+/** Parse a complete CSV string. Kept for callers that already hold the whole
+ *  file — it is now the streaming parser fed a single chunk, so the two cannot
+ *  drift apart. */
+export function parseCsv(text: string, delimiter = ","): CsvTable {
+  const parser = new CsvStreamParser(delimiter);
+  const rows = [...parser.push(text), ...parser.end()];
   const header = rows.shift() ?? [];
   return { header, rows };
 }

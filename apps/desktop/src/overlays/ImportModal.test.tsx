@@ -206,3 +206,71 @@ describe("ImportModal — running", () => {
     expect(invokeMock.mock.calls.map((c) => c[0])).toContain("pg_rollback");
   });
 });
+
+describe("ImportModal — streaming a file it never holds whole", () => {
+  /** A file whose stream fails partway, to exercise the read-error path. */
+  const brokenFile = (name = "broken.csv") => {
+    const f = new File(["id\n1\n"], name, { type: "text/csv" });
+    Object.defineProperty(f, "stream", {
+      value: () =>
+        new ReadableStream({
+          start(c) {
+            c.error(new Error("disk went away"));
+          },
+        }),
+      configurable: true,
+    });
+    return f;
+  };
+
+  it("reports a read failure instead of pretending the file was empty", async () => {
+    const { container } = render(<ImportModal {...base} />);
+    await choose(container, brokenFile());
+    expect(await screen.findByText(/Could not read that file/)).toBeInTheDocument();
+    // And it must not offer to import something it never read.
+    expect(screen.queryByRole("button", { name: /^Import/ })).not.toBeInTheDocument();
+  });
+
+  it("samples a large file rather than counting every row up front", async () => {
+    // 600 data rows against a 500-row sample: the modal must not claim a total
+    // it has not counted, because it deliberately stopped reading.
+    const many = "id,name\n" + Array.from({ length: 600 }, (_, i) => `${i},n${i}`).join("\n") + "\n";
+    const { container } = render(<ImportModal {...base} />);
+    await choose(container, csv(many, "big.csv"));
+    expect(await screen.findByText(/first 500 rows sampled/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Import all rows/ })).toBeInTheDocument();
+  });
+
+  it("reports the true row count after streaming the whole file", async () => {
+    const many = "id,name\n" + Array.from({ length: 600 }, (_, i) => `${i},n${i}`).join("\n") + "\n";
+    const onDone = vi.fn();
+    const { container } = render(<ImportModal {...base} onDone={onDone} />);
+    await choose(container, csv(many, "big.csv"));
+    await userEvent.click(await screen.findByRole("button", { name: /Import all rows/ }));
+    // 600 rows in batches of 500 — the count comes from what was inserted, not
+    // from the 500-row preview.
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith(expect.stringContaining("600")));
+  });
+
+  it("cancels mid-import and rolls back rather than leaving a half-filled table", async () => {
+    const many = "id,name\n" + Array.from({ length: 2000 }, (_, i) => `${i},n${i}`).join("\n") + "\n";
+    // Flip cancel as soon as the first batch insert goes out.
+    let cancelBtn: HTMLElement | null = null;
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "pg_query" && cancelBtn) fireEvent.click(cancelBtn);
+      return { columns: [], rows: [], rowsAffected: 0, durationMs: 1 };
+    });
+    const onDone = vi.fn();
+    const { container } = render(<ImportModal {...base} onDone={onDone} />);
+    await choose(container, csv(many, "big.csv"));
+    // The footer only exists once the preview has streamed in, so wait for the
+    // Import button before reaching for the Cancel beside it.
+    const importBtn = await screen.findByRole("button", { name: /Import all rows/ });
+    cancelBtn = screen.getByRole("button", { name: "Cancel" });
+    await userEvent.click(importBtn);
+
+    await waitFor(() => expect(screen.getByText(/cancelled/i)).toBeInTheDocument());
+    expect(invokeMock.mock.calls.map((c) => c[0])).toContain("pg_rollback");
+    expect(onDone).not.toHaveBeenCalled();
+  });
+});

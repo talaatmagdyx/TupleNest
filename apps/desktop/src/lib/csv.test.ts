@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildCreateTable,
+  CsvStreamParser,
   buildInsert,
   coerceCell,
   inferType,
@@ -193,5 +194,90 @@ describe("buildInsert", () => {
 
   it("throws rather than emit an empty insert", () => {
     expect(() => buildInsert("public", "t", cols, [])).toThrow(/no rows/i);
+  });
+});
+
+describe("CsvStreamParser — the same file, delivered in pieces", () => {
+  /** Feed `text` one character at a time: the most hostile chunking possible,
+   *  so every boundary case is exercised at once. */
+  const byChar = (text: string, delimiter = ",") => {
+    const p = new CsvStreamParser(delimiter);
+    const rows: string[][] = [];
+    for (const ch of text) rows.push(...p.push(ch));
+    rows.push(...p.end());
+    return rows;
+  };
+
+  /** Split at one specific index — for pinning a named boundary. */
+  const splitAt = (text: string, at: number, delimiter = ",") => {
+    const p = new CsvStreamParser(delimiter);
+    const rows = [...p.push(text.slice(0, at)), ...p.push(text.slice(at))];
+    rows.push(...p.end());
+    return rows;
+  };
+
+  const SAMPLES = [
+    "a,b\n1,2\n",
+    "a,b\n1,2", // no trailing newline
+    'name,note\n"Ann","said ""hi"""\n', // escaped quotes
+    'a,b\n"multi\nline",2\n', // newline inside a quoted field
+    'a,b\n"has,comma",2\n', // delimiter inside a quoted field
+    "a,b\r\n1,2\r\n", // CRLF
+    '﻿a,b\n1,2\n', // BOM
+    'a,b\n"",2\n', // empty quoted field
+    'a,b\n"trailing space ",2\n',
+  ];
+
+  it("gives the same answer as parsing the whole string, however it is chopped", () => {
+    for (const text of SAMPLES) {
+      const whole = parseCsv(text);
+      const expected = [whole.header, ...whole.rows];
+      expect(byChar(text), `char-by-char: ${JSON.stringify(text)}`).toEqual(expected);
+      for (let at = 0; at <= text.length; at++) {
+        expect(splitAt(text, at), `split at ${at}: ${JSON.stringify(text)}`).toEqual(expected);
+      }
+    }
+  });
+
+  it("keeps an escaped quote intact when the boundary falls between its two characters", () => {
+    // The case the whole-string parser could never hit: chunk one ends on the
+    // first `"` of a `""` pair, so the parser cannot yet know whether the
+    // field closed or an escaped quote began.
+    const text = 'a\n"x""y"\n';
+    const at = text.indexOf('""') + 1;
+    expect(splitAt(text, at)).toEqual([["a"], ['x"y']]);
+  });
+
+  it("holds back a row until the chunk that finishes it", () => {
+    const p = new CsvStreamParser();
+    expect(p.push("a,b\n1,")).toEqual([["a", "b"]]); // only the completed row
+    expect(p.push("2\n")).toEqual([["1", "2"]]);
+    expect(p.end()).toEqual([]);
+  });
+
+  it("emits the last row from end() when the file has no trailing newline", () => {
+    const p = new CsvStreamParser();
+    expect(p.push("a\n1")).toEqual([["a"]]);
+    expect(p.end()).toEqual([["1"]]);
+  });
+
+  it("strips the BOM only once, not from every chunk", () => {
+    const p = new CsvStreamParser();
+    expect(p.push("﻿a,b\n")).toEqual([["a", "b"]]);
+    // A BOM mid-file is a real character and must survive.
+    expect(p.push("﻿x,y\n")).toEqual([["﻿x", "y"]]);
+  });
+
+  it("handles a quoted field spanning three chunks", () => {
+    const p = new CsvStreamParser();
+    expect(p.push('a\n"one ')).toEqual([["a"]]);
+    expect(p.push("two ")).toEqual([]);
+    expect(p.push('three"\n')).toEqual([["one two three"]]);
+  });
+
+  it("respects a non-comma delimiter across chunks", () => {
+    const p = new CsvStreamParser(";");
+    expect(p.push("a;b\n1;")).toEqual([["a", "b"]]);
+    expect(p.push("2\n")).toEqual([["1", "2"]]);
   });
 });
