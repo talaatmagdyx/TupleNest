@@ -125,7 +125,8 @@ connect"*.
 </tr>
 <tr>
 <td width="50%" valign="top">
-<p align="center"><br/><b>The plan writes the fix, not just the diagnosis</b></p>
+<img src="docs/site/shots/index-advisor.png" alt="Query plan with a Seq Scan flagged as the bottleneck, and three runnable CREATE INDEX statements beside it" />
+<p align="center"><b>The plan writes the fix, not just the diagnosis</b></p>
 <sub>A sequential scan applying a filter gets you a runnable <code>CREATE INDEX</code> with a copy button — equality columns first, then one range column, the only ordering a btree can seek on. Filters a plain index can't serve get an expression index, preserved character for character because the planner only uses one that matches verbatim.<br/><br/>It reads the column's <i>real type</i> to decide: <code>date_trunc('day', ts)</code> is offered on a <code>timestamp</code> and declined on a <code>timestamptz</code>, which reads the session time zone and so <b>cannot be indexed at all</b>.</sub>
 </td>
 <td width="50%" valign="top">
