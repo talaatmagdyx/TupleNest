@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   extractPredicates,
   extractExpressionIndexes,
+  catalogTypeLookup,
   suggestIndexes,
   type IndexSuggestion,
 } from "./index-advisor";
@@ -228,7 +229,7 @@ describe("extractExpressionIndexes — expressions a plain index can't serve", (
     expect(extractExpressionIndexes("(lower(email) = 'x'::text)")).toEqual(["lower(email)"]);
   });
 
-  it("declines a cast on a column — it may not be IMMUTABLE, so it may not be indexable", () => {
+  it("declines a cast on a column when the column's type is unknown", () => {
     // A live PostgreSQL 18 rejects `CREATE INDEX ON orders (((created_at)::date))`
     // with "functions in index expression must be marked IMMUTABLE", because
     // timestamptz→date depends on the session TimeZone. The plan does not say
@@ -237,7 +238,7 @@ describe("extractExpressionIndexes — expressions a plain index can't serve", (
     expect(extractExpressionIndexes("(created_at::date = '2024-01-01'::date)")).toEqual([]);
   });
 
-  it("declines date_trunc — its timestamptz overload is STABLE, not IMMUTABLE", () => {
+  it("declines date_trunc when the column's type is unknown", () => {
     expect(extractExpressionIndexes("(date_trunc('day'::text, created_at) = '2024-01-01'::timestamp)")).toEqual([]);
   });
 
@@ -329,6 +330,29 @@ describe("suggestIndexes — expression indexes", () => {
     expect(ddl(s)).toEqual(["CREATE INDEX ON app.users ((lower(email)));"]);
   });
 
+  it("uses the column type to allow what PostgreSQL will accept", () => {
+    // Same filter, two column types. `timestamp → date` is IMMUTABLE and so
+    // indexable; `timestamptz → date` reads the session TimeZone and is not.
+    const filter = "((created_at)::date = '2024-01-01'::date)";
+    const plain = () => "timestamp without time zone";
+    const tz = () => "timestamp with time zone";
+    expect(extractExpressionIndexes(filter, plain)).toEqual(["(created_at)::date"]);
+    expect(extractExpressionIndexes(filter, tz)).toEqual([]);
+  });
+
+  it("uses the column type to pick date_trunc's overload", () => {
+    const filter = "(date_trunc('day'::text, created_at) = '2024-01-01'::timestamp)";
+    expect(extractExpressionIndexes(filter, () => "timestamp without time zone")).toEqual([
+      "date_trunc('day'::text, created_at)",
+    ]);
+    expect(extractExpressionIndexes(filter, () => "timestamp with time zone")).toEqual([]);
+  });
+
+  it("still declines a type it has no cast evidence for", () => {
+    // A user-defined type: absent from the generated table, so declined.
+    expect(extractExpressionIndexes("(weird::date = '2024-01-01'::date)", () => "my_custom_type")).toEqual([]);
+  });
+
   it("suggests an expression index from a heavy residual filter on an indexed scan", () => {
     const plan = {
       Plan: {
@@ -342,5 +366,74 @@ describe("suggestIndexes — expression indexes", () => {
     const s = suggestIndexes(plan);
     expect(ddl(s)).toEqual(["CREATE INDEX ON users ((lower(email)));"]);
     expect(s[0].reason).toContain("residual filter on");
+  });
+
+  it("passes column types down to the expression rules", () => {
+    const plan = seqScan("orders", "((created_at)::date = '2024-01-01'::date)");
+    expect(ddl(suggestIndexes(plan))).toEqual([]); // no types: declined
+    expect(ddl(suggestIndexes(plan, () => "timestamp without time zone"))).toEqual([
+      "CREATE INDEX ON orders (((created_at)::date));",
+    ]);
+    expect(ddl(suggestIndexes(plan, () => "timestamp with time zone"))).toEqual([]);
+  });
+
+  it("resolves types against the scanned table, not just any table", () => {
+    const plan = {
+      Plan: {
+        "Node Type": "Hash Join",
+        Plans: [
+          { "Node Type": "Seq Scan", "Relation Name": "orders", Filter: "((created_at)::date = '2024-01-01'::date)" },
+          { "Node Type": "Seq Scan", "Relation Name": "events", Filter: "((created_at)::date = '2024-01-01'::date)" },
+        ],
+      },
+    };
+    // `orders.created_at` is indexable, `events.created_at` is not — the same
+    // filter text must resolve differently per relation.
+    const typeOf = (_s: string | null, table: string) =>
+      table === "orders" ? "timestamp without time zone" : "timestamp with time zone";
+    expect(ddl(suggestIndexes(plan, typeOf))).toEqual(["CREATE INDEX ON orders (((created_at)::date));"]);
+  });
+});
+
+describe("catalogTypeLookup — reading types out of the editor's catalog", () => {
+  const cat = {
+    searchPath: ["public"],
+    columns: {
+      "public.orders": [
+        { name: "created_at", dbType: "timestamp without time zone" },
+        { name: "status", dbType: "text" },
+      ],
+      "sales.orders": [{ name: "created_at", dbType: "timestamp with time zone" }],
+      "public.events": [{ name: "at", dbType: "timestamp with time zone" }],
+    },
+  };
+
+  it("prefers an explicit schema from the plan", () => {
+    expect(catalogTypeLookup(cat)("sales", "orders", "created_at")).toBe("timestamp with time zone");
+    expect(catalogTypeLookup(cat)("public", "orders", "created_at")).toBe("timestamp without time zone");
+  });
+
+  it("falls back to the search path when the plan gave no schema", () => {
+    expect(catalogTypeLookup(cat)(null, "orders", "created_at")).toBe("timestamp without time zone");
+  });
+
+  it("is case-insensitive on the column name", () => {
+    expect(catalogTypeLookup(cat)(null, "orders", "CREATED_AT")).toBe("timestamp without time zone");
+  });
+
+  it("says nothing rather than guessing when the table name is ambiguous", () => {
+    const ambiguous = { searchPath: ["nope"], columns: cat.columns };
+    // `orders` exists in two schemas and the search path matches neither.
+    expect(catalogTypeLookup(ambiguous)(null, "orders", "created_at")).toBeUndefined();
+  });
+
+  it("resolves an unambiguous table outside the search path", () => {
+    const off = { searchPath: ["nope"], columns: { "public.events": cat.columns["public.events"] } };
+    expect(catalogTypeLookup(off)(null, "events", "at")).toBe("timestamp with time zone");
+  });
+
+  it("returns undefined for a column or table it does not have", () => {
+    expect(catalogTypeLookup(cat)(null, "orders", "nope")).toBeUndefined();
+    expect(catalogTypeLookup(cat)(null, "missing", "x")).toBeUndefined();
   });
 });

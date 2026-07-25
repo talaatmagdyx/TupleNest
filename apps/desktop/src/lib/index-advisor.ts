@@ -241,6 +241,124 @@ const IMMUTABLE_FUNCTIONS = new Set([
   "sqrt", "substr", "substring", "to_hex", "translate", "trunc", "upper",
 ]);
 
+/* ------------------------------------------------ type-aware volatility */
+
+/**
+ * What the caller knows about a column's type.
+ *
+ * The set above is the answer when we know nothing. When the app *does* know
+ * the column types — it already loads them for autocomplete — a whole family of
+ * useful expressions becomes decidable rather than merely suspicious:
+ * `date_trunc('day', ts)` is IMMUTABLE on a `timestamp` and STABLE on a
+ * `timestamptz`, and that is the single most common thing people want an
+ * expression index for.
+ */
+export type ColumnTypeLookup = (
+  schema: string | null,
+  table: string,
+  column: string,
+) => string | undefined;
+
+/**
+ * Build a lookup from the catalog the editor already loads for autocomplete.
+ *
+ * A plan names the relation but not its schema unless VERBOSE was on, so an
+ * unqualified relation is resolved against the search path — and, failing that,
+ * against any schema that has a table of that name, because a plan that says
+ * `orders` in a database with exactly one `orders` is not ambiguous in
+ * practice. Returns undefined rather than guessing when the name really is
+ * ambiguous, which puts the advisor back on its type-free behaviour.
+ */
+export function catalogTypeLookup(cat: {
+  columns: Record<string, { name: string; dbType: string }[]>;
+  searchPath: string[];
+}): ColumnTypeLookup {
+  return (schema, table, column) => {
+    let key: string | undefined;
+    if (schema) {
+      key = cat.columns[`${schema}.${table}`] ? `${schema}.${table}` : undefined;
+    } else {
+      // The search path decides first — that is what the server itself would
+      // do — and only if it holds no such table do we look wider.
+      key = cat.searchPath.map((s) => `${s}.${table}`).find((k) => cat.columns[k]);
+      if (!key) {
+        const all = Object.keys(cat.columns).filter((k) => k.slice(k.indexOf(".") + 1) === table);
+        // Same table name in two schemas, and nothing to choose by: say nothing.
+        if (all.length !== 1) return undefined;
+        key = all[0];
+      }
+    }
+    if (!key) return undefined;
+    const col = column.toLowerCase();
+    return cat.columns[key].find((c) => c.name.toLowerCase() === col)?.dbType;
+  };
+}
+
+/** PostgreSQL's `format_type` spellings, folded to the short names used below. */
+function normalizeType(raw: string | undefined): string | null {
+  if (!raw) return null;
+  // Drop a type modifier and any array markers: `numeric(10,2)[]` → `numeric`.
+  const t = raw.toLowerCase().replace(/\(.*$/, "").replace(/\[\s*\]/g, "").trim();
+  const map: Record<string, string> = {
+    "timestamp with time zone": "timestamptz",
+    "timestamp without time zone": "timestamp",
+    "time with time zone": "timetz",
+    "time without time zone": "time",
+    "character varying": "varchar",
+    character: "bpchar",
+    "double precision": "float8",
+    real: "float4",
+    integer: "int4",
+    bigint: "int8",
+    smallint: "int2",
+    boolean: "bool",
+  };
+  return map[t] ?? t;
+}
+
+/**
+ * Casts that PostgreSQL marks IMMUTABLE, as `source>target`.
+ *
+ * Generated, not remembered — every pair below came out of a live PostgreSQL 18:
+ *
+ *     SELECT format_type(castsource,NULL), format_type(casttarget,NULL),
+ *            CASE WHEN castfunc = 0 THEN 'i'
+ *                 ELSE (SELECT provolatile FROM pg_proc WHERE oid = castfunc) END
+ *     FROM pg_cast;
+ *
+ * The temporal rows are the interesting ones and they split exactly on
+ * `timestamptz`: `timestamp → date` is immutable, `timestamptz → date` is
+ * stable, because only the latter has to ask what the session's time zone is.
+ * A pair that is not listed is declined, so an unknown or user-defined type
+ * never produces a suggestion.
+ */
+const IMMUTABLE_CASTS = new Set([
+  // temporal (note: nothing converting *between* timestamptz and another
+  // temporal type appears here — all of those are STABLE)
+  "timestamp>date", "timestamp>time", "timestamp>timestamp",
+  "date>timestamp", "time>time", "timestamptz>timestamptz",
+  // text
+  "text>varchar", "varchar>text", "varchar>varchar", "text>text",
+  // numeric and boolean
+  "int4>int8", "int4>numeric", "int4>bool", "int8>int4", "int8>numeric",
+  "numeric>int4", "numeric>int8", "numeric>numeric",
+  "bool>int4", "bool>text", "bool>varchar",
+]);
+
+/**
+ * Functions whose volatility depends on which overload the argument selects,
+ * with the argument types for which they are IMMUTABLE.
+ *
+ *     SELECT proname, pg_get_function_arguments(oid), provolatile FROM pg_proc;
+ *
+ * `to_char` is deliberately absent: every one of its overloads is STABLE, even
+ * the purely numeric ones, because the output depends on lc_numeric.
+ */
+const IMMUTABLE_BY_ARG_TYPE: Record<string, Set<string>> = {
+  date_trunc: new Set(["timestamp", "interval"]),
+  date_part: new Set(["timestamp", "date", "time", "timetz", "interval"]),
+};
+
 /**
  * Expression predicates a *plain* column index cannot serve — a function on a
  * column (`lower(email)`) or a cast (`(created_at)::date`). Each returned string
@@ -257,10 +375,21 @@ const IMMUTABLE_FUNCTIONS = new Set([
  * Conservative like the column path: nothing when the filter contains `OR`,
  * only expressions over exactly one column, and only against a value (not
  * another column).
+ *
+ * `typeOf` resolves a column name to its declared type. Without it the advisor
+ * offers only functions that are immutable whatever their argument — with it,
+ * casts and the temporal functions become decidable too.
  */
-export function extractExpressionIndexes(raw: string): string[] {
+export function extractExpressionIndexes(raw: string, typeOf?: (column: string) => string | undefined): string[] {
   const masked = raw.replace(/'(?:[^']|'')*'/g, "§");
   if (/\bor\b/i.test(masked)) return [];
+
+  /** The single column an expression references, or null when it is not
+   *  exactly one — which is the only case we are willing to reason about. */
+  const soleColumn = (expr: string): string | null => {
+    const cols = exprColumns(expr);
+    return cols.length === 1 ? cols[0] : null;
+  };
 
   const out: string[] = [];
   const seen = new Set<string>();
@@ -272,47 +401,65 @@ export function extractExpressionIndexes(raw: string): string[] {
     }
   };
 
-  // Casts are deliberately absent.
-  //
-  // `(created_at)::date` was suggested here until a round-trip against a live
-  // PostgreSQL 18 rejected the statement outright:
+  // A cast on a column: `(col)::type`, `col::type`, `t.col::type`. Only offered
+  // when the column's type is known and `pg_cast` says that conversion is
+  // IMMUTABLE — `timestamp → date` qualifies, `timestamptz → date` does not,
+  // and without a known type nothing does. This was suggested unconditionally
+  // once, and a live PostgreSQL answered:
   //
   //     ERROR: functions in index expression must be marked IMMUTABLE
-  //
-  // A cast from `timestamptz` to `date` reads the session TimeZone, so it is
-  // STABLE and cannot be indexed; the same cast from a plain `timestamp` is
-  // IMMUTABLE and can. Which one applies depends on the column's type, and a
-  // plan never states it — so every cast suggestion was a coin flip on whether
-  // the statement would even run. Declined until the advisor has the column
-  // types to decide with.
-  //
+  const colTarget = String.raw`(?:\(\s*(?:${IDENT}\.)?${IDENT}\s*\)|(?:${IDENT}\.)?${IDENT})`;
+  const castExpr = String.raw`${colTarget}::\s*[a-z_][a-z0-9_ ]*(?:\(\s*\d+(?:\s*,\s*\d+)?\s*\))?(?:\s*\[\s*\])*`;
+  const castRe = new RegExp(String.raw`(${castExpr})\s*${OP}\s*(\S+)`, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = castRe.exec(raw)) !== null) {
+    const expr = m[1];
+    if (isColumnReference(m[2])) continue;
+    if (!typeOf) continue; // no types: cannot tell immutable from stable
+    const col = soleColumn(expr.slice(0, expr.lastIndexOf("::")));
+    if (!col) continue;
+    const src = normalizeType(typeOf(col));
+    const tgt = normalizeType(expr.slice(expr.lastIndexOf("::") + 2));
+    if (src && tgt && IMMUTABLE_CASTS.has(`${src}>${tgt}`)) add(expr);
+  }
+
   // A function call whose argument list references exactly one column. `[^()]*`
   // keeps the match to a single, un-nested call — enough for the common
   // `lower(col)` case without trying to parse arbitrary nesting.
   const fnRe = new RegExp(String.raw`([a-z_][a-z0-9_]*\s*\([^()]*\))\s*${OP}\s*(\S+)`, "gi");
-  let m: RegExpExecArray | null;
   while ((m = fnRe.exec(raw)) !== null) {
     const expr = m[1];
     const name = (/^[a-z_][a-z0-9_]*/.exec(expr)?.[0] ?? "").toLowerCase();
     if (NOT_A_FUNCTION.has(name)) continue;
-    // Only functions that are IMMUTABLE in every overload; see the set above.
-    if (!IMMUTABLE_FUNCTIONS.has(name)) continue;
     if (isColumnReference(m[2])) continue;
-    if (exprColumnCount(expr) !== 1) continue;
-    add(expr);
+    const col = soleColumn(expr);
+    if (!col) continue; // zero or several columns: not ours to reason about
+
+    if (IMMUTABLE_FUNCTIONS.has(name)) {
+      add(expr); // immutable in every overload, so the argument type is moot
+      continue;
+    }
+    // Otherwise it is only safe if the column's type selects an immutable
+    // overload — `date_trunc('day', ts)` on a `timestamp`, but not on a
+    // `timestamptz`.
+    const allowed = IMMUTABLE_BY_ARG_TYPE[name];
+    const t = normalizeType(typeOf?.(col));
+    if (allowed && t && allowed.has(t)) add(expr);
   }
 
   return out;
 }
 
-/** How many distinct columns a function-call expression references. Literals
- *  are masked, and numbers, keywords and the function name never count — so
- *  `lower(email)` is 1, `date_trunc('day', ts)` is 1, `coalesce(a, b)` is 2,
- *  and a type modifier like `numeric(10,2)` is 0. Used to hold expression-index
- *  suggestions to the unambiguous single-column case. */
-function exprColumnCount(fnCall: string): number {
+/** The distinct columns an expression references. Literals are masked, and
+ *  numbers, keywords and the function name never count — so `lower(email)` is
+ *  one, `date_trunc('day', ts)` is one, `replace(a, b, 'x')` is two, and a type
+ *  modifier like `numeric(10,2)` is none. Suggestions are held to the
+ *  unambiguous single-column case, and that column is what gets its type
+ *  looked up. */
+function exprColumns(fnCall: string): string[] {
+  // A bare or parenthesised column (the cast case) has no argument list.
   const open = fnCall.indexOf("(");
-  const args = fnCall.slice(open + 1, fnCall.lastIndexOf(")"));
+  const args = open === -1 ? fnCall : fnCall.slice(open + 1, fnCall.lastIndexOf(")"));
   // Mask literals, then strip casts, so the *type* name in `'day'::text` is not
   // miscounted as a column. Bounded by the comma/end of each argument.
   const masked = args
@@ -334,7 +481,7 @@ function exprColumnCount(fnCall: string): number {
     }
     cols.add(bareColumn(tok).toLowerCase());
   }
-  return cols.size;
+  return [...cols];
 }
 
 /** True when `col` appears cast in the (literal-masked) source, i.e. followed
@@ -414,7 +561,7 @@ function reasonForExpr(nodeType: string, table: string, expr: string): string {
  * anything it cannot walk, never throwing: a plan we cannot read is a missing
  * suggestion, not a crash.
  */
-export function suggestIndexes(parsed: unknown): IndexSuggestion[] {
+export function suggestIndexes(parsed: unknown, typeOf?: ColumnTypeLookup): IndexSuggestion[] {
   const root = (Array.isArray(parsed) ? parsed[0] : parsed) as Record<string, unknown> | null;
   const plan = root?.["Plan"] as RawPlan | undefined;
   if (!plan || typeof plan !== "object") return [];
@@ -454,8 +601,12 @@ export function suggestIndexes(parsed: unknown): IndexSuggestion[] {
           }
         }
 
-        // Function/cast expressions → one expression index each.
-        for (const expr of extractExpressionIndexes(filter)) {
+        // Function/cast expressions → one expression index each. The lookup is
+        // bound to *this* node's relation, so a column name resolves against
+        // the table actually being scanned.
+        const schema = attrText(n, "Schema");
+        const columnType = typeOf ? (c: string) => typeOf(schema, relation, c) : undefined;
+        for (const expr of extractExpressionIndexes(filter, columnType)) {
           emit({
             table,
             columns: [expr],

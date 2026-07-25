@@ -12,7 +12,8 @@ import {
   type Insight,
   type ParsedPlanNode,
 } from "../lib/explain";
-import type { IndexSuggestion } from "../lib/index-advisor";
+import { catalogTypeLookup, type IndexSuggestion } from "../lib/index-advisor";
+import type { Catalog } from "../lib/complete";
 
 /** The plan currently on screen, and the statement that produced it. */
 export type ExplainState = {
@@ -47,6 +48,10 @@ export type ExplainRunArgs = {
   title: string;
   connected: boolean;
   override?: unknown;
+  /** Column types, so the index advisor can tell an indexable expression from
+   *  one PostgreSQL would reject. Passed per run rather than to the hook
+   *  because the catalog is built further down the component. */
+  catalog?: Catalog;
   /** Called once the run is committed to — after the checks pass, before the
    *  server is asked. This is where the modal opens: opening it only on the
    *  result would leave an EXPLAIN ANALYZE of a slow query looking like a
@@ -77,7 +82,7 @@ export function useExplain(serverMajor?: number): Explain {
   const [busy, setBusy] = useState(false);
 
   const run = useCallback(
-    async ({ sql, title, connected, override, onStart }: ExplainRunArgs): Promise<ExplainOutcome> => {
+    async ({ sql, title, connected, override, onStart, catalog }: ExplainRunArgs): Promise<ExplainOutcome> => {
       if (!sql.trim()) return { kind: "blocked", reason: "empty" };
       if (!connected) return { kind: "blocked", reason: "disconnected" };
 
@@ -130,7 +135,12 @@ export function useExplain(serverMajor?: number): Explain {
         // is documented to be an array of plan documents.
         const parsed: unknown = typeof cell === "string" ? (JSON.parse(cell) as unknown) : cell;
         const root = (Array.isArray(parsed) ? parsed[0] : parsed) as Record<string, unknown>;
-        const { nodes, stats, suggestion, insights, indexSuggestions } = parsePlan(parsed);
+        // Column types turn "might not be indexable" into a decidable question
+        // for the advisor; without a catalog it stays on its cautious path.
+        const { nodes, stats, suggestion, insights, indexSuggestions } = parsePlan(
+          parsed,
+          catalog ? catalogTypeLookup(catalog) : undefined,
+        );
         setExplain({
           title,
           sql,

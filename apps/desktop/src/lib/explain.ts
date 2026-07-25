@@ -12,7 +12,7 @@
  */
 
 import { maskLiterals } from "./complete";
-import { suggestIndexes, type IndexSuggestion } from "./index-advisor";
+import { suggestIndexes, type ColumnTypeLookup, type IndexSuggestion } from "./index-advisor";
 import { cellText, mdCell } from "./text";
 
 export type ExplainFormat = "json" | "text" | "yaml" | "xml";
@@ -422,7 +422,11 @@ function nodeDetail(n: RawPlan): string {
  * we can't walk is a display problem, not a reason to lose the raw payload the
  * user can still read.
  */
-export function parsePlan(parsed: unknown): ParsedPlan {
+/** `typeOf` lets the index advisor decide whether an expression is IMMUTABLE —
+ *  and so indexable — from the column's real type. Optional: the paste-a-plan
+ *  window has a plan but no connection, and the advisor falls back to only
+ *  suggesting what is safe whatever the types are. */
+export function parsePlan(parsed: unknown, typeOf?: ColumnTypeLookup): ParsedPlan {
   const root = (Array.isArray(parsed) ? parsed[0] : parsed) as Record<string, unknown> | null;
   const plan = root?.["Plan"] as RawPlan | undefined;
   if (!plan || typeof plan !== "object")
@@ -567,7 +571,7 @@ export function parsePlan(parsed: unknown): ParsedPlan {
     insights: buildInsights(nodes, hot ?? null, jitMs, trigMs, execMs),
     // Reads the same raw payload for the columns behind each filter. Kept
     // separate from `insights` because these are runnable statements, not prose.
-    indexSuggestions: suggestIndexes(parsed),
+    indexSuggestions: suggestIndexes(parsed, typeOf),
   };
 }
 

@@ -930,6 +930,9 @@ export default function App() {
         title,
         connected,
         override,
+        // Lets the index advisor read column types, so it can tell an
+        // indexable expression from one PostgreSQL would refuse to index.
+        catalog,
         onStart: () => setOverlay("explain"),
       });
       if (out.kind !== "ok") return;
@@ -940,7 +943,7 @@ export default function App() {
         setPlans((ps) => [...ps, { label: `${title} · ${new Date().toLocaleTimeString()}`, summary }].slice(-6));
       }
     },
-    [tabs, activeTab, connected, runExplainRaw, query],
+    [tabs, activeTab, connected, runExplainRaw, query, catalog],
   );
 
   /** Everything the exporters need from the current plan. */
