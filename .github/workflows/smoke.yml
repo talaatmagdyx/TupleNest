@@ -73,15 +73,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y webkit2gtk-driver xvfb gnome-keyring dbus-x11
 
-      # msedgedriver must match the installed WebView2 runtime; a mismatch fails
-      # at session start with a version error rather than anything informative.
-      # This tool picks the matching one instead of guessing.
-      - name: Matching msedgedriver (Windows)
+      # The Edge driver itself is handled by @wdio/tauri-service, which reads
+      # the installed Edge version out of the registry and fetches the matching
+      # msedgedriver. What it cannot fix is a runner whose Edge is older than
+      # any published driver, so bring Edge up to date first and let the
+      # service match it. Not fatal if it is already current.
+      - name: Current Edge, so the driver has something to match (Windows)
         if: runner.os == 'Windows'
-        run: |
-          cargo install --git https://github.com/chippers/msedgedriver-tool --locked
-          & "$HOME/.cargo/bin/msedgedriver-tool.exe"
-          $PWD.Path >> $env:GITHUB_PATH
+        run: choco upgrade microsoft-edge -y --no-progress
+        continue-on-error: true
 
       # A real server, so the connect spec exercises the driver rather than a
       # mock. Same action on both platforms: Windows runners cannot use service
@@ -154,10 +154,20 @@ jobs:
           PGDATABASE: ${{ steps.postgres.outputs.database }}
         run: npm test
 
+      # A driver/browser version mismatch reports itself as if the app crashed,
+      # so record both numbers rather than leaving the next person to guess.
+      - name: Edge and driver versions on failure (Windows)
+        if: failure() && runner.os == 'Windows'
+        continue-on-error: true
+        run: |
+          (Get-Item "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe").VersionInfo.ProductVersion
+          Get-Command msedgedriver.exe -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source; & $_.Source --version }
+
       # The app's own log is far more useful than the WebDriver transcript when
       # the window opened and then something inside it went wrong.
       - name: App log on failure
         if: failure()
+        continue-on-error: true
         shell: bash
         run: |
           find "$HOME/.local/share/TupleNest" "$HOME/.config/TupleNest" \

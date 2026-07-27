@@ -1,6 +1,3 @@
-import os from "os";
-import path from "path";
-import { spawn } from "child_process";
 import { existsSync } from "fs";
 
 /**
@@ -13,13 +10,18 @@ import { existsSync } from "fs";
  * blank — are invisible to a unit test and to the developer's own machine.
  *
  * So this deliberately drives the INSTALLED ARTIFACT, not a fresh `cargo
- * build`. Building from source on the runner would test the source; installing
- * the .deb or the .msi and driving that tests the thing a user downloads,
- * including the packaging around it.
+ * build`. Building from source on the runner would test the source;
+ * installing the .deb or the .msi and driving that tests the thing a user
+ * downloads, including the packaging around it.
  *
- * `TUPLENEST_BIN` is set by the workflow to wherever the installer put the
- * binary. It falls back to a local debug build so the suite can be run on a
- * developer's Linux box without a release in hand.
+ * `@wdio/tauri-service` owns the WebDriver layer. Spawning `tauri-driver` by
+ * hand works on Linux and fails on Windows: there, the app runs in WebView2
+ * and is driven by `msedgedriver.exe`, which must match the installed Edge
+ * *major version*. A mismatched driver does not say so — it reports
+ * `session not created: DevToolsActivePort file doesn't exist`, which reads
+ * like the app crashed. The service detects the Edge version from the
+ * registry and downloads the matching driver, which is the whole reason it is
+ * here rather than a hand-rolled spawn.
  */
 
 const platformDefault = () =>
@@ -36,19 +38,27 @@ if (!existsSync(application)) {
   );
 }
 
-let tauriDriver;
-let exiting = false;
-
 export const config = {
-  hostname: "127.0.0.1",
-  port: 4444,
   specs: ["./specs/**/*.e2e.js"],
 
-  // One at a time. Two instances would race for port 4444 and, more to the
-  // point, for the single workspace SQLite file in the OS app-data directory —
-  // these tests write real connection profiles into it.
+  services: [
+    [
+      "tauri",
+      {
+        application,
+        // Windows only, and on by default — stated explicitly because it is
+        // the fix for the failure described above, not an incidental setting.
+        autoDownloadEdgeDriver: true,
+        tauriDriverPort: 4444,
+      },
+    ],
+  ],
+
+  // One at a time. Two instances would race for the driver port and, more to
+  // the point, for the single workspace SQLite file in the OS app-data
+  // directory — these tests write real connection profiles into it.
   maxInstances: 1,
-  capabilities: [{ maxInstances: 1, "tauri:options": { application } }],
+  capabilities: [{ maxInstances: 1 }],
 
   reporters: ["spec"],
   framework: "mocha",
@@ -58,38 +68,4 @@ export const config = {
   mochaOpts: { ui: "bdd", timeout: 120000 },
   waitforTimeout: 20000,
   logLevel: "warn",
-
-  beforeSession: () => {
-    tauriDriver = spawn(path.resolve(os.homedir(), ".cargo", "bin", "tauri-driver"), [], {
-      stdio: [null, process.stdout, process.stderr],
-    });
-    tauriDriver.on("error", (e) => {
-      console.error("tauri-driver failed to start:", e);
-      process.exit(1);
-    });
-    tauriDriver.on("exit", (code) => {
-      // tauri-driver dying mid-run is not a test failure to be reported as a
-      // timeout thirty seconds later — say what actually happened.
-      if (!exiting) {
-        console.error("tauri-driver exited early with code:", code);
-        process.exit(1);
-      }
-    });
-  },
-
-  afterSession: () => stopDriver(),
 };
-
-function stopDriver() {
-  exiting = true;
-  tauriDriver?.kill();
-}
-
-// afterSession does not run if the session never started, so cover the exit
-// paths too rather than leaving a driver process behind on the runner.
-for (const sig of ["exit", "SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.on(sig, () => {
-    stopDriver();
-    if (sig !== "exit") process.exit();
-  });
-}

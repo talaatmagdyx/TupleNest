@@ -72,7 +72,8 @@
     <h2>What you need to run it</h2>
     <table style="margin-top:20px">
       <tr><th>Item</th><th>Requirement</th></tr>
-      <tr><td>Operating systems</td><td class="how">macOS 10.15+, Windows 10/11, Linux with webkit2gtk (Ubuntu 22.04+ or equivalent)</td></tr>
+      <tr><td>Operating systems</td><td class="how">macOS 10.15+, Windows 10/11, Linux with webkit2gtk</td></tr>
+      <tr><td>Linux, precisely</td><td class="how">x86_64, <b>glibc 2.34 or newer</b> and <code class="inline">libwebkit2gtk-4.1</code> — Ubuntu 22.04+, Debian 12+, Fedora 36+. Ubuntu 20.04 has glibc 2.31 and cannot start the binary. “Or equivalent” is vague if you are not on Ubuntu; check with <code class="inline">ldd --version</code>.</td></tr>
       <tr><td>CPU architecture</td><td class="how">Apple Silicon &amp; Intel on macOS; x86_64 on Windows and Linux</td></tr>
       <tr><td>Minimum RAM</td><td class="how">~256&nbsp;MB for the app; results are bounded, but very wide result sets use more</td></tr>
       <tr><td>Recommended RAM</td><td class="how">4&nbsp;GB or more for comfortable large-result work</td></tr>
@@ -118,7 +119,7 @@ minisign -Vm &lt;artifact&gt; -P &lt;public-key&gt;</pre></div>
       <div class="card"><h3>🍎 macOS</h3>
         <ul><li>Open the .dmg, drag TupleNest to Applications</li><li>First launch: right-click the app → <b>Open</b>, then confirm</li><li>Gatekeeper only warns once per version</li><li>Uninstall: move the app to Trash</li></ul></div>
       <div class="card"><h3>🪟 Windows</h3>
-        <ul><li>Run the .msi or .exe installer</li><li>SmartScreen: <b>More info</b> → <b>Run anyway</b></li><li>Requires WebView2 (bundled on Win 11, auto-installed otherwise)</li><li>Uninstall: Apps &amp; features</li></ul></div>
+        <ul><li>Run the .msi or .exe installer</li><li>SmartScreen: <b>More info</b> → <b>Run anyway</b></li><li>Requires WebView2 — bundled on Win 11; on Win 10 the installer downloads it, so that machine needs internet during install</li><li>Uninstall: Apps &amp; features</li></ul></div>
       <div class="card"><h3>🐧 Linux</h3>
         <ul><li>AppImage: <code class="inline">chmod +x</code> then run</li><li>.deb: <code class="inline">sudo dpkg -i tuplenest_*.deb</code></li><li>Needs webkit2gtk installed</li><li>Uninstall: <code class="inline">sudo apt remove tuplenest</code></li></ul></div>
     </div>
