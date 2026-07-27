@@ -40,7 +40,9 @@ describe("analysing a pasted plan", () => {
   });
 
   it("renders the tree, including the node that discarded rows", async () => {
-    const analyze = await $('button.btn.primary=Analyze');
+    // `tag=text`, not `css=text`: WebDriverIO rejects a compound class
+    // selector combined with its text syntax as an invalid selector.
+    const analyze = await $("button=Analyze");
     await analyze.click();
 
     const modal = await $(".modal.explain-modal");

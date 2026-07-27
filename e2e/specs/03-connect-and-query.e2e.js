@@ -50,7 +50,7 @@ describe("connecting to a real server", () => {
   });
 
   it("reaches the server on Test before committing to anything", async () => {
-    await (await $("button.btn=Test")).click();
+    await (await $("button=Test")).click();
     // Test runs the staged probe (DNS, TCP, then a real handshake). Waiting on
     // the server version rather than a generic "ok" means a probe that passed
     // DNS and stopped cannot satisfy this.
@@ -58,11 +58,21 @@ describe("connecting to a real server", () => {
   });
 
   it("saves the password to the OS credential store and connects", async () => {
-    await (await $("button.btn.primary=Save & Connect")).click();
+    await (await $("button=Save & Connect")).click();
     // Connected state is what the titlebar and the ambient window frame both
     // key off; `.env-frame` only appears once a session is live.
     await expect($(".shell")).toHaveElementClass("env-frame", { timeout: 60000 });
     await expect($(".titlebar")).toHaveText(expect.stringContaining("smoke"));
+  });
+
+  it("names the server and the platform once a session is live", async () => {
+    // Only true when connected — the status bar has nothing to report about a
+    // server it has not reached. Asserting the OS here means a Windows run
+    // that somehow drove a Linux binary could not pass quietly.
+    const os = process.platform === "win32" ? "windows" : "linux";
+    const status = await $(".statusbar");
+    await expect(status).toHaveText(expect.stringContaining("PostgreSQL"), { timeout: 30000 });
+    await expect(status).toHaveText(expect.stringContaining(os));
   });
 
   it("runs a query and renders rows", async () => {

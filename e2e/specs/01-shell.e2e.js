@@ -16,14 +16,16 @@ describe("the app comes up", () => {
     await expect($(".brand-word")).toHaveText("TupleNest");
   });
 
-  it("reports the platform it is actually running on", async () => {
-    // The status bar carries os and commit. Asserting the OS here means a
-    // Windows run that somehow executed a Linux binary would be caught rather
-    // than quietly passing.
-    const expected = process.platform === "win32" ? "windows" : "linux";
+  it("stamps the build it is running", async () => {
+    // The OS and server version only appear here once a session is live, so
+    // that assertion belongs in the connected spec. What the status bar can
+    // prove while disconnected is which build this is — worth pinning, since
+    // an installer that quietly left an older binary in place is exactly the
+    // kind of thing this suite exists to catch.
     const status = await $(".statusbar");
     await status.waitForExist();
-    await expect(status).toHaveText(expect.stringContaining(expected));
+    await expect(status).toHaveText(expect.stringContaining("disconnected"));
+    await expect(status).toHaveText(/[0-9a-f]{7} · \d{4}-\d{2}-\d{2}/);
   });
 
   it("starts disconnected, and says so", async () => {
@@ -47,7 +49,10 @@ describe("the editor works with no server", () => {
     const search = await $('input[aria-label="Search commands and tables"]');
     await search.waitForExist();
     await search.setValue("Analyze");
-    await expect($(".pal-item")).toHaveText(expect.stringContaining("plan"));
+    // Assert on the palette, not on `.pal-item`: `$` returns the first match,
+    // and each row's icon and type badge are separate children, so the first
+    // one reads "📋ACTION" and an assertion on it says nothing about filtering.
+    await expect($(".modal.palette")).toHaveText(expect.stringContaining("plan"));
     await browser.keys(["Escape"]);
   });
 });
