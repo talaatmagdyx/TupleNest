@@ -48,6 +48,12 @@ export const config = {
     [
       "tauri",
       {
+        // `external` — drive the installed binary through tauri-driver. The
+        // default, `embedded`, runs a WebDriver server inside the app, which
+        // means compiling `tauri-plugin-wdio-webdriver` into it. That would
+        // be a special build, and this suite exists to test the artifact
+        // users actually download.
+        driverProvider: "external",
         // Windows only, and on by default — stated explicitly because it is
         // the fix for the failure described above, not an incidental setting.
         autoDownloadEdgeDriver: true,
