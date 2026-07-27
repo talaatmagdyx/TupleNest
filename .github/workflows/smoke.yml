@@ -114,8 +114,12 @@ jobs:
           if (!(Test-Path $exe)) { Get-Content install.log -Tail 40; throw "MSI did not install $exe" }
           "TUPLENEST_BIN=$exe" >> $env:GITHUB_ENV
 
+      # `ci`, not `install`: the lockfile is committed, and this suite is one
+      # `npm install` away from silently resolving a different tree than the
+      # one that was verified. It already happened once — a service version
+      # that imports a symbol its own pinned dependency does not export.
       - name: Install test dependencies
-        run: npm install
+        run: npm ci
         working-directory: e2e
 
       # Windows has a real Credential Manager, so the app's keychain path works
