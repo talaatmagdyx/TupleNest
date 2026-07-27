@@ -1,0 +1,164 @@
+# Install the released artifact on Linux and Windows and drive the real app.
+#
+# Every other check in this repo runs on a developer's macOS machine or in
+# jsdom. Neither sees a WebKitGTK or a WebView2 window. The failures this
+# catches — a shared library the .deb does not pull in, a WebView2 that never
+# initialises, a keychain with no daemon behind it — are invisible to 1,954
+# unit tests and to the person who built the release.
+#
+# It installs the artifact rather than building from source on purpose. A
+# `cargo build` on the runner would test the source; installing the .deb and
+# the .msi tests what a user actually downloads, packaging included.
+
+name: Smoke
+
+on:
+  # The normal path: a release was published, so check what it published.
+  release:
+    types: [published]
+  # And on demand, so a suspect release can be re-checked without cutting a new
+  # one, and so this workflow can be developed without publishing anything.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to install and drive (e.g. v0.1.0-beta.9)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-${{ github.event.inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: true
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.event.release.tag_name }}
+
+jobs:
+  smoke:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # A Windows failure should not hide a Linux one, or the reverse.
+      fail-fast: false
+      matrix:
+        include:
+          # Match the runner the release is built on. Building on 22.04 sets a
+          # glibc 2.34 floor; testing on a newer image would silently pass on a
+          # binary that no 22.04 user can start.
+          - os: ubuntu-22.04
+            name: Ubuntu 22.04 (x86_64)
+          - os: windows-latest
+            name: Windows (x86_64)
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch @ 2025-07
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+
+      # `webkit2gtk-driver` is the WebDriver implementation tauri-driver proxies
+      # to on Linux; `xvfb` is the fake display that lets a GUI app run on a
+      # headless runner without changing a line of the app.
+      - name: WebDriver and display dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y webkit2gtk-driver xvfb gnome-keyring dbus-x11
+
+      # msedgedriver must match the installed WebView2 runtime; a mismatch fails
+      # at session start with a version error rather than anything informative.
+      # This tool picks the matching one instead of guessing.
+      - name: Matching msedgedriver (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cargo install --git https://github.com/chippers/msedgedriver-tool --locked
+          & "$HOME/.cargo/bin/msedgedriver-tool.exe"
+          $PWD.Path >> $env:GITHUB_PATH
+
+      # A real server, so the connect spec exercises the driver rather than a
+      # mock. Same action on both platforms: Windows runners cannot use service
+      # containers, so a service container on Linux would mean two code paths.
+      - name: PostgreSQL
+        uses: ikalnytskyi/action-setup-postgres@10ab8a56cc77b4823c2bfa57b1d4dd5605ef0481 # v8
+        id: postgres
+
+      - name: Download the release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "$TAG" -D artifacts -p 'TupleNest_*_amd64.deb' -p 'TupleNest_*_x64_en-US.msi'
+        shell: bash
+
+      - name: Install the .deb (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y ./artifacts/TupleNest_*_amd64.deb
+          # Prove the installed binary resolves every library it links before
+          # blaming the test framework for a session that will not start.
+          ldd /usr/bin/tuplenest-desktop | grep -i "not found" && exit 1
+          echo "TUPLENEST_BIN=/usr/bin/tuplenest-desktop" >> "$GITHUB_ENV"
+
+      - name: Install the .msi (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $msi = (Get-ChildItem artifacts\*.msi)[0].FullName
+          Start-Process msiexec.exe -Wait -ArgumentList "/i `"$msi`" /quiet /norestart /l*v install.log"
+          $exe = "C:\Program Files\TupleNest\tuplenest-desktop.exe"
+          if (!(Test-Path $exe)) { Get-Content install.log -Tail 40; throw "MSI did not install $exe" }
+          "TUPLENEST_BIN=$exe" >> $env:GITHUB_ENV
+
+      - name: Install test dependencies
+        run: npm install
+        working-directory: e2e
+
+      # Windows has a real Credential Manager, so the app's keychain path works
+      # as-is. Linux does not: the Secret Service is a daemon, and a bare runner
+      # has nothing owning `org.freedesktop.secrets`. Rather than skip the
+      # password path on the one platform where it genuinely fails for users,
+      # stand a keyring up — the same approach ci.yml already takes for the
+      # credential-store contract test.
+      - name: Smoke (Linux, under xvfb with an unlocked keyring)
+        if: runner.os == 'Linux'
+        working-directory: e2e
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: ${{ steps.postgres.outputs.user }}
+          PGPASSWORD: ${{ steps.postgres.outputs.password }}
+          PGDATABASE: ${{ steps.postgres.outputs.database }}
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            # --daemonize so it forks and returns, and eval because the daemon
+            # prints the environment it needs exported. The unlock password must
+            # be non-empty: an empty one does not create the login keyring, so
+            # the daemon owns the bus name but has no collection to store into.
+            eval "$(echo -n smoke | gnome-keyring-daemon --unlock --daemonize --components=secrets)"
+            xvfb-run --auto-servernum npm test
+          '
+
+      - name: Smoke (Windows)
+        if: runner.os == 'Windows'
+        working-directory: e2e
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: ${{ steps.postgres.outputs.user }}
+          PGPASSWORD: ${{ steps.postgres.outputs.password }}
+          PGDATABASE: ${{ steps.postgres.outputs.database }}
+        run: npm test
+
+      # The app's own log is far more useful than the WebDriver transcript when
+      # the window opened and then something inside it went wrong.
+      - name: App log on failure
+        if: failure()
+        shell: bash
+        run: |
+          find "$HOME/.local/share/TupleNest" "$HOME/.config/TupleNest" \
+               "$LOCALAPPDATA/TupleNest" -name '*.log' -print -exec tail -n 200 {} \; 2>/dev/null || true
