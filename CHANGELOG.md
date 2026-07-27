@@ -3,7 +3,7 @@
 Notable changes to TupleNest. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [0.1.0-beta.9] — 2026-07-25
+## [0.1.0-beta.9] — 2026-07-27
 
 Three things that used to have a ceiling: the size of a file you could import,
 the resolution of a plan comparison, and how far a schema diff got you.

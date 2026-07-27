@@ -45,7 +45,42 @@
     <div class="kicker">Current release</div>
     <div class="release" style="border-color:var(--line2)">
       <div class="rhead">
-        <h3>v0.1.0-beta.8</h3><span class="pill beta">Public Beta</span><span class="date">July 2026</span>
+        <h3>v0.1.0-beta.9</h3><span class="pill beta">Public Beta</span><span class="date">July 2026</span>
+      </div>
+      <p style="color:var(--dim);margin-bottom:6px">Three things that used to have a ceiling: the size of a file you could import, the resolution of a plan comparison, and how far a schema diff got you.</p>
+
+      <h4 class="add">Added</h4>
+      <ul>
+        <li><b>CSV import streams the file instead of loading it.</b> Import read the whole file into one string and held every parsed row in state, so it was bounded by RAM rather than by patience. The parser is now an incremental state machine — the obvious fix, split on newlines and parse each line, is wrong, because a quoted field may legally contain the delimiter, a newline, or both, so a read boundary can land inside a value. Measured on a 358 MB file of 6,000,001 rows: peak memory growth <b>15 MB</b> streaming, against heap exhaustion and a dead process on the old path. Because the row total is genuinely unknown until the file has been read, the UI stops claiming one: progress is percent-of-bytes and the preview says "first 500 rows sampled".</li>
+        <li><b>Plan comparison goes node by node.</b> It could tell you the query got 30% costlier and that a <code class="inline">Seq Scan</code> appeared, but not which node absorbed the time. Trees are now aligned and each node reports its own delta. Where two siblings look identical — an <code class="inline">Append</code> over matching partition scans — position is the only signal, and position is not evidence, so those pairs are labelled <b>ambiguous</b> rather than shown with the same confidence as the rest.</li>
+        <li><b>A schema diff can now write the migration.</b> Reviewable <code class="inline">ALTER</code> DDL with three risk levels that mean something: <i>safe</i>, <i>review</i>, and <i>destructive</i> — <code class="inline">DROP TABLE</code>, <code class="inline">DROP COLUMN</code> — which come back <b>already commented out</b>, so pasting the script whole cannot run them. TupleNest generates it and never executes it; there is no run button and there will not be one.</li>
+      </ul>
+
+      <h4 class="fix">Fixed</h4>
+      <ul>
+        <li><b>The generated migration named the wrong schema.</b> A diff of left → right describes what <i>left</i> is missing, so the DDL belongs to left; it was addressed to right — the schema that already had the new column. Pasted and run, it would have errored on the first <code class="inline">ADD COLUMN</code>. Every test covering the generator asserted the statement <i>kind</i> and none asserted the schema name, so all of them passed throughout. Found by applying the output to a real database.</li>
+        <li><b>An added <code class="inline">NOT NULL</code> column came back nullable</b>, because the column diff carried the type and not the nullability. The constraint is now a second, review-level statement: <code class="inline">ADD COLUMN ... NOT NULL</code> fails outright on a populated table, so the honest form is add nullable, backfill, then <code class="inline">SET NOT NULL</code>.</li>
+        <li><b>An import left the explorer stuck on "Loading schemas…"</b>, because finishing one dropped the cached catalog without re-reading it — emptying every schema picker in the app until you reconnected. And <b>"Compare schemas…" opened on find-usages</b>: three palette commands share one modal and all three landed on its first pane.</li>
+      </ul>
+
+      <p style="color:var(--dim);margin-top:14px">The migration generator was verified by round trip against a live PostgreSQL 18, taking the statements from the UI rather than writing them by hand: two schemas differing by an added column, a dropped column, a retyped column, an added table and a dropped table; the generated script applied to a copy of the left schema; the result re-diffed against the right. <b>Schemas are identical.</b> That round trip is why this entry is trustworthy and an earlier draft of it was not — it had claimed the same result on the strength of statements assembled by hand, and it was wrong twice over.</p>
+
+      <div class="cta" style="margin-top:20px">
+        <a class="btn sm primary" href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.9">GitHub release ↗</a>
+        <a class="btn sm ghost" href="download.html">Download</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HISTORY -->
+<section class="tight">
+  <div class="wrap">
+    <div class="kicker">History</div>
+
+    <div class="release">
+      <div class="rhead">
+        <h3>v0.1.0-beta.8</h3><span class="pill beta">Beta</span><span class="date">July 2026</span>
       </div>
       <p style="color:var(--dim);margin-bottom:6px">The plan analyzer stops describing the problem and writes the statement that fixes it.</p>
 
@@ -58,18 +93,7 @@
 
       <p style="color:var(--dim);margin-top:14px">Every suggestion was verified end to end against a live PostgreSQL 18 on a 600k-row table: build what the advisor proposes, re-run <code class="inline">EXPLAIN</code>, confirm the planner abandons the sequential scan. 17 of 17 cases behaved as designed — 1.9× to 1461× faster where an index is offered, silence where one cannot be built. These are candidates to verify, not promises: the advisor reads the filter, not the table's data distribution.</p>
 
-      <div class="cta" style="margin-top:20px">
-        <a class="btn sm primary" href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.8">GitHub release ↗</a>
-        <a class="btn sm ghost" href="download.html">Download</a>
-      </div>
     </div>
-  </div>
-</section>
-
-<!-- HISTORY -->
-<section class="tight">
-  <div class="wrap">
-    <div class="kicker">History</div>
 
     <div class="release">
       <div class="rhead">
