@@ -3,6 +3,71 @@
 Notable changes to TupleNest. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.0-beta.9] — 2026-07-25
+
+Three things that used to have a ceiling: the size of a file you could import,
+the resolution of a plan comparison, and how far a schema diff got you.
+
+### Added
+
+- **CSV import streams the file instead of loading it.** Import read the whole
+  file into one JavaScript string and then held every parsed row in component
+  state, so it was bounded by RAM rather than by patience. The parser is now
+  an incremental state machine: the obvious fix — split on newlines, parse each
+  line — is wrong, because a quoted field may legally contain the delimiter, a
+  newline, or both, so a read boundary can land inside a value. State is kept
+  across chunks, and `parseCsv` is now that same machine fed a single chunk so
+  the two cannot drift apart.
+
+  Measured rather than asserted, on a 358 MB file of 6,000,001 rows: peak
+  memory growth **15 MB** streaming, against heap exhaustion and a dead process
+  on the old path.
+
+  Because the row total is genuinely unknown until the file has been read, the
+  UI stops claiming one — progress is percent-of-bytes, the preview says "first
+  500 rows sampled", and the final count comes from what was actually inserted.
+  Cancel now aborts a running import and rolls back, rather than only closing
+  the dialog.
+
+- **Plan comparison goes node by node.** It could tell you the query got 30%
+  costlier and that a `Seq Scan` appeared, but not which node absorbed the
+  time. Trees are now aligned and each node reports its own delta. Children
+  pair by node type plus relation and index name; anything left over is
+  reported as added or removed rather than force-matched to something it is
+  not. Timings are excluded from the matching key — they are what is being
+  compared, so they cannot also decide identity.
+
+  Where two siblings look identical — an `Append` over matching partition scans
+  — position is the only signal, and position is not evidence. Those pairs are
+  labelled **ambiguous** rather than shown with the same confidence as the
+  rest. Guessing silently there is exactly how the bottleneck badge landed on
+  the wrong node in beta.5.
+
+- **A schema diff can now write the migration.** Reviewable `ALTER` DDL, with
+  three risk levels that mean something: *safe* (a new nullable column,
+  dropping `NOT NULL`), *review* (a type change that rewrites the table under
+  an `ACCESS EXCLUSIVE` lock, adding `NOT NULL`, a new table whose keys a
+  column diff cannot know), and *destructive* — `DROP TABLE`, `DROP COLUMN` —
+  which come back **already commented out**, so pasting the script whole cannot
+  run them.
+
+  TupleNest generates it and never executes it; there is no run button and
+  there will not be one. Two places it declines to guess: a primary-key change
+  needs the constraint's name, which a column diff does not carry, and a new
+  table is only written out in full when the target's columns were loaded.
+
+  Verified end to end against a live PostgreSQL — two schemas differing by an
+  added column, a dropped column, a retyped column, `NOT NULL` in both
+  directions, an added table and a dropped table: 7 statements generated, 7
+  accepted by the server, **0 differences remaining** afterwards.
+
+### Fixed
+
+- The suggested index statement no longer breaks mid-word (`CREATE INDEX ON o`
+  / `rders`), and a duplicated character in an internal pattern that CodeQL
+  flagged is gone. Neither changed behaviour; both were the shape a real
+  mistake takes.
+
 ## [0.1.0-beta.8] — 2026-07-25
 
 The plan analyzer stops describing the problem and writes the statement that

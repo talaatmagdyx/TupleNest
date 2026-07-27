@@ -53,7 +53,7 @@ refusal, so the claims on this page aren't copy. They're pinned behavior that
 CI would catch regressing.
 
 > ⚠️ **Early software, stated plainly.** This is a v0.1.0 beta — tested far
-> more than it has been *used*. 1,600+ frontend tests, contract tests against
+> more than it has been *used*. 1,900+ frontend tests, contract tests against
 > live PostgreSQL 13/15/17, SSH tunnel tests against a real sshd. What it
 > hasn't had is people living in it. **That's the part you'd be contributing.**
 
@@ -178,9 +178,9 @@ respected.
 | | |
 |---|---|
 | **📝 Query work** | Format SQL · EXPLAIN / ANALYZE plan tab · **candidate `CREATE INDEX` statements from the plan** · find & replace (`⌘F`) and comment toggling (`⌘/`) · a per-connection query timeout the *server* enforces · `$1..$n` parameter binding · searchable history · **prod audit log** (full SQL of everything run on prod) · snippets in the palette · CSV/JSON export with an honest truncation note · one-click charts |
-| **🗺 Schema work** | Global object search · column-by-column schema diff · find-usages & rename across tabs (unicode-aware) · EXPLAIN comparison with cost deltas + a *"new sequential scan"* regression flag · partition tree browsing |
+| **🗺 Schema work** | Global object search · column-by-column schema diff · find-usages & rename across tabs (unicode-aware) · **node-by-node EXPLAIN comparison** (which node got slower, and an *ambiguous* label when the pairing is a guess) · **generated `ALTER` migration scripts** — destructive statements come back commented out, and TupleNest never runs them · partition tree browsing |
 | **🩺 Health** | Index health report · vacuum & bloat panel · `pg_stat_statements` top queries |
-| **📥 Data in** | CSV import wizard — RFC-4180 parsing, type inference **you review before anything runs**, batched inserts in one transaction |
+| **📥 Data in** | CSV import wizard — **streams the file, so it is not bounded by RAM** (358 MB / 6M rows imports with ~15 MB peak growth) · RFC-4180 parsing, type inference **you review before anything runs**, batched inserts in one transaction, cancel-and-roll-back mid-import |
 | **✨ Fit & finish** | Environment-reactive window frame — dev/staging/prod get different ambient colors, so *the wrong window is visibly the wrong window* · dark, dense, flat — deliberately an IDE, not a dashboard |
 
 <br/>
@@ -329,7 +329,7 @@ binary** — the release host only ever serves bytes.
 The claims on this page are only as good as what checks them. What runs in CI,
 on every push:
 
-- **1,600+ frontend tests** — including a suite that *executes each documented
+- **1,900+ frontend tests** — including a suite that *executes each documented
   misuse* (guard bypasses, editability holes, the racing edit, the cross-tab
   commit) and asserts the refusal.
 - **Contract tests against live PostgreSQL 13, 15, 17** — a real server, real
@@ -387,7 +387,7 @@ release (≈ +400 kB, slower). Install with `--include=dev`; build with
 ```sh
 # test suites
 cargo test --workspace                                          # Rust
-cd apps/desktop && npm test                                     # 1,600+ frontend
+cd apps/desktop && npm test                                     # 1,900+ frontend
 cargo test -p tuplenest-driver-postgres -- --include-ignored    # needs live PG
 ```
 

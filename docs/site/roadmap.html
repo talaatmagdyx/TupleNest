@@ -68,7 +68,7 @@
       <span class="chip">CSV / JSON / Markdown export</span><span class="chip">Spreadsheet-safe CSV</span><span class="chip">Query history &amp; snippets</span>
       <span class="chip">Parameter binding</span><span class="chip">Global object search</span><span class="chip">Server monitoring &amp; terminate</span>
       <span class="chip">EXPLAIN + self-time bottleneck highlighting</span><span class="chip">Candidate <code class="inline">CREATE INDEX</code> statements from the plan</span><span class="chip">Analyse a pasted plan (text or JSON, offline)</span><span class="chip">Plan diagnostics (spills, filters, buffers, JIT)</span><span class="chip">Plan comparison</span><span class="chip">Schema diff</span><span class="chip">Find usages &amp; rename</span>
-      <span class="chip">Find &amp; replace, comment toggling</span><span class="chip">Server-enforced query timeout</span>
+      <span class="chip">Node-by-node plan comparison</span><span class="chip">Generated migration DDL</span><span class="chip">Streaming CSV import (files larger than memory)</span><span class="chip">Find &amp; replace, comment toggling</span><span class="chip">Server-enforced query timeout</span>
       <span class="chip">Index / bloat / stat panels</span><span class="chip">Partition management</span><span class="chip">Signed releases + SBOM + provenance</span>
     </div>
   </div>
@@ -82,7 +82,7 @@
         <h3><span class="pill beta">In progress</span></h3>
         <p class="lede" style="font-size:14px;margin-bottom:18px">Current near-term focus. Stages and dates shift as we learn.</p>
         <div class="card"><h4>Connection diagnostics</h4><p>Clearer staged failures and actionable messages.</p></div>
-        <div class="card"><h4>Import improvements</h4><p>Streaming large CSVs instead of reading fully into memory.</p></div>
+        <div class="card"><h4>Import improvements</h4><p>Streaming landed; next is column-level transforms and resuming a failed import.</p></div>
         <div class="card"><h4>Accessibility</h4><p>Keyboard and screen-reader coverage across dialogs and the grid.</p></div>
       </div>
       <div class="rmcol">

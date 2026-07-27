@@ -52,7 +52,7 @@
       <h5>Connections</h5>
       <a href="#connections">Connection profiles</a><a href="#tls">TLS modes</a><a href="#ssh">SSH tunnels</a><a href="#credentials">Password storage</a>
       <h5>Editor &amp; Results</h5>
-      <a href="#editor">SQL editor</a><a href="#results">Result grid</a><a href="#plans">Query plans</a><a href="#io">Import &amp; export</a><a href="#shortcuts">Keyboard shortcuts</a>
+      <a href="#editor">SQL editor</a><a href="#results">Result grid</a><a href="#plans">Query plans</a><a href="#migrations">Migrations</a><a href="#io">Import &amp; export</a><a href="#shortcuts">Keyboard shortcuts</a>
       <h5>Safety &amp; Security</h5>
       <a href="#read-only">Read-only mode</a><a href="#dangerous">Dangerous statements</a><a href="#privacy">Security &amp; privacy</a>
       <h5>More</h5>
@@ -136,8 +136,26 @@
       <p>Both formats work: the indented text psql prints, and <code class="inline">FORMAT JSON</code>. TupleNest detects which as you type and says so before you press anything; text it doesn't recognise is called out rather than drawn as a misleading tree. Everything else — the badges, the self-time bars, the insights — behaves exactly as it does for a query you ran here.</p>
       <div class="callout ok">The plan is read on your machine. Pasting a plan into a website means sending table names, index names, filter conditions and sometimes literal values from production to a third party; this exists so you don't have to.</div>
 
+      <h3 id="plan-compare">Comparing two runs</h3>
+      <p>Run a query, change something, run it again, then open <b>Compare EXPLAIN plans</b> from the command palette. Above the fold are the whole-query numbers — time, cost, and any node type that appeared or vanished. Below them, <b>Node by node</b> lines up the two trees and reports each node's own delta, so you can see which one absorbed the time rather than only that the query got slower.</p>
+      <p>Nodes are paired by type, relation and index name. One with no counterpart is marked <b>new</b> or <b>gone</b> rather than matched to something it is not, and a change is only called slower or faster past both a 1&nbsp;ms and a 10&nbsp;% floor.</p>
+      <div class="callout">Where two siblings look identical — an <code class="inline">Append</code> over matching partition scans — only their position separates them, and position is not evidence. Those rows are labelled <b>ambiguous</b>. Treat their deltas with suspicion; the label exists because guessing silently is how a previous release put the bottleneck badge on the wrong node.</div>
+
+      <h2 id="migrations">Generating a migration</h2>
+      <p>In <b>Schema diff</b>, compare two schemas and press <b>Generate migration</b>. You get the <code class="inline">ALTER</code> statements the difference implies, each tagged with what it will cost you:</p>
+      <ul>
+        <li><b>safe</b> — additive and reversible: a new nullable column, dropping a <code class="inline">NOT NULL</code>.</li>
+        <li><b>review</b> — it will run, but the outcome depends on your data: a type change rewrites the table and holds an <code class="inline">ACCESS EXCLUSIVE</code> lock; adding <code class="inline">NOT NULL</code> fails if any row is null; a new table has no keys or indexes because a column diff does not carry them.</li>
+        <li><b>destructive</b> — <code class="inline">DROP TABLE</code> and <code class="inline">DROP COLUMN</code>, returned <b>already commented out</b>. Pasting the script whole cannot run them; uncommenting one is a deliberate act.</li>
+      </ul>
+      <p>A primary-key change appears as a commented sketch rather than a statement, because dropping a constraint needs its name and a column diff does not carry one.</p>
+      <div class="callout ok"><b>TupleNest generates the script and never executes it.</b> There is no run button. Copy it, read it, edit it, and run it wherever you normally run migrations.</div>
+
       <h2 id="io">Import &amp; export</h2>
       <p>Import CSV with header mapping and a type/error preview before committing. Export to CSV, JSON, or Markdown. CSV export is spreadsheet-safe by default (formula injection neutralized); a toggle enables raw output.</p>
+      <h3>Importing a file bigger than memory</h3>
+      <p>The file is streamed rather than loaded, so its size is not bounded by RAM: a 358&nbsp;MB CSV of 6,000,001 rows imports with roughly 15&nbsp;MB of peak memory growth. Only one batch of rows is held at a time.</p>
+      <p>The preview reads the first 500 rows — enough to map headers and infer types — which is why a large file says <em>"first 500 rows sampled"</em> rather than a total. Progress during the import is the percentage of the file read, because the row count genuinely is not known until it has been read; the count in the final message is what was actually inserted. <b>Cancel</b> during an import stops the read and rolls the transaction back.</p>
 
       <h2 id="shortcuts">Keyboard shortcuts</h2>
       <div class="keys">
