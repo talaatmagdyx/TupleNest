@@ -33,7 +33,23 @@ describe("analysing a pasted plan", () => {
   it("recognises the text format", async () => {
     const paste = await $('textarea[aria-label="Paste a query plan"]');
     await paste.waitForExist();
-    await paste.setValue(PLAN);
+    // Not `setValue`: it sends the string as keystrokes, and every newline in
+    // a plan becomes an Enter press. The first run of this spec reported
+    // "1 node · 1 line" for a seven-line plan because only the first line
+    // survived. Setting the value and dispatching `input` is what a paste
+    // actually looks like to React.
+    await browser.execute(
+      (el, text) => {
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLTextAreaElement.prototype,
+          "value"
+        ).set;
+        setter.call(el, text);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      },
+      paste,
+      PLAN
+    );
     // The format chip going green is the parser's own verdict on the input,
     // reached before anything is rendered.
     await expect($(".fmt-chip.ok")).toExist();

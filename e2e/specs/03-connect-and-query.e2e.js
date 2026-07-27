@@ -83,9 +83,19 @@ describe("connecting to a real server", () => {
 
     const grid = await $('[aria-label="Query results"]');
     await grid.waitForExist({ timeout: 60000 });
-    // The value has to survive the driver's type decoding, the row store and
-    // the virtualized grid. A header with no cell would pass a weaker check.
-    await expect(grid).toHaveText(expect.stringContaining("42"));
+
+    // Columns arrive with the result; rows are fetched separately into the
+    // bounded row store and only then rendered. Asserting on the container the
+    // moment it exists caught it mid-flight, holding a header and a row number
+    // and no cell — so poll the cells themselves for the value.
+    await browser.waitUntil(
+      async () => {
+        const cells = await $$(".g-cell");
+        for (const cell of cells) if ((await cell.getText()).includes("42")) return true;
+        return false;
+      },
+      { timeout: 60000, timeoutMsg: "no grid cell ever held the queried value" }
+    );
   });
 
   it("reads the catalog into the explorer", async () => {

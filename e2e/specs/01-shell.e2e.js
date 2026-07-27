@@ -48,11 +48,19 @@ describe("the editor works with no server", () => {
     await browser.keys([meta, "k"]);
     const search = await $('input[aria-label="Search commands and tables"]');
     await search.waitForExist();
+    // Assert on how many rows survive the filter rather than on their text.
+    // The label sits in a child the driver does not return from getText on the
+    // container — the palette reads as "⌕📋ACTION" — so a text assertion here
+    // would be testing the driver, not the filtering.
     await search.setValue("Analyze");
-    // Assert on the palette, not on `.pal-item`: `$` returns the first match,
-    // and each row's icon and type badge are separate children, so the first
-    // one reads "📋ACTION" and an assertion on it says nothing about filtering.
-    await expect($(".modal.palette")).toHaveText(expect.stringContaining("plan"));
+    await browser.waitUntil(async () => (await $$(".pal-item")).length === 1, {
+      timeoutMsg: "expected exactly one command to survive the filter",
+    });
+
+    await search.setValue("zzzz-no-such-command");
+    await browser.waitUntil(async () => (await $$(".pal-item")).length === 0, {
+      timeoutMsg: "expected a nonsense query to match nothing",
+    });
     await browser.keys(["Escape"]);
   });
 });
