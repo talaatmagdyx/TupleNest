@@ -43,7 +43,7 @@ import {
 } from "./lib/explain";
 import { FILTERS, baseName, saveText } from "./lib/save";
 import { MAX_CHART_ROWS, aggregateChart, chartSubtitle, chartTitle, pickChartColumns } from "./lib/chart";
-import IntelModal from "./overlays/IntelModal";
+import IntelModal, { type Pane as IntelPane } from "./overlays/IntelModal";
 import ImportModal from "./overlays/ImportModal";
 import DetailsModal, { type ObjectDetails } from "./overlays/DetailsModal";
 import { useQueryTabs } from "./hooks/useQueryTabs";
@@ -169,6 +169,9 @@ export default function App() {
   // "user edited", never zero tabs) are stated and tested in one place.
   const { tabs, activeTab, setActiveTab, setActiveSql, newTab, closeTab, setTabs } = useQueryTabs();
   const [overlay, setOverlay] = useState<OverlayKind>(null);
+  /** Three palette commands share the SQL-intelligence modal; this is which of
+   *  its panes the chosen command meant. */
+  const [intelPane, setIntelPane] = useState<IntelPane>("usages");
   const [paletteQ, setPaletteQ] = useState("");
   const [paletteIdx, setPaletteIdx] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -517,6 +520,12 @@ export default function App() {
     setOverlay(null);
     await doConnect();
   }, [doSaveProfile, doConnect]);
+
+  /** Open the SQL-intelligence modal on a named pane. */
+  const openIntel = useCallback((pane: IntelPane) => {
+    setIntelPane(pane);
+    setOverlay("intel");
+  }, []);
 
   const newProfile = useCallback(() => {
     form.set("profileId", null);
@@ -1218,9 +1227,9 @@ export default function App() {
       { icon: "＋", label: "New connection…", type: "Action", exec: newProfile },
       { icon: "⌥", label: "Show EXPLAIN plan", type: "Action", exec: () => runExplain() },
       { icon: "⤓", label: "Import CSV…", type: "Action", exec: () => setOverlay("import") },
-      { icon: "⌕", label: "Find usages & rename…", type: "Action", exec: () => setOverlay("intel") },
-      { icon: "⇄", label: "Compare schemas…", type: "Action", exec: () => setOverlay("intel") },
-      { icon: "◫", label: "Compare EXPLAIN plans…", type: "Action", exec: () => setOverlay("intel") },
+      { icon: "⌕", label: "Find usages & rename…", type: "Action", exec: () => openIntel("usages") },
+      { icon: "⇄", label: "Compare schemas…", type: "Action", exec: () => openIntel("diff") },
+      { icon: "◫", label: "Compare EXPLAIN plans…", type: "Action", exec: () => openIntel("plans") },
       { icon: "⚙", label: "Open settings", type: "Action", exec: () => setOverlay("settings") },
       { icon: "◈", label: "About TupleNest", type: "Action", exec: () => setOverlay("about") },
     ];
@@ -1294,7 +1303,7 @@ export default function App() {
       }));
 
     return [...items, ...live, ...connections, ...catalogItems, ...snippetItems, ...recent];
-  }, [doRun, doFormat, saveSnippet, newTab, applyTheme, theme, newProfile, runExplain, connected, connectedEnv, inTx, doDisconnect, doBegin, doCommit, doRollback, saved, selectProfile, objects, insertSelect, describeObject, snippets, historyItems, setActiveSql, showToast, loadHealth]);
+  }, [doRun, doFormat, saveSnippet, newTab, applyTheme, theme, newProfile, runExplain, openIntel, connected, connectedEnv, inTx, doDisconnect, doBegin, doCommit, doRollback, saved, selectProfile, objects, insertSelect, describeObject, snippets, historyItems, setActiveSql, showToast, loadHealth]);
 
   /* ---------------- render ---------------- */
 
@@ -1660,7 +1669,11 @@ export default function App() {
           inTx={inTx}
           onDone={(m) => {
             showToast(m);
-            resetExplorer();
+            // An import can create a table, so the catalog has to be re-read —
+            // not merely dropped. `resetExplorer` alone leaves `schemas` null,
+            // which strands the tree on "Loading schemas…" and empties every
+            // schema picker in the app.
+            afterConnect();
             void refreshHistory();
           }}
           onClose={() => setOverlay(null)}
@@ -1717,6 +1730,7 @@ export default function App() {
           tabs={tabs.map((t) => ({ name: t.name, sql: t.sql }))}
           catalog={catalog}
           plans={plans}
+          pane={intelPane}
           onJump={(tabIndex) => setActiveTab(tabIndex)}
           onRename={(tabIndex, sql) =>
             setTabs((ts) => {

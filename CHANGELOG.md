@@ -56,12 +56,42 @@ the resolution of a plan comparison, and how far a schema diff got you.
   needs the constraint's name, which a column diff does not carry, and a new
   table is only written out in full when the target's columns were loaded.
 
-  Verified end to end against a live PostgreSQL — two schemas differing by an
-  added column, a dropped column, a retyped column, `NOT NULL` in both
-  directions, an added table and a dropped table: 7 statements generated, 7
-  accepted by the server, **0 differences remaining** afterwards.
+  Verified by round trip against a live PostgreSQL, taking the statements from
+  the UI rather than writing them by hand: two schemas differing by an added
+  column, a dropped column, a retyped column, an added table and a dropped
+  table; the generated script applied to a copy of the left schema; the result
+  re-diffed against the right. **Schemas are identical.**
+
+  That round trip is the reason this entry is trustworthy and the earlier
+  version of it was not. An earlier pass had claimed the same thing on the
+  strength of statements assembled by hand, and it was wrong twice over — see
+  *Fixed*.
 
 ### Fixed
+
+- **The generated migration named the wrong schema.** A diff of `left → right`
+  describes what *left* is missing, so its statements have to be addressed to
+  left. They were addressed to right — the schema that already had the new
+  column and never had the dropped one. Pasted and run, the script would have
+  errored on the first `ADD COLUMN`. Every test covering the generator asserted
+  the statement *kind* and none asserted the schema name, so all of them passed
+  throughout. Found by applying the output to a real database.
+
+- **An added `NOT NULL` column came back nullable**, because the column diff
+  carried the type and not the nullability. The constraint is now a second,
+  *review*-level statement rather than being folded into the `ADD COLUMN`:
+  `ADD COLUMN ... NOT NULL` fails outright on a table that already has rows, so
+  the honest form is add nullable, backfill, then `SET NOT NULL`. Found by the
+  same round trip — it was the one difference left after applying the script.
+
+- **An import left the explorer stuck on "Loading schemas…".** Finishing an
+  import dropped the cached catalog without re-reading it, so the tree never
+  came back and every schema picker in the app — Schema diff included — was
+  empty until you reconnected.
+
+- **"Compare schemas…" and "Compare EXPLAIN plans…" both opened on find-usages.**
+  Three palette commands share one modal, and all three landed on its first
+  pane regardless of which you picked.
 
 - The suggested index statement no longer breaks mid-word (`CREATE INDEX ON o`
   / `rders`), and a duplicated character in an internal pattern that CodeQL

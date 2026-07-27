@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import { CONNECTION, backend, type Backend } from "./test/backend";
@@ -59,16 +59,26 @@ describe("App — overlays that need no connection", () => {
     expect((await screen.findAllByText(/csv/i)).length).toBeGreaterThan(0);
   });
 
-  it("opens find-usages", async () => {
+  // Three palette commands open one modal. Asserting only that the modal is
+  // there passed even when every command dumped the user on find-usages, which
+  // is what "Compare schemas…" actually did until it was caught by hand. The
+  // assertion is on the *selected* pane.
+  it("opens find-usages on the find-usages pane", async () => {
     const user = await mount();
     await palette(user, "Find usages");
-    expect(await screen.findByRole("button", { name: /Schema diff/ })).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText(/Identifier — table, column/)).toBeInTheDocument();
   });
 
-  it("opens plan compare on the same modal", async () => {
+  it("opens Compare schemas on the schema-diff pane", async () => {
+    const user = await mount();
+    await palette(user, "Compare schemas");
+    expect(await screen.findByText(/Pick two different schemas/)).toBeInTheDocument();
+  });
+
+  it("opens Compare EXPLAIN plans on the plan-compare pane", async () => {
     const user = await mount();
     await palette(user, "Compare EXPLAIN plans");
-    expect(await screen.findByRole("button", { name: /Plan compare/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Plan compare/ })).toHaveClass("on");
   });
 
   it("closes an overlay again", async () => {
@@ -99,6 +109,32 @@ describe("App — overlays that need a session", () => {
     await palette(user, "Server monitor");
     await waitFor(() => expect(be.sent("pg_activity").length).toBeGreaterThan(0));
     expect(await screen.findByText(/No other sessions/i)).toBeInTheDocument();
+  });
+
+  it("re-reads the catalog after an import instead of stranding the explorer", async () => {
+    // An import can create a table, so the tree has to be re-read. It used to
+    // only be *dropped*: `schemas` went null and nothing re-fetched it, so the
+    // explorer sat on "Loading schemas…" forever and every schema picker in the
+    // app — Schema diff included — came up empty. Found by hand on a real
+    // 250k-row import, not by a test.
+    const user = await connected();
+    const listSchemas = () =>
+      be.sent("pg_metadata").filter((a) => (a.request as { kind: string }).kind === "list_schemas").length;
+    const before = listSchemas();
+
+    await palette(user, "Import CSV");
+    const text = "id,name\n1,Ada\n";
+    const file = new File([text], "people.csv", { type: "text/csv" });
+    Object.defineProperty(file, "text", { value: async () => text, configurable: true });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    await act(async () => {
+      fireEvent.change(input);
+    });
+    await user.click(await screen.findByRole("button", { name: /Import 1 row/ }));
+
+    await waitFor(() => expect(listSchemas()).toBeGreaterThan(before));
+    expect(screen.queryByText(/Loading schemas/)).not.toBeInTheDocument();
   });
 
   it("opens the ER diagram", async () => {

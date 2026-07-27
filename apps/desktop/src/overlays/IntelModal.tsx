@@ -25,16 +25,20 @@ type Props = {
   onJump: (tabIndex: number, offset: number) => void;
   onRename: (tabIndex: number, sql: string) => void;
   onClose: () => void;
+  /** Which pane to land on. The palette offers three separate commands into
+   *  this one modal, so "Compare schemas…" has to arrive at the diff — not at
+   *  find-usages with the diff a click away. */
+  pane?: Pane;
 };
 
-type Pane = "usages" | "diff" | "plans";
+export type Pane = "usages" | "diff" | "plans";
 
 /** Bounded so "diff two schemas" can't fire thousands of describe calls at a
  *  4000-table schema. */
 const DIFF_TABLE_CAP = 150;
 
 export default function IntelModal(p: Props) {
-  const [pane, setPane] = useState<Pane>("usages");
+  const [pane, setPane] = useState<Pane>(p.pane ?? "usages");
 
   /* ------------------------------------------------------------- usages */
   const [needle, setNeedle] = useState("");
@@ -252,13 +256,15 @@ export default function IntelModal(p: Props) {
                       {showDdl ? "Hide migration" : "Generate migration"}
                     </button>
                     <span className="note muted">
-                      Generated for you to read. TupleNest never runs it.
+                      Statements to bring <code className="inline">{left}</code> in line with{" "}
+                      <code className="inline">{right}</code>. Generated for you to read —
+                      TupleNest never runs it.
                     </span>
                   </div>
                   {showDdl && (
                     <>
                       <div className="intel-list">
-                        {generateMigration(diff, right, rightCols).map((m, i) => (
+                        {generateMigration(diff, left, rightCols).map((m, i) => (
                           <div key={i} className={`mig-row mig-${m.risk}`}>
                             <span className={`mig-badge mig-${m.risk}`}>{m.risk}</span>
                             <div className="mig-body">
@@ -273,7 +279,7 @@ export default function IntelModal(p: Props) {
                         style={{ marginTop: 10 }}
                         onClick={() => {
                           void navigator.clipboard
-                            ?.writeText(migrationScript(generateMigration(diff, right, rightCols)))
+                            ?.writeText(migrationScript(generateMigration(diff, left, rightCols)))
                             .catch(() => {});
                         }}
                       >

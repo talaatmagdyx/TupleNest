@@ -336,6 +336,57 @@ describe("IntelModal — generated migration", () => {
     expect(drop.closest(".mig-row")!.querySelector(".mig-badge")).toHaveTextContent("destructive");
   });
 
+  it("restores a NOT NULL the bare ADD COLUMN cannot carry", async () => {
+    // Found by applying a generated migration to a copy of the left schema and
+    // re-diffing: everything matched except the new column's nullability,
+    // because `added` did not carry it. The constraint is a second statement
+    // because ADD COLUMN ... NOT NULL fails outright on a populated table.
+    invokeMock.mockImplementation(async (_cmd, args) => {
+      const req = (args as { request?: { kind: string; schema: string } } | undefined)?.request;
+      if (!req) return { payload: [], fetchedAt: null, source: "live" };
+      if (req.kind === "list_objects") {
+        return { payload: [{ name: "t", kind: "table" }], fetchedAt: null, source: "live" };
+      }
+      return {
+        payload: {
+          columns:
+            req.schema === "public"
+              ? [column("id", "int8", false)]
+              : [column("id", "int8", false), column("added", "text", false)],
+        },
+        fetchedAt: null,
+        source: "live",
+      };
+    });
+    render(<IntelModal {...base} />);
+    await userEvent.click(screen.getByRole("button", { name: /Schema diff/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Compare" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Generate migration" }));
+
+    const notNull = await screen.findByText(/SET NOT NULL/);
+    expect(notNull.textContent).toContain('"public"."t"');
+    expect(notNull.closest(".mig-row")!.querySelector(".mig-badge")).toHaveTextContent("review");
+    // …and the ADD COLUMN itself stays nullable, so it can actually run.
+    expect((await screen.findByText(/ADD COLUMN/)).textContent).not.toMatch(/NOT NULL/);
+  });
+
+  it("addresses the statements to the left schema, the one that needs changing", async () => {
+    // The diff runs left→right, so its statements are what the LEFT schema is
+    // missing. The modal used to pass the right schema, producing DDL that
+    // re-added a column `analytics` already has and dropped one it never had —
+    // paste-and-run would have errored. Every earlier test here asserted only
+    // the statement *kind*, so none of them noticed.
+    await openDiff();
+    expect((await screen.findByText(/ADD COLUMN/)).textContent).toContain('"public"."t"');
+    expect((await screen.findByText(/DROP COLUMN/)).textContent).toContain('"public"."t"');
+    expect(screen.queryByText(/"analytics"\."t"/)).not.toBeInTheDocument();
+  });
+
+  it("says which schema the migration is for", async () => {
+    await openDiff();
+    expect(await screen.findByText(/bring/)).toHaveTextContent("bring public in line with analytics");
+  });
+
   it("hides the migration again on request", async () => {
     await openDiff();
     await userEvent.click(screen.getByRole("button", { name: "Hide migration" }));

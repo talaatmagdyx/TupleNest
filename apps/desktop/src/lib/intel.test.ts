@@ -135,7 +135,8 @@ describe("diffSchemas", () => {
     const users = diffSchemas(left, right).find((d) => d.table === "users");
     expect(users?.kind).toBe("changed");
     if (users?.kind === "changed") {
-      expect(users.columns).toContainEqual({ kind: "added", column: "age", type: "int4" });
+      // `nullable` rides along so the migration can restore a NOT NULL.
+      expect(users.columns).toContainEqual({ kind: "added", column: "age", type: "int4", nullable: true });
     }
   });
 

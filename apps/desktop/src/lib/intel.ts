@@ -92,7 +92,9 @@ export function unknownTables(sql: string, cat: Catalog): string[] {
 /* -------------------------------------------------------------- schema diff */
 
 export type ColumnDiff =
-  | { kind: "added"; column: string; type: string }
+  /** `nullable` is the target's, so the migration can restore a NOT NULL the
+   *  bare ADD COLUMN cannot carry. */
+  | { kind: "added"; column: string; type: string; nullable: boolean }
   | { kind: "removed"; column: string; type: string }
   | { kind: "type-changed"; column: string; from: string; to: string }
   | { kind: "nullability-changed"; column: string; from: boolean; to: boolean }
@@ -144,7 +146,8 @@ export function diffSchemas(
       }
     }
     for (const c of r) {
-      if (!lMap.has(c.name.toLowerCase())) cols.push({ kind: "added", column: c.name, type: c.dbType });
+      if (!lMap.has(c.name.toLowerCase()))
+        cols.push({ kind: "added", column: c.name, type: c.dbType, nullable: c.nullable });
     }
 
     if (cols.length) out.push({ kind: "changed", table: t, columns: cols });
@@ -193,6 +196,9 @@ const commented = (sql: string) => sql.split("\n").map((l) => `-- ${l}`).join("\
  */
 export function generateMigration(
   diffs: TableDiff[],
+  /** The schema the statements are addressed to — the *left* side of the diff,
+   *  since a diff of left→right describes what left is missing. Passing the
+   *  right schema here produces DDL that re-adds columns it already has. */
   schema: string,
   /** Columns of the *target* schema, so a newly added table can be written out
    *  in full. Without it, a new table is reported but not defined — the diff
@@ -237,11 +243,21 @@ export function generateMigration(
       const t = qt(schema, d.table);
       switch (c.kind) {
         case "added":
+          // Always added nullable first. `ADD COLUMN ... NOT NULL` in one step
+          // fails outright on a table that already has rows, so the constraint
+          // is a separate statement you run after backfilling.
           adds.push({
             sql: `ALTER TABLE ${t} ADD COLUMN ${q(c.column)} ${c.type};`,
             risk: "safe",
             note: "Adds a nullable column. Existing rows get NULL.",
           });
+          if (!c.nullable) {
+            adds.push({
+              sql: `ALTER TABLE ${t} ALTER COLUMN ${q(c.column)} SET NOT NULL;`,
+              risk: "review",
+              note: "The column is NOT NULL in the target. This fails until every existing row has a value, so backfill first.",
+            });
+          }
           break;
         case "removed":
           drops.push({
