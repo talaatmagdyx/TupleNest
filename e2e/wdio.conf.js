@@ -41,11 +41,13 @@ if (!existsSync(application)) {
 export const config = {
   specs: ["./specs/**/*.e2e.js"],
 
+  hostname: "127.0.0.1",
+  port: 4444,
+
   services: [
     [
       "tauri",
       {
-        application,
         // Windows only, and on by default — stated explicitly because it is
         // the fix for the failure described above, not an incidental setting.
         autoDownloadEdgeDriver: true,
@@ -58,7 +60,10 @@ export const config = {
   // the point, for the single workspace SQLite file in the OS app-data
   // directory — these tests write real connection profiles into it.
   maxInstances: 1,
-  capabilities: [{ maxInstances: 1 }],
+  // The binary goes in the capability, not the service options: this version
+  // of the service reads `tauri:options.application` and ignores an
+  // `application` passed alongside `autoDownloadEdgeDriver`.
+  capabilities: [{ maxInstances: 1, "tauri:options": { application } }],
 
   reporters: ["spec"],
   framework: "mocha",
