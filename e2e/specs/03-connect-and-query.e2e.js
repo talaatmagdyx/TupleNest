@@ -19,6 +19,22 @@ const PG = {
   password: process.env.PGPASSWORD || "postgres",
 };
 
+/** Set a React-controlled field's value outright, the way a paste does, rather
+ *  than typing into whatever is already there. */
+const setEditor = (el, text) =>
+  browser.execute(
+    (node, value) => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        "value"
+      ).set;
+      setter.call(node, value);
+      node.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    el,
+    text
+  );
+
 /** The form's inputs get generated ids, so go through the label, which is what
  *  a screen reader and a user both do. */
 const byLabel = async (text) => {
@@ -77,7 +93,11 @@ describe("connecting to a real server", () => {
 
   it("runs a query and renders rows", async () => {
     const editor = await $('textarea[aria-label="SQL editor"]');
-    await editor.setValue("select 42 as answer");
+    // Replace the content rather than typing into it. A new tab is seeded with
+    // `select now(), version()`, and `setValue` on a controlled React textarea
+    // appended to that instead of replacing it — the run then failed in 0 ms
+    // with a syntax error that looked like a database problem and was not.
+    await setEditor(editor, "select 42 as answer");
     const meta = process.platform === "win32" ? "Control" : "Meta";
     await browser.keys([meta, "Enter"]);
 
@@ -106,7 +126,13 @@ describe("connecting to a real server", () => {
     // file lives under a directory the .deb never creates, which is the sort
     // of thing only an installed build can prove.
     await (await $("button.rtab=History")).click();
-    await expect($(".hist-list")).toHaveText(expect.stringContaining("42"), { timeout: 30000 });
+    const row = await $(".hist-row");
+    await row.waitForExist({ timeout: 30000 });
+    // The row's visible text is status and timing; the SQL itself is the
+    // hover title. Assert on both — that the statement was recorded, and that
+    // it was recorded as a success rather than an error.
+    await expect(await row.getAttribute("title")).toContain("42");
+    await expect(row).not.toHaveText(expect.stringContaining("error"));
   });
 
   it("reads the catalog into the explorer", async () => {
