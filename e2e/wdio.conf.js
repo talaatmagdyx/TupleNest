@@ -17,28 +17,24 @@ import { existsSync } from "fs";
  * installing the .deb or the .msi and driving that tests the thing a user
  * downloads, including the packaging around it.
  *
- * The WebDriver layer is chosen per platform, because the two platforms have
- * genuinely different problems.
+ * `tauri-driver` is spawned directly on both platforms. The Windows-specific
+ * problem — `msedgedriver` must match the WebView2 Runtime, and a mismatch
+ * reports itself as `session not created: DevToolsActivePort file doesn't
+ * exist` — is solved in the workflow, by putting a driver matched to the
+ * Runtime's own registry version first on PATH. Solving it there rather than
+ * here is what lets both platforms share one mechanism.
  *
- * On Linux, spawning `tauri-driver` by hand works, and is what runs here. It
- * drove the app through the full connect-and-query path on the first attempt.
- *
- * On Windows it does not: the app runs in WebView2 and is driven by
- * `msedgedriver.exe`, which must match the installed Edge *major version*. A
- * mismatch does not say so — it reports `session not created:
- * DevToolsActivePort file doesn't exist`, which reads like the app crashed.
- * `@wdio/tauri-service` reads the Edge version from the registry and fetches
- * the matching driver, so Windows goes through the service.
- *
- * Using the service on both would be tidier to look at and is not what the
- * evidence supports: introducing it on Linux replaced a mechanism that
- * already worked and left the run hanging. A test harness is not the place to
- * trade a working path for a uniform one.
+ * `@wdio/tauri-service` was tried for this and removed. It matches the driver
+ * against the Edge *browser*, which is a different product with a different
+ * version, and which is not installed on the runner at all — so it detected
+ * nothing and changed nothing. It also replaced a working Linux path with a
+ * twenty-minute hang.
  */
-const WINDOWS = process.platform === "win32";
 
 const platformDefault = () =>
-  WINDOWS ? "C:\\Program Files\\TupleNest\\tuplenest-desktop.exe" : "/usr/bin/tuplenest-desktop";
+  process.platform === "win32"
+    ? "C:\\Program Files\\TupleNest\\tuplenest-desktop.exe"
+    : "/usr/bin/tuplenest-desktop";
 
 const application = process.env.TUPLENEST_BIN || platformDefault();
 
@@ -55,21 +51,13 @@ export const config = {
   hostname: "127.0.0.1",
   port: 4444,
 
-  // Windows only. `external` keeps it driving the installed binary through
-  // tauri-driver; the default `embedded` provider runs a WebDriver server
-  // inside the app, which means compiling a plugin into it — a special build,
-  // when the point of this suite is the artifact users download.
-  services: WINDOWS
-    ? [["tauri", { driverProvider: "external", autoDownloadEdgeDriver: true, tauriDriverPort: 4444 }]]
-    : [],
 
   // One at a time. Two instances would race for the driver port and, more to
   // the point, for the single workspace SQLite file in the OS app-data
   // directory — these tests write real connection profiles into it.
   maxInstances: 1,
-  // The binary goes in the capability, not the service options: this version
-  // of the service reads `tauri:options.application` and ignores an
-  // `application` passed alongside `autoDownloadEdgeDriver`.
+  // `tauri:options.application` is how tauri-driver is told which binary to
+  // launch.
   capabilities: [{ maxInstances: 1, "tauri:options": { application } }],
 
   reporters: ["spec"],
@@ -81,10 +69,9 @@ export const config = {
   waitforTimeout: 20000,
   logLevel: "warn",
 
-  // Linux drives tauri-driver directly; on Windows the service owns it and
-  // these hooks do nothing.
+  // Spawn the driver the specs talk to; the matching msedgedriver is already
+  // first on PATH on Windows.
   beforeSession: () => {
-    if (WINDOWS) return;
     tauriDriver = spawn(path.resolve(os.homedir(), ".cargo", "bin", "tauri-driver"), [], {
       stdio: [null, process.stdout, process.stderr],
     });

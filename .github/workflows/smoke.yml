@@ -73,15 +73,34 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y webkit2gtk-driver xvfb gnome-keyring dbus-x11
 
-      # The Edge driver itself is handled by @wdio/tauri-service, which reads
-      # the installed Edge version out of the registry and fetches the matching
-      # msedgedriver. What it cannot fix is a runner whose Edge is older than
-      # any published driver, so bring Edge up to date first and let the
-      # service match it. Not fatal if it is already current.
-      - name: Current Edge, so the driver has something to match (Windows)
+      # A Tauri app on Windows runs in the WebView2 Runtime, which is a
+      # different product from the Edge browser and carries its own version.
+      # `msedgedriver` must match the WebView2 Runtime, not the browser — and
+      # a mismatch does not say so, it reports `session not created:
+      # DevToolsActivePort file doesn't exist`, which reads like the app
+      # crashed.
+      #
+      # This is why matching against Edge did not work: the runner has no Edge
+      # browser installed at all, so nothing was detected and the preinstalled
+      # driver at C:\SeleniumWebDrivers\EdgeDriver was used against whatever
+      # WebView2 the MSI brought in.
+      #
+      # `pv` under the Evergreen WebView2 Runtime's own EdgeUpdate key is the
+      # authoritative version. Fail loudly if it is missing rather than
+      # falling back to a driver that will not match.
+      - name: msedgedriver matching the WebView2 Runtime (Windows)
         if: runner.os == 'Windows'
-        run: choco upgrade microsoft-edge -y --no-progress
-        continue-on-error: true
+        run: |
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $pv = (Get-ItemProperty -Path $key -Name pv -ErrorAction Stop).pv
+          Write-Host "WebView2 Runtime: $pv"
+          $dir = "$env:RUNNER_TEMP\edgedriver"
+          Invoke-WebRequest -Uri "https://msedgedriver.microsoft.com/$pv/edgedriver_win64.zip" -OutFile "$env:RUNNER_TEMP\edgedriver.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\edgedriver.zip" -DestinationPath $dir -Force
+          & "$dir\msedgedriver.exe" --version
+          # GITHUB_PATH prepends, so this wins over the runner's preinstalled
+          # driver rather than merely sitting behind it.
+          $dir >> $env:GITHUB_PATH
 
       # A real server, so the connect spec exercises the driver rather than a
       # mock. Same action on both platforms: Windows runners cannot use service
