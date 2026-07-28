@@ -1,4 +1,4 @@
-# Install the released artifact on Linux and Windows and drive the real app.
+# Install the released artifact on Linux and Windows and run the real app.
 #
 # Every other check in this repo runs on a developer's macOS machine or in
 # jsdom. Neither sees a WebKitGTK or a WebView2 window. The failures this
@@ -9,6 +9,20 @@
 # It installs the artifact rather than building from source on purpose. A
 # `cargo build` on the runner would test the source; installing the .deb and
 # the .msi tests what a user actually downloads, packaging included.
+#
+# The two platforms go to different depths, and the difference is real rather
+# than incidental:
+#
+#   Linux   — full WebDriver run against the installed .deb: shell, editor,
+#             plan analyzer, then connect, query, history and catalog against
+#             a live PostgreSQL.
+#   Windows — installs the .msi, launches the binary, and asserts a window
+#             opens. `tauri-driver` cannot drive a release build here, because
+#             it needs the WebView2 remote-debugging port that Tauri only
+#             enables via the `devtools` feature (on in debug, off in
+#             release). Driving a debug build would test a binary nobody
+#             ships; enabling devtools in release to satisfy a test would be
+#             worse. The step where this is done explains it in full.
 
 name: Smoke
 
@@ -56,12 +70,15 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: runner.os == 'Linux'
         with:
           node-version: 24
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch @ 2025-07
+        if: runner.os == 'Linux'
 
       - name: Install tauri-driver
+        if: runner.os == 'Linux'
         run: cargo install tauri-driver --locked
 
       # `webkit2gtk-driver` is the WebDriver implementation tauri-driver proxies
@@ -73,39 +90,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y webkit2gtk-driver xvfb gnome-keyring dbus-x11
 
-      # A Tauri app on Windows runs in the WebView2 Runtime, which is a
-      # different product from the Edge browser and carries its own version.
-      # `msedgedriver` must match the WebView2 Runtime, not the browser — and
-      # a mismatch does not say so, it reports `session not created:
-      # DevToolsActivePort file doesn't exist`, which reads like the app
-      # crashed.
-      #
-      # This is why matching against Edge did not work: the runner has no Edge
-      # browser installed at all, so nothing was detected and the preinstalled
-      # driver at C:\SeleniumWebDrivers\EdgeDriver was used against whatever
-      # WebView2 the MSI brought in.
-      #
-      # `pv` under the Evergreen WebView2 Runtime's own EdgeUpdate key is the
-      # authoritative version. Fail loudly if it is missing rather than
-      # falling back to a driver that will not match.
-      - name: msedgedriver matching the WebView2 Runtime (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-          $pv = (Get-ItemProperty -Path $key -Name pv -ErrorAction Stop).pv
-          Write-Host "WebView2 Runtime: $pv"
-          $dir = "$env:RUNNER_TEMP\edgedriver"
-          Invoke-WebRequest -Uri "https://msedgedriver.microsoft.com/$pv/edgedriver_win64.zip" -OutFile "$env:RUNNER_TEMP\edgedriver.zip"
-          Expand-Archive -Path "$env:RUNNER_TEMP\edgedriver.zip" -DestinationPath $dir -Force
-          & "$dir\msedgedriver.exe" --version
-          # GITHUB_PATH prepends, so this wins over the runner's preinstalled
-          # driver rather than merely sitting behind it.
-          $dir >> $env:GITHUB_PATH
-
       # A real server, so the connect spec exercises the driver rather than a
-      # mock. Same action on both platforms: Windows runners cannot use service
-      # containers, so a service container on Linux would mean two code paths.
+      # mock. Linux only — it is the only leg that runs the specs, and this
+      # action takes roughly twenty minutes on a Windows runner.
       - name: PostgreSQL
+        if: runner.os == 'Linux'
         uses: ikalnytskyi/action-setup-postgres@10ab8a56cc77b4823c2bfa57b1d4dd5605ef0481 # v8
         id: postgres
 
@@ -133,37 +122,54 @@ jobs:
           if (!(Test-Path $exe)) { Get-Content install.log -Tail 40; throw "MSI did not install $exe" }
           "TUPLENEST_BIN=$exe" >> $env:GITHUB_ENV
 
+      # Windows is checked by launching the installed app and confirming it
+      # opens a real window. It does not run the WebDriver specs, and that is
+      # a property of the artifact rather than a gap someone forgot to close.
+      #
+      # `tauri-driver` drives a Windows app through msedgedriver, which needs
+      # the WebView2 remote-debugging port. Tauri enables that with the
+      # `devtools` feature, which is on automatically in debug builds and off
+      # in release. This app is `tauri = { features = [] }`, so the shipped
+      # binary has no debugging port and msedgedriver has nothing to attach
+      # to — it reports `session not created: DevToolsActivePort file doesn't
+      # exist`, which reads like a crash and is not one. Tauri's own CI
+      # example sidesteps this by building with `--debug`.
+      #
+      # Driving a debug build here would mean testing a binary nobody ships.
+      # Shipping a devtools-enabled release build to make a test pass would be
+      # worse. So Windows proves what it honestly can: the MSI installs, the
+      # binary runs, and a window appears — which is exactly the class of
+      # failure (missing runtime, WebView2 that never initialises, blank
+      # window) this suite was built to catch.
+      - name: The installed app opens a window (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $p = Start-Process -FilePath $env:TUPLENEST_BIN -PassThru
+          Start-Sleep -Seconds 25
+          if ($p.HasExited) {
+            Write-Host "::error::TupleNest exited with code $($p.ExitCode) instead of staying up"
+            Get-ChildItem -Recurse "$env:LOCALAPPDATA\TupleNest","$env:APPDATA\TupleNest" -Filter *.log -ErrorAction SilentlyContinue |
+              ForEach-Object { Write-Host "--- $($_.FullName)"; Get-Content $_.FullName -Tail 100 }
+            exit 1
+          }
+          # A live process is not enough: a WebView2 that fails to initialise
+          # leaves the process up with no window, which is the exact failure
+          # worth catching.
+          $p.Refresh()
+          if ($p.MainWindowHandle -eq 0) {
+            Write-Host "::error::process is alive but opened no window — WebView2 likely failed to initialise"
+            Stop-Process -Id $p.Id -Force
+            exit 1
+          }
+          Write-Host "Window open after 25s: '$($p.MainWindowTitle)' (pid $($p.Id))"
+          Stop-Process -Id $p.Id -Force
+
       # `ci`, not `install`: the lockfile is committed, and this suite is one
       # `npm install` away from silently resolving a different tree than the
       # one that was verified. It already happened once — a service version
       # that imports a symbol its own pinned dependency does not export.
-      # Before involving WebDriver at all: does the installed binary start?
-      #
-      # This is here because a whole round of debugging assumed the Windows
-      # failure was a driver/WebView2 version mismatch. It was not — the
-      # Runtime and the driver were byte-identical at 150.0.4078.65 and the
-      # session still failed. What the evidence actually showed was no app
-      # log and no app process: the binary never ran. WebDriver cannot attach
-      # to a process that does not exist, and `DevToolsActivePort file
-      # doesn't exist` is what that looks like from the driver's side.
-      #
-      # So establish the simpler fact first, and fail here with the exit code
-      # rather than six minutes later with a misleading driver error.
-      - name: The installed binary starts (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          $p = Start-Process -FilePath $env:TUPLENEST_BIN -PassThru
-          Start-Sleep -Seconds 20
-          if ($p.HasExited) {
-            Write-Host "::error::TupleNest exited immediately with code $($p.ExitCode)"
-            Get-ChildItem -Recurse "$env:LOCALAPPDATA\TupleNest" -Filter *.log -ErrorAction SilentlyContinue |
-              ForEach-Object { Write-Host "--- $($_.FullName)"; Get-Content $_.FullName -Tail 100 }
-            exit 1
-          }
-          Write-Host "Running as pid $($p.Id) after 20s."
-          Stop-Process -Id $p.Id -Force
-
       - name: Install test dependencies
+        if: runner.os == 'Linux'
         run: npm ci
         working-directory: e2e
 
@@ -191,26 +197,6 @@ jobs:
             eval "$(echo -n smoke | gnome-keyring-daemon --unlock --daemonize --components=secrets)"
             xvfb-run --auto-servernum npm test
           '
-
-      - name: Smoke (Windows)
-        if: runner.os == 'Windows'
-        working-directory: e2e
-        env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: ${{ steps.postgres.outputs.user }}
-          PGPASSWORD: ${{ steps.postgres.outputs.password }}
-          PGDATABASE: ${{ steps.postgres.outputs.database }}
-        run: npm test
-
-      # A driver/browser version mismatch reports itself as if the app crashed,
-      # so record both numbers rather than leaving the next person to guess.
-      - name: Edge and driver versions on failure (Windows)
-        if: failure() && runner.os == 'Windows'
-        continue-on-error: true
-        run: |
-          (Get-Item "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe").VersionInfo.ProductVersion
-          Get-Command msedgedriver.exe -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source; & $_.Source --version }
 
       # The app's own log is far more useful than the WebDriver transcript when
       # the window opened and then something inside it went wrong.

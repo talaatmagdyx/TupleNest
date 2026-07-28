@@ -17,18 +17,19 @@ import { existsSync } from "fs";
  * installing the .deb or the .msi and driving that tests the thing a user
  * downloads, including the packaging around it.
  *
- * `tauri-driver` is spawned directly on both platforms. The Windows-specific
- * problem — `msedgedriver` must match the WebView2 Runtime, and a mismatch
- * reports itself as `session not created: DevToolsActivePort file doesn't
- * exist` — is solved in the workflow, by putting a driver matched to the
- * Runtime's own registry version first on PATH. Solving it there rather than
- * here is what lets both platforms share one mechanism.
+ * This runs on Linux. It is not a Linux-only suite by preference — Windows is
+ * genuinely not drivable this way. There, `tauri-driver` goes through
+ * msedgedriver, which needs the WebView2 remote-debugging port, and Tauri
+ * only opens that with the `devtools` feature: on in debug builds, off in
+ * release. Against the shipped binary msedgedriver has nothing to attach to
+ * and reports `session not created: DevToolsActivePort file doesn't exist`,
+ * which reads like a crash and is not one. The Windows leg of the workflow
+ * checks that the installed app launches and opens a window instead.
  *
- * `@wdio/tauri-service` was tried for this and removed. It matches the driver
- * against the Edge *browser*, which is a different product with a different
- * version, and which is not installed on the runner at all — so it detected
- * nothing and changed nothing. It also replaced a working Linux path with a
- * twenty-minute hang.
+ * Two things were tried for Windows before that was understood, and both were
+ * wrong: matching msedgedriver to the Edge browser (not installed on the
+ * runner) and then to the WebView2 Runtime (already an exact match, and it
+ * still failed). The version was never the problem.
  */
 
 const platformDefault = () =>
