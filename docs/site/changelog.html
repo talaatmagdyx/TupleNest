@@ -45,7 +45,36 @@
     <div class="kicker">Current release</div>
     <div class="release" style="border-color:var(--line2)">
       <div class="rhead">
-        <h3>v0.1.0-beta.9</h3><span class="pill beta">Public Beta</span><span class="date">July 2026</span>
+        <h3>v0.1.0-beta.10</h3><span class="pill beta">Public Beta</span><span class="date">July 2026</span>
+      </div>
+      <p style="color:var(--dim);margin-bottom:6px">The plan reader stops asserting things that are not true.</p>
+
+      <h4 class="fix">Fixed</h4>
+      <ul>
+        <li><b>An index was recommended for queries with nothing to index.</b> Any <code class="inline">Seq Scan</code> earned “an index matching its filter could avoid the full scan”, whether or not it had a filter. On a bare <code class="inline">select * … limit 1</code> there is no <code class="inline">WHERE</code>, so that sends you after a predicate that does not exist. All three code paths now check for a <code class="inline">Filter</code>, <code class="inline">Index Cond</code> or <code class="inline">Recheck Cond</code>, and where there is none they say the true thing: the scan reads the whole table and narrowing the query is the only lever.</li>
+        <li><b>Pruned partitions were scored for row-estimate accuracy.</b> A branch the executor never reached reports 0 rows because it was skipped, not because it found nothing — so every pruned partition earned an alarming <code class="inline">EST 100k× OFF</code> badge. There is no actual count to compare against, so no verdict is offered.</li>
+        <li><b>The stale-statistics advice was wrong under a <code class="inline">LIMIT</code>.</b> The planner estimates the whole set and is never asked for it, so the shortfall is arithmetic rather than staleness — yet the panel told you to run <code class="inline">ANALYZE</code> on a perfectly healthy table. It now names the <code class="inline">LIMIT</code> and says the discrepancy is expected.</li>
+        <li><b>Ratios read at a glance</b> — <code class="inline">1.5M×</code> rather than <code class="inline">×1499292</code>. The extra digits were false precision you had to count before they meant anything.</li>
+      </ul>
+
+      <p style="color:var(--dim);margin-top:14px">All four were found by looking at one real plan, not by any test. The tests passed throughout because they asserted the <i>shape</i> of the output rather than whether it was correct — and one of them had been passing for the wrong reason, on a fixture with no filter. An analysis tool can be fully covered and still be confidently wrong.</p>
+
+      <div class="cta" style="margin-top:20px">
+        <a class="btn sm primary" href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.10">GitHub release ↗</a>
+        <a class="btn sm ghost" href="download.html">Download</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HISTORY -->
+<section class="tight">
+  <div class="wrap">
+    <div class="kicker">History</div>
+
+    <div class="release">
+      <div class="rhead">
+        <h3>v0.1.0-beta.9</h3><span class="pill beta">Beta</span><span class="date">July 2026</span>
       </div>
       <p style="color:var(--dim);margin-bottom:6px">Three things that used to have a ceiling: the size of a file you could import, the resolution of a plan comparison, and how far a schema diff got you.</p>
 
@@ -65,18 +94,7 @@
 
       <p style="color:var(--dim);margin-top:14px">The migration generator was verified by round trip against a live PostgreSQL 18, taking the statements from the UI rather than writing them by hand: two schemas differing by an added column, a dropped column, a retyped column, an added table and a dropped table; the generated script applied to a copy of the left schema; the result re-diffed against the right. <b>Schemas are identical.</b> That round trip is why this entry is trustworthy and an earlier draft of it was not — it had claimed the same result on the strength of statements assembled by hand, and it was wrong twice over.</p>
 
-      <div class="cta" style="margin-top:20px">
-        <a class="btn sm primary" href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.9">GitHub release ↗</a>
-        <a class="btn sm ghost" href="download.html">Download</a>
-      </div>
     </div>
-  </div>
-</section>
-
-<!-- HISTORY -->
-<section class="tight">
-  <div class="wrap">
-    <div class="kicker">History</div>
 
     <div class="release">
       <div class="rhead">

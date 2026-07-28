@@ -3,6 +3,52 @@
 Notable changes to TupleNest. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.0-beta.10] — 2026-07-29
+
+The plan reader stops asserting things that are not true.
+
+All four of these were found by looking at one real plan — a `select *
+… limit 1` over a partitioned table — not by any test. The tests passed
+throughout, because they asserted the *shape* of the output rather than
+whether it was correct. That is the lesson worth carrying: an analysis
+tool can be fully covered and still be confidently wrong.
+
+### Fixed
+
+- **An index was recommended for queries with nothing to index.** Any
+  `Seq Scan` earned "an index matching its filter could avoid the full
+  scan", whether or not the node had a filter. On a bare `select * …
+  limit 1` there is no `WHERE` clause, so that sends you looking for a
+  predicate that does not exist. Three separate code paths emitted it;
+  all three now check for a `Filter`, `Index Cond` or `Recheck Cond`, and
+  where there is none they say the true thing instead — the scan reads
+  the whole table and narrowing the query is the only lever.
+
+- **Pruned partitions were scored for row-estimate accuracy.** A branch
+  the executor never reached reports 0 actual rows because it was
+  skipped, not because it looked and found nothing. Comparing an estimate
+  against that gave every pruned partition an alarming `EST 100k× OFF`
+  badge. There is no actual count to compare against, so no verdict is
+  offered.
+
+- **The stale-statistics advice was wrong under a `LIMIT`.** The planner
+  estimates the whole set and is never asked for it, so the shortfall is
+  arithmetic rather than staleness — yet the panel said "its statistics
+  may be stale (try ANALYZE on its table)" and would have sent you to
+  ANALYZE a perfectly healthy table. It now names the `LIMIT` as the
+  cause and states that the discrepancy is expected.
+
+- **Ratios are written at a readable magnitude** — `1.5M×` rather than
+  `×1499292`. Whether the planner was 1,499,292× or 1.5M× out changes
+  nothing about what you do next, and the extra digits are false
+  precision you have to count before they mean anything.
+
+### Notes
+
+One of the tests covering the index advice had been passing for the wrong
+reason: its fixture had no filter, so it was asserting the buggy
+behaviour. It now carries one, which is what it always meant to test.
+
 ## [0.1.0-beta.9] — 2026-07-27
 
 Three things that used to have a ceiling: the size of a file you could import,
