@@ -137,6 +137,32 @@ jobs:
       # `npm install` away from silently resolving a different tree than the
       # one that was verified. It already happened once — a service version
       # that imports a symbol its own pinned dependency does not export.
+      # Before involving WebDriver at all: does the installed binary start?
+      #
+      # This is here because a whole round of debugging assumed the Windows
+      # failure was a driver/WebView2 version mismatch. It was not — the
+      # Runtime and the driver were byte-identical at 150.0.4078.65 and the
+      # session still failed. What the evidence actually showed was no app
+      # log and no app process: the binary never ran. WebDriver cannot attach
+      # to a process that does not exist, and `DevToolsActivePort file
+      # doesn't exist` is what that looks like from the driver's side.
+      #
+      # So establish the simpler fact first, and fail here with the exit code
+      # rather than six minutes later with a misleading driver error.
+      - name: The installed binary starts (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $p = Start-Process -FilePath $env:TUPLENEST_BIN -PassThru
+          Start-Sleep -Seconds 20
+          if ($p.HasExited) {
+            Write-Host "::error::TupleNest exited immediately with code $($p.ExitCode)"
+            Get-ChildItem -Recurse "$env:LOCALAPPDATA\TupleNest" -Filter *.log -ErrorAction SilentlyContinue |
+              ForEach-Object { Write-Host "--- $($_.FullName)"; Get-Content $_.FullName -Tail 100 }
+            exit 1
+          }
+          Write-Host "Running as pid $($p.Id) after 20s."
+          Stop-Process -Id $p.Id -Force
+
       - name: Install test dependencies
         run: npm ci
         working-directory: e2e
