@@ -534,7 +534,14 @@ describe("parsePlan — bottleneck", () => {
       root({
         "Node Type": "Aggregate",
         "Actual Total Time": 100,
-        Plans: [{ "Node Type": "Seq Scan", "Relation Name": "big", "Actual Total Time": 92 }],
+        Plans: [
+          {
+            "Node Type": "Seq Scan",
+            "Relation Name": "big",
+            "Actual Total Time": 92,
+            Filter: "(status = 'open'::text)",
+          },
+        ],
       }),
     ]);
     const bn = p.nodes.find((n) => n.flags.includes("bottleneck"));
@@ -735,6 +742,20 @@ describe("parsePlan — resource call-outs", () => {
     ]);
     expect(p.stats).toContainEqual({ label: "Trigger time", value: "12.5 ms" });
     expect(p.insights.some((i) => /Triggers accounted for 12.5 ms/.test(i.text))).toBe(true);
+  });
+
+  it("does not recommend an index when there is no predicate to index", () => {
+    // `select * from t limit 1` has no WHERE. Telling someone to add "an index
+    // matching its filter" is advice they cannot act on — there is no filter.
+    const p = parsePlan([
+      root({
+        "Node Type": "Aggregate",
+        "Actual Total Time": 100,
+        Plans: [{ "Node Type": "Seq Scan", "Relation Name": "big", "Actual Total Time": 92 }],
+      }),
+    ]);
+    expect(p.insights[0].text).not.toMatch(/index matching its filter/);
+    expect(p.insights[0].text).toMatch(/no predicate to index/);
   });
 
   it("does not score a row estimate against a node that never ran", () => {

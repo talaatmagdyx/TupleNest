@@ -222,6 +222,10 @@ export type ParsedPlanNode = {
   /** Rows the node read and threw away. A scan that discards nearly everything
    *  it reads is the clearest "this wants an index" signal in a plan. */
   rowsRemoved: number | null;
+  /** Whether the node carries a `Filter` or index condition. An index can only
+   *  help a scan that is selecting something; recommending one for a bare
+   *  `select *` is advice that cannot be acted on. */
+  hasFilter: boolean;
   /** Block counts from BUFFERS, when it was requested. */
   buffers: NodeBuffers | null;
   /** Call-outs worth a badge next to the node. */
@@ -489,6 +493,7 @@ export function parsePlan(parsed: unknown, typeOf?: ColumnTypeLookup): ParsedPla
     const misestimate = isNeverExecuted(n) ? null : misestimateOf(rowsEst, rowsActual);
     const loops = attrNum(n, "Actual Loops");
     const rowsRemoved = attrNum(n, "Rows Removed by Filter");
+    const hasFilter = !!attrText(n, "Filter") || !!attrText(n, "Index Cond") || !!attrText(n, "Recheck Cond");
     const buffers = buffersOf(n);
 
     const flags: NodeFlag[] = [];
@@ -521,6 +526,7 @@ export function parsePlan(parsed: unknown, typeOf?: ColumnTypeLookup): ParsedPla
       hot: false,
       selfMs,
       selfPct,
+      hasFilter,
       rowsEst,
       rowsActual,
       misestimate,
@@ -576,7 +582,9 @@ export function parsePlan(parsed: unknown, typeOf?: ColumnTypeLookup): ParsedPla
 
   const hot = nodes.find((n) => n.hot);
   const suggestion = hot
-    ? `${hot.title} dominates this plan. An index matching its filter could avoid the full scan.`
+    ? hot.hasFilter
+      ? `${hot.title} dominates this plan. An index matching its filter could avoid the full scan.`
+      : `${hot.title} dominates this plan. It reads the whole table and there is no predicate to index — narrowing the query is the only lever.`
     : null;
 
   const execMs = attrNum(root as RawPlan, "Execution Time") ?? execTotal;
@@ -631,13 +639,22 @@ function buildInsights(
   if (bottleneck) {
     const ms = bottleneck.selfMs !== null ? ` (${bottleneck.selfMs.toFixed(1)} ms)` : "";
     let text = `${bottleneck.title} is the busiest node — ${bottleneck.selfPct.toFixed(0)}% of execution time${ms}.`;
-    if (bottleneck.flags.includes("seq-scan")) text += " An index matching its filter could avoid the full scan.";
+    // Only worth suggesting an index when the scan is actually selecting
+    // something. On a bare `select * ... limit n` there is no predicate to
+    // index, and telling someone to add one sends them after nothing.
+    if (bottleneck.flags.includes("seq-scan")) {
+      text += bottleneck.hasFilter
+        ? " An index matching its filter could avoid the full scan."
+        : " It reads the whole table and there is no predicate to index — narrowing the query is the only lever.";
+    }
     insights.push({ level: "tip", text });
   } else if (hot) {
     // No measured bottleneck (ANALYZE off), but a dominant Seq Scan by cost.
     insights.push({
       level: "tip",
-      text: `${hot.title} dominates this plan. An index matching its filter could avoid the full scan.`,
+      text: hot.hasFilter
+        ? `${hot.title} dominates this plan. An index matching its filter could avoid the full scan.`
+        : `${hot.title} dominates this plan. It reads the whole table and there is no predicate to index — narrowing the query is the only lever.`,
     });
   }
 
