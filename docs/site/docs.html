@@ -67,7 +67,7 @@
       <h2 id="install">Installation</h2>
       <p>Download the build for your platform from the <a href="download.html">Download page</a>, then:</p>
       <ul>
-        <li><b>macOS</b> — open the .dmg, drag to Applications, then right-click → Open on first launch.</li>
+        <li><b>macOS</b> — open the .dmg, drag to Applications, then run <code class="inline">xattr -dr com.apple.quarantine /Applications/TupleNest.app</code>. macOS calls the unsigned app “damaged”; right-click → Open does not bypass that on macOS 15+.</li>
         <li><b>Windows</b> — run the installer; on SmartScreen choose “More info” → “Run anyway”.</li>
         <li><b>Linux</b> — <code class="inline">chmod +x</code> the AppImage and run it, or install the .deb.</li>
       </ul>
