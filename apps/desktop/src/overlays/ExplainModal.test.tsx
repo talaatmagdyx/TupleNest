@@ -140,7 +140,7 @@ describe("ExplainModal — richer plan", () => {
     );
     expect(screen.getByText("BOTTLENECK")).toBeInTheDocument();
     expect(screen.getByText("DISK SORT")).toBeInTheDocument();
-    expect(screen.getByText("EST ×42 OFF")).toBeInTheDocument();
+    expect(screen.getByText("EST 42× OFF")).toBeInTheDocument();
   });
 
   it("shows the insights list and hides the legacy suggestion when insights exist", () => {

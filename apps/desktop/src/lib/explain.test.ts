@@ -15,6 +15,7 @@ import {
   type ExplainOptions,
   type ExportablePlan,
   type RawPlan,
+  formatRatio,
 } from "./explain";
 
 const opts = (o: Partial<ExplainOptions> = {}): ExplainOptions => ({ ...DEFAULT_EXPLAIN, ...o });
@@ -734,6 +735,52 @@ describe("parsePlan — resource call-outs", () => {
     ]);
     expect(p.stats).toContainEqual({ label: "Trigger time", value: "12.5 ms" });
     expect(p.insights.some((i) => /Triggers accounted for 12.5 ms/.test(i.text))).toBe(true);
+  });
+
+  it("does not score a row estimate against a node that never ran", () => {
+    // A never-executed branch reports 0 actual rows because the executor
+    // skipped it, not because it looked and found nothing. Comparing an
+    // estimate against that produced badges like "EST 100k× OFF" on branches
+    // that were simply pruned — noise presented as a finding.
+    const p = parsePlan([
+      root({
+        "Node Type": "Append",
+        "Actual Total Time": 1,
+        Plans: [
+          { "Node Type": "Seq Scan", "Relation Name": "skipped", "Plan Rows": 99999, "Actual Rows": 0, "Actual Loops": 0 },
+        ],
+      }),
+    ]);
+    const skipped = p.nodes.find((n) => n.title.includes("skipped"));
+    expect(skipped?.flags).toContain("never-executed");
+    expect(skipped?.misestimate).toBeNull();
+    expect(skipped?.flags).not.toContain("misestimate");
+  });
+
+  it("blames a LIMIT rather than statistics when the scan was cut short", () => {
+    // Under a LIMIT the planner estimates the whole set and is never asked for
+    // it, so a huge shortfall is expected. Telling the user to run ANALYZE
+    // there sends them after a problem that does not exist.
+    const p = parsePlan([
+      root({
+        "Node Type": "Limit",
+        "Actual Total Time": 1,
+        "Plan Rows": 1,
+        "Actual Rows": 1,
+        Plans: [
+          { "Node Type": "Seq Scan", "Relation Name": "wide", "Actual Total Time": 1, "Plan Rows": 500000, "Actual Rows": 1 },
+        ],
+      }),
+    ]);
+    const est = p.insights.find((i) => /estimate is off/.test(i.text));
+    expect(est?.text).toMatch(/LIMIT stopped execution early/);
+    expect(est?.text).not.toMatch(/ANALYZE/);
+  });
+
+  it("writes big ratios at a readable magnitude", () => {
+    expect(formatRatio(1_499_292)).toBe("1.5M×");
+    expect(formatRatio(100_135)).toBe("100.1k×");
+    expect(formatRatio(12)).toBe("12×");
   });
 
   it("orders insights: bottleneck first, then spills, then stale statistics", () => {

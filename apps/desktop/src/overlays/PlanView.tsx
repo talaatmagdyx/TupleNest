@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Insight, NodeFlag } from "../lib/explain";
+import { formatRatio, type Insight, type NodeFlag } from "../lib/explain";
 import type { IndexSuggestion } from "../lib/index-advisor";
 
 /** One drawable plan node. The richer fields are optional so a plain fixture —
@@ -65,7 +65,7 @@ export function nodeChips(n: PlanNode): { label: string; cls: string; title: str
     chips.push({ label: `${compact(n.loops)} LOOPS`, cls: "info", title: "This node ran many times" });
   if (f.includes("misestimate") && n.misestimate != null)
     chips.push({
-      label: `EST ×${Math.round(n.misestimate)} OFF`,
+      label: `EST ${formatRatio(n.misestimate)} OFF`,
       cls: "info",
       title: "The row estimate missed the actual count by this factor",
     });

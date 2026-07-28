@@ -338,6 +338,18 @@ function misestimateOf(est: number | null, act: number | null): number | null {
   return r >= MISESTIMATE_RATIO ? r : null;
 }
 
+/** A misestimate ratio, short enough to read at a glance.
+ *
+ *  `×1499292` is a number the eye has to count digits on before it means
+ *  anything, and the precision is false — whether the planner was 1,499,292×
+ *  or 1,500,000× out changes nothing about what you do next. Magnitude is the
+ *  whole message. */
+export function formatRatio(r: number): string {
+  if (r >= 1_000_000) return `${(r / 1_000_000).toFixed(1).replace(/\.0$/, "")}M×`;
+  if (r >= 1_000) return `${(r / 1_000).toFixed(1).replace(/\.0$/, "")}k×`;
+  return `${Math.round(r)}×`;
+}
+
 /** A sort or hash that ran out of `work_mem` and went to disk. */
 function isDiskSort(n: RawPlan): boolean {
   const method = attrText(n, "Sort Method");
@@ -470,7 +482,11 @@ export function parsePlan(parsed: unknown, typeOf?: ColumnTypeLookup): ParsedPla
 
     const rowsEst = attrNum(n, "Plan Rows");
     const rowsActual = attrNum(n, "Actual Rows");
-    const misestimate = misestimateOf(rowsEst, rowsActual);
+    // A node the executor never reached has no actual row count to compare an
+    // estimate against — its zero is "did not run", not "found nothing". Scoring
+    // it as a miss produced badges like "EST ×99960 OFF" on branches that were
+    // simply skipped, which is noise dressed up as a finding.
+    const misestimate = isNeverExecuted(n) ? null : misestimateOf(rowsEst, rowsActual);
     const loops = attrNum(n, "Actual Loops");
     const rowsRemoved = attrNum(n, "Rows Removed by Filter");
     const buffers = buffersOf(n);
@@ -670,9 +686,17 @@ function buildInsights(
     .filter((n) => n.misestimate !== null)
     .sort((a, b) => (b.misestimate as number) - (a.misestimate as number))[0];
   if (worst) {
+    // A LIMIT stops the executor early, so the rows below it are legitimately
+    // far short of the estimate — the planner was estimating the whole set and
+    // was never asked for it. Recommending ANALYZE there is wrong advice: the
+    // statistics may be perfect. Only call statistics into question when
+    // nothing above the node cut the scan short.
+    const cutShort = nodes.some((n) => /^Limit$/i.test(n.title)) && (worst.rowsActual ?? 0) < (worst.rowsEst ?? 0);
     insights.push({
       level: "warn",
-      text: `Row estimate is off by ${Math.round(worst.misestimate as number)}× at ${worst.title}; its statistics may be stale (try ANALYZE on its table).`,
+      text: cutShort
+        ? `Row estimate is off by ${formatRatio(worst.misestimate as number)} at ${worst.title}, but a LIMIT stopped execution early — the planner estimated the full set and was never asked for it. This is expected, not a sign of stale statistics.`
+        : `Row estimate is off by ${formatRatio(worst.misestimate as number)} at ${worst.title}; its statistics may be stale (try ANALYZE on its table).`,
     });
   }
 
