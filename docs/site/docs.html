@@ -193,7 +193,8 @@
         <li><b>Keychain access error</b> — grant TupleNest keychain permission when the OS prompts.</li>
         <li><b>Query timeout / large result</b> — adjust the statement timeout or narrow the query; the grid caps are configurable.</li>
         <li><b>Update failure</b> — betas update by manual download; the auto-updater targets stable releases.</li>
-        <li><b>Logs</b> — rotating log files live in the app-data directory (owner-only on Unix).</li>
+        <li><b>Logs</b> — rotating log files live in the app-data directory, under the bundle identifier rather than the product name: <code class="inline">~/Library/Application Support/app.tuplenest.desktop/logs</code> on macOS, <code class="inline">~/.local/share/app.tuplenest.desktop/logs</code> on Linux, <code class="inline">%APPDATA%\app.tuplenest.desktop\logs</code> on Windows. Owner-only on Unix.</li>
+        <li><b>Checking a Windows build by hand</b> — CI installs the <code class="inline">.msi</code> and confirms a window opens, but cannot drive the UI on Windows (a release build has no WebView2 debugging port). There is a <a href="https://github.com/talaatmagdyx/TupleNest/blob/main/docs/windows-manual-check.md">twelve-step manual check</a> for the rest.</li>
       </ul>
 
       <h2 id="faq">FAQ</h2>

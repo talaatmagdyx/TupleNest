@@ -148,7 +148,7 @@ jobs:
           Start-Sleep -Seconds 25
           if ($p.HasExited) {
             Write-Host "::error::TupleNest exited with code $($p.ExitCode) instead of staying up"
-            Get-ChildItem -Recurse "$env:LOCALAPPDATA\TupleNest","$env:APPDATA\TupleNest" -Filter *.log -ErrorAction SilentlyContinue |
+            Get-ChildItem -Recurse "$env:APPDATA\app.tuplenest.desktop" -Filter *.log -ErrorAction SilentlyContinue |
               ForEach-Object { Write-Host "--- $($_.FullName)"; Get-Content $_.FullName -Tail 100 }
             exit 1
           }
@@ -204,6 +204,11 @@ jobs:
         if: failure()
         continue-on-error: true
         shell: bash
+        # The directory is the bundle identifier, not the product name — an
+        # earlier version of this looked under `TupleNest` and would have found
+        # nothing even when there was something to find.
         run: |
-          find "$HOME/.local/share/TupleNest" "$HOME/.config/TupleNest" \
-               "$LOCALAPPDATA/TupleNest" -name '*.log' -print -exec tail -n 200 {} \; 2>/dev/null || true
+          find "$HOME/.local/share/app.tuplenest.desktop" \
+               "$HOME/.config/app.tuplenest.desktop" \
+               "$APPDATA/app.tuplenest.desktop" \
+               -name '*.log' -print -exec tail -n 200 {} \; 2>/dev/null || true
