@@ -362,6 +362,32 @@ describe("parsePlan", () => {
     expect(p.suggestion).toContain("Seq Scan on big");
   });
 
+  it("does not badge a hot spot that cost a fraction of a millisecond", () => {
+    // Same shape as the test above, three orders of magnitude faster. The
+    // arithmetic still says this scan is 80% of the query; a red HOT badge on
+    // 0.08 ms tells the reader to go fix nothing.
+    const tree = root({
+      "Node Type": "Hash Join",
+      "Actual Total Time": 0.1,
+      Plans: [leaf({ "Actual Total Time": 0.005 }), leaf({ "Relation Name": "big", "Actual Total Time": 0.08 })],
+    });
+    const p = parsePlan([tree]);
+    expect(p.nodes.some((n) => n.hot)).toBe(false);
+    expect(p.suggestion).toBeNull();
+  });
+
+  it("still badges a hot spot when the plan was never timed", () => {
+    // No ANALYZE means no milliseconds to floor against, and cost is then the
+    // only signal there is — silence would lose the one thing we can say.
+    const tree = root({
+      "Node Type": "Hash Join",
+      "Total Cost": 500,
+      Plans: [leaf({ "Total Cost": 10 }), leaf({ "Relation Name": "big", "Total Cost": 400 })],
+    });
+    const p = parsePlan([tree]);
+    expect(p.nodes.filter((n) => n.hot).map((n) => n.title)).toEqual(["Seq Scan on big"]);
+  });
+
   it("does not blame an index scan", () => {
     const tree = root({
       "Node Type": "Limit",
@@ -802,6 +828,42 @@ describe("parsePlan — resource call-outs", () => {
     expect(formatRatio(1_499_292)).toBe("1.5M×");
     expect(formatRatio(100_135)).toBe("100.1k×");
     expect(formatRatio(12)).toBe("12×");
+    // Single digits keep the decimal — 3.4 and 3.9 are not the same finding.
+    expect(formatRatio(3.4)).toBe("3.4×");
+    expect(formatRatio(4)).toBe("4×");
+  });
+
+  it("leads with planning cost when planning outweighs execution", () => {
+    // A partitioned table: the planner considers every partition, prunes to
+    // one, and the executor then does almost nothing. Every other insight
+    // describes the 0.2 ms half, so the ratio has to be said first.
+    const p = parsePlan([
+      {
+        Plan: { "Node Type": "Append", "Actual Total Time": 0.2 },
+        "Planning Time": 30.4,
+        "Execution Time": 0.2,
+      },
+    ]);
+    expect(p.insights[0].level).toBe("warn");
+    expect(p.insights[0].text).toMatch(/Planning took 30.4 ms against 0.2 ms of execution/);
+    expect(p.insights[0].text).toMatch(/152×/);
+    expect(p.insights[0].text).toMatch(/prepared statement/);
+  });
+
+  it("stays quiet when planning is merely larger, not dominant", () => {
+    // 0.4 ms of planning against 0.2 ms of execution is every trivial query
+    // ever run. The ratio is real; the finding is not.
+    const p = parsePlan([
+      { Plan: { "Node Type": "Result", "Actual Total Time": 0.2 }, "Planning Time": 0.4, "Execution Time": 0.2 },
+    ]);
+    expect(p.insights.some((i) => /Planning took/.test(i.text))).toBe(false);
+  });
+
+  it("stays quiet when execution outweighs planning", () => {
+    const p = parsePlan([
+      { Plan: { "Node Type": "Result", "Actual Total Time": 900 }, "Planning Time": 12, "Execution Time": 900 },
+    ]);
+    expect(p.insights.some((i) => /Planning took/.test(i.text))).toBe(false);
   });
 
   it("orders insights: bottleneck first, then spills, then stale statistics", () => {

@@ -264,6 +264,13 @@ const HEAVY_READ_BLOCKS = 1000;
 const HIGH_LOOPS = 10_000;
 /** JIT costing more than this share of execution is usually not worth it. */
 const JIT_PCT = 25;
+/** Planning that costs this many times execution is the real story of the
+ *  query — most often a partitioned table, where the planner considers every
+ *  partition and the executor then touches one. The floor keeps it quiet for
+ *  queries where both numbers are trivially small and the ratio is arithmetic
+ *  rather than a finding. */
+const PLANNING_DOMINANCE_RATIO = 3;
+const PLANNING_MIN_MS = 5;
 
 /**
  * How many workers execute the children of this node concurrently.
@@ -351,6 +358,9 @@ function misestimateOf(est: number | null, act: number | null): number | null {
 export function formatRatio(r: number): string {
   if (r >= 1_000_000) return `${(r / 1_000_000).toFixed(1).replace(/\.0$/, "")}M×`;
   if (r >= 1_000) return `${(r / 1_000).toFixed(1).replace(/\.0$/, "")}k×`;
+  // Single digits keep a decimal: rounding 3.4 and 3.9 both to "3×" loses the
+  // difference at exactly the scale where the reader can still feel it.
+  if (r < 10) return `${r.toFixed(1).replace(/\.0$/, "")}×`;
   return `${Math.round(r)}×`;
 }
 
@@ -546,7 +556,18 @@ export function parsePlan(parsed: unknown, typeOf?: ColumnTypeLookup): ParsedPla
   // A lone Seq Scan is the whole plan — calling it the hot spot says nothing
   // and the suggestion that follows ("an index could avoid the full scan")
   // would be advice to index a table the user asked to read end to end.
-  if (hotVal > 0 && nodes.length > 1) nodes[hotIdx].hot = true;
+  //
+  // And when the query was actually timed, cost alone is not enough. `hot` is
+  // a cost ranking, so on a query that finished in a fraction of a millisecond
+  // it still painted a node red and badged it HOT — alarming presentation for
+  // something that cost nobody anything. `bottleneck` already refuses to fire
+  // below BOTTLENECK_MIN_MS for exactly this reason; the cost-based hot spot
+  // now honours the same floor. With no timings (ANALYZE off) cost is the only
+  // signal there is, so it still stands alone.
+  if (hotVal > 0 && nodes.length > 1) {
+    const self = nodes[hotIdx].selfMs;
+    if (self === null || self >= BOTTLENECK_MIN_MS) nodes[hotIdx].hot = true;
+  }
 
   // The bottleneck is the node with the most *self*-time, when that share is
   // meaningful and there is more than one node to choose between. Unlike the
@@ -588,11 +609,12 @@ export function parsePlan(parsed: unknown, typeOf?: ColumnTypeLookup): ParsedPla
     : null;
 
   const execMs = attrNum(root as RawPlan, "Execution Time") ?? execTotal;
+  const planMs = attrNum(root as RawPlan, "Planning Time");
   return {
     nodes,
     stats,
     suggestion,
-    insights: buildInsights(nodes, hot ?? null, jitMs, trigMs, execMs),
+    insights: buildInsights(nodes, hot ?? null, jitMs, trigMs, execMs, planMs),
     // Reads the same raw payload for the columns behind each filter. Kept
     // separate from `insights` because these are runnable statements, not prose.
     indexSuggestions: suggestIndexes(parsed, typeOf),
@@ -624,16 +646,39 @@ function triggerTotalMs(root: Record<string, unknown> | null): number | null {
 }
 
 /** Turn the flagged nodes into an ordered, de-duplicated list of observations.
- *  Ordering is deliberate: the bottleneck first (it's the reader's biggest
- *  lever), then resource spills, then a stale-statistics hint. */
+ *  Ordering is deliberate: planning cost first when planning is where the time
+ *  actually went, then the bottleneck (the reader's biggest lever inside the
+ *  tree), then resource spills, then a stale-statistics hint. */
 function buildInsights(
   nodes: ParsedPlanNode[],
   hot: ParsedPlanNode | null,
   jitMs: number | null,
   triggerMs: number | null,
   execMs: number | null,
+  planMs: number | null = null,
 ): Insight[] {
   const insights: Insight[] = [];
+
+  // Every other insight talks about execution, so when planning outweighs it
+  // they all describe the smaller half of the query. Say so first — otherwise
+  // the number sits in the stats list and the reader tunes the wrong thing.
+  if (
+    planMs !== null &&
+    execMs !== null &&
+    execMs > 0 &&
+    planMs >= PLANNING_MIN_MS &&
+    planMs >= execMs * PLANNING_DOMINANCE_RATIO
+  ) {
+    insights.push({
+      level: "warn",
+      text:
+        `Planning took ${planMs.toFixed(1)} ms against ${execMs.toFixed(1)} ms of execution — ` +
+        `${formatRatio(planMs / execMs)} more time choosing the plan than running it. ` +
+        `Everything below describes that ${execMs.toFixed(1)} ms. ` +
+        `Wide partitioned tables and many candidate indexes both cost planning time; ` +
+        `a prepared statement reuses the plan across calls.`,
+    });
+  }
 
   const bottleneck = nodes.find((n) => n.flags.includes("bottleneck"));
   if (bottleneck) {
