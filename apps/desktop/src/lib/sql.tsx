@@ -7,25 +7,56 @@ import { invoke } from "@tauri-apps/api/core";
 const SQL_RE =
   /(--[^\n]*)|('(?:[^']|'')*')|(\b\d+(?:\.\d+)?\b)|(\b(?:select|from|where|join|left|right|inner|outer|full|on|group|order|by|having|limit|offset|insert|into|values|update|set|delete|create|table|view|as|and|or|not|null|is|in|like|distinct|desc|asc|union|all|case|when|then|else|end|count|sum|avg|min|max|begin|commit|rollback|explain|analyze)\b)/gi;
 
-export function tokenizeSQL(sql: string): React.ReactNode[] {
-  const out: React.ReactNode[] = [];
+/** A run of text and the highlight class it belongs to, or null for plain. */
+type Piece = { text: string; cls: string | null };
+
+function tokenPieces(sql: string): Piece[] {
+  const out: Piece[] = [];
   let last = 0;
   let m: RegExpExecArray | null;
-  let k = 0;
   const re = new RegExp(SQL_RE.source, "gi");
   while ((m = re.exec(sql))) {
-    if (m.index > last) out.push(sql.slice(last, m.index));
-    const cls = m[1] ? "tok-c" : m[2] ? "tok-s" : m[3] ? "tok-n" : "tok-k";
-    out.push(
-      <span key={k++} className={cls}>
-        {m[0]}
-      </span>
-    );
+    if (m.index > last) out.push({ text: sql.slice(last, m.index), cls: null });
+    out.push({ text: m[0], cls: m[1] ? "tok-c" : m[2] ? "tok-s" : m[3] ? "tok-n" : "tok-k" });
     last = re.lastIndex;
   }
-  if (last < sql.length) out.push(sql.slice(last));
-  out.push("\n");
+  if (last < sql.length) out.push({ text: sql.slice(last), cls: null });
   return out;
+}
+
+/**
+ * Highlighted SQL, grouped one array per logical line.
+ *
+ * The editor wraps long lines, and a wrapped line occupies several visual rows.
+ * That rules out the old arrangement — a single flowing <pre> beside a gutter of
+ * fixed-height rows — because the gutter immediately drifts out of step with the
+ * text. Grouping by line lets each line be its own block that carries its own
+ * number, so a line that wraps to four rows takes its number with it.
+ *
+ * The tokenizer still runs over the whole text before the split, not line by
+ * line: a string literal may span newlines, and re-starting the scan at every
+ * line would end that literal at the first one.
+ */
+export function tokenizeLines(sql: string): React.ReactNode[][] {
+  const lines: React.ReactNode[][] = [[]];
+  let k = 0;
+  for (const piece of tokenPieces(sql)) {
+    const parts = piece.text.split("\n");
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) lines.push([]);
+      if (parts[i] === "") continue;
+      lines[lines.length - 1].push(
+        piece.cls ? (
+          <span key={k++} className={piece.cls}>
+            {parts[i]}
+          </span>
+        ) : (
+          parts[i]
+        ),
+      );
+    }
+  }
+  return lines;
 }
 
 /** Pages the backend row store until `stored` rows are collected. */
@@ -209,6 +240,28 @@ export function envMeta(env: string | null | undefined) {
 
 export type EditResult = { sql: string; selectionStart: number; selectionEnd: number };
 
+/** The lines a selection touches, and where each line starts.
+ *
+ *  A selection ending exactly at a line start does not include that line —
+ *  otherwise selecting a whole line by dragging affects the one below it too. */
+export function lineSpan(sql: string, start: number, end: number) {
+  const lines = sql.split("\n");
+  const offsets: number[] = [];
+  let at = 0;
+  for (const l of lines) {
+    offsets.push(at);
+    at += l.length + 1;
+  }
+  let first = 0;
+  let last = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (offsets[i] <= start) first = i;
+    if (offsets[i] <= end) last = i;
+  }
+  if (last > first && end === offsets[last]) last--;
+  return { lines, offsets, first, last };
+}
+
 /** The `--` prefix, and how much whitespace precedes it, on one line. */
 const COMMENT_RE = /^(\s*)--( ?)/;
 
@@ -226,24 +279,7 @@ const COMMENT_RE = /^(\s*)--( ?)/;
  * is the behaviour that lets you press it twice and know what you have.
  */
 export function toggleLineComment(sql: string, start: number, end: number): EditResult {
-  const lines = sql.split("\n");
-
-  // Which lines the selection covers, by character offset.
-  const offsets: number[] = [];
-  let at = 0;
-  for (const l of lines) {
-    offsets.push(at);
-    at += l.length + 1;
-  }
-  let first = 0;
-  let last = 0;
-  for (let i = 0; i < lines.length; i++) {
-    if (offsets[i] <= start) first = i;
-    if (offsets[i] <= end) last = i;
-  }
-  // A selection ending exactly at a line start does not include that line —
-  // otherwise selecting a whole line by dragging comments the one below too.
-  if (last > first && end === offsets[last]) last--;
+  const { lines, offsets, first, last } = lineSpan(sql, start, end);
 
   const span = lines.slice(first, last + 1);
   const meaningful = span.filter((l) => l.trim() !== "");
@@ -282,6 +318,162 @@ export function toggleLineComment(sql: string, start: number, end: number): Edit
     sql: next,
     selectionStart: startedAtLineStart ? offsets[first] : Math.max(offsets[first], start + firstDelta),
     selectionEnd: Math.max(offsets[first], end + delta),
+  };
+}
+
+/* ------------------------------------------------------------- indenting */
+
+/** Two spaces. Spaces rather than a tab because a tab renders at whatever width
+ *  the next tool chooses, and SQL gets pasted into a lot of other tools. */
+export const INDENT = "  ";
+
+/**
+ * Indent or outdent, the way Tab and Shift-Tab should behave.
+ *
+ * A bare caret inserts up to the next tab stop, so pressing Tab in the middle of
+ * a line moves to a column rather than always adding two spaces. Anything with a
+ * selection — even within a single line — shifts whole lines instead, because
+ * that is what Tab is for in an editor and replacing a selection with a tab
+ * character is a thing nobody wants in SQL.
+ *
+ * Outdent removes up to one level of leading whitespace and never reaches past
+ * the start of the line; a line with no indentation is left alone rather than
+ * eating the first real character.
+ */
+export function indentSelection(sql: string, start: number, end: number, outdent = false): EditResult {
+  const { lines, offsets, first, last } = lineSpan(sql, start, end);
+
+  if (!outdent && start === end) {
+    const col = start - offsets[first];
+    const pad = " ".repeat(INDENT.length - (col % INDENT.length));
+    return {
+      sql: sql.slice(0, start) + pad + sql.slice(start),
+      selectionStart: start + pad.length,
+      selectionEnd: start + pad.length,
+    };
+  }
+
+  let firstDelta = 0;
+  let delta = 0;
+  const out = lines.slice(first, last + 1).map((line, i) => {
+    if (outdent) {
+      // A tab counts as a whole level; spaces come off up to a level's worth.
+      const m = /^(\t| {1,2})/.exec(line);
+      if (!m) return line;
+      if (i === 0) firstDelta = -m[1].length;
+      delta -= m[1].length;
+      return line.slice(m[1].length);
+    }
+    // Never indent a blank line: it would leave trailing whitespace behind on a
+    // line the user cannot see it on.
+    if (line === "") return line;
+    if (i === 0) firstDelta = INDENT.length;
+    delta += INDENT.length;
+    return INDENT + line;
+  });
+
+  const next = [...lines.slice(0, first), ...out, ...lines.slice(last + 1)].join("\n");
+  // A selection that began at a line start stays there, so indenting whole
+  // lines leaves whole lines selected rather than losing the new indentation
+  // from the top of the block.
+  const atLineStart = start === offsets[first];
+  return {
+    sql: next,
+    selectionStart: atLineStart ? offsets[first] : Math.max(offsets[first], start + firstDelta),
+    selectionEnd: Math.max(offsets[first], end + delta),
+  };
+}
+
+/**
+ * Enter, carrying the current line's indentation onto the new one.
+ *
+ * Opening a bracket adds a level. If the matching closer is sitting right after
+ * the caret — which it is when the pair was auto-inserted — the closer is pushed
+ * onto a third line at the original indentation and the caret lands in the
+ * middle, which is the shape you wanted when you pressed Enter inside `(|)`.
+ */
+export function newlineIndent(sql: string, start: number, end: number): EditResult {
+  const lineStart = sql.lastIndexOf("\n", start - 1) + 1;
+  const indent = (/^[ \t]*/.exec(sql.slice(lineStart, start)) as RegExpExecArray)[0];
+
+  const before = sql.slice(0, start).trimEnd();
+  const opener = before.endsWith("(") ? ")" : before.endsWith("[") ? "]" : null;
+  const inner = opener ? indent + INDENT : indent;
+
+  const text = opener && sql[end] === opener ? `\n${inner}\n${indent}` : `\n${inner}`;
+  const caret = start + 1 + inner.length;
+  return {
+    sql: sql.slice(0, start) + text + sql.slice(end),
+    selectionStart: caret,
+    selectionEnd: caret,
+  };
+}
+
+/* ------------------------------------------------------------- pairing */
+
+const PAIRS: Record<string, string> = { "(": ")", "[": "]", "'": "'", '"': '"' };
+const CLOSERS = new Set([")", "]", "'", '"']);
+const WORD = /[A-Za-z0-9_]/;
+
+/**
+ * What typing a bracket or quote should do, or null to just type it.
+ *
+ * Three behaviours, in order:
+ *   - With text selected, the pair wraps it. Quoting a chosen identifier or
+ *     bracketing a chosen expression is the one case where auto-pairing is
+ *     unambiguously what was meant.
+ *   - Typing a closer that is already the next character steps over it instead
+ *     of doubling it, which is what makes the auto-inserted closer harmless.
+ *   - Otherwise the pair is inserted with the caret between the two halves —
+ *     but not when it would split a word. `don't` and `o'brien` must stay one
+ *     word, and `foo(bar` should not become `foo()bar`.
+ */
+export function autoPair(sql: string, start: number, end: number, ch: string): EditResult | null {
+  const nextCh = sql[end] ?? "";
+  const prevCh = start > 0 ? sql[start - 1] : "";
+
+  if (start !== end && PAIRS[ch]) {
+    const inner = sql.slice(start, end);
+    return {
+      sql: sql.slice(0, start) + ch + inner + PAIRS[ch] + sql.slice(end),
+      selectionStart: start + 1,
+      selectionEnd: start + 1 + inner.length,
+    };
+  }
+
+  if (start === end && CLOSERS.has(ch) && nextCh === ch) {
+    return { sql, selectionStart: start + 1, selectionEnd: start + 1 };
+  }
+
+  if (start === end && PAIRS[ch]) {
+    if (WORD.test(nextCh)) return null;
+    // A quote after a word character is an apostrophe or the end of something,
+    // not the start of a new literal. Brackets after a word are fine — that is
+    // a function call.
+    if ((ch === "'" || ch === '"') && (WORD.test(prevCh) || prevCh === ch)) return null;
+    return {
+      sql: sql.slice(0, start) + ch + PAIRS[ch] + sql.slice(start),
+      selectionStart: start + 1,
+      selectionEnd: start + 1,
+    };
+  }
+
+  return null;
+}
+
+/** Backspace between the two halves of an empty pair removes both, so undoing
+ *  an auto-inserted bracket takes one press rather than two. Null when the
+ *  caret is anywhere else, leaving Backspace entirely alone. */
+export function deletePair(sql: string, start: number, end: number): EditResult | null {
+  if (start !== end || start === 0) return null;
+  const close = PAIRS[sql[start - 1]];
+  // `undefined !== undefined` is false, so testing the lookup against the next
+  // character alone made backspace at the very end of any text delete two.
+  if (close === undefined || close !== sql[start]) return null;
+  return {
+    sql: sql.slice(0, start - 1) + sql.slice(start + 1),
+    selectionStart: start - 1,
+    selectionEnd: start - 1,
   };
 }
 

@@ -411,14 +411,13 @@ a { color: var(--tn-accent); text-decoration: none; }
    The <pre> and the gutter are overflow:hidden and driven from the textarea's
    scrollTop/scrollLeft in SqlEditor's onScroll. */
 .editor-frame { display: flex; overflow: hidden; background: var(--tn-bg); }
-.gutter {
-  flex: none; width: 44px; padding: 11px 0; text-align: right;
-  font: 12.5px/20px var(--tn-mono); color: var(--tn-tm);
-  user-select: none; background: var(--tn-bg); border-right: 1px solid var(--tn-bs);
-  overflow: hidden;
-}
-.gutter div { padding-right: 11px; height: 20px; }
 .editor-rel { position: relative; flex: 1; min-width: 0; }
+/* Background stripe only. It does not scroll and holds no text: the numbers
+   are rendered per line inside .editor-pre so they wrap with their line. */
+.gutter-bg {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 44px; z-index: 1;
+  background: var(--tn-bg); border-right: 1px solid var(--tn-bs); pointer-events: none;
+}
 
 /* Find & replace, floating over the top-right of the editor rather than
    pushing it down: the line the caret is on must not move when the bar opens,
@@ -443,14 +442,25 @@ a { color: var(--tn-accent); text-decoration: none; }
 /* `pre`, not `pre-wrap`: one logical line must occupy exactly one 20px row or
    it drifts out of step with the fixed-height gutter. Long lines scroll
    horizontally instead, as in any SQL IDE. */
+/* Both layers must wrap identically or the caret drifts away from the glyph
+   under it, so every property that affects line breaking is set on both.
+   The left padding clears the 44px gutter stripe. */
 .editor-pre, .editor-ta {
-  margin: 0; padding: 11px 14px; font: 12.5px/20px var(--tn-mono);
-  white-space: pre; position: absolute; inset: 0; border: none;
+  margin: 0; padding: 11px 14px 11px 58px; font: 12.5px/20px var(--tn-mono);
+  white-space: pre-wrap; overflow-wrap: break-word; tab-size: 2;
+  position: absolute; inset: 0; border: none;
 }
-.editor-pre { pointer-events: none; color: var(--tn-tp); overflow: hidden; }
+.editor-pre { pointer-events: none; color: var(--tn-tp); overflow: hidden; z-index: 2; }
 .editor-ta {
   outline: none; resize: none; background: transparent; color: transparent;
-  caret-color: var(--tn-accent); overflow: auto;
+  caret-color: var(--tn-accent); overflow-y: auto; overflow-x: hidden; z-index: 3;
+}
+/* One block per logical line. min-height keeps a blank line a line high; a line
+   that wraps grows and takes its number with it. */
+.eline { position: relative; min-height: 20px; }
+.lnum {
+  position: absolute; left: -58px; width: 33px; text-align: right;
+  color: var(--tn-tm); user-select: none;
 }
 .tok-k { color: var(--tn-purple); }
 .tok-s { color: var(--tn-success); }
@@ -1242,7 +1252,6 @@ body { background: var(--tn-desk); background-image: none; }
 .tree-row:hover .tree-label { color: var(--tn-tp); }
 
 /* — Editor active-line gutter accent (subtle) — */
-.gutter { color: var(--tn-tm); }
 
 /* — Result tabs: hover state — */
 .rtab:hover { color: var(--tn-ts); }

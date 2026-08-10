@@ -42,7 +42,16 @@ describe("SqlEditor — editing", () => {
 
   it("numbers the lines", () => {
     const { container } = render(<SqlEditor {...base} sql={"a\nb\nc"} />);
-    expect(container.querySelector(".gutter")).toHaveTextContent("123");
+    expect([...container.querySelectorAll(".lnum")].map((n) => n.textContent)).toEqual(["1", "2", "3"]);
+  });
+
+  it("puts each number inside its own line, so a wrapped line keeps it", () => {
+    // The number is a child of the line it belongs to rather than a row in a
+    // parallel column: that is what survives one logical line taking several
+    // visual rows.
+    const { container } = render(<SqlEditor {...base} sql={"a\nbb"} />);
+    const second = container.querySelectorAll(".editor-pre .eline")[1];
+    expect(second).toHaveTextContent("2bb");
   });
 
   it("reports typing", async () => {
@@ -464,6 +473,86 @@ describe("SqlEditor — comment toggling", () => {
     await userEvent.keyboard("/");
     // The change that arrives is the typed character, not a comment toggle.
     for (const [value] of onChange.mock.calls) expect(value).not.toContain("--");
+  });
+});
+
+describe("SqlEditor — shaping the text", () => {
+  /** Render with a caret or selection already placed, and return onChange. */
+  const withSelection = async (sql: string, start: number, end = start) => {
+    const onChange = vi.fn();
+    // No catalog: the completion popup owns Tab and Enter when it is open, and
+    // these tests are about what those keys do when it is not.
+    render(<SqlEditor sql={sql} disabled={false} height={200} onChange={onChange} />);
+    const el = ta();
+    await userEvent.click(el);
+    el.setSelectionRange(start, end);
+    return onChange;
+  };
+
+  it("indents the line on Tab instead of leaving the editor", async () => {
+    const onChange = await withSelection("select 1", 0);
+    await userEvent.keyboard("{Tab}");
+    expect(onChange).toHaveBeenCalledWith("  select 1");
+    expect(ta()).toHaveFocus();
+  });
+
+  it("indents every selected line", async () => {
+    const onChange = await withSelection("a\nb", 0, 3);
+    await userEvent.keyboard("{Tab}");
+    expect(onChange).toHaveBeenCalledWith("  a\n  b");
+  });
+
+  it("outdents them again on Shift-Tab", async () => {
+    const onChange = await withSelection("  a\n  b", 0, 7);
+    await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(onChange).toHaveBeenCalledWith("a\nb");
+  });
+
+  it("lets Escape then Tab move focus, so the editor is not a keyboard trap", async () => {
+    const onChange = await withSelection("select 1", 0);
+    await userEvent.keyboard("{Escape}{Tab}");
+    expect(onChange).not.toHaveBeenCalled();
+    expect(ta()).not.toHaveFocus();
+  });
+
+  it("re-arms indentation after any other key", async () => {
+    const onChange = await withSelection("select 1", 0);
+    await userEvent.keyboard("{Escape}{ArrowRight}{Tab}");
+    // The caret is at column 1, one short of the tab stop, so one space lands
+    // there — and the fact that anything landed is the point: the escape
+    // hatch was spent on the arrow key, not saved up for the Tab.
+    expect(onChange).toHaveBeenCalledWith("s elect 1");
+  });
+
+  it("keeps the indentation on Enter", async () => {
+    const onChange = await withSelection("    select", 10);
+    await userEvent.keyboard("{Enter}");
+    expect(onChange).toHaveBeenCalledWith("    select\n    ");
+  });
+
+  it("closes a bracket as you open it", async () => {
+    const onChange = await withSelection("count", 5);
+    await userEvent.keyboard("(");
+    expect(onChange).toHaveBeenCalledWith("count()");
+  });
+
+  it("steps over the closer rather than doubling it", async () => {
+    const onChange = await withSelection("count()", 6);
+    await userEvent.keyboard(")");
+    // Nothing inserted — the text is unchanged and only the caret moved.
+    for (const [value] of onChange.mock.calls) expect(value).toBe("count()");
+  });
+
+  it("quotes a selection", async () => {
+    const onChange = await withSelection("select x", 7, 8);
+    await userEvent.keyboard("'");
+    expect(onChange).toHaveBeenCalledWith("select 'x'");
+  });
+
+  it("removes both halves of an empty pair on Backspace", async () => {
+    const onChange = await withSelection("count()", 6);
+    await userEvent.keyboard("{Backspace}");
+    expect(onChange).toHaveBeenCalledWith("count");
   });
 });
 

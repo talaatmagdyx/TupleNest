@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  autoPair,
+  deletePair,
   findMatches,
+  indentSelection,
+  newlineIndent,
   replaceAllMatches,
   replaceMatch,
-  tokenizeSQL,
+  tokenizeLines,
   toggleLineComment,
+  type EditResult,
   type Match,
 } from "../lib/sql";
 import { matchShortcut } from "../lib/shortcuts";
@@ -58,26 +63,25 @@ const KIND_GLYPH: Record<string, string> = {
 export default function SqlEditor(p: Props) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const preRef = useRef<HTMLPreElement>(null);
-  const gutterRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [pop, setPop] = useState<PopupState | null>(null);
   const [find, setFind] = useState<FindState | null>(null);
   const findRef = useRef<HTMLInputElement>(null);
   /** Set when the bar is opened, cleared once its box has been focused. */
   const justOpened = useRef(false);
-  const lines = p.sql.split("\n");
+  /** Escape arms the next Tab to leave the editor instead of indenting. Without
+   *  it, taking Tab for indentation traps keyboard users in the text box. */
+  const tabEscapes = useRef(false);
+  const lines = useMemo(() => tokenizeLines(p.sql), [p.sql]);
 
-  /** The textarea is the only scroller; the highlight layer and the gutter are
-   *  overflow:hidden and follow it. Without this they stay pinned and the text
-   *  simply stops rendering past the first screenful. */
+  /** The textarea is the only scroller; the highlight layer is overflow:hidden
+   *  and follows it. Without this it stays pinned and the text simply stops
+   *  rendering past the first screenful. Only the vertical offset matters —
+   *  lines wrap, so there is nothing to scroll sideways. */
   const syncScroll = useCallback(() => {
     const ta = taRef.current;
     if (!ta) return;
-    if (preRef.current) {
-      preRef.current.scrollTop = ta.scrollTop;
-      preRef.current.scrollLeft = ta.scrollLeft;
-    }
-    if (gutterRef.current) gutterRef.current.scrollTop = ta.scrollTop;
+    if (preRef.current) preRef.current.scrollTop = ta.scrollTop;
   }, []);
 
   // Keep them aligned when the text changes height (paste, format, tab switch)
@@ -244,11 +248,12 @@ export default function SqlEditor(p: Props) {
     const ta = taRef.current;
     if (!ta || !m) return;
     ta.setSelectionRange(m.start, m.end);
-    // Textareas do not scroll a programmatic selection into view. Approximate
-    // it by the line the match starts on rather than leaving it off-screen.
-    const before = ta.value.slice(0, m.start).split("\n").length - 1;
-    const lineHeight = ta.clientHeight / Math.max(1, Math.round(ta.clientHeight / 20));
-    ta.scrollTop = Math.max(0, before * lineHeight - ta.clientHeight / 2);
+    // Textareas do not scroll a programmatic selection into view. Counting
+    // newlines would be wrong now that lines wrap — a match forty logical lines
+    // down can be a hundred rows down — so measure where the caret actually
+    // lands and centre on that.
+    const { top } = caretPosition(ta, m.start);
+    ta.scrollTop = Math.max(0, top - ta.clientHeight / 2);
   }, []);
 
   const step = useCallback(
@@ -305,7 +310,23 @@ export default function SqlEditor(p: Props) {
     findRef.current?.select();
   }, [find]);
 
+  /** Apply a text edit and put the selection where the edit says it goes.
+   *  The new value arrives on the next render, so the range has to be set after
+   *  it — doing it now would apply to the text being replaced. */
+  const apply = useCallback(
+    (r: EditResult) => {
+      p.onChange(r.sql);
+      requestAnimationFrame(() => {
+        taRef.current?.setSelectionRange(r.selectionStart, r.selectionEnd);
+      });
+    },
+    [p],
+  );
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Escape arms Tab to move focus; anything else disarms it again.
+    if (e.key !== "Tab") tabEscapes.current = e.key === "Escape";
+
     if (e.key === " " && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       openAt(true);
@@ -325,15 +346,47 @@ export default function SqlEditor(p: Props) {
       e.preventDefault();
       const ta = taRef.current;
       if (!ta) return;
-      const next = toggleLineComment(ta.value, ta.selectionStart, ta.selectionEnd);
-      p.onChange(next.sql);
-      // The value arrives on the next render, so the selection has to be put
-      // back after it — setting it now would apply to the old text.
-      requestAnimationFrame(() => {
-        ta.setSelectionRange(next.selectionStart, next.selectionEnd);
-      });
+      apply(toggleLineComment(ta.value, ta.selectionStart, ta.selectionEnd));
       return;
     }
+
+    // Text shaping, below the popup so that Tab and Enter still accept a
+    // completion when one is showing.
+    const ta = taRef.current;
+    if (ta && !pop && !mod && !e.altKey && !e.nativeEvent.isComposing) {
+      const { value, selectionStart: s, selectionEnd: t } = ta;
+      if (e.key === "Tab") {
+        if (tabEscapes.current) {
+          tabEscapes.current = false;
+          return; // let focus move on, the escape hatch having been armed
+        }
+        e.preventDefault();
+        apply(indentSelection(value, s, t, e.shiftKey));
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        apply(newlineIndent(value, s, t));
+        return;
+      }
+      if (e.key === "Backspace") {
+        const r = deletePair(value, s, t);
+        if (r) {
+          e.preventDefault();
+          apply(r);
+          return;
+        }
+      }
+      if (e.key.length === 1) {
+        const r = autoPair(value, s, t, e.key);
+        if (r) {
+          e.preventDefault();
+          apply(r);
+          return;
+        }
+      }
+    }
+
     if (!pop) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -392,12 +445,11 @@ export default function SqlEditor(p: Props) {
 
   return (
     <div className="editor-frame" style={{ height: p.height }}>
-      <div className="gutter" ref={gutterRef}>
-        {lines.map((_, i) => (
-          <div key={i}>{i + 1}</div>
-        ))}
-      </div>
       <div className="editor-rel">
+        {/* The gutter is only a background stripe. The numbers themselves live
+            in the highlight layer, one per line, so that a wrapped line keeps
+            its number beside its first row instead of drifting. */}
+        <div className="gutter-bg" aria-hidden="true" />
         {find && (
           <div className="findbar" role="search" aria-label="Find and replace">
             <input
@@ -474,8 +526,13 @@ export default function SqlEditor(p: Props) {
             </button>
           </div>
         )}
-        <pre className="editor-pre" ref={preRef}>
-          {tokenizeSQL(p.sql)}
+        <pre className="editor-pre" ref={preRef} aria-hidden="true">
+          {lines.map((nodes, i) => (
+            <div className="eline" key={i}>
+              <span className="lnum">{i + 1}</span>
+              {nodes}
+            </div>
+          ))}
         </pre>
         <textarea
           ref={taRef}

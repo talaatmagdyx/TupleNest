@@ -73,15 +73,93 @@ export function charWidth(ta: HTMLTextAreaElement): number {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
-/** Character offset under a viewport point.
+/**
+ * Character offset under a viewport point.
  *
- *  Exact because the editor is monospace with `white-space: pre`: one logical
- *  line is always one row of `lineHeight`, and every column is `charWidth`
- *  wide. Used to extend a selection while auto-scrolling past the edge, where
- *  the pointer sits still and the browser reports nothing.
+ * Used to extend a selection while auto-scrolling past the edge, where the
+ * pointer sits still and the browser reports nothing.
+ *
+ * Measured, not calculated. The editor wraps, so a logical line can be any
+ * number of rows tall and the old row = floor(y / lineHeight) arithmetic
+ * indexed the wrong line the moment anything wrapped. Instead the text is
+ * mirrored and a Range asks the layout engine directly where each character
+ * sits, then a binary search walks to the point — reading order increases
+ * monotonically with offset, which is what makes the search valid.
+ *
+ * `measuredOffsetAt` returns null when the environment reports no geometry at
+ * all (jsdom, or a detached node); `offsetAt` then falls back to the monospace
+ * arithmetic, which is right for unwrapped text and better than nothing.
  */
+function measuredOffsetAt(ta: HTMLTextAreaElement, x: number, y: number): number | null {
+  const text = ta.value;
+  if (text === "") return 0;
+
+  const style = window.getComputedStyle(ta);
+  const mirror = document.createElement("div");
+  for (const prop of COPIED) {
+    mirror.style[prop] = style[prop];
+  }
+  mirror.style.position = "absolute";
+  mirror.style.visibility = "hidden";
+  mirror.style.top = "0";
+  mirror.style.left = "-9999px";
+  mirror.style.height = "auto";
+  const node = document.createTextNode(text);
+  mirror.appendChild(node);
+  document.body.appendChild(mirror);
+
+  try {
+    const origin = mirror.getBoundingClientRect();
+    const range = document.createRange();
+    // jsdom has no layout engine and does not implement this at all.
+    if (typeof range.getClientRects !== "function") return null;
+    /** Rect of the character at `i`, relative to the mirror's border box. */
+    const rectAt = (i: number): DOMRect | null => {
+      range.setStart(node, i);
+      range.setEnd(node, Math.min(i + 1, text.length));
+      const r = range.getClientRects()[0];
+      return r ?? null;
+    };
+
+    const probe = rectAt(0);
+    // No layout engine: every rect is a zero-sized box at the origin, and a
+    // binary search over those would just return garbage confidently.
+    if (!probe || (probe.width === 0 && probe.height === 0)) return null;
+
+    // True when the character at `i` starts before the point in reading order.
+    const before = (i: number): boolean => {
+      const r = rectAt(i);
+      if (!r) return true;
+      const top = r.top - origin.top;
+      const left = r.left - origin.left;
+      if (top + r.height <= y) return true;
+      if (top > y) return false;
+      return left + r.width / 2 <= x;
+    };
+
+    let lo = 0;
+    let hi = text.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (before(mid)) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  } finally {
+    document.body.removeChild(mirror);
+  }
+}
+
 export function offsetAt(ta: HTMLTextAreaElement, clientX: number, clientY: number): number {
-  const rect = ta.getBoundingClientRect();
+  const box = ta.getBoundingClientRect();
+  const measured = measuredOffsetAt(
+    ta,
+    clientX - box.left + ta.scrollLeft,
+    clientY - box.top + ta.scrollTop,
+  );
+  if (measured !== null) return measured;
+
+  const rect = box;
   const style = window.getComputedStyle(ta);
   const padTop = parseFloat(style.paddingTop) || 0;
   const padLeft = parseFloat(style.paddingLeft) || 0;

@@ -16,8 +16,12 @@ import {
   toCSV,
   toJSONExport,
   toMarkdown,
-  tokenizeSQL,
+  tokenizeLines,
   toggleLineComment,
+  indentSelection,
+  newlineIndent,
+  autoPair,
+  deletePair,
   findMatches,
   replaceMatch,
   replaceAllMatches,
@@ -28,9 +32,10 @@ beforeEach(() => invokeMock.mockReset());
 
 const cols = [{ name: "id" }, { name: "name" }];
 
-describe("tokenizeSQL", () => {
+describe("tokenizeLines", () => {
+  /** Every highlighted span across every line, in order. */
   const cls = (sql: string) =>
-    render(<>{tokenizeSQL(sql)}</>).container.querySelectorAll("span");
+    render(<>{tokenizeLines(sql).map((l, i) => <div key={i}>{l}</div>)}</>).container.querySelectorAll("span");
 
   it("marks keywords", () => {
     const spans = cls("select 1");
@@ -54,24 +59,35 @@ describe("tokenizeSQL", () => {
   });
 
   it("keeps the text between tokens", () => {
-    render(<>{tokenizeSQL("select foo from t")}</>);
+    render(<>{tokenizeLines("select foo from t")[0]}</>);
     expect(screen.getByText(/foo/)).toBeInTheDocument();
   });
 
   it("emits plain text when nothing matches", () => {
-    const { container } = render(<>{tokenizeSQL("zzz")}</>);
+    const { container } = render(<>{tokenizeLines("zzz")[0]}</>);
     expect(container.querySelectorAll("span")).toHaveLength(0);
-    expect(container.textContent).toBe("zzz\n");
+    expect(container.textContent).toBe("zzz");
   });
 
-  it("terminates every line with a newline so rows align with the gutter", () => {
-    const { container } = render(<>{tokenizeSQL("select")}</>);
-    expect(container.textContent?.endsWith("\n")).toBe(true);
+  it("returns one entry per line, so the numbers line up", () => {
+    expect(tokenizeLines("select 1\nfrom t\n")).toHaveLength(3);
+    expect(tokenizeLines("")).toHaveLength(1);
   });
 
-  it("handles an empty string", () => {
-    const { container } = render(<>{tokenizeSQL("")}</>);
-    expect(container.textContent).toBe("\n");
+  it("splits a token that spans a newline across both lines", () => {
+    // A string literal may contain a newline. Tokenizing line by line would
+    // end it at the break and highlight the rest of the file as a string.
+    const out = tokenizeLines("select 'a\nb' from t");
+    const first = render(<>{out[0]}</>).container;
+    const second = render(<>{out[1]}</>).container;
+    expect(first.querySelector(".tok-s")).toHaveTextContent("'a");
+    expect(second.querySelector(".tok-s")).toHaveTextContent("b'");
+  });
+
+  it("keeps a blank line as an empty entry rather than dropping it", () => {
+    const out = tokenizeLines("a\n\nb");
+    expect(out).toHaveLength(3);
+    expect(out[1]).toEqual([]);
   });
 
   it("is case-insensitive on keywords", () => {
@@ -83,6 +99,124 @@ describe("tokenizeSQL", () => {
     // call start mid-string and silently drop the first token.
     expect(cls("select 1")).toHaveLength(2);
     expect(cls("select 1")).toHaveLength(2);
+  });
+});
+
+describe("indentSelection", () => {
+  it("inserts to the next tab stop from a bare caret", () => {
+    expect(indentSelection("select", 0, 0)).toMatchObject({ sql: "  select", selectionStart: 2 });
+    // Column 1 is one space short of the stop, so one space is what it gets —
+    // not a blind two, which would leave the text off the grid.
+    expect(indentSelection("select", 1, 1)).toMatchObject({ sql: "s elect", selectionStart: 2 });
+  });
+
+  it("shifts every line a selection touches", () => {
+    const r = indentSelection("a\nb\nc", 0, 3);
+    expect(r.sql).toBe("  a\n  b\nc");
+  });
+
+  it("shifts whole lines even when the selection is inside one line", () => {
+    // Replacing a selection with a tab character is never what is wanted here.
+    expect(indentSelection("select x", 2, 4).sql).toBe("  select x");
+  });
+
+  it("outdents by one level and stops at the margin", () => {
+    expect(indentSelection("    a\n  b\nc", 0, 11, true).sql).toBe("  a\nb\nc");
+  });
+
+  it("treats a tab as one whole level when outdenting", () => {
+    expect(indentSelection("\ta", 0, 2, true).sql).toBe("a");
+  });
+
+  it("leaves blank lines without trailing whitespace", () => {
+    expect(indentSelection("a\n\nb", 0, 4).sql).toBe("  a\n\n  b");
+  });
+
+  it("keeps a selection that started at a line start anchored there", () => {
+    const r = indentSelection("a\nb", 0, 3);
+    expect(r.selectionStart).toBe(0);
+    expect(r.sql.slice(r.selectionStart, r.selectionEnd)).toBe("  a\n  b");
+  });
+
+  it("does not include a line the selection merely ends at the start of", () => {
+    expect(indentSelection("a\nb\nc", 0, 2).sql).toBe("  a\nb\nc");
+  });
+});
+
+describe("newlineIndent", () => {
+  it("carries the current line's indentation onto the next", () => {
+    const r = newlineIndent("  select x", 10, 10);
+    expect(r.sql).toBe("  select x\n  ");
+    expect(r.selectionStart).toBe(13);
+  });
+
+  it("adds a level after an opening bracket", () => {
+    expect(newlineIndent("  foo(", 6, 6).sql).toBe("  foo(\n    ");
+  });
+
+  it("pushes a waiting closer onto its own line", () => {
+    const r = newlineIndent("foo()", 4, 4);
+    expect(r.sql).toBe("foo(\n  \n)");
+    // Caret on the middle line, inside the new level.
+    expect(r.selectionStart).toBe(7);
+  });
+
+  it("ignores whitespace between the bracket and the caret", () => {
+    expect(newlineIndent("foo(   ", 7, 7).sql).toBe("foo(   \n  ");
+  });
+
+  it("replaces a selection rather than leaving it behind", () => {
+    expect(newlineIndent("ab", 0, 2).sql).toBe("\n");
+  });
+});
+
+describe("autoPair", () => {
+  it("wraps a selection", () => {
+    const r = autoPair("select x", 7, 8, "'");
+    expect(r?.sql).toBe("select 'x'");
+    expect(r).toMatchObject({ selectionStart: 8, selectionEnd: 9 });
+  });
+
+  it("inserts both halves and sits between them", () => {
+    expect(autoPair("count", 5, 5, "(")).toMatchObject({ sql: "count()", selectionStart: 6, selectionEnd: 6 });
+  });
+
+  it("steps over a closer that is already there instead of doubling it", () => {
+    const r = autoPair("count()", 6, 6, ")");
+    expect(r).toMatchObject({ sql: "count()", selectionStart: 7 });
+  });
+
+  it("leaves an apostrophe alone", () => {
+    // `don't` must not become `don''t`.
+    expect(autoPair("don", 3, 3, "'")).toBeNull();
+  });
+
+  it("does not split a word", () => {
+    expect(autoPair("bar", 0, 0, "(")).toBeNull();
+  });
+
+  it("still opens a bracket after a word, which is a function call", () => {
+    expect(autoPair("count", 5, 5, "(")).not.toBeNull();
+  });
+
+  it("says nothing about characters that are not pairs", () => {
+    expect(autoPair("a", 1, 1, "x")).toBeNull();
+  });
+});
+
+describe("deletePair", () => {
+  it("removes both halves of an empty pair", () => {
+    expect(deletePair("count()", 6, 6)).toMatchObject({ sql: "count", selectionStart: 5 });
+  });
+
+  it("leaves a pair with something in it alone", () => {
+    expect(deletePair("count(x)", 7, 7)).toBeNull();
+  });
+
+  it("leaves an ordinary backspace alone", () => {
+    expect(deletePair("abc", 3, 3)).toBeNull();
+    expect(deletePair("abc", 0, 0)).toBeNull();
+    expect(deletePair("()", 0, 2)).toBeNull();
   });
 });
 

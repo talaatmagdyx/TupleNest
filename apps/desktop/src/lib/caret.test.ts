@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { caretPosition, charWidth, offsetAt } from "./caret";
 
 /**
@@ -129,9 +129,101 @@ describe("charWidth", () => {
   });
 });
 
-describe("offsetAt", () => {
-  // charWidth resolves to 6 (10px * 0.6) and lineHeight to 20 under stubStyle,
-  // with padding 10 top / 5 left and rect origin at 0,0 in jsdom.
+describe("offsetAt — measured", () => {
+  /**
+   * The measured path asks the layout engine where each character sits. jsdom
+   * does not implement Range.getClientRects at all, so the geometry is supplied
+   * here: ten characters per row, six pixels wide, twenty tall, wrapping with
+   * no regard for newlines. That is deliberately a *wrapping* model — it is the
+   * case the old arithmetic could not express, and what these tests check is
+   * that the search converges on the character under the point whatever shape
+   * the engine reports.
+   */
+  const CW = 6;
+  const LH = 20;
+  const PER_ROW = 10;
+
+  // Defined rather than spied: the method does not exist on jsdom's Range at
+  // all, and vi.spyOn refuses to replace a property that was never there.
+  const supplyRects = (impl: (r: Range) => unknown[]) => {
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: function (this: Range) {
+        return impl(this);
+      },
+    });
+  };
+
+  const stubRects = () =>
+    supplyRects((range) => {
+      const i = range.startOffset;
+      const left = (i % PER_ROW) * CW;
+      const top = Math.floor(i / PER_ROW) * LH;
+      return [{ left, top, width: CW, height: LH, right: left + CW, bottom: top + LH }];
+    });
+
+  afterEach(() => {
+    Reflect.deleteProperty(Range.prototype, "getClientRects");
+  });
+
+  const text = "abcdefghijklmnopqrstuvwxyz"; // three rows under this model
+
+  it("finds the character under the point", () => {
+    stubStyle();
+    stubRects();
+    // Row 0, just past the middle of column 3.
+    expect(offsetAt(mkTextarea(text), 3 * CW + 4, 5)).toBe(4);
+  });
+
+  it("keeps counting past a wrap, where row and line are not the same thing", () => {
+    stubStyle();
+    stubRects();
+    // Row 2 column 1, in text with no newline in it at all. The old row-per-
+    // line arithmetic could only ever have answered from line 0 here.
+    expect(offsetAt(mkTextarea(text), CW + 1, 2 * LH + 5)).toBe(21);
+  });
+
+  it("returns the end when the point is past the last character", () => {
+    stubStyle();
+    stubRects();
+    expect(offsetAt(mkTextarea(text), 9999, 9999)).toBe(text.length);
+  });
+
+  it("returns the start when the point is above the text", () => {
+    stubStyle();
+    stubRects();
+    expect(offsetAt(mkTextarea(text), 0, -9999)).toBe(0);
+  });
+
+  it("accounts for the textarea's scroll offset", () => {
+    stubStyle();
+    stubRects();
+    const ta = mkTextarea(text);
+    ta.scrollTop = LH; // scrolled down one row
+    expect(offsetAt(ta, 0, 5)).toBe(PER_ROW);
+  });
+
+  it("has nothing to search in an empty textarea", () => {
+    stubStyle();
+    stubRects();
+    expect(offsetAt(mkTextarea(""), 50, 50)).toBe(0);
+  });
+
+  it("falls back to the arithmetic when the engine reports empty boxes", () => {
+    // A detached or display:none mirror measures as zero. Binary-searching
+    // zero-sized rects would return a confident wrong answer, so the
+    // arithmetic — right for unwrapped text — takes over instead.
+    stubStyle({ fontFamily: "measured-zero" });
+    supplyRects(() => [{ left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 }]);
+    // charWidth 6, lineHeight 20, padding 5 left / 10 top: column 3 of row 0.
+    expect(offsetAt(mkTextarea("abcdef"), 5 + 3 * 6, 10)).toBe(3);
+  });
+});
+
+describe("offsetAt — arithmetic fallback", () => {
+  // jsdom does not implement Range.getClientRects, so every test below runs the
+  // fallback. charWidth resolves to 6 (10px * 0.6) and lineHeight to 20 under
+  // stubStyle, with padding 10 top / 5 left and rect origin at 0,0 in jsdom.
   const ta = () => {
     const t = mkTextarea("abcdef\nghijkl\nmn");
     return t;
