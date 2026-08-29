@@ -9,6 +9,19 @@
 //! - Passwords are not resolved from the keychain yet; local trust/peer auth.
 //! - Type conversion covers common types; the rest render as `Other`.
 
+// `DriverError` is deliberately fat: category, title, explanation, SQLSTATE,
+// the original server message, a query range and a list of suggested actions —
+// roughly 150 bytes, past clippy's 128-byte threshold. That richness is the
+// point; it is what puts a real diagnosis in front of the user instead of
+// "Database error", and every field is read somewhere in the UI.
+//
+// Getting under the threshold means boxing it, and the type is named in the
+// `Driver` trait in driver-api, so that is a signature change across every
+// driver, the Tauri command layer and their tests — worth doing on its own,
+// not as a drive-by. Suppressed here rather than pretended away: this is a
+// known cost, on an error path where one allocation is irrelevant.
+#![allow(clippy::result_large_err)]
+
 use std::sync::Arc;
 use std::time::Instant;
 
