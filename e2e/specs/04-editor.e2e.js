@@ -94,11 +94,14 @@ describe("the editor lays out long lines", () => {
 });
 
 describe("the editor's keys reach the text", () => {
-  it("indents on Tab instead of leaving the editor", async () => {
+  it("indents the selected line on Tab, and keeps focus", async () => {
     const ta = await setFresh("select 1");
-    // Home, not Meta+ArrowLeft: that is a macOS binding and does nothing on the
-    // Linux runner, so the caret stayed at the end and Tab indented there.
-    await browser.keys(["Home"]);
+    // Select the line rather than pressing Home first. Caret movement keys are
+    // the least portable thing in this file — Meta+ArrowLeft is macOS-only and
+    // Home did not move the caret here either — and none of that is what this
+    // test is about. Setting the range directly asks the one question that
+    // matters: does Tab reach the editor and indent.
+    await browser.execute((el) => el.setSelectionRange(0, "select 1".length), ta);
     await browser.keys(["Tab"]);
     await expect(ta).toHaveValue(expect.stringContaining("  select 1"));
     // Focus stayed put — Tab was taken by the editor, not by the browser.
