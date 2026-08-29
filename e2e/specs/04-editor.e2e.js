@@ -31,11 +31,28 @@ async function clear() {
  *  Deliberate: typing this text character by character would run it through
  *  the bracket and quote pairing, so the editor would end up holding something
  *  other than what was asked for. These tests want the text; the key tests
- *  below want the keys. `setValue` on a controlled React textarea appends
- *  rather than replaces, hence the clear first. */
+ *  below want the keys.
+ *
+ *  Not `setValue`, for two reasons found by watching this fail on CI: it
+ *  appends to a controlled React textarea rather than replacing, and it does
+ *  not carry newlines — a three-line string arrived as one line, so the
+ *  line-number assertion counted one. Going through React's own value setter
+ *  and firing `input` is what a real edit looks like to the component. */
 async function setFresh(text) {
   const ta = await clear();
-  await ta.setValue(text);
+  await browser.execute(
+    (el, value) => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      ).set;
+      setter.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    ta,
+    text,
+  );
+  await ta.click();
   return ta;
 }
 
@@ -79,7 +96,9 @@ describe("the editor lays out long lines", () => {
 describe("the editor's keys reach the text", () => {
   it("indents on Tab instead of leaving the editor", async () => {
     const ta = await setFresh("select 1");
-    await browser.keys([META, "ArrowLeft"]); // caret to the start of the line
+    // Home, not Meta+ArrowLeft: that is a macOS binding and does nothing on the
+    // Linux runner, so the caret stayed at the end and Tab indented there.
+    await browser.keys(["Home"]);
     await browser.keys(["Tab"]);
     await expect(ta).toHaveValue(expect.stringContaining("  select 1"));
     // Focus stayed put — Tab was taken by the editor, not by the browser.
@@ -89,14 +108,14 @@ describe("the editor's keys reach the text", () => {
 
   it("closes a bracket as it is opened", async () => {
     const ta = await setFresh("select count");
-    await browser.keys([META, "ArrowRight"]); // caret to the end of the line
+    await browser.keys(["End"]);
     await browser.keys(["("]);
     await expect(ta).toHaveValue(expect.stringContaining("count()"));
   });
 
   it("carries the indentation onto the next line", async () => {
     const ta = await setFresh("  select 1");
-    await browser.keys([META, "ArrowRight"]);
+    await browser.keys(["End"]);
     await browser.keys(["Enter"]);
     await browser.keys(["x"]);
     // The new line starts where the old one did, not at column zero.
