@@ -179,7 +179,7 @@ fn resolve_password(secret_ref: &Option<String>) -> Result<Option<Secret>, Strin
 /// in the frontend matches a prefix of the first line, and the status bar
 /// shows only the first line; everything below it is the full report for the
 /// error box. All fields are sanitized upstream by design (no credentials).
-fn err_to_string(e: DriverError) -> String {
+fn err_to_string(e: &DriverError) -> String {
     let mut out = e.title.clone();
     if let Some(code) = &e.native_code {
         out.push_str(&format!(" [SQLSTATE {code}]"));
@@ -277,7 +277,7 @@ mod err_to_string_tests {
                  Detail: Key (id)=(1) already exists.\n\
                  On: table \"books\", constraint \"books_pkey\"",
             );
-        let s = err_to_string(e);
+        let s = err_to_string(&e);
         assert!(
             s.starts_with("Constraint violation [SQLSTATE 23505]\n"),
             "{s}"
@@ -294,7 +294,7 @@ mod err_to_string_tests {
         let e = DriverError::new(ErrorCategory::Syntax, "Syntax error")
             .with_native_code("42601")
             .with_original_message("syntax error at or near \"selct\"");
-        let first = err_to_string(e);
+        let first = err_to_string(&e);
         let first = first.lines().next().unwrap();
         assert_eq!(first, "Syntax error [SQLSTATE 42601]");
     }
@@ -303,7 +303,7 @@ mod err_to_string_tests {
     fn no_duplicate_when_message_equals_title() {
         let e = DriverError::new(ErrorCategory::Network, "Connection closed")
             .with_original_message("Connection closed");
-        assert_eq!(err_to_string(e), "Connection closed");
+        assert_eq!(err_to_string(&e), "Connection closed");
     }
 
     #[test]
@@ -311,7 +311,7 @@ mod err_to_string_tests {
         let e = DriverError::new(ErrorCategory::Network, "Connection closed")
             .with_original_message("connection reset by peer")
             .with_suggested_action("Reconnect and retry if the statement is safe to re-run");
-        let s = err_to_string(e);
+        let s = err_to_string(&e);
         assert!(
             s.ends_with("Try: Reconnect and retry if the statement is safe to re-run"),
             "{s}"
@@ -433,7 +433,7 @@ pub async fn pg_test(params: PgParams) -> Result<TestReportOut, String> {
     let report = PostgresDriver
         .test_with_password(&config, password.as_ref().map(|s| s.expose()))
         .await
-        .map_err(err_to_string)?;
+        .map_err(|e| err_to_string(&e))?;
     stages.extend(report.stages.into_iter().map(|mut s| {
         // In the combined report the driver's "connect" stage is the
         // authenticated session open, i.e. the auth stage.
@@ -469,7 +469,7 @@ pub async fn pg_connect(state: tauri::State<'_, PgState>, params: PgParams) -> R
     let session = PostgresDriver
         .connect_concrete_with_password(config, password.as_ref().map(|s| s.expose()))
         .await
-        .map_err(err_to_string)?;
+        .map_err(|e| err_to_string(&e))?;
     *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = Some(session.cancel_handle());
     *state.session.lock().await = Some(session);
     *state.tunnel.lock().map_err(|_| "tunnel lock poisoned")? = tunnel;
@@ -587,7 +587,7 @@ struct StoreSink {
 
 #[async_trait]
 impl BatchSink for StoreSink {
-    async fn deliver(&self, batch: RowBatch) -> Result<(), DriverError> {
+    async fn deliver(&self, batch: RowBatch) -> Result<(), Box<DriverError>> {
         let mut inner = self.inner.lock().expect("sink lock");
         if inner.columns.is_empty() {
             inner.columns = batch
@@ -834,7 +834,7 @@ pub async fn pg_query(
             // Persist the reduced form (no DETAIL/row values); show the full
             // report in memory. Compute the disk copy before `e` is consumed.
             let persisted = persisted_error(&e);
-            let msg = err_to_string(e);
+            let msg = err_to_string(&e);
             let status = if msg.to_lowercase().contains("cancel") {
                 "cancelled"
             } else {
@@ -1099,7 +1099,7 @@ pub async fn pg_metadata(
                     return Ok(cached);
                 }
             }
-            Err(err_to_string(live_err))
+            Err(err_to_string(&live_err))
         }
     }
 }
@@ -1113,7 +1113,7 @@ pub async fn pg_activity(state: tauri::State<'_, PgState>) -> Result<serde_json:
         .metadata(MetadataRequest::ServerActivity)
         .await
         .map(|r| r.payload)
-        .map_err(err_to_string)
+        .map_err(|e| err_to_string(&e))
 }
 
 /// Foreign-key relationships for the ER view (Phase 2).
@@ -1128,7 +1128,7 @@ pub async fn pg_relationships(
         .metadata(MetadataRequest::Relationships { schema })
         .await
         .map(|r| r.payload)
-        .map_err(err_to_string)
+        .map_err(|e| err_to_string(&e))
 }
 
 /// Cancel (soft) or terminate (hard) a backend by pid from the monitor.
@@ -1143,7 +1143,7 @@ pub async fn pg_admin_backend(
     session
         .admin_backend(pid, terminate)
         .await
-        .map_err(err_to_string)
+        .map_err(|e| err_to_string(&e))
 }
 
 /// Cache-only metadata: renders the explorer for a saved profile before —
@@ -1167,21 +1167,21 @@ pub async fn pg_begin(state: tauri::State<'_, PgState>) -> Result<(), String> {
         .begin(tuplenest_driver_api::TransactionOptions::default())
         .await
         .map(|_| ())
-        .map_err(err_to_string)
+        .map_err(|e| err_to_string(&e))
 }
 
 #[tauri::command]
 pub async fn pg_commit(state: tauri::State<'_, PgState>) -> Result<(), String> {
     let mut guard = state.session.lock().await;
     let session = guard.as_mut().ok_or("not connected")?;
-    session.commit().await.map_err(err_to_string)
+    session.commit().await.map_err(|e| err_to_string(&e))
 }
 
 #[tauri::command]
 pub async fn pg_rollback(state: tauri::State<'_, PgState>) -> Result<(), String> {
     let mut guard = state.session.lock().await;
     let session = guard.as_mut().ok_or("not connected")?;
-    session.rollback().await.map_err(err_to_string)
+    session.rollback().await.map_err(|e| err_to_string(&e))
 }
 
 /// Cancels the in-flight query via the wire-protocol cancel key. Does not
@@ -1194,5 +1194,5 @@ pub async fn pg_cancel(state: tauri::State<'_, PgState>) -> Result<(), String> {
         .map_err(|_| "cancel lock poisoned")?
         .clone()
         .ok_or("not connected")?;
-    handle.cancel().await.map_err(err_to_string)
+    handle.cancel().await.map_err(|e| err_to_string(&e))
 }

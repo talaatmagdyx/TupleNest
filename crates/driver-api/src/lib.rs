@@ -29,7 +29,7 @@ use async_trait::async_trait;
 /// batch has been accepted, and drivers must not buffer unbounded batches.
 #[async_trait]
 pub trait BatchSink: Send + Sync {
-    async fn deliver(&self, batch: RowBatch) -> Result<(), DriverError>;
+    async fn deliver(&self, batch: RowBatch) -> Result<(), Box<DriverError>>;
 }
 
 #[async_trait]
@@ -38,12 +38,15 @@ pub trait DatabaseDriver: Send + Sync {
     fn capabilities(&self) -> DriverCapabilities;
 
     /// Staged connection test: DNS → TCP → TLS → auth → server version.
-    async fn test(&self, config: ConnectionConfig) -> Result<ConnectionTestReport, DriverError>;
+    async fn test(
+        &self,
+        config: ConnectionConfig,
+    ) -> Result<ConnectionTestReport, Box<DriverError>>;
 
     async fn connect(
         &self,
         config: ConnectionConfig,
-    ) -> Result<Box<dyn DatabaseSession>, DriverError>;
+    ) -> Result<Box<dyn DatabaseSession>, Box<DriverError>>;
 }
 
 #[async_trait]
@@ -53,17 +56,23 @@ pub trait DatabaseSession: Send + Sync {
         &mut self,
         request: QueryRequest,
         sink: &dyn BatchSink,
-    ) -> Result<ExecutionSummary, DriverError>;
+    ) -> Result<ExecutionSummary, Box<DriverError>>;
 
     /// Request cancellation of a running execution. Must be safe to call
     /// concurrently with `execute` and must reach the server where supported.
-    async fn cancel(&self, execution_id: ExecutionId) -> Result<(), DriverError>;
+    async fn cancel(&self, execution_id: ExecutionId) -> Result<(), Box<DriverError>>;
 
-    async fn metadata(&self, request: MetadataRequest) -> Result<MetadataResponse, DriverError>;
+    async fn metadata(
+        &self,
+        request: MetadataRequest,
+    ) -> Result<MetadataResponse, Box<DriverError>>;
 
-    async fn begin(&mut self, options: TransactionOptions) -> Result<TransactionId, DriverError>;
-    async fn commit(&mut self) -> Result<(), DriverError>;
-    async fn rollback(&mut self) -> Result<(), DriverError>;
+    async fn begin(
+        &mut self,
+        options: TransactionOptions,
+    ) -> Result<TransactionId, Box<DriverError>>;
+    async fn commit(&mut self) -> Result<(), Box<DriverError>>;
+    async fn rollback(&mut self) -> Result<(), Box<DriverError>>;
 
     /// True if the underlying connection is known to be unusable.
     fn is_broken(&self) -> bool;

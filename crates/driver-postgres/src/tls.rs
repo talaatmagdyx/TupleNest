@@ -63,7 +63,7 @@ impl TlsSetup {
 /// loading roots or the CA file is an error, never a silent downgrade.
 // DriverError is the crate-wide error type; its size is accepted API-wide.
 #[allow(clippy::result_large_err)]
-pub fn build(config: &ConnectionConfig) -> Result<TlsSetup, DriverError> {
+pub fn build(config: &ConnectionConfig) -> Result<TlsSetup, Box<DriverError>> {
     match config.tls_mode {
         TlsMode::Disabled => Ok(TlsSetup::None),
         TlsMode::Prefer => {
@@ -108,7 +108,7 @@ pub fn build(config: &ConnectionConfig) -> Result<TlsSetup, DriverError> {
 /// OS trust store plus the caller's CA file. Fails closed: an unreadable or
 /// empty CA file is an error, never a silent downgrade to fewer roots.
 #[allow(clippy::result_large_err)]
-fn build_roots(config: &ConnectionConfig) -> Result<rustls::RootCertStore, DriverError> {
+fn build_roots(config: &ConnectionConfig) -> Result<rustls::RootCertStore, Box<DriverError>> {
     let mut roots = rustls::RootCertStore::empty();
     let native = rustls_native_certs::load_native_certs();
     for cert in native.certs {
@@ -146,7 +146,8 @@ fn build_roots(config: &ConnectionConfig) -> Result<rustls::RootCertStore, Drive
             return Err(DriverError::new(
                 ErrorCategory::Tls,
                 format!("CA file {path} contains no certificates"),
-            ));
+            )
+            .into());
         }
         for cert in certs {
             roots.add(cert).map_err(|e| {
@@ -158,10 +159,9 @@ fn build_roots(config: &ConnectionConfig) -> Result<rustls::RootCertStore, Drive
         }
     }
     if roots.is_empty() {
-        return Err(DriverError::new(
-            ErrorCategory::Tls,
-            "No trusted root certificates available",
-        ));
+        return Err(
+            DriverError::new(ErrorCategory::Tls, "No trusted root certificates available").into(),
+        );
     }
     Ok(roots)
 }

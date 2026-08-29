@@ -1015,6 +1015,13 @@ export default function App() {
 
   /* ---------------- export / chart ---------------- */
 
+  /** Progress of a running file export, or null when none is running. */
+  const [exportRun, setExportRun] = useState<{ written: number; total: number } | null>(null);
+  /** Set by the Cancel button; read between pages by the export loop. A ref
+   *  rather than state because the loop closes over it and must see the change
+   *  without being re-created. */
+  const cancelExport = useRef(false);
+
   /**
    * Export the result grid to a file the user picks.
    *
@@ -1045,16 +1052,26 @@ export default function App() {
       const cap = EXPORT_CAPS[kind];
       const total = cap === undefined ? result.storedRows : Math.min(result.storedRows, cap);
       let written = 0;
+      cancelExport.current = false;
+      setExportRun({ written: 0, total });
       try {
         await writeChunk(exportPrefix(kind, result.columns, mode));
         // pg_rows serves at most 1000 per call, so that is the page size.
         for (let off = 0; off < total; off += 1000) {
+          // Checked between pages rather than mid-write: stopping halfway
+          // through a chunk would leave the file's last row torn in half, and
+          // the whole point of aborting is to leave nothing behind.
+          if (cancelExport.current) {
+            await abortSave().catch(() => {});
+            showToast("Export cancelled — the partial file was removed");
+            return;
+          }
           const page = await invoke<unknown[][]>("pg_rows", { offset: off, limit: 1000 });
           if (page.length === 0) break;
           const slice = page.length > total - off ? page.slice(0, total - off) : page;
           await writeChunk(exportChunk(kind, result.columns, slice, written === 0, mode));
           written += slice.length;
-          showToast(`Exporting… ${written.toLocaleString()} of ${total.toLocaleString()} rows`);
+          setExportRun({ written, total });
         }
         await writeChunk(exportSuffix(kind, written > 0));
         await finishSave();
@@ -1064,6 +1081,8 @@ export default function App() {
         // missing rows, with nothing on its face to say so.
         await abortSave().catch(() => {});
         showToast(`Export failed: ${String(e).slice(0, 60)}`);
+      } finally {
+        setExportRun(null);
       }
     },
     [result, showToast, tabs, activeTab, csvSafe]
@@ -1622,6 +1641,27 @@ export default function App() {
       />
 
       {toast && <div className="toast">{toast}</div>}
+
+      {/* A running export gets its own persistent strip rather than the toast:
+          it lasts longer than a toast should, and it needs a way out. */}
+      {exportRun && (
+        <div className="export-progress" role="status" aria-live="polite">
+          <div className="ep-bar">
+            <div
+              className="ep-fill"
+              style={{ width: `${exportRun.total > 0 ? Math.round((exportRun.written / exportRun.total) * 100) : 0}%` }}
+            />
+          </div>
+          <span className="ep-text">
+            Exporting {exportRun.written.toLocaleString()} of {exportRun.total.toLocaleString()} rows
+          </span>
+          {/* "Cancel export", not "Cancel": the toolbar already has a Cancel,
+              for the running query, and two of them is a coin toss. */}
+          <button className="btn xs" aria-label="Cancel export" onClick={() => (cancelExport.current = true)}>
+            Cancel
+          </button>
+        </div>
+      )}
 
       {overlay === "palette" && (
         <Palette

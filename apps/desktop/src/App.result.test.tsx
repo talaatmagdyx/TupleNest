@@ -164,6 +164,64 @@ describe("App — exporting the result", () => {
     expect(order[0]).toBe("export_begin");
   });
 
+  /** A nine-page result whose pages arrive slowly enough to be seen mid-flight.
+   *  Against an instant fake backend the whole export lands in one batch and
+   *  there is no running state to assert on — which is a property of the
+   *  fixture, not of the app. */
+  const slowNinePages = () => {
+    be.on("pg_query", () => ({
+      columns: [{ name: "n", dbType: "int4" }],
+      totalRows: 9000,
+      storedRows: 9000,
+      truncated: false,
+      rowsAffected: null,
+    }));
+    const page = Array.from({ length: 1000 }, (_, i) => [i]);
+    be.on("pg_rows", () => new Promise((resolve) => setTimeout(() => resolve(page), 20)));
+  };
+
+  it("stops on Cancel and removes what it had written", async () => {
+    // A big export is worth starting and then thinking better of. Without a way
+    // out the only exit is force-quitting the app, which leaves the partial
+    // file behind — the exact thing export_abort exists to prevent.
+    slowNinePages();
+    const user = await connected();
+    await run(user);
+    const menu = await exportMenu(user);
+    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+
+    await user.click(await screen.findByRole("button", { name: "Cancel export" }));
+    await waitFor(() => expect(be.sent("export_abort")).toHaveLength(1));
+    expect(be.sent("export_finish")).toHaveLength(0);
+    expect(await screen.findByText(/Export cancelled/)).toBeInTheDocument();
+    // Cancelling ends the loop, so nothing is left in flight to bleed into the
+    // next test — but assert it, because that is the claim.
+    expect(screen.queryByRole("button", { name: "Cancel export" })).toBeNull();
+  });
+
+  it("shows how far a running export has got", async () => {
+    slowNinePages();
+    const user = await connected();
+    await run(user);
+    const menu = await exportMenu(user);
+    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    expect(await screen.findByText(/Exporting [\d,]+ of 9,000 rows/)).toBeInTheDocument();
+    // Let it finish before the test ends. Testing-library unmounts the tree
+    // between tests but cannot stop an in-flight promise chain, and a nine-page
+    // export left running keeps calling `invoke` — into the *next* test's fake
+    // backend, whose call log then has writes nobody in that test made.
+    await waitFor(() => expect(be.sent("export_finish")).toHaveLength(1));
+  });
+
+  it("takes the progress strip away once the export ends", async () => {
+    const user = await connected();
+    await run(user);
+    const menu = await exportMenu(user);
+    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    await waitFor(() => expect(be.sent("export_finish")).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Cancel export" })).toBeNull());
+  });
+
   it("does no work at all when the save panel is cancelled", async () => {
     be.on("export_begin", () => null);
     const user = await connected();

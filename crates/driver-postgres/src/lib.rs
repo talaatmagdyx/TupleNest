@@ -9,19 +9,6 @@
 //! - Passwords are not resolved from the keychain yet; local trust/peer auth.
 //! - Type conversion covers common types; the rest render as `Other`.
 
-// `DriverError` is deliberately fat: category, title, explanation, SQLSTATE,
-// the original server message, a query range and a list of suggested actions —
-// roughly 150 bytes, past clippy's 128-byte threshold. That richness is the
-// point; it is what puts a real diagnosis in front of the user instead of
-// "Database error", and every field is read somewhere in the UI.
-//
-// Getting under the threshold means boxing it, and the type is named in the
-// `Driver` trait in driver-api, so that is a signature change across every
-// driver, the Tauri command layer and their tests — worth doing on its own,
-// not as a drive-by. Suppressed here rather than pretended away: this is a
-// known cost, on an error path where one allocation is irrelevant.
-#![allow(clippy::result_large_err)]
-
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -186,7 +173,7 @@ impl PostgresDriver {
         &self,
         config: &ConnectionConfig,
         password: Option<&str>,
-    ) -> Result<ConnectionTestReport, DriverError> {
+    ) -> Result<ConnectionTestReport, Box<DriverError>> {
         let mut stages = Vec::new();
 
         // TLS configuration errors fail closed before any network activity.
@@ -298,14 +285,17 @@ impl DatabaseDriver for PostgresDriver {
         }
     }
 
-    async fn test(&self, config: ConnectionConfig) -> Result<ConnectionTestReport, DriverError> {
+    async fn test(
+        &self,
+        config: ConnectionConfig,
+    ) -> Result<ConnectionTestReport, Box<DriverError>> {
         self.test_with_password(&config, None).await
     }
 
     async fn connect(
         &self,
         config: ConnectionConfig,
-    ) -> Result<Box<dyn DatabaseSession>, DriverError> {
+    ) -> Result<Box<dyn DatabaseSession>, Box<DriverError>> {
         Ok(Box::new(
             self.connect_concrete_with_password(config, None).await?,
         ))
@@ -329,7 +319,7 @@ pub struct PgCancelHandle {
 }
 
 impl PgCancelHandle {
-    pub async fn cancel(&self) -> Result<(), DriverError> {
+    pub async fn cancel(&self) -> Result<(), Box<DriverError>> {
         let token = self.token.lock().await.clone();
         cancel_with(token, &self.tls).await.map_err(normalize_error)
     }
@@ -338,7 +328,7 @@ impl PgCancelHandle {
 impl PostgresSession {
     /// Cancel (soft) or terminate (hard) another backend by pid — powers the
     /// monitoring panel's actions. Returns whether the admin call succeeded.
-    pub async fn admin_backend(&self, pid: i32, terminate: bool) -> Result<bool, DriverError> {
+    pub async fn admin_backend(&self, pid: i32, terminate: bool) -> Result<bool, Box<DriverError>> {
         let sql = if terminate {
             "SELECT pg_terminate_backend($1)"
         } else {
@@ -366,7 +356,7 @@ impl PostgresDriver {
     pub async fn connect_concrete(
         &self,
         config: ConnectionConfig,
-    ) -> Result<PostgresSession, DriverError> {
+    ) -> Result<PostgresSession, Box<DriverError>> {
         self.connect_concrete_with_password(config, None).await
     }
 
@@ -375,7 +365,7 @@ impl PostgresDriver {
         &self,
         config: ConnectionConfig,
         password: Option<&str>,
-    ) -> Result<PostgresSession, DriverError> {
+    ) -> Result<PostgresSession, Box<DriverError>> {
         let setup = tls::build(&config)?;
         let (client, conn_task) = connect_client(&Self::pg_config(&config, password), &setup)
             .await
@@ -413,7 +403,8 @@ impl PostgresDriver {
                     MIN_SERVER_MAJOR,
                     MIN_SERVER_MAJOR,
                 ),
-            ));
+            )
+            .into());
         }
 
         /*
@@ -476,7 +467,7 @@ impl DatabaseSession for PostgresSession {
         &mut self,
         request: QueryRequest,
         sink: &dyn BatchSink,
-    ) -> Result<ExecutionSummary, DriverError> {
+    ) -> Result<ExecutionSummary, Box<DriverError>> {
         use futures_util::StreamExt;
         let started = Instant::now();
 
@@ -562,12 +553,15 @@ impl DatabaseSession for PostgresSession {
         })
     }
 
-    async fn cancel(&self, _execution_id: ExecutionId) -> Result<(), DriverError> {
+    async fn cancel(&self, _execution_id: ExecutionId) -> Result<(), Box<DriverError>> {
         let token = self.cancel_token.lock().await.clone();
         cancel_with(token, &self.tls).await.map_err(normalize_error)
     }
 
-    async fn metadata(&self, request: MetadataRequest) -> Result<MetadataResponse, DriverError> {
+    async fn metadata(
+        &self,
+        request: MetadataRequest,
+    ) -> Result<MetadataResponse, Box<DriverError>> {
         let payload = match request {
             MetadataRequest::ServerInfo => {
                 let row = self
@@ -894,7 +888,8 @@ impl DatabaseSession for PostgresSession {
                     return Err(DriverError::new(
                         ErrorCategory::Configuration,
                         format!("Relation {schema}.{name} not found"),
-                    ));
+                    )
+                    .into());
                 }
                 // Indexes + size/row estimates for the object-detail view.
                 let idx_rows = self
@@ -1059,12 +1054,14 @@ impl DatabaseSession for PostgresSession {
         })
     }
 
-    async fn begin(&mut self, options: TransactionOptions) -> Result<TransactionId, DriverError> {
+    async fn begin(
+        &mut self,
+        options: TransactionOptions,
+    ) -> Result<TransactionId, Box<DriverError>> {
         if self.in_transaction.is_some() {
-            return Err(DriverError::new(
-                ErrorCategory::Internal,
-                "Transaction already open",
-            ));
+            return Err(
+                DriverError::new(ErrorCategory::Internal, "Transaction already open").into(),
+            );
         }
         /*
          * The options were discarded — the parameter was literally `_options` —
@@ -1086,12 +1083,9 @@ impl DatabaseSession for PostgresSession {
         Ok(id)
     }
 
-    async fn commit(&mut self) -> Result<(), DriverError> {
+    async fn commit(&mut self) -> Result<(), Box<DriverError>> {
         if self.in_transaction.take().is_none() {
-            return Err(DriverError::new(
-                ErrorCategory::Internal,
-                "No open transaction",
-            ));
+            return Err(DriverError::new(ErrorCategory::Internal, "No open transaction").into());
         }
         self.client
             .batch_execute("COMMIT")
@@ -1099,12 +1093,9 @@ impl DatabaseSession for PostgresSession {
             .map_err(normalize_error)
     }
 
-    async fn rollback(&mut self) -> Result<(), DriverError> {
+    async fn rollback(&mut self) -> Result<(), Box<DriverError>> {
         if self.in_transaction.take().is_none() {
-            return Err(DriverError::new(
-                ErrorCategory::Internal,
-                "No open transaction",
-            ));
+            return Err(DriverError::new(ErrorCategory::Internal, "No open transaction").into());
         }
         self.client
             .batch_execute("ROLLBACK")
@@ -1177,7 +1168,7 @@ fn index_verdict(
 async fn index_health(
     client: &Client,
     schema: Option<&str>,
-) -> Result<serde_json::Value, DriverError> {
+) -> Result<serde_json::Value, Box<DriverError>> {
     let rows = client
         .query(
             // `base` exists so the column signature can be computed per index
@@ -1282,7 +1273,7 @@ async fn index_health(
 async fn table_health(
     client: &Client,
     schema: Option<&str>,
-) -> Result<serde_json::Value, DriverError> {
+) -> Result<serde_json::Value, Box<DriverError>> {
     let rows = client
         .query(
             "SELECT schemaname, relname, n_live_tup, n_dead_tup,
@@ -1344,7 +1335,7 @@ async fn table_health(
 }
 
 /// Top statements, or an honest explanation of why there are none.
-async fn top_queries(client: &Client, limit: i64) -> Result<serde_json::Value, DriverError> {
+async fn top_queries(client: &Client, limit: i64) -> Result<serde_json::Value, Box<DriverError>> {
     let installed: bool = client
         .query_one(
             "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')",
@@ -1410,7 +1401,7 @@ async fn search_objects(
     client: &Client,
     term: &str,
     limit: i64,
-) -> Result<serde_json::Value, DriverError> {
+) -> Result<serde_json::Value, Box<DriverError>> {
     let pat = format!(
         "%{}%",
         term.replace('\\', "\\\\")
@@ -1465,7 +1456,7 @@ async fn partition_overview(
     client: &Client,
     schema: &str,
     table: &str,
-) -> Result<serde_json::Value, DriverError> {
+) -> Result<serde_json::Value, Box<DriverError>> {
     let head = client
         .query_opt(
             "SELECT pg_get_partkeydef(c.oid), c.relkind::text
@@ -1547,7 +1538,7 @@ async fn object_details(
     schema: &str,
     name: &str,
     kind: &str,
-) -> Result<serde_json::Value, DriverError> {
+) -> Result<serde_json::Value, Box<DriverError>> {
     let mut sections: Vec<serde_json::Value> = Vec::new();
 
     if kind == "sequence" {
@@ -2202,7 +2193,7 @@ fn param_to_sql(p: &ParamValue) -> Box<dyn tokio_postgres::types::ToSql + Sync +
 }
 
 /// Map a tokio-postgres error into the normalized taxonomy (spec §54).
-pub fn normalize_error(e: tokio_postgres::Error) -> DriverError {
+pub fn normalize_error(e: tokio_postgres::Error) -> Box<DriverError> {
     if let Some(db) = e.as_db_error() {
         let (category, title) = match *db.code() {
             SqlState::QUERY_CANCELED => (ErrorCategory::Cancelled, "Query cancelled"),
@@ -2287,14 +2278,16 @@ pub fn normalize_error(e: tokio_postgres::Error) -> DriverError {
             let p = *p as usize;
             err = err.with_query_range(p.saturating_sub(1), p);
         }
-        err
+        err.into()
     } else if e.is_closed() {
         DriverError::new(ErrorCategory::Network, "Connection closed")
             .with_original_message(e.to_string())
             .with_suggested_action("Reconnect and retry if the statement is safe to re-run")
+            .into()
     } else {
         DriverError::new(ErrorCategory::DriverFailure, "Driver error")
             .with_original_message(e.to_string())
+            .into()
     }
 }
 

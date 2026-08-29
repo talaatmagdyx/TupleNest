@@ -52,7 +52,7 @@ struct NullSink;
 
 #[async_trait]
 impl BatchSink for NullSink {
-    async fn deliver(&self, _batch: RowBatch) -> Result<(), DriverError> {
+    async fn deliver(&self, _batch: RowBatch) -> Result<(), Box<DriverError>> {
         Ok(())
     }
 }
@@ -68,7 +68,7 @@ struct CountingSink {
 
 #[async_trait]
 impl BatchSink for CountingSink {
-    async fn deliver(&self, batch: RowBatch) -> Result<(), DriverError> {
+    async fn deliver(&self, batch: RowBatch) -> Result<(), Box<DriverError>> {
         self.batches.fetch_add(1, Ordering::SeqCst);
         self.rows
             .fetch_add(batch.rows.len() as u64, Ordering::SeqCst);
@@ -92,7 +92,7 @@ struct CollectSink {
 
 #[async_trait]
 impl BatchSink for CollectSink {
-    async fn deliver(&self, batch: RowBatch) -> Result<(), DriverError> {
+    async fn deliver(&self, batch: RowBatch) -> Result<(), Box<DriverError>> {
         self.rows.lock().unwrap().extend(batch.rows);
         Ok(())
     }
@@ -455,7 +455,7 @@ struct FirstCellSink(Mutex<Option<String>>);
 
 #[async_trait]
 impl BatchSink for FirstCellSink {
-    async fn deliver(&self, batch: RowBatch) -> Result<(), DriverError> {
+    async fn deliver(&self, batch: RowBatch) -> Result<(), Box<DriverError>> {
         let mut slot = self.0.lock().unwrap();
         if slot.is_none() {
             if let Some(row) = batch.rows.first() {
@@ -1013,7 +1013,7 @@ async fn live_typed_parameters_bind_correctly() {
     struct Counter(std::sync::atomic::AtomicU64);
     #[async_trait]
     impl BatchSink for Counter {
-        async fn deliver(&self, b: RowBatch) -> Result<(), DriverError> {
+        async fn deliver(&self, b: RowBatch) -> Result<(), Box<DriverError>> {
             self.0.fetch_add(b.rows.len() as u64, Ordering::SeqCst);
             Ok(())
         }

@@ -59,7 +59,10 @@ impl DatabaseDriver for MockDriver {
         }
     }
 
-    async fn test(&self, _config: ConnectionConfig) -> Result<ConnectionTestReport, DriverError> {
+    async fn test(
+        &self,
+        _config: ConnectionConfig,
+    ) -> Result<ConnectionTestReport, Box<DriverError>> {
         Ok(ConnectionTestReport {
             stages: vec![TestStage {
                 name: "tcp".into(),
@@ -74,11 +77,12 @@ impl DatabaseDriver for MockDriver {
     async fn connect(
         &self,
         config: ConnectionConfig,
-    ) -> Result<Box<dyn DatabaseSession>, DriverError> {
+    ) -> Result<Box<dyn DatabaseSession>, Box<DriverError>> {
         if config.secret_ref.is_none() {
             return Err(
                 DriverError::new(ErrorCategory::Authentication, "Missing credentials")
-                    .with_suggested_action("Add a password to this connection profile"),
+                    .with_suggested_action("Add a password to this connection profile")
+                    .into(),
             );
         }
         Ok(Box::new(MockSession {
@@ -95,16 +99,17 @@ impl DatabaseSession for MockSession {
         &mut self,
         request: QueryRequest,
         sink: &dyn BatchSink,
-    ) -> Result<ExecutionSummary, DriverError> {
+    ) -> Result<ExecutionSummary, Box<DriverError>> {
         if request.sql.contains("syntax error") {
             return Err(DriverError::new(ErrorCategory::Syntax, "Syntax error")
                 .with_native_code("42601")
-                .with_query_range(0, 12));
+                .with_query_range(0, 12)
+                .into());
         }
         let mut rows_returned = 0u64;
         for sequence in 0..3u64 {
             if self.cancelled.load(Ordering::SeqCst) {
-                return Err(DriverError::cancelled());
+                return Err(DriverError::cancelled().into());
             }
             let rows: Vec<Vec<CellValue>> = (0..10)
                 .map(|i| {
@@ -145,12 +150,15 @@ impl DatabaseSession for MockSession {
         })
     }
 
-    async fn cancel(&self, _execution_id: ExecutionId) -> Result<(), DriverError> {
+    async fn cancel(&self, _execution_id: ExecutionId) -> Result<(), Box<DriverError>> {
         self.cancelled.store(true, Ordering::SeqCst);
         Ok(())
     }
 
-    async fn metadata(&self, request: MetadataRequest) -> Result<MetadataResponse, DriverError> {
+    async fn metadata(
+        &self,
+        request: MetadataRequest,
+    ) -> Result<MetadataResponse, Box<DriverError>> {
         let payload = match request {
             MetadataRequest::ServerInfo => serde_json::json!({"version": "1.0"}),
             MetadataRequest::ListSchemas => serde_json::json!(["public"]),
@@ -162,24 +170,27 @@ impl DatabaseSession for MockSession {
         })
     }
 
-    async fn begin(&mut self, _options: TransactionOptions) -> Result<TransactionId, DriverError> {
+    async fn begin(
+        &mut self,
+        _options: TransactionOptions,
+    ) -> Result<TransactionId, Box<DriverError>> {
         let id = TransactionId::new();
         self.in_transaction = Some(id);
         Ok(id)
     }
 
-    async fn commit(&mut self) -> Result<(), DriverError> {
+    async fn commit(&mut self) -> Result<(), Box<DriverError>> {
         self.in_transaction
             .take()
             .map(|_| ())
-            .ok_or_else(|| DriverError::new(ErrorCategory::Internal, "No open transaction"))
+            .ok_or_else(|| DriverError::new(ErrorCategory::Internal, "No open transaction").into())
     }
 
-    async fn rollback(&mut self) -> Result<(), DriverError> {
+    async fn rollback(&mut self) -> Result<(), Box<DriverError>> {
         self.in_transaction
             .take()
             .map(|_| ())
-            .ok_or_else(|| DriverError::new(ErrorCategory::Internal, "No open transaction"))
+            .ok_or_else(|| DriverError::new(ErrorCategory::Internal, "No open transaction").into())
     }
 
     fn is_broken(&self) -> bool {
@@ -196,7 +207,7 @@ struct CollectSink {
 
 #[async_trait]
 impl BatchSink for CollectSink {
-    async fn deliver(&self, batch: RowBatch) -> Result<(), DriverError> {
+    async fn deliver(&self, batch: RowBatch) -> Result<(), Box<DriverError>> {
         self.batches.lock().unwrap().push(batch);
         Ok(())
     }
