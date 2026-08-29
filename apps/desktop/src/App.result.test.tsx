@@ -113,7 +113,7 @@ describe("App — exporting the result", () => {
   });
 
   it("says why a write failed rather than claiming it saved", async () => {
-    be.on("export_save", () => {
+    be.on("export_write", () => {
       throw new Error("disk full");
     });
     const user = await connected();
@@ -123,15 +123,56 @@ describe("App — exporting the result", () => {
     expect(await screen.findByText(/Export failed/)).toBeInTheDocument();
   });
 
+  it("deletes the partial file when a write fails", async () => {
+    // A half-written CSV opens, parses, and is missing rows with nothing on
+    // its face to say so — worse than no file at all.
+    be.on("export_write", () => {
+      throw new Error("disk full");
+    });
+    const user = await connected();
+    await run(user);
+    const menu = await exportMenu(user);
+    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    await waitFor(() => expect(be.sent("export_abort")).toHaveLength(1));
+    expect(be.sent("export_finish")).toHaveLength(0);
+  });
+
   it("writes markdown when markdown was asked for", async () => {
     const user = await connected();
     await run(user);
     const menu = await exportMenu(user);
     await user.click(within(menu).getByRole("button", { name: "Markdown .md" }));
-    await waitFor(() => expect(be.sent("export_save")).toHaveLength(1));
-    const args = be.sent("export_save")[0] as { contents: string; extensions: string[] };
-    expect(args.extensions).toEqual(["md"]);
-    expect(args.contents).toContain("|");
+    await waitFor(() => expect(be.sent("export_finish")).toHaveLength(1));
+    const begun = be.sent("export_begin")[0] as { extensions: string[] };
+    expect(begun.extensions).toEqual(["md"]);
+    const written = be.sent("export_write").map((a) => (a as { chunk: string }).chunk).join("");
+    expect(written).toContain("|");
+  });
+
+  it("opens the save panel before formatting anything", async () => {
+    // The old order — gather, format, then ask where to put it — froze the
+    // window with nothing on screen, and threw the work away on a cancel.
+    const user = await connected();
+    await run(user);
+    const menu = await exportMenu(user);
+    // The grid fetches its own visible window, so only calls made from here on
+    // belong to the export.
+    const before = be.calls().length;
+    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    await waitFor(() => expect(be.sent("export_finish")).toHaveLength(1));
+    const order = be.calls().slice(before).filter((c) => c.startsWith("export_") || c === "pg_rows");
+    expect(order[0]).toBe("export_begin");
+  });
+
+  it("does no work at all when the save panel is cancelled", async () => {
+    be.on("export_begin", () => null);
+    const user = await connected();
+    await run(user);
+    const menu = await exportMenu(user);
+    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    await waitFor(() => expect(be.sent("export_begin")).toHaveLength(1));
+    expect(be.sent("export_write")).toHaveLength(0);
+    expect(be.sent("export_finish")).toHaveLength(0);
   });
 });
 

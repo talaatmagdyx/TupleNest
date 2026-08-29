@@ -17,6 +17,10 @@ import {
   toJSONExport,
   toMarkdown,
   tokenizeLines,
+  toExportText,
+  exportPrefix,
+  exportChunk,
+  exportSuffix,
   toggleLineComment,
   indentSelection,
   newlineIndent,
@@ -565,6 +569,77 @@ describe("rowCountNote", () => {
     // The flag can be set while the export still got every row — claiming a
     // loss that did not happen sends people looking for missing data.
     expect(rowCountNote(50, res({ totalRows: 50, truncated: true }))).toBe("50 rows");
+  });
+
+  it("reports rows lost to a format or clipboard cap, which set no flag", () => {
+    // Markdown stops at 1000 and a clipboard copy at 10,000, neither of which
+    // touches the store's truncated flag. Reading only the flag would call a
+    // 1000-row slice of a 40,000-row result "1,000 rows".
+    expect(rowCountNote(1000, res({ totalRows: 40_000, truncated: false }))).toBe(
+      "1,000 of 40,000 rows (truncated)",
+    );
+  });
+});
+
+describe("streamed export", () => {
+  const cols = [{ name: "id" }, { name: "name" }];
+  const rows: unknown[][] = [
+    [1, "ada"],
+    [2, 'a "quoted", comma'],
+    [3, null],
+  ];
+
+  /** Write in batches of `size`, exactly as doExport does. */
+  const streamed = (kind: "csv" | "json" | "md", src: unknown[][], size: number) => {
+    let out = exportPrefix(kind, cols);
+    let written = 0;
+    for (let off = 0; off < src.length; off += size) {
+      const slice = src.slice(off, off + size);
+      out += exportChunk(kind, cols, slice, written === 0);
+      written += slice.length;
+    }
+    return out + exportSuffix(kind, written > 0);
+  };
+
+  for (const kind of ["csv", "json", "md"] as const) {
+    it(`${kind}: streaming in pieces gives byte-for-byte the same document`, () => {
+      // The whole-document function is what the existing tests pin, so this is
+      // what stops the streamed path from quietly diverging from it — a stray
+      // newline at a chunk boundary would be invisible until someone opened
+      // the file.
+      const whole = toExportText(kind, cols, rows);
+      expect(streamed(kind, rows, 1)).toBe(whole);
+      expect(streamed(kind, rows, 2)).toBe(whole); // boundary mid-document
+      expect(streamed(kind, rows, 99)).toBe(whole);
+    });
+  }
+
+  it("writes a well-formed empty document when there are no rows", () => {
+    expect(streamed("json", [], 1)).toBe("[]");
+    expect(JSON.parse(streamed("json", [], 1))).toEqual([]);
+    expect(streamed("csv", [], 1)).toBe("id,name");
+  });
+
+  it("round-trips through JSON.parse whatever the batch size", () => {
+    expect(JSON.parse(streamed("json", rows, 2))).toEqual([
+      { id: 1, name: "ada" },
+      { id: 2, name: 'a "quoted", comma' },
+      { id: 3, name: null },
+    ]);
+  });
+
+  it("keeps the formula neutralization on the streamed path", () => {
+    // The reason there is one set of escaping rules rather than two: this is
+    // a security fix, and a second copy of it would be the one that rots.
+    const danger: unknown[][] = [["=cmd|' /c calc'!A1", "ok"]];
+    expect(streamed("csv", danger, 1)).toContain("'=cmd");
+    expect(exportChunk("csv", cols, danger, true, "raw")).not.toContain("'=cmd");
+  });
+
+  it("caps Markdown but not CSV or JSON", () => {
+    const many = Array.from({ length: 1200 }, (_, i) => [i, "x"]);
+    expect(toExportText("md", cols, many).split("\n")).toHaveLength(1002); // head + sep + 1000
+    expect(toExportText("csv", cols, many).split("\n")).toHaveLength(1201); // head + 1200
   });
 });
 

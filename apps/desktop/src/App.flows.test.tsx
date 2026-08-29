@@ -205,28 +205,31 @@ describe("App — the chart", () => {
 });
 
 describe("App — exporting", () => {
-  it("hands the rows to the backend export command (contents, never a path)", async () => {
+  it("hands the rows to the backend in chunks (contents, never a path)", async () => {
     const user = await connected();
     await run(user, "select kind, n from t");
     await user.click(screen.getByRole("button", { name: /^Export/ }));
     const menu = document.querySelector(".drop-menu") as HTMLElement;
     await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
-    await waitFor(() => expect(be.sent("export_save")).toHaveLength(1));
-    const args = be.sent("export_save")[0] as { contents: string };
-    expect(args.contents).toContain("kind,n");
-    expect(args.contents).toContain("13109");
-    // The WebView supplies contents + name, never a filesystem path.
-    expect(args).not.toHaveProperty("path");
+    await waitFor(() => expect(be.sent("export_finish")).toHaveLength(1));
+    const written = be.sent("export_write").map((a) => (a as { chunk: string }).chunk).join("");
+    expect(written).toContain("kind,n");
+    expect(written).toContain("13109");
+    // The WebView supplies contents + a suggested name, never a path — the
+    // TAURI-01 invariant, which streaming must not quietly reintroduce.
+    for (const args of [...be.sent("export_begin"), ...be.sent("export_write")]) {
+      expect(args).not.toHaveProperty("path");
+    }
   });
 
   it("surfaces a cancelled save without error (backend returns null)", async () => {
-    be.on("export_save", () => null);
+    be.on("export_begin", () => null);
     const user = await connected();
     await run(user, "select kind, n from t");
     await user.click(screen.getByRole("button", { name: /^Export/ }));
     const menu = document.querySelector(".drop-menu") as HTMLElement;
     await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
-    await waitFor(() => expect(be.sent("export_save")).toHaveLength(1));
+    await waitFor(() => expect(be.sent("export_begin")).toHaveLength(1));
     // No throw, no crash — cancelling is normal.
   });
 });

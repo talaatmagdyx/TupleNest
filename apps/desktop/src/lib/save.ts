@@ -30,6 +30,40 @@ export async function saveText(defaultName: string, contents: string, filter?: S
   });
 }
 
+/**
+ * Show a save panel and open the file for a streamed write.
+ *
+ * The dialog is deliberately first. `saveText` needs the finished document
+ * before it can ask where to put it, which for a large result means a long
+ * unresponsive pause with nothing on screen, and everything thrown away if the
+ * user then cancels. Returns the chosen path, or null when cancelled.
+ *
+ * The same invariant holds as for `saveText`: the WebView never supplies a
+ * path. It gets one back only to name the file in a toast.
+ */
+export async function beginSave(defaultName: string, filter?: SaveFilter): Promise<string | null> {
+  return invoke<string | null>("export_begin", {
+    defaultName,
+    filterName: filter?.name ?? null,
+    extensions: filter?.extensions ?? null,
+  });
+}
+
+/** Append to the open export. */
+export async function writeChunk(chunk: string): Promise<void> {
+  await invoke("export_write", { chunk });
+}
+
+/** Flush and close. The file is only complete once this resolves. */
+export async function finishSave(): Promise<void> {
+  await invoke("export_finish");
+}
+
+/** Abandon the open export and delete the partial file. */
+export async function abortSave(): Promise<void> {
+  await invoke("export_abort");
+}
+
 /** Just the file name, for a confirmation toast.
  *
  *  `split().pop()` alone returns "" for a trailing separator — and `?? path`

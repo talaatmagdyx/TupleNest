@@ -41,7 +41,7 @@ import {
   rawExtension,
   type ExportablePlan,
 } from "./lib/explain";
-import { FILTERS, baseName, saveText } from "./lib/save";
+import { FILTERS, abortSave, baseName, beginSave, finishSave, saveText, writeChunk } from "./lib/save";
 import { MAX_CHART_ROWS, aggregateChart, chartSubtitle, chartTitle, pickChartColumns } from "./lib/chart";
 import IntelModal, { type Pane as IntelPane } from "./overlays/IntelModal";
 import ImportModal from "./overlays/ImportModal";
@@ -75,12 +75,15 @@ import { UpdateToast } from "./overlays/Overlays";
 import { ParamPrompt } from "./overlays/Overlays";
 import {
   coerceParam,
+  EXPORT_CAPS,
+  exportChunk,
+  exportPrefix,
+  exportSuffix,
   fetchAllRows,
   formatSQL,
   rowCountNote,
-  toCSV,
-  toJSONExport,
-  toMarkdown,
+  toExportText,
+  type ExportKind,
 } from "./lib/sql";
 import type {
   AppInfo,
@@ -118,6 +121,14 @@ type OverlayKind =
   | "parts"
   | "snippetName"
   | "audit";
+
+/** Rows a "Copy as…" will build into a string.
+ *
+ *  A file export streams and needs no such limit, but the clipboard takes the
+ *  whole document at once — so this is the ceiling on how long that can block
+ *  the window. Ten thousand rows is already far more than anyone pastes
+ *  anywhere; the count in the toast says when it capped. */
+const COPY_ROW_CAP = 10_000;
 
 export default function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -1004,27 +1015,54 @@ export default function App() {
 
   /* ---------------- export / chart ---------------- */
 
-  /** Export the result grid to a file the user picks. This used to copy to the
-   *  clipboard, which is not what "Export" means — and silently truncated
-   *  usefulness for anything larger than a paste. */
+  /**
+   * Export the result grid to a file the user picks.
+   *
+   * Streamed, a page of rows at a time, for the reason described in lib/sql:
+   * gathering every row and formatting the whole document in one pass blocked
+   * the main thread for as long as it took, and on a large result that read as
+   * the app hanging. Each page is a bounded piece of work with an IPC round
+   * trip either side of it, so the window keeps painting and can report where
+   * it has got to.
+   *
+   * The save panel comes first. Cancelling now costs nothing, and there is
+   * never a moment where the app is busy with nothing on screen to say so.
+   */
   const doExport = useCallback(
-    async (kind: "csv" | "json" | "md") => {
+    async (kind: ExportKind) => {
       setExportMenu(false);
       if (!result || result.columns.length === 0) return;
-      showToast("Collecting rows…");
-      const rows = await fetchAllRows(result.storedRows);
-      const csvMode = csvSafe ? "spreadsheet-safe" : "raw";
-      const text =
-        kind === "csv" ? toCSV(result.columns, rows, csvMode) : kind === "json" ? toJSONExport(result.columns, rows) : toMarkdown(result.columns, rows);
       const ext = kind === "md" ? "md" : kind;
       const name = `${(tabs[activeTab]?.name ?? "result").replace(/\.sql$/i, "")}-${new Date()
         .toISOString()
         .slice(0, 19)
         .replace(/[:T]/g, "-")}.${ext}`;
+
+      const path = await beginSave(name, FILTERS[ext]);
+      if (!path) return; // cancelled before any work was done
+
+      const mode = csvSafe ? "spreadsheet-safe" : "raw";
+      const cap = EXPORT_CAPS[kind];
+      const total = cap === undefined ? result.storedRows : Math.min(result.storedRows, cap);
+      let written = 0;
       try {
-        const path = await saveText(name, text, FILTERS[ext]);
-        if (path) showToast(`Saved ${baseName(path)} — ${rowCountNote(rows.length, result)}`);
+        await writeChunk(exportPrefix(kind, result.columns, mode));
+        // pg_rows serves at most 1000 per call, so that is the page size.
+        for (let off = 0; off < total; off += 1000) {
+          const page = await invoke<unknown[][]>("pg_rows", { offset: off, limit: 1000 });
+          if (page.length === 0) break;
+          const slice = page.length > total - off ? page.slice(0, total - off) : page;
+          await writeChunk(exportChunk(kind, result.columns, slice, written === 0, mode));
+          written += slice.length;
+          showToast(`Exporting… ${written.toLocaleString()} of ${total.toLocaleString()} rows`);
+        }
+        await writeChunk(exportSuffix(kind, written > 0));
+        await finishSave();
+        showToast(`Saved ${baseName(path)} — ${rowCountNote(written, result)}`);
       } catch (e) {
+        // Leave no half-written file behind: it opens and parses and is
+        // missing rows, with nothing on its face to say so.
+        await abortSave().catch(() => {});
         showToast(`Export failed: ${String(e).slice(0, 60)}`);
       }
     },
@@ -1032,14 +1070,17 @@ export default function App() {
   );
 
   const doCopyResult = useCallback(
-    async (kind: "csv" | "json" | "md") => {
+    async (kind: ExportKind) => {
       setExportMenu(false);
       if (!result || result.columns.length === 0) return;
-      const rows = await fetchAllRows(result.storedRows);
-      const csvMode = csvSafe ? "spreadsheet-safe" : "raw";
-      const text =
-        kind === "csv" ? toCSV(result.columns, rows, csvMode) : kind === "json" ? toJSONExport(result.columns, rows) : toMarkdown(result.columns, rows);
-      await navigator.clipboard.writeText(text);
+      // The clipboard takes one string or nothing, so this cannot stream — and
+      // that is exactly why it is capped. Pasting a hundred thousand rows into
+      // something is not a thing anyone does on purpose, and building the
+      // string to find out costs the same freeze the file export just lost.
+      const cap = Math.min(EXPORT_CAPS[kind] ?? COPY_ROW_CAP, COPY_ROW_CAP);
+      const rows = await fetchAllRows(Math.min(result.storedRows, cap));
+      const mode = csvSafe ? "spreadsheet-safe" : "raw";
+      await navigator.clipboard.writeText(toExportText(kind, result.columns, rows, mode));
       showToast(`${kind.toUpperCase()} copied — ${rowCountNote(rows.length, result)}`);
     },
     [result, showToast, csvSafe]

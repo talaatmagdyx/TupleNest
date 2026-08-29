@@ -70,7 +70,11 @@ export function tokenizeLines(sql: string): React.ReactNode[][] {
  * a file that is missing 98% of the answer.
  */
 export function rowCountNote(written: number, result: { totalRows: number; truncated: boolean }): string {
-  if (!result.truncated || result.totalRows <= written) return `${written.toLocaleString()} rows`;
+  // The test is "did we write everything", not "did the store overflow". A
+  // format cap (Markdown) or a clipboard cap loses rows without the store's
+  // truncated flag ever being set, and a count that stayed quiet about that
+  // would be the same lie the flag exists to prevent.
+  if (result.totalRows <= written) return `${written.toLocaleString()} rows`;
   return `${written.toLocaleString()} of ${result.totalRows.toLocaleString()} rows (truncated)`;
 }
 
@@ -88,43 +92,122 @@ export async function fetchAllRows(stored: number, cap = 100_000): Promise<unkno
 /** CSV export safety: neutralize spreadsheet formulas, or preserve raw bytes. */
 export type CsvSafetyMode = "spreadsheet-safe" | "raw";
 
+/* ----------------------------------------------------------- export text
+ *
+ * Exports are written in pieces, not built as one string.
+ *
+ * The old shape — collect every row, format the whole document, then save —
+ * blocked the main thread for the entire format pass, and a result can be
+ * 100,000 rows. The document existed three times over at the peak: the row
+ * arrays, the finished string, and the copy the IPC bridge escaped to carry
+ * it. On a large result that is where the app stopped responding.
+ *
+ * So the three whole-document functions are defined in terms of the streaming
+ * pieces rather than beside them. There is one set of escaping rules — which
+ * matters, because they include the spreadsheet formula neutralization from
+ * the security review, and a second copy of that would eventually drift from
+ * this one.
+ */
+
+export type ExportKind = "csv" | "json" | "md";
+
+/** Markdown is for pasting into a document, not for archiving a result set;
+ *  past a thousand rows nobody reads it and no renderer enjoys it. CSV and
+ *  JSON have no cap of their own beyond the result store's. */
+export const EXPORT_CAPS: Partial<Record<ExportKind, number>> = { md: 1000 };
+
+/** RFC-4180 field, formula-neutralized first when asked.
+ *
+ *  Order matters: neutralize FIRST, then quote. Quoting first means a leading
+ *  `'` lands inside the quoted field where the spreadsheet still sees it, and
+ *  a `"=..."` slips through. The quote trigger includes \r so a CR-bearing
+ *  value is always wrapped. */
+const csvField = (raw: string, mode: CsvSafetyMode) => {
+  const s = mode === "spreadsheet-safe" ? neutralizeFormula(raw) : raw;
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
+/** Everything before the first row: a header line, or an opening bracket. */
+export function exportPrefix(
+  kind: ExportKind,
+  cols: { name: string }[],
+  mode: CsvSafetyMode = "spreadsheet-safe"
+): string {
+  if (kind === "csv") return cols.map((c) => csvField(c.name, mode)).join(",");
+  if (kind === "json") return "[";
+  // mdCell on the header too: PostgreSQL allows `SELECT 1 AS "a|b"`, and a
+  // pipe in a column name breaks the table exactly like one in a value.
+  return `| ${cols.map((c) => mdCell(c.name)).join(" | ")} |\n| ${cols.map(() => "---").join(" | ")} |`;
+}
+
+/**
+ * One batch of rows, ready to append.
+ *
+ * Every line carries its *leading* separator rather than a trailing one, so
+ * chunks concatenate without the writer having to remember whether the last
+ * one ended in a newline. `first` says whether this batch opens the document,
+ * which is the only thing the separator depends on.
+ */
+export function exportChunk(
+  kind: ExportKind,
+  cols: { name: string }[],
+  rows: unknown[][],
+  first: boolean,
+  mode: CsvSafetyMode = "spreadsheet-safe"
+): string {
+  if (kind === "csv") {
+    return rows.map((r) => "\n" + r.map((v) => csvField(cellText(v), mode)).join(",")).join("");
+  }
+  if (kind === "md") {
+    return rows.map((r) => "\n| " + r.map((v) => mdCell(cellText(v))).join(" | ") + " |").join("");
+  }
+  // Matches `JSON.stringify(array, null, 2)` exactly: each object is indented
+  // one level, which means re-indenting its own newlines too.
+  return rows
+    .map((r, i) => {
+      const obj = Object.fromEntries(cols.map((c, j) => [c.name, r[j] ?? null]));
+      const body = JSON.stringify(obj, null, 2).replace(/\n/g, "\n  ");
+      return `${first && i === 0 ? "\n  " : ",\n  "}${body}`;
+    })
+    .join("");
+}
+
+/** Everything after the last row. `wroteAny` distinguishes `[]` from `[…]`. */
+export function exportSuffix(kind: ExportKind, wroteAny: boolean): string {
+  return kind === "json" ? (wroteAny ? "\n]" : "]") : "";
+}
+
+/** The whole document in one string — for the clipboard, which cannot take it
+ *  in pieces. File exports stream instead; see the note above. */
+export function toExportText(
+  kind: ExportKind,
+  cols: { name: string }[],
+  rows: unknown[][],
+  mode: CsvSafetyMode = "spreadsheet-safe"
+): string {
+  const cap = EXPORT_CAPS[kind];
+  const capped = cap === undefined ? rows : rows.slice(0, cap);
+  return (
+    exportPrefix(kind, cols, mode) +
+    exportChunk(kind, cols, capped, true, mode) +
+    exportSuffix(kind, capped.length > 0)
+  );
+}
+
 export function toCSV(
   cols: { name: string }[],
   rows: unknown[][],
   mode: CsvSafetyMode = "spreadsheet-safe"
 ): string {
-  // Order: neutralize the formula FIRST, then RFC-4180 quote. Quoting after
-  // means the leading `'` is inside the quoted field where the spreadsheet
-  // still sees it; quoting first would let a `"=..."` slip through. The quote
-  // trigger includes \r so a CR-bearing value is always wrapped.
-  const esc = (raw: string) => {
-    const s = mode === "spreadsheet-safe" ? neutralizeFormula(raw) : raw;
-    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const head = cols.map((c) => esc(c.name)).join(",");
-  return [head, ...rows.map((r) => r.map((v) => esc(cellText(v))).join(","))].join("\n");
+  return toExportText("csv", cols, rows, mode);
 }
 
 export function toJSONExport(cols: { name: string }[], rows: unknown[][]): string {
-  return JSON.stringify(
-    rows.map((r) => Object.fromEntries(cols.map((c, i) => [c.name, r[i] ?? null]))),
-    null,
-    2
-  );
+  return toExportText("json", cols, rows);
 }
 
 export function toMarkdown(cols: { name: string }[], rows: unknown[][]): string {
-  // mdCell everywhere a value lands in the table — including the header:
-  // PostgreSQL allows `SELECT 1 AS "a|b"`, and a quoted column name with a
-  // pipe (or backslash, or newline) breaks the table exactly like a cell
-  // value does. The old code escaped only cell pipes, and only halfway —
-  // see mdCell for the backslash trap CodeQL caught.
-  const head = `| ${cols.map((c) => mdCell(c.name)).join(" | ")} |`;
-  const sep = `| ${cols.map(() => "---").join(" | ")} |`;
-  const body = rows
-    .slice(0, 1000)
-    .map((r) => `| ${r.map((v) => mdCell(cellText(v))).join(" | ")} |`);
-  return [head, sep, ...body].join("\n");
+  return toExportText("md", cols, rows);
 }
 
 /**

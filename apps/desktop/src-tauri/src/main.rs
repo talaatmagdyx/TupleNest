@@ -234,6 +234,114 @@ fn export_save(
     }
 }
 
+/// A file the user chose, open and waiting for the rest of the document.
+///
+/// The path is held here rather than handed to the WebView: `export_save`'s
+/// invariant is that the front end never names a file, and streaming must not
+/// quietly reintroduce a path parameter to get around it. The front end gets a
+/// path back only to put a filename in a toast.
+struct ExportSink {
+    writer: std::io::BufWriter<std::fs::File>,
+    path: std::path::PathBuf,
+}
+
+impl ExportSink {
+    fn create(path: std::path::PathBuf) -> std::io::Result<Self> {
+        let file = std::fs::File::create(&path)?;
+        Ok(Self {
+            writer: std::io::BufWriter::new(file),
+            path,
+        })
+    }
+
+    fn write(&mut self, chunk: &str) -> std::io::Result<()> {
+        use std::io::Write;
+        self.writer.write_all(chunk.as_bytes())
+    }
+
+    fn finish(mut self) -> std::io::Result<()> {
+        use std::io::Write;
+        self.writer.flush()
+    }
+
+    /// Close and remove the partial file.
+    fn abort(self) {
+        drop(self.writer);
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+#[derive(Default)]
+struct ExportState(Mutex<Option<ExportSink>>);
+
+/// Open the save panel and start a streamed export.
+///
+/// The dialog comes first, before a single row is formatted. The old export
+/// gathered every row, built the whole document as one string, and only then
+/// asked where to put it — so cancelling threw away all the work, and until the
+/// panel appeared there was nothing on screen to say the app was doing
+/// anything at all.
+///
+/// Returns the chosen path, or None if the user cancelled.
+#[tauri::command]
+fn export_begin(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ExportState>,
+    default_name: String,
+    filter_name: Option<String>,
+    extensions: Option<Vec<String>>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let mut slot = state.0.lock().map_err(|_| "export lock poisoned")?;
+    if slot.is_some() {
+        return Err("an export is already in progress".into());
+    }
+
+    let mut builder = app.dialog().file().set_file_name(&default_name);
+    if let (Some(name), Some(exts)) = (filter_name, extensions.as_ref()) {
+        let refs: Vec<&str> = exts.iter().map(String::as_str).collect();
+        builder = builder.add_filter(name, &refs);
+    }
+    // blocking_* must run off the main thread; sync command handlers do.
+    let Some(fp) = builder.blocking_save_file() else {
+        return Ok(None); // cancelled — not an error
+    };
+    let path = fp.into_path().map_err(|e| e.to_string())?;
+    let sink = ExportSink::create(path.clone()).map_err(|e| e.to_string())?;
+    *slot = Some(sink);
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+/// Append one chunk to the open export.
+#[tauri::command]
+fn export_write(state: tauri::State<'_, ExportState>, chunk: String) -> Result<(), String> {
+    let mut slot = state.0.lock().map_err(|_| "export lock poisoned")?;
+    let sink = slot.as_mut().ok_or("no export in progress")?;
+    sink.write(&chunk).map_err(|e| e.to_string())
+}
+
+/// Flush and close. The file is only complete once this returns.
+#[tauri::command]
+fn export_finish(state: tauri::State<'_, ExportState>) -> Result<(), String> {
+    let mut slot = state.0.lock().map_err(|_| "export lock poisoned")?;
+    let sink = slot.take().ok_or("no export in progress")?;
+    sink.finish().map_err(|e| e.to_string())
+}
+
+/// Abandon an export and remove what was written.
+///
+/// A half-written CSV is worse than no CSV: it opens, it parses, and it is
+/// missing rows with nothing on its face to say so. Failure deletes the file
+/// rather than leaving that lying around.
+#[tauri::command]
+fn export_abort(state: tauri::State<'_, ExportState>) -> Result<(), String> {
+    let mut slot = state.0.lock().map_err(|_| "export lock poisoned")?;
+    if let Some(sink) = slot.take() {
+        sink.abort();
+    }
+    Ok(())
+}
+
 /// The app menu, with macOS's native About panel swapped for ours.
 ///
 /// The menu bar's "About TupleNest" opened a bare system panel showing the
@@ -373,11 +481,16 @@ fn main() {
                 tuplenest_metadata_cache::MetadataCache::open(&dir.join("metadata-cache.db"))
                     .map_err(|e| -> Box<dyn std::error::Error> { format!("{e}").into() })?;
             app.manage(pg::PgState::new(cache));
+            app.manage(ExportState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             app_get_info,
             export_save,
+            export_begin,
+            export_write,
+            export_finish,
+            export_abort,
             settings_get,
             settings_set,
             layout_save,
@@ -598,5 +711,61 @@ mod capability_tests {
                  no error anywhere."
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod export_sink_tests {
+    use super::ExportSink;
+
+    fn tmp(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("tuplenest-export-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir.join(name)
+    }
+
+    #[test]
+    fn chunks_land_end_to_end_in_order() {
+        // The whole point of streaming is that the file is assembled from
+        // pieces; if they were buffered wrongly or written out of order the
+        // frontend would have no way to tell.
+        let path = tmp("ordered.csv");
+        let mut sink = ExportSink::create(path.clone()).expect("create");
+        sink.write("id,name").expect("write");
+        sink.write("\n1,ada").expect("write");
+        sink.write("\n2,grace").expect("write");
+        sink.finish().expect("finish");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            "id,name\n1,ada\n2,grace"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn nothing_is_on_disk_until_finish_flushes() {
+        // BufWriter holds small writes in memory. That is the point — but it
+        // also means "the file exists" is not the same as "the file is
+        // complete", which is why finish() is a separate step the frontend
+        // must reach before it claims a successful save.
+        let path = tmp("unflushed.csv");
+        let mut sink = ExportSink::create(path.clone()).expect("create");
+        sink.write("id,name").expect("write");
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "");
+        sink.finish().expect("finish");
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "id,name");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn abort_takes_the_partial_file_with_it() {
+        // A truncated CSV opens, parses, and is missing rows with nothing on
+        // its face to say so. Leaving one behind after a failed export is
+        // worse than leaving nothing.
+        let path = tmp("aborted.csv");
+        let mut sink = ExportSink::create(path.clone()).expect("create");
+        sink.write("id,name\n1,ada").expect("write");
+        sink.abort();
+        assert!(!path.exists(), "abort must remove the partial file");
     }
 }
