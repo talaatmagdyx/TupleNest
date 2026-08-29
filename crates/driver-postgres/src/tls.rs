@@ -300,7 +300,12 @@ mod ca_only_tests {
         let leaf_params =
             rcgen::CertificateParams::new(vec!["real.example.com".to_string()]).unwrap();
         let leaf_key = rcgen::KeyPair::generate().unwrap();
-        let leaf = leaf_params.signed_by(&leaf_key, &ca_cert, &ca_key).unwrap();
+        // rcgen 0.14 replaced `signed_by(key, &ca_cert, &ca_key)` with an
+        // explicit `Issuer` holding both halves of the signing identity. Same
+        // certificate, one type standing in for what used to be two loose
+        // arguments that could be mismatched.
+        let issuer = rcgen::Issuer::new(ca_params, ca_key);
+        let leaf = leaf_params.signed_by(&leaf_key, &issuer).unwrap();
 
         (ca_cert.der().clone(), leaf.der().clone())
     }
