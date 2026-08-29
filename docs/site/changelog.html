@@ -45,7 +45,46 @@
     <div class="kicker">Current release</div>
     <div class="release" style="border-color:var(--line2)">
       <div class="rhead">
-        <h3>v0.1.0-beta.10</h3><span class="pill beta">Public Beta</span><span class="date">July 2026</span>
+        <h3>v0.1.0-beta.11</h3><span class="pill beta">Public Beta</span><span class="date">August 2026</span>
+      </div>
+      <p style="color:var(--dim);margin-bottom:6px">Exporting a large result no longer freezes the app, and the editor stops fighting long queries.</p>
+
+      <h4 class="fix">Fixed</h4>
+      <ul>
+        <li><b>Exporting a large result froze the app.</b> Every row was fetched, the whole document was built as one string, and only then was the save panel shown — all on the main thread, in one unbroken stretch. Nothing yielded, so the window could not paint or take a click for as long as it took, and the document existed about three times over at the peak. Exports now stream: the save panel opens <i>first</i>, then rows are written a page at a time.</li>
+        <li><b>A running export could not be stopped.</b> It has a progress bar and a Cancel button now. Cancelling is checked between pages, never mid-write, and it deletes the partial file — a truncated CSV opens, parses, and is missing rows with nothing on its face to say so.</li>
+        <li><b>Copying a large result froze it too.</b> The clipboard takes one string or nothing, so that path cannot stream; it is capped at 10,000 rows instead, and the count says when it capped.</li>
+        <li><b>A row count could hide what an export left out.</b> It reported missing rows only when the result store had overflowed, so rows dropped by a format cap were not mentioned. It now compares what was written against the true total.</li>
+        <li><b><code class="inline">HOT</code> on a node that cost 0.3 ms.</b> The hot-spot badge was a cost ranking with no wall-clock floor, so a query finishing in a fraction of a millisecond still got a full-width red bar. It now honours the same 1 ms floor the bottleneck flag always had.</li>
+      </ul>
+
+      <h4 class="add">Added</h4>
+      <ul>
+        <li><b>The editor wraps long lines.</b> A 300-character <code class="inline">ANY(ARRAY[…])</code> no longer runs off the right edge, and line numbers stay with their line when it wraps to several rows.</li>
+        <li><b>Tab indents, Shift-Tab outdents.</b> Tab used to do nothing but move focus out of the editor, so a block could not be indented at all. Escape still arms the next Tab to move focus, so the editor is not a keyboard trap.</li>
+        <li><b>Enter keeps the indentation</b>, adds a level after an opening bracket, and pushes a waiting closer onto its own line.</li>
+        <li><b>Brackets and quotes auto-close</b>, wrap a selection, and step over a closer rather than doubling it — without splitting a word, so <code class="inline">don't</code> does not become <code class="inline">don''t</code>.</li>
+        <li><b>Planning time leads when it dominates.</b> On a partitioned table the planner can spend far longer choosing a plan than the executor spends running it — a ratio that was sitting quietly in the stats list while every insight above it described the smaller half of the query.</li>
+      </ul>
+
+      <p style="color:var(--dim);margin-top:14px">Both of these came from using the app rather than testing it: a wide <code class="inline">ANY(ARRAY[…])</code> query that ran off the edge of the editor, and an export that hung the window long enough to look crashed.</p>
+
+      <div class="cta" style="margin-top:20px">
+        <a class="btn sm primary" href="https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.0-beta.11">GitHub release ↗</a>
+        <a class="btn sm ghost" href="download.html">Download</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HISTORY -->
+<section class="tight">
+  <div class="wrap">
+    <div class="kicker">History</div>
+
+    <div class="release">
+      <div class="rhead">
+        <h3>v0.1.0-beta.10</h3><span class="pill beta">Beta</span><span class="date">July 2026</span>
       </div>
       <p style="color:var(--dim);margin-bottom:6px">The plan reader stops asserting things that are not true.</p>
 
@@ -64,13 +103,6 @@
         <a class="btn sm ghost" href="download.html">Download</a>
       </div>
     </div>
-  </div>
-</section>
-
-<!-- HISTORY -->
-<section class="tight">
-  <div class="wrap">
-    <div class="kicker">History</div>
 
     <div class="release">
       <div class="rhead">

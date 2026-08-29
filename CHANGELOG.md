@@ -3,6 +3,84 @@
 Notable changes to TupleNest. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.0-beta.11] — 2026-08-29
+
+Exporting a large result no longer freezes the app, and the editor stops
+fighting long queries.
+
+Both came from using it rather than testing it: a wide `ANY(ARRAY[...])`
+query that ran off the right edge of the editor, and an export that hung
+the window long enough to look crashed.
+
+### Fixed
+
+- **Exporting a large result froze the app.** Every part of it happened
+  on the main thread in one unbroken stretch — fetch every row the store
+  holds (up to 100,000), walk every cell building one string, then hand
+  that string to the backend. The format pass never yielded, so from the
+  first row to the last the window could not paint or take a click, and
+  the document existed roughly three times over at the peak: the row
+  arrays, the finished string, and the copy the IPC bridge escaped to
+  carry it.
+
+  Exports now stream. The save panel opens *first*, then rows are
+  written a page at a time, so the window stays alive, the progress is
+  visible, and cancelling costs nothing. A failure or a cancel deletes
+  the partial file — a truncated CSV opens, parses, and is missing rows
+  with nothing on its face to say so, which is worse than no file.
+
+- **A running export could not be stopped.** It now has a progress bar
+  and a Cancel button of its own. Cancellation is checked between pages,
+  never mid-write, so the file never ends with half a row in it.
+
+- **Copying a large result froze it too.** The clipboard takes one
+  string or nothing, so that path cannot stream; it is capped at 10,000
+  rows instead, and the count says when it capped.
+
+- **A row count could hide what an export left out.** It reported
+  missing rows only when the *result store* had overflowed, so rows
+  dropped by a format cap — Markdown stops at 1,000 — were not
+  mentioned. It now compares what was written against the true total.
+
+- **`HOT` on a node that cost 0.3 ms.** The plan panel's hot-spot badge
+  was a cost ranking with no wall-clock floor, so a query that finished
+  in a fraction of a millisecond still got a full-width red bar telling
+  you to go and look at it. It now honours the same 1 ms floor the
+  bottleneck flag has always had. With `ANALYZE` off there are no
+  timings to floor against and cost stands alone, as before.
+
+### Added
+
+- **The editor wraps long lines.** A 300-character `ANY(ARRAY[...])` no
+  longer runs off the right edge, and the line numbers stay with their
+  lines when a line wraps to several rows.
+
+- **Tab indents, Shift-Tab outdents.** Tab previously did nothing but
+  move focus out of the editor, so there was no way to indent a block.
+  Escape still arms the next Tab to move focus, so the editor is not a
+  keyboard trap.
+
+- **Enter keeps the indentation**, adds a level after an opening
+  bracket, and pushes a waiting closer onto its own line.
+
+- **Brackets and quotes auto-close**, wrap a selection, and step over a
+  closer rather than doubling it — without splitting a word, so `don't`
+  does not become `don''t`.
+
+- **Planning time is a headline insight when it dominates.** On a
+  partitioned table the planner can spend far longer choosing a plan
+  than the executor spends running it. That ratio was sitting quietly in
+  the stats list while every insight above it described the smaller
+  half of the query.
+
+### Changed
+
+- `DriverError` is now boxed at the trait boundary. It is deliberately
+  rich — category, title, explanation, SQLSTATE, the server's own
+  message, a query range, suggested actions — which is what puts a real
+  diagnosis on screen instead of "Database error", and also what made
+  every `Result` in the driver carry ~150 bytes of error.
+
 ## [0.1.0-beta.10] — 2026-07-29
 
 The plan reader stops asserting things that are not true.
