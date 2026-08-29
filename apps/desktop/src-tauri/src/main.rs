@@ -719,7 +719,8 @@ mod export_sink_tests {
     use super::ExportSink;
 
     fn tmp(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("tuplenest-export-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("tuplenest-export-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         dir.join(name)
     }
