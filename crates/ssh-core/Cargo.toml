@@ -8,7 +8,7 @@ publish.workspace = true
 description = "SSH tunnels for database connections: local listener over direct-tcpip channels"
 
 [dependencies]
-russh = "0.62"
+russh = "0.63"
 tokio = { workspace = true, features = ["net", "io-util"] }
 thiserror = { workspace = true }
 tracing = { workspace = true }
