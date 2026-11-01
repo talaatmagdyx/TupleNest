@@ -69,7 +69,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: runner.os == 'Linux'
         with:
           node-version: 24
@@ -95,7 +95,7 @@ jobs:
       # action takes roughly twenty minutes on a Windows runner.
       - name: PostgreSQL
         if: runner.os == 'Linux'
-        uses: ikalnytskyi/action-setup-postgres@c4dda34aae1c821e3a771b68b73b13af3198a7ee # v8
+        uses: ikalnytskyi/action-setup-postgres@325155bfd7807b2a21ac9c2c7bb9b9a6eacc44df # v9
         id: postgres
 
       - name: Download the release artifacts
