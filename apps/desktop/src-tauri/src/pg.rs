@@ -539,7 +539,15 @@ fn cell_to_json(cell: CellValue) -> serde_json::Value {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    // One pre-sized buffer. `format!` per byte was one heap allocation per
+    // byte: a 5 MB bytea cost five million of them (measured 51× slower).
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(DIGITS[(b >> 4) as usize] as char);
+        out.push(DIGITS[(b & 0x0f) as usize] as char);
+    }
+    out
 }
 
 /// Backend-held result of the last query: the WebView pages windows out of
@@ -571,20 +579,29 @@ const RESULT_STORE_BYTES: usize = 256 * 1024 * 1024;
 /// `serde_json::to_string` on every row would be a real cost on the hot path
 /// to buy precision nobody needs.
 fn approx_bytes(row: &[serde_json::Value]) -> usize {
-    fn one(v: &serde_json::Value) -> usize {
+    /*
+     * What a row really costs. Every cell is a `serde_json::Value` held inline
+     * in the row's Vec — 32 bytes, even for NULL — and every heap allocation
+     * carries allocator overhead. Counting a NULL as 8 bytes let a 200-column,
+     * mostly-NULL result of 100k rows reach 1.1 GB while the estimate said it
+     * was under the 256 MB budget (measured).
+     */
+    const VALUE: usize = std::mem::size_of::<serde_json::Value>();
+    const ALLOC: usize = 16; // per heap allocation: header and rounding
+    fn heap(v: &serde_json::Value) -> usize {
         match v {
-            serde_json::Value::Null | serde_json::Value::Bool(_) => 8,
-            serde_json::Value::Number(_) => 16,
-            // The bytes of the text, plus the String header.
-            serde_json::Value::String(s) => s.len() + 24,
-            serde_json::Value::Array(a) => 24 + a.iter().map(one).sum::<usize>(),
-            serde_json::Value::Object(o) => {
-                24 + o.iter().map(|(k, v)| k.len() + 24 + one(v)).sum::<usize>()
-            }
+            serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => 0,
+            serde_json::Value::String(s) => ALLOC + s.capacity(),
+            serde_json::Value::Array(a) => ALLOC + a.len() * VALUE + a.iter().map(heap).sum::<usize>(),
+            serde_json::Value::Object(o) => o
+                .iter()
+                // key String + value + a map node
+                .map(|(k, v)| ALLOC + k.len() + VALUE + 48 + heap(v))
+                .sum::<usize>(),
         }
     }
-    // The Vec header, plus every cell.
-    24 + row.iter().map(one).sum::<usize>()
+    // The row's own Vec header in the store, its buffer, and every cell.
+    24 + ALLOC + row.len() * VALUE + row.iter().map(heap).sum::<usize>()
 }
 
 /// Streams batches into a bounded RowStore.
@@ -604,6 +621,13 @@ impl BatchSink for StoreSink {
                 .collect();
         }
         for row in batch.rows {
+            // Past the cap the row is only counted. Converting it first was
+            // all the work of storing it, for a row thrown away (a 1M-row
+            // query converted 900k rows it then dropped).
+            if inner.store.is_full() {
+                inner.store.skip();
+                continue;
+            }
             let json: Vec<serde_json::Value> = row.into_iter().map(cell_to_json).collect();
             let bytes = approx_bytes(&json);
             inner.store.push_sized(json, bytes);
@@ -915,10 +939,13 @@ pub fn pg_rows(
     state: tauri::State<'_, PgState>,
     offset: usize,
     limit: usize,
-) -> Result<Vec<Vec<serde_json::Value>>, String> {
+) -> Result<Box<serde_json::value::RawValue>, String> {
     let guard = state.result.lock().map_err(|_| "result lock poisoned")?;
     let stored = guard.as_ref().ok_or("no result")?;
-    Ok(stored.store.window(offset, limit.min(1_000)).to_vec())
+    // Serialized straight from the store. `.to_vec()` deep-cloned every row
+    // of the window first, only to serialize the clone and drop it.
+    let window = stored.store.window(offset, limit.min(1_000));
+    serde_json::value::to_raw_value(window).map_err(|e| e.to_string())
 }
 
 #[derive(serde::Serialize)]
@@ -1219,6 +1246,22 @@ pub async fn pg_cancel(state: tauri::State<'_, PgState>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hex_matches_the_per_byte_format() {
+        let bytes: Vec<u8> = (0..=255).collect();
+        let slow: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex(&bytes), slow);
+        assert_eq!(hex(&[]), "");
+    }
+
+    #[test]
+    fn a_null_cell_costs_what_a_value_costs() {
+        // 200 NULL columns: the old estimate said 1,624 bytes; the row really
+        // holds 200 inline Values of 32 bytes each.
+        let row = vec![serde_json::Value::Null; 200];
+        assert!(approx_bytes(&row) >= 200 * std::mem::size_of::<serde_json::Value>());
+    }
 
     #[test]
     fn int8_past_2_pow_53_reaches_the_webview_as_exact_text() {

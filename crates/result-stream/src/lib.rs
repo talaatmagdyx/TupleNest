@@ -25,6 +25,9 @@ pub struct RowStore<T> {
     byte_budget: usize,
     bytes: usize,
     total_seen: u64,
+    /// Set by the first refusal. From then on nothing is stored, so the kept
+    /// rows are always a prefix of the stream — "the first N of M".
+    full: bool,
 }
 
 impl<T> RowStore<T> {
@@ -41,6 +44,7 @@ impl<T> RowStore<T> {
             byte_budget,
             bytes: 0,
             total_seen: 0,
+            full: false,
         }
     }
 
@@ -60,15 +64,32 @@ impl<T> RowStore<T> {
     /// query that returned data, which reads as a bug rather than a limit.
     pub fn push_sized(&mut self, row: T, bytes: usize) -> bool {
         self.total_seen += 1;
-        let room = self.rows.len() < self.capacity
+        let room = !self.full
+            && self.rows.len() < self.capacity
             && (self.rows.is_empty() || self.bytes.saturating_add(bytes) <= self.byte_budget);
         if room {
             self.bytes = self.bytes.saturating_add(bytes);
             self.rows.push(row);
             true
         } else {
+            // Without this, a small row after a refused large one would still
+            // fit the byte budget, and the store would hold rows 1..k and then
+            // row k+5 — not the first N rows it reports.
+            self.full = true;
             false
         }
+    }
+
+    /// True once the store has refused a row; every later row is refused too.
+    /// Callers can then count rows with [`skip`] instead of building them.
+    pub fn is_full(&self) -> bool {
+        self.full || self.rows.len() >= self.capacity
+    }
+
+    /// Counts a row that will not be stored, without the caller building it.
+    pub fn skip(&mut self) {
+        self.total_seen += 1;
+        self.full = true;
     }
 
     /// Bytes attributed to the stored rows, as measured by the caller.
@@ -103,6 +124,30 @@ impl<T> RowStore<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stays_a_prefix_once_a_row_is_refused() {
+        // Budget 100: rows of 60, 60 (refused), then 10 — which would fit.
+        let mut store = RowStore::with_budget(10, 100);
+        assert!(store.push_sized(1, 60));
+        assert!(!store.push_sized(2, 60));
+        assert!(!store.push_sized(3, 10), "a later small row must not leapfrog the refused one");
+        assert_eq!(store.window(0, 10), &[1]);
+        assert!(store.is_full());
+        assert_eq!(store.total_seen(), 3);
+    }
+
+    #[test]
+    fn skip_counts_without_storing() {
+        let mut store = RowStore::new(1);
+        assert!(store.push(1));
+        assert!(store.is_full());
+        store.skip();
+        store.skip();
+        assert_eq!(store.total_seen(), 3);
+        assert_eq!(store.stored(), 1);
+        assert!(store.truncated());
+    }
 
     #[test]
     fn stores_up_to_capacity_and_counts_overflow() {
