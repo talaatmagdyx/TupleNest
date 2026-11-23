@@ -236,6 +236,24 @@ describe("App — the lost-session notice", () => {
     expect(within(modal()).getByRole("button", { name: /reconnect/i })).toBeInTheDocument();
   });
 
+  it.each([
+    ["Begin", "pg_begin", false],
+    ["Rollback", "pg_rollback", true],
+  ])("appears when %s finds the connection gone", async (_name, cmd, needsTx) => {
+    const user = await connected();
+    if (needsTx) {
+      await user.click(screen.getByRole("button", { name: /begin transaction/i }));
+      await screen.findByText(/in transaction/i);
+    }
+    be.on(cmd, () => {
+      throw new Error(LOST);
+    });
+    const button = needsTx ? /^rollback/i : /begin transaction/i;
+    await user.click(screen.getByRole("button", { name: button }));
+    await waitFor(() => expect(document.querySelector(".modal")).toBeInTheDocument());
+    expect(within(modal()).getByRole("button", { name: /reconnect/i })).toBeInTheDocument();
+  });
+
   it("can be dismissed without reconnecting", async () => {
     be.on("pg_query", () => {
       throw new Error(LOST);

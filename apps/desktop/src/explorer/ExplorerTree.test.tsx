@@ -122,6 +122,50 @@ describe("ExplorerTree — shell", () => {
     expect(document.activeElement).toBe(first);
   });
 
+  it("closes an open row with ArrowLeft, steps out to its parent, and ends with End", async () => {
+    const onToggle = vi.fn();
+    render(<ExplorerTree {...withTable(obj("users"))} onToggle={onToggle} />);
+    const items = () => screen.getAllByRole("treeitem");
+    const pub = screen.getByText("public").closest('[role="treeitem"]') as HTMLElement;
+    pub.focus();
+    // Open row + ArrowRight steps into its first child instead of toggling.
+    await userEvent.keyboard("{ArrowRight}");
+    const child = document.activeElement as HTMLElement;
+    expect(child).not.toBe(pub);
+    expect(Number(child.getAttribute("aria-level"))).toBeGreaterThan(1);
+    // From the deepest row, ArrowLeft (on a closed row) steps out a level.
+    await userEvent.keyboard("{End}");
+    const deep = document.activeElement as HTMLElement;
+    const deepLevel = Number(deep.getAttribute("aria-level"));
+    if (deep.getAttribute("aria-expanded") !== "true") {
+      await userEvent.keyboard("{ArrowLeft}");
+      expect(Number((document.activeElement as HTMLElement).getAttribute("aria-level"))).toBeLessThan(deepLevel);
+    }
+    // ArrowLeft on the open parent closes it.
+    pub.focus();
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(onToggle).toHaveBeenCalledWith("s:public");
+    await userEvent.keyboard("{End}");
+    expect(document.activeElement).toBe(items()[items().length - 1]);
+    await userEvent.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(items()[items().length - 2]);
+    // Other keys are left alone.
+    await userEvent.keyboard("x");
+    expect(document.activeElement).toBe(items()[items().length - 2]);
+  });
+
+  it("returns to the row last used when focus comes back to the tree", async () => {
+    render(<ExplorerTree {...base} schemas={["public", "app"]} />);
+    const tree = screen.getByRole("tree");
+    tree.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    const app = screen.getByText("app").closest('[role="treeitem"]');
+    expect(document.activeElement).toBe(app);
+    (document.activeElement as HTMLElement).blur();
+    tree.focus();
+    expect(document.activeElement).toBe(app);
+  });
+
   it("filters objects within a schema, and shows the ratio it kept", async () => {
     // Schemas stay put: hiding them would make an empty tree look like a lost
     // connection. The group badge reports matched/total instead.

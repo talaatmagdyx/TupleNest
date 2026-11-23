@@ -179,5 +179,10 @@ describe("compareNumeric — exact, whatever the cell's JSON type", () => {
     expect(sorted(["NaN", "Infinity", "-Infinity", "1"])).toEqual(["-Infinity", "1", "Infinity", "NaN"]);
     expect(compareNumeric("-2.5", "-2.25")).toBeLessThan(0);
     expect(compareNumeric(1e21, 5)).toBeGreaterThan(0);
+    // Same integer part: the fraction decides, padded to equal length.
+    expect(compareNumeric("1.25", "1.3")).toBeLessThan(0);
+    expect(compareNumeric("1.30", "1.3")).toBe(0);
+    expect(compareNumeric("12", "9")).toBeGreaterThan(0);
+    expect(compareNumeric("-12", "-9")).toBeLessThan(0);
   });
 });
