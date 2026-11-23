@@ -79,7 +79,11 @@ describe("quoteIdent", () => {
 describe("coerceValue", () => {
   it("keeps digits as text in a text column", () => expect(coerceValue("123", "text")).toBe("123"));
   it("converts digits in an int column", () => expect(coerceValue("123", "int4")).toBe(123));
-  it("converts decimals in a numeric column", () => expect(coerceValue("1.5", "numeric")).toBe(1.5));
+  it("keeps decimals as exact text, so numeric is never rounded", () =>
+    expect(coerceValue("0.1000000000000000055", "numeric")).toBe("0.1000000000000000055"));
+  it("keeps an integer past 2^53 as exact text", () =>
+    expect(coerceValue("9007199254740993", "int8")).toBe("9007199254740993"));
+  it("still sends a safe integer as a number", () => expect(coerceValue("42", "int4")).toBe(42));
   it("passes non-numeric text through for the server to reject", () =>
     expect(coerceValue("abc", "int4")).toBe("abc"));
   it("maps empty and 'null' to NULL", () => {
@@ -539,5 +543,37 @@ describe("buildUpdate — optimistic concurrency", () => {
     // equality in the WHERE and cannot be edited at all.
     const st = buildUpdate(target, [7], [{ column: "email", value: "x", oldValue: "y" }]);
     expect(st.sql.match(/IS NOT DISTINCT FROM/g)).toHaveLength(1);
+  });
+});
+
+describe("buildUpdate with column types: everything bound as text and cast", () => {
+  const target = {
+    schema: "public",
+    table: "t",
+    pk: [{ name: "id", index: 0 }],
+    writable: [false, true],
+    types: { id: "uuid", ts: "timestamp with time zone", n: "numeric(12,2)", doc: "json", bad: "int; DROP TABLE x" },
+  };
+  it("casts each placeholder to its column's type", () => {
+    const st = buildUpdate(target, ["6f1c3e1e-1c1a-4b9b-9a43-6b0c6d5b9f10"], [
+      { column: "ts", value: "2026-01-01T00:00:00Z", oldValue: null },
+      { column: "n", value: "12.30", oldValue: 1.5 },
+    ]);
+    expect(st.sql).toBe(
+      'UPDATE "public"."t" SET "ts" = $1::text::timestamp with time zone, "n" = $2::text::numeric(12,2) ' +
+        'WHERE "id" = $3::text::uuid AND "ts" IS NOT DISTINCT FROM $4::text::timestamp with time zone ' +
+        'AND "n" IS NOT DISTINCT FROM $5::text::numeric(12,2)',
+    );
+    expect(st.params).toEqual(["2026-01-01T00:00:00Z", "12.30", "6f1c3e1e-1c1a-4b9b-9a43-6b0c6d5b9f10", null, "1.5"]);
+  });
+  it("compares json through jsonb, which has an equality operator", () => {
+    const st = buildUpdate(target, ["k"], [{ column: "doc", value: { a: 1 }, oldValue: { a: 0 } }]);
+    expect(st.sql).toContain('"doc"::jsonb IS NOT DISTINCT FROM $3::text::jsonb');
+    expect(st.params[2]).toBe('{"a":0}');
+  });
+  it("never splices a type name that is not plainly a type", () => {
+    const st = buildUpdate(target, ["k"], [{ column: "bad", value: "1", oldValue: "0" }]);
+    expect(st.sql).not.toContain("DROP");
+    expect(st.sql).toContain('"bad" = $1');
   });
 });

@@ -1117,6 +1117,58 @@ async fn read_only_session_cannot_be_switched_back_to_read_write() {
     }
 }
 
+/// Row edits bind every value as text and cast it (`$n::text::uuid`), the shape
+/// `buildUpdate` emits. Binary-bound text was refused for uuid, timestamptz and
+/// numeric ("error serializing parameter"), which made editing most real tables
+/// impossible; this is the shape that must work, NULLs and big integers included.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn row_edits_bind_as_text_and_cast_for_every_common_type() {
+    use tuplenest_driver_api::ParamValue::{Null, Text};
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    s.execute(
+        req("CREATE TEMP TABLE tn_edit (id uuid PRIMARY KEY, ts timestamptz, n numeric(12,2), t text, b int8)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    s.execute(
+        req("INSERT INTO tn_edit VALUES ('6f1c3e1e-1c1a-4b9b-9a43-6b0c6d5b9f10', now(), 1.50, NULL, 9007199254740993)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    let mut r = req(
+        "UPDATE tn_edit SET ts = $1::text::timestamptz, n = $2::text::numeric(12,2), b = $3::text::int8 \
+         WHERE id = $4::text::uuid AND t IS NOT DISTINCT FROM $5::text::text AND b IS NOT DISTINCT FROM $6::text::int8",
+    );
+    r.params = vec![
+        Text("2026-02-02T00:00:00Z".into()),
+        Text("12.30".into()),
+        Text("9007199254740995".into()),
+        Text("6f1c3e1e-1c1a-4b9b-9a43-6b0c6d5b9f10".into()),
+        Null,
+        Text("9007199254740993".into()),
+    ];
+    let done = s
+        .execute(r, &NullSink)
+        .await
+        .expect("cast-bound row edit must serialize");
+    assert_eq!(done.rows_affected, Some(1));
+    let sink = FirstCellSink(Mutex::new(None));
+    s.execute(req("SELECT b::text FROM tn_edit"), &sink)
+        .await
+        .unwrap();
+    assert_eq!(
+        sink.0.lock().unwrap().as_deref(),
+        Some("9007199254740995"),
+        "bigint must be exact"
+    );
+}
+
 /// A COMMIT that fails at a deferred constraint rolls the transaction back.
 /// The driver used to have cleared its flag *and* left the UI believing the
 /// transaction was open; afterwards it must agree with the server, and a new

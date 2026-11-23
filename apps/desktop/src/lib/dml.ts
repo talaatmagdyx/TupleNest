@@ -21,6 +21,14 @@ export type EditTarget = {
   pk: { name: string; index: number }[];
   /** Result-column index → true when that column maps to a writable table column. */
   writable: boolean[];
+  /**
+   * Table column name → its type (as the catalog spells it). With it, every
+   * placeholder is bound as text and cast, `$n::text::uuid`, the way CSV
+   * import does. Binary-bound text was refused for uuid, timestamptz, numeric
+   * and NULL ("error serializing parameter"), and a number above 2^53 was
+   * rounded before it ever left JavaScript.
+   */
+  types?: Record<string, string>;
 };
 
 export type Editability = { editable: true; target: EditTarget } | { editable: false; reason: string };
@@ -84,7 +92,11 @@ export function coerceValue(raw: string, dbType: string): unknown {
     return raw;
   }
   if (NUMERIC.test(dbType)) {
-    if (/^-?\d+(\.\d+)?$/.test(t)) return Number(t);
+    // Exact text unless it is a number JavaScript holds exactly: Number()
+    // turned 9007199254740993 into …992, and the edit wrote that.
+    if (/^-?\d+(\.\d+)?$/.test(t)) {
+      return /^-?\d+$/.test(t) && Number.isSafeInteger(Number(t)) ? Number(t) : t;
+    }
     return raw; // let the server reject it with a real type error
   }
   return raw; // text, timestamps, json, uuid, … bind as text
@@ -190,7 +202,45 @@ export function analyzeEditability(sql: string, cols: GridCol[], cat: Catalog | 
     return real.has(n) && !pkNames.has(n) && !generated.has(n);
   });
 
-  return { editable: true, target: { schema, table: ref.name, pk, writable } };
+  const types = Object.fromEntries(tableCols.map((c) => [c.name, c.dbType]));
+  return { editable: true, target: { schema, table: ref.name, pk, writable, types } };
+}
+
+/** A type name safe to splice into `::type` — catalog-supplied, so checked. */
+const SAFE_TYPE = /^[A-Za-z_][A-Za-z0-9_ ."]*(\(\d+(,\s*\d+)?\))?(\[\])*$/;
+
+/** The value as the text PostgreSQL will cast, or null. */
+function asText(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") return String(v);
+  return JSON.stringify(v);
+}
+
+/** `$n`, cast to the column's type when it is known: `$n::text::uuid`. */
+function placeholder(
+  target: Pick<EditTarget, "types">,
+  column: string,
+  params: unknown[],
+  value: unknown,
+): string {
+  const type = target.types?.[column];
+  if (!type || !SAFE_TYPE.test(type)) {
+    params.push(value);
+    return `$${params.length}`;
+  }
+  params.push(asText(value));
+  return `$${params.length}::text::${type}`;
+}
+
+/** `col IS NOT DISTINCT FROM $n`. `json` has no equality operator, so it is
+ *  compared as jsonb. */
+function unchangedTest(target: Pick<EditTarget, "types">, column: string, params: unknown[], old: unknown): string {
+  if (target.types?.[column]?.toLowerCase() === "json") {
+    params.push(asText(old));
+    return `${quoteIdent(column)}::jsonb IS NOT DISTINCT FROM $${params.length}::text::jsonb`;
+  }
+  return `${quoteIdent(column)} IS NOT DISTINCT FROM ${placeholder(target, column, params, old)}`;
 }
 
 /**
@@ -208,7 +258,7 @@ export function analyzeEditability(sql: string, cols: GridCol[], cat: Catalog | 
  * be reported as a conflict.
  */
 export function buildUpdate(
-  target: Pick<EditTarget, "schema" | "table" | "pk">,
+  target: Pick<EditTarget, "schema" | "table" | "pk" | "types">,
   pkValues: unknown[],
   sets: { column: string; value: unknown; oldValue: unknown }[]
 ): Statement {
@@ -217,35 +267,23 @@ export function buildUpdate(
 
   const params: unknown[] = [];
   const setSql = sets
-    .map((s) => {
-      params.push(s.value);
-      return `${quoteIdent(s.column)} = $${params.length}`;
-    })
+    .map((s) => `${quoteIdent(s.column)} = ${placeholder(target, s.column, params, s.value)}`)
     .join(", ");
-  const keyed = target.pk.map((k, i) => {
-    params.push(pkValues[i]);
-    return `${quoteIdent(k.name)} = $${params.length}`;
-  });
-  const unchanged = sets.map((s) => {
-    params.push(s.oldValue);
-    return `${quoteIdent(s.column)} IS NOT DISTINCT FROM $${params.length}`;
-  });
+  const keyed = target.pk.map((k, i) => `${quoteIdent(k.name)} = ${placeholder(target, k.name, params, pkValues[i])}`);
+  const unchanged = sets.map((s) => unchangedTest(target, s.column, params, s.oldValue));
   const whereSql = [...keyed, ...unchanged].join(" AND ");
 
   return { sql: `UPDATE ${qualifiedName(target.schema, target.table)} SET ${setSql} WHERE ${whereSql}`, params };
 }
 
 export function buildDelete(
-  target: Pick<EditTarget, "schema" | "table" | "pk">,
+  target: Pick<EditTarget, "schema" | "table" | "pk" | "types">,
   pkValues: unknown[]
 ): Statement {
   if (pkValues.length !== target.pk.length) throw new Error("buildDelete: primary key value count mismatch");
   const params: unknown[] = [];
   const whereSql = target.pk
-    .map((k, i) => {
-      params.push(pkValues[i]);
-      return `${quoteIdent(k.name)} = $${params.length}`;
-    })
+    .map((k, i) => `${quoteIdent(k.name)} = ${placeholder(target, k.name, params, pkValues[i])}`)
     .join(" AND ");
   return { sql: `DELETE FROM ${qualifiedName(target.schema, target.table)} WHERE ${whereSql}`, params };
 }
