@@ -222,6 +222,20 @@ describe("App — the lost-session notice", () => {
     await waitFor(() => expect(be.sent("pg_connect")).toHaveLength(2));
   });
 
+  it("appears when Commit finds the connection gone, not only on Run", async () => {
+    // Begin, Commit, Apply and Import failures used to leave the app showing
+    // a live session and an open transaction that no longer existed.
+    const user = await connected();
+    await user.click(screen.getByRole("button", { name: /begin transaction/i }));
+    await screen.findByText(/in transaction/i);
+    be.on("pg_commit", () => {
+      throw new Error(LOST);
+    });
+    await user.click(screen.getByRole("button", { name: /^commit/i }));
+    await waitFor(() => expect(document.querySelector(".modal")).toBeInTheDocument());
+    expect(within(modal()).getByRole("button", { name: /reconnect/i })).toBeInTheDocument();
+  });
+
   it("can be dismissed without reconnecting", async () => {
     be.on("pg_query", () => {
       throw new Error(LOST);

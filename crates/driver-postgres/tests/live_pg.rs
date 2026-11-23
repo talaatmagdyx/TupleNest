@@ -1270,6 +1270,32 @@ async fn a_failed_commit_leaves_the_driver_agreeing_with_the_server() {
     s.commit().await.expect("commit after a failed commit");
 }
 
+/// The driver's transaction flag only knows about `begin()`. Commit must end
+/// a transaction the user opened by typing BEGIN, and `begin()` must work
+/// again after the user ended its transaction by typing COMMIT.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn transaction_commands_follow_the_server_not_the_flag() {
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    s.execute(req("BEGIN"), &NullSink).await.unwrap();
+    s.commit().await.expect("Commit must end a typed BEGIN");
+    assert!(!s.server_in_transaction().await.unwrap());
+
+    s.begin(TransactionOptions::default()).await.unwrap();
+    s.execute(req("COMMIT"), &NullSink).await.unwrap();
+    s.begin(TransactionOptions::default())
+        .await
+        .expect("begin after a typed COMMIT must not say 'already open'");
+    s.rollback().await.unwrap();
+    assert!(
+        s.commit().await.is_err(),
+        "with nothing open, Commit still says so"
+    );
+}
+
 /// A bigint past 2^53 travels from the WebView as text and must bind to the
 /// int8 column exactly, so a WHERE on it matches the right row and only it.
 #[tokio::test]

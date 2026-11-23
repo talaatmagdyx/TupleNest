@@ -405,8 +405,17 @@ impl PostgresSession {
      * failure the server is asked rather than either side guessing.
      */
     async fn end_transaction(&mut self, sql: &str) -> Result<(), Box<DriverError>> {
-        let Some(id) = self.in_transaction.take() else {
-            return Err(DriverError::new(ErrorCategory::Internal, "No open transaction").into());
+        // The flag knows only about `begin()`. A transaction the user opened by
+        // typing BEGIN is just as real, and Commit/Rollback (and the prompt on
+        // closing the window) must be able to end it — so ask the server.
+        let id = match self.in_transaction.take() {
+            Some(id) => id,
+            None if self.server_in_transaction().await.unwrap_or(false) => TransactionId::new(),
+            None => {
+                return Err(
+                    DriverError::new(ErrorCategory::Internal, "No open transaction").into(),
+                );
+            }
         };
         let result = self
             .client
@@ -1214,10 +1223,16 @@ impl DatabaseSession for PostgresSession {
         &mut self,
         options: TransactionOptions,
     ) -> Result<TransactionId, Box<DriverError>> {
+        // The flag goes stale when the user ends the transaction by typing
+        // COMMIT or ROLLBACK; the server is the authority on whether one is
+        // still open.
         if self.in_transaction.is_some() {
-            return Err(
-                DriverError::new(ErrorCategory::Internal, "Transaction already open").into(),
-            );
+            if self.server_in_transaction().await.unwrap_or(true) {
+                return Err(
+                    DriverError::new(ErrorCategory::Internal, "Transaction already open").into(),
+                );
+            }
+            self.in_transaction = None;
         }
         /*
          * The options were discarded — the parameter was literally `_options` —
