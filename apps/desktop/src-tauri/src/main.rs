@@ -292,8 +292,10 @@ fn export_begin(
     extensions: Option<Vec<String>>,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    let mut slot = state.0.lock().map_err(|_| "export lock poisoned")?;
-    if slot.is_some() {
+    // Checked before and again after the dialog, without holding the lock
+    // while it is open: a modal dialog can sit there for minutes, and every
+    // other export command would wait on the lock behind it.
+    if state.0.lock().map_err(|_| "export lock poisoned")?.is_some() {
         return Err("an export is already in progress".into());
     }
 
@@ -307,6 +309,10 @@ fn export_begin(
         return Ok(None); // cancelled — not an error
     };
     let path = fp.into_path().map_err(|e| e.to_string())?;
+    let mut slot = state.0.lock().map_err(|_| "export lock poisoned")?;
+    if slot.is_some() {
+        return Err("an export is already in progress".into());
+    }
     let sink = ExportSink::create(path.clone()).map_err(|e| e.to_string())?;
     *slot = Some(sink);
     Ok(Some(path.to_string_lossy().into_owned()))

@@ -548,7 +548,12 @@ pub async fn pg_test(
         Some(t) => params.to_config_endpoint("127.0.0.1", t.local_port())?,
         None => params.to_config()?,
     };
-    let password = resolve_password(&params.secret_ref)?;
+    // The keychain can block — on a permission prompt, for as long as the
+    // user takes — so it runs off the async workers.
+    let secret_ref = params.secret_ref.clone();
+    let password = tauri::async_runtime::spawn_blocking(move || resolve_password(&secret_ref))
+        .await
+        .map_err(|e| e.to_string())??;
     let report = PostgresDriver
         .test_with_password(&config, password.as_ref().map(|s| s.expose()))
         .await
@@ -574,7 +579,12 @@ pub async fn pg_connect(
     params: PgParams,
 ) -> Result<(), String> {
     authorize_secret(&app, &state, &params)?;
-    let password = resolve_password(&params.secret_ref)?;
+    // The keychain can block — on a permission prompt, for as long as the
+    // user takes — so it runs off the async workers.
+    let secret_ref = params.secret_ref.clone();
+    let password = tauri::async_runtime::spawn_blocking(move || resolve_password(&secret_ref))
+        .await
+        .map_err(|e| e.to_string())??;
 
     // E1.2: with SSH configured, open the tunnel first and point the
     // driver at its local end. The tunnel lives as long as the session.
