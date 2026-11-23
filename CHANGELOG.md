@@ -3,6 +3,51 @@
 Notable changes to TupleNest. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+From a second audit, which re-tested every fix in 0.1.1-beta.12 rather than
+trusting it.
+
+### Safety
+- **Read-only profiles refuse `DO` and `CALL`.** Either can commit partway
+  through and switch the session back to read-write, so one pasted block could
+  delete rows on a profile marked read-only. `SET TRANSACTION` works again on
+  read-only profiles, and the statement after a mode change is no longer
+  refused by mistake.
+- **Nothing runs inside the app's own write.** Cmd+Enter during Apply or an
+  import used to run inside that transaction — committed with it, or silently
+  rolled back with it.
+
+### Correctness
+- **Row editing works on uuid keys, timestamps, decimals and NULLs**, and stays
+  exact: values are sent as text and cast to the column's type. Editing a
+  bigint above 2^53 no longer writes a different number.
+- Commit and Rollback end a transaction you began by typing `BEGIN`, and
+  closing the window asks about it. An import inside your transaction says it
+  still needs a commit.
+- A lost connection is noticed by Begin, Commit, Apply and Import, not only Run.
+- The grid, its rows and exports stay in step after edits, imports and failed
+  EXPLAINs. Numeric columns sort exactly. JSON export keeps same-named columns;
+  NaN and Infinity show as values; spreadsheet-safe CSV leaves negative numbers
+  numeric.
+
+### Security
+- A stored password is bound to how its profile connects (TLS mode, CA file,
+  SSH hop), not only where; a profile's environment and read-only flag come
+  from the profile.
+- Secrets in JSON shapes are redacted; logs keep 14 days.
+
+### Performance and reliability
+- One query can no longer exceed the result budget many times over: batches are
+  cut by size, and bytea/json cells over 1 MB are not decoded (600 × 1 MB bytea:
+  882 → 296 MB). Rows past the cap are counted, not decoded.
+- Disconnect cancels and gives up after three tries instead of waiting forever;
+  connections use TCP keepalives and a connect timeout.
+
+### Accessibility
+- The schema tree is one tab stop with arrow-key navigation; toasts are
+  announced reliably.
+
 ## [0.1.1-beta.12] — 2026-11-23
 
 A safety and correctness release, from an end-to-end audit. Several places
