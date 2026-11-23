@@ -115,13 +115,30 @@ pub fn connection_list(state: tauri::State<'_, AppState>) -> Result<Vec<Connecti
 }
 
 #[tauri::command]
-pub fn connection_delete(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
-    let secret_ref = state
-        .store
-        .lock()
-        .map_err(|_| "store lock poisoned")?
-        .connection_delete(&id)
-        .map_err(|e| e.to_string())?;
+pub fn connection_delete(
+    state: tauri::State<'_, AppState>,
+    pg: tauri::State<'_, crate::pg::PgState>,
+    id: String,
+) -> Result<(), String> {
+    let (secret_ref, orphaned_cache) = {
+        let store = state.store.lock().map_err(|_| "store lock poisoned")?;
+        let key_of = |r: &tuplenest_workspace_store::ConnectionRecord| {
+            crate::pg::cache_key(&r.username, &r.host, r.port, &r.database)
+        };
+        let doomed = store.connection_get(&id).map_err(|e| e.to_string())?.map(|r| key_of(&r));
+        let secret_ref = store.connection_delete(&id).map_err(|e| e.to_string())?;
+        // Another profile may point at the same database; its cache stays.
+        let still_used = |k: &String| {
+            store
+                .connection_list()
+                .map(|all| all.iter().any(|r| &key_of(r) == k))
+                .unwrap_or(true)
+        };
+        (secret_ref, doomed.filter(|k| !still_used(k)))
+    };
+    if let Some(key) = orphaned_cache {
+        pg.forget_cached_metadata(&key);
+    }
     // Keychain cleanup: profile row is gone; remove the orphaned secret.
     if let Some(key) = secret_ref {
         KeychainStore::new()

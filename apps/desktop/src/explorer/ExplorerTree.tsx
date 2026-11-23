@@ -165,16 +165,18 @@ export default function ExplorerTree(p: Props) {
           title={o.comment ?? o.name}
           badge={
             o.isPartitioned ? (
-              <span
+              <button
+                type="button"
                 className="part-badge act"
                 title={`${o.partitionCount} direct partitions — click for bounds, sizes and gaps`}
+                aria-label={`${o.partitionCount} partitions of ${o.name}: bounds, sizes and gaps`}
                 onClick={(e) => {
                   e.stopPropagation();
                   p.onPartitions(schema, o.name);
                 }}
               >
                 {o.partitionCount}
-              </span>
+              </button>
             ) : undefined
           }
           act={

@@ -139,6 +139,15 @@ pub struct PgState {
 }
 
 impl PgState {
+    /// Drops cached metadata for a database nothing points at any more.
+    /// `invalidate` existed and was never called, so the cache kept every
+    /// schema of every profile ever deleted.
+    pub fn forget_cached_metadata(&self, key: &str) {
+        if let Ok(cache) = self.cache.lock() {
+            let _ = cache.invalidate(key);
+        }
+    }
+
     pub fn new(cache: tuplenest_metadata_cache::MetadataCache) -> Self {
         Self {
             session: AsyncMutex::new(None),
@@ -154,7 +163,12 @@ impl PgState {
 
 /// Stable, secret-free cache identity for a connection target.
 fn cache_key_of(p: &PgParams) -> String {
-    format!("{}@{}:{}/{}", p.username, p.host, p.port, p.database)
+    cache_key(&p.username, &p.host, p.port, &p.database)
+}
+
+/// The metadata cache's key for one database as one user.
+pub fn cache_key(username: &str, host: &str, port: u16, database: &str) -> String {
+    format!("{username}@{host}:{port}/{database}")
 }
 
 fn resolve_password(secret_ref: &Option<String>) -> Result<Option<Secret>, String> {

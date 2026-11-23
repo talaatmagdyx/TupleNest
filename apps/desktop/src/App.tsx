@@ -63,7 +63,7 @@ import { suggestName, useSnippets } from "./hooks/useSnippets";
 import HealthModal, { type HealthTab } from "./overlays/HealthModal";
 import SearchModal from "./overlays/SearchModal";
 import PartitionsModal from "./overlays/PartitionsModal";
-import { analyzeEditability } from "./lib/dml";
+import { analyzeEditability, qualifiedName } from "./lib/dml";
 import EditReviewModal from "./overlays/EditReviewModal";
 import SchemaModal, { type SchemaExtra } from "./overlays/SchemaModal";
 import MonitorModal from "./overlays/MonitorModal";
@@ -684,7 +684,7 @@ export default function App() {
 
   const insertSelect = useCallback(
     (schema: string, name: string) => {
-      setActiveSql(`select * from "${schema}"."${name}" limit 100`);
+      setActiveSql(`select * from ${qualifiedName(schema, name)} limit 100`);
       showToast(`Inserted select for ${schema}.${name}`);
     },
     [setActiveSql, showToast]
