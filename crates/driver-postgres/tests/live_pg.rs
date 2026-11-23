@@ -434,13 +434,21 @@ async fn transactions_visible_only_after_commit() {
 }
 
 // --- TLS live tests (E1.2) --------------------------------------------------
-// Require a local server with ssl=on and a self-signed cert whose SAN covers
-// `localhost` (see docs). CA path from TUPLENEST_TEST_PG_SSL_CA, defaulting
-// to the brew PG 18 data dir.
+// Require a server with ssl=on and a certificate whose SAN covers `localhost`,
+// signed by the CA at TUPLENEST_TEST_PG_SSL_CA (CI builds one; see ci.yml and
+// CONTRIBUTING). Without that variable the tests that need TLS skip instead of
+// failing — the default used to be a path on the maintainer's own machine.
 
 fn ca_path() -> String {
-    std::env::var("TUPLENEST_TEST_PG_SSL_CA")
-        .unwrap_or_else(|_| "/opt/homebrew/var/postgresql@18/tuplenest_ca.crt".into())
+    std::env::var("TUPLENEST_TEST_PG_SSL_CA").expect("TUPLENEST_TEST_PG_SSL_CA")
+}
+
+fn tls_server_provisioned() -> bool {
+    let on = std::env::var("TUPLENEST_TEST_PG_SSL_CA").is_ok();
+    if !on {
+        eprintln!("skipping: set TUPLENEST_TEST_PG_SSL_CA to the CA of an ssl=on server to run");
+    }
+    on
 }
 
 fn tls_config(mode: TlsMode, ca: Option<String>) -> ConnectionConfig {
@@ -474,6 +482,9 @@ impl BatchSink for FirstCellSink {
 #[tokio::test]
 #[ignore]
 async fn live_tls_verify_full_with_ca_passes_and_encrypts() {
+    if !tls_server_provisioned() {
+        return;
+    }
     let config = tls_config(TlsMode::VerifyFull, Some(ca_path()));
     let report = PostgresDriver
         .test_with_password(&config, None)
@@ -517,6 +528,9 @@ async fn live_tls_verify_full_without_ca_fails_closed() {
 #[tokio::test]
 #[ignore]
 async fn live_tls_prefer_encrypts_without_verification() {
+    if !tls_server_provisioned() {
+        return;
+    }
     let mut session = PostgresDriver
         .connect_concrete(tls_config(TlsMode::Prefer, None))
         .await
@@ -651,6 +665,9 @@ async fn live_tls_disabled_connects_to_a_plaintext_server() {
 #[tokio::test]
 #[ignore]
 async fn live_tls_cancel_works_over_tls() {
+    if !tls_server_provisioned() {
+        return;
+    }
     let mut session = PostgresDriver
         .connect_concrete(tls_config(TlsMode::VerifyFull, Some(ca_path())))
         .await
