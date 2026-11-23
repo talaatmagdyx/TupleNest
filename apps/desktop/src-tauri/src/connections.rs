@@ -47,15 +47,43 @@ pub struct ConnectionInput {
 #[tauri::command]
 pub fn connection_save(
     state: tauri::State<'_, AppState>,
+    pg: tauri::State<'_, crate::pg::PgState>,
     input: ConnectionInput,
 ) -> Result<ConnectionRecord, String> {
     let store = state.store.lock().map_err(|_| "store lock poisoned")?;
 
     let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
-    let existing_ref = store
-        .connection_get(&id)
-        .map_err(|e| e.to_string())?
-        .and_then(|c| c.secret_ref);
+    let existing = store.connection_get(&id).map_err(|e| e.to_string())?;
+    let typed_password = input.password.as_deref().is_some_and(|p| !p.is_empty());
+
+    // A stored password is bound to the server and user it was saved for (see
+    // `pg::authorize_secret`). Moving a profile to another server or user
+    // without re-entering it would carry the old password to the new place.
+    if let Some(old) = &existing {
+        let moved = old.host != input.host
+            || old.port != input.port
+            || old.database != input.database
+            || old.username != input.username;
+        let carried = old.secret_ref.is_some()
+            && !typed_password
+            && !input
+                .secret_ref
+                .as_deref()
+                .is_some_and(|k| pg.is_fresh_secret(k));
+        if moved && carried {
+            return Err(
+                "Enter the password again: this profile now points at a different server or user."
+                    .into(),
+            );
+        }
+    }
+    let existing_ref = existing.and_then(|c| c.secret_ref);
+    // Only a ref written this session (a Test with the typed password) may be
+    // adopted; any other would let a profile claim another profile's secret.
+    let adoptable = input
+        .secret_ref
+        .clone()
+        .filter(|k| !k.is_empty() && pg.is_fresh_secret(k));
 
     // Password handling: new password → create or replace keychain entry;
     // no password → keep the profile's existing ref, or adopt one already
@@ -76,7 +104,16 @@ pub fn connection_save(
                 .key()
                 .to_string(),
         }),
-        _ => existing_ref.or_else(|| input.secret_ref.filter(|k| !k.is_empty())),
+        _ => {
+            // A fresh ref replacing an older one: remove the old entry rather
+            // than leave an unreferenced password in the keychain.
+            if let (Some(new), Some(old)) = (&adoptable, &existing_ref) {
+                if new != old {
+                    let _ = keychain.delete(&SecretRef::new(old.clone()));
+                }
+            }
+            adoptable.or(existing_ref)
+        }
     };
 
     let record = ConnectionRecord {
@@ -125,7 +162,10 @@ pub fn connection_delete(
         let key_of = |r: &tuplenest_workspace_store::ConnectionRecord| {
             crate::pg::cache_key(&r.username, &r.host, r.port, &r.database)
         };
-        let doomed = store.connection_get(&id).map_err(|e| e.to_string())?.map(|r| key_of(&r));
+        let doomed = store
+            .connection_get(&id)
+            .map_err(|e| e.to_string())?
+            .map(|r| key_of(&r));
         let secret_ref = store.connection_delete(&id).map_err(|e| e.to_string())?;
         // Another profile may point at the same database; its cache stays.
         let still_used = |k: &String| {

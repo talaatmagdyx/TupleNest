@@ -130,6 +130,9 @@ pub struct PgState {
     cache: StdMutex<tuplenest_metadata_cache::MetadataCache>,
     /// Cache key of the currently connected session.
     cache_key: StdMutex<Option<String>>,
+    /// Secret refs written by `pg_secret_save` in this app session — the
+    /// password the user just typed into the form. See `authorize_secret`.
+    fresh_secrets: StdMutex<std::collections::HashSet<String>>,
     /// Last query's rows, held backend-side for windowed paging.
     result: StdMutex<Option<StoredResult>>,
     /// Environment tag of the connected profile (prod → history text off).
@@ -142,6 +145,14 @@ impl PgState {
     /// Drops cached metadata for a database nothing points at any more.
     /// `invalidate` existed and was never called, so the cache kept every
     /// schema of every profile ever deleted.
+    /// Was this secret ref written by `pg_secret_save` in this app session?
+    pub fn is_fresh_secret(&self, key: &str) -> bool {
+        self.fresh_secrets
+            .lock()
+            .map(|s| s.contains(key))
+            .unwrap_or(false)
+    }
+
     pub fn forget_cached_metadata(&self, key: &str) {
         if let Ok(cache) = self.cache.lock() {
             let _ = cache.invalidate(key);
@@ -154,6 +165,7 @@ impl PgState {
             cancel: StdMutex::new(None),
             cache: StdMutex::new(cache),
             cache_key: StdMutex::new(None),
+            fresh_secrets: StdMutex::new(Default::default()),
             result: StdMutex::new(None),
             connected_env: StdMutex::new(None),
             tunnel: StdMutex::new(None),
@@ -169,6 +181,56 @@ fn cache_key_of(p: &PgParams) -> String {
 /// The metadata cache's key for one database as one user.
 pub fn cache_key(username: &str, host: &str, port: u16, database: &str) -> String {
     format!("{username}@{host}:{port}/{database}")
+}
+
+/*
+ * May these parameters use this stored secret?
+ *
+ * The WebView names the secret by reference and also names the host, so a
+ * compromised WebView could send a production profile's ref with
+ * `host: "attacker"`, `tlsMode: "disabled"` — and a server asking for
+ * cleartext auth would receive the password. The ref is honoured only when:
+ *  - it was written in this app session (the password the user just typed
+ *    into this form), or
+ *  - it belongs to a saved profile for the same host, port, database and
+ *    user — that profile's own connection.
+ * Editing a saved profile's host without re-entering its password therefore
+ * asks for the password again, which is exactly the case being prevented.
+ */
+fn authorize_secret(
+    app: &crate::AppState,
+    state: &PgState,
+    params: &PgParams,
+) -> Result<(), String> {
+    let Some(key) = params.secret_ref.as_deref() else {
+        return Ok(());
+    };
+    if state
+        .fresh_secrets
+        .lock()
+        .map_err(|_| "secret lock poisoned")?
+        .contains(key)
+    {
+        return Ok(());
+    }
+    let profiles = app
+        .store
+        .lock()
+        .map_err(|_| "store lock poisoned")?
+        .connection_list()
+        .map_err(|e| e.to_string())?;
+    let owned = profiles.iter().any(|r| {
+        r.secret_ref.as_deref() == Some(key)
+            && r.host == params.host
+            && r.port == params.port
+            && r.database == params.database
+            && r.username == params.username
+    });
+    if owned {
+        Ok(())
+    } else {
+        Err("The saved password belongs to a different server or user. Enter the password again to use it here.".into())
+    }
 }
 
 fn resolve_password(secret_ref: &Option<String>) -> Result<Option<Secret>, String> {
@@ -336,7 +398,45 @@ mod err_to_string_tests {
 /// Stores a password in the OS keychain; returns the opaque reference key.
 /// This is the ONLY command that ever sees a secret, and it does not log it.
 #[tauri::command]
-pub fn pg_secret_save(password: String, reuse_ref: Option<String>) -> Result<String, String> {
+pub fn pg_secret_save(
+    app: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, PgState>,
+    password: String,
+    reuse_ref: Option<String>,
+) -> Result<String, String> {
+    // Overwriting is limited to refs this app wrote: one minted this session,
+    // or a saved profile's own. Any other key in the service was a free
+    // overwrite for whatever could call this command.
+    if let Some(k) = reuse_ref.as_deref().filter(|k| !k.is_empty()) {
+        let fresh = state
+            .fresh_secrets
+            .lock()
+            .map_err(|_| "secret lock poisoned")?
+            .contains(k);
+        let saved = || -> Result<bool, String> {
+            Ok(app
+                .store
+                .lock()
+                .map_err(|_| "store lock poisoned")?
+                .connection_list()
+                .map_err(|e| e.to_string())?
+                .iter()
+                .any(|r| r.secret_ref.as_deref() == Some(k)))
+        };
+        if !fresh && !saved()? {
+            return Err("Unknown secret reference".into());
+        }
+    }
+    let key = save_secret(password, reuse_ref)?;
+    state
+        .fresh_secrets
+        .lock()
+        .map_err(|_| "secret lock poisoned")?
+        .insert(key.clone());
+    Ok(key)
+}
+
+fn save_secret(password: String, reuse_ref: Option<String>) -> Result<String, String> {
     let store = KeychainStore::new();
     // Reuse the ref the form already holds instead of minting a new keychain
     // entry every time. Previously each Test/connect of a typed password
@@ -390,7 +490,12 @@ fn stage_out(s: tuplenest_driver_api::TestStage) -> TestStageOut {
 /// failure. With SSH configured the network probe targets the SSH host and
 /// the driver connects through a temporary tunnel.
 #[tauri::command]
-pub async fn pg_test(params: PgParams) -> Result<TestReportOut, String> {
+pub async fn pg_test(
+    app: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, PgState>,
+    params: PgParams,
+) -> Result<TestReportOut, String> {
+    authorize_secret(&app, &state, &params)?;
     let (probe_host, probe_port) = match &params.ssh {
         Some(ssh) => (ssh.host.clone(), ssh.port),
         None => (params.host.clone(), params.port),
@@ -463,7 +568,12 @@ pub async fn pg_test(params: PgParams) -> Result<TestReportOut, String> {
 }
 
 #[tauri::command]
-pub async fn pg_connect(state: tauri::State<'_, PgState>, params: PgParams) -> Result<(), String> {
+pub async fn pg_connect(
+    app: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, PgState>,
+    params: PgParams,
+) -> Result<(), String> {
+    authorize_secret(&app, &state, &params)?;
     let password = resolve_password(&params.secret_ref)?;
 
     // E1.2: with SSH configured, open the tunnel first and point the
@@ -1361,6 +1471,64 @@ mod tests {
             query.await.unwrap().is_err(),
             "the running query should have been cancelled"
         );
+    }
+
+    fn app_with_profile() -> crate::AppState {
+        let store = tuplenest_workspace_store::Store::open_in_memory().unwrap();
+        store
+            .connection_upsert(&tuplenest_workspace_store::ConnectionRecord {
+                id: "p1".into(),
+                name: "prod".into(),
+                driver: "postgres".into(),
+                environment: Some("prod".into()),
+                color: None,
+                read_only: false,
+                host: "prod.db".into(),
+                port: 5432,
+                database: "app".into(),
+                username: "svc".into(),
+                secret_ref: Some("tn-secret-prod".into()),
+                tls_mode: "verify-full".into(),
+                tls_ca_path: None,
+                ssh_json: None,
+                options_json: None,
+                statement_timeout_ms: 0,
+            })
+            .unwrap();
+        crate::AppState {
+            store: std::sync::Mutex::new(store),
+            _log_guard: None,
+        }
+    }
+
+    fn params(host: &str, secret: Option<&str>) -> PgParams {
+        serde_json::from_value(serde_json::json!({
+            "host": host, "port": 5432, "database": "app", "username": "svc",
+            "secretRef": secret, "tlsMode": "disabled"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_saved_password_only_goes_to_its_own_server() {
+        // A compromised WebView could send a prod profile's ref with
+        // host: "evil" and TLS off, and receive the password in cleartext.
+        let app = app_with_profile();
+        let pg = PgState::new(tuplenest_metadata_cache::MetadataCache::open_in_memory().unwrap());
+        assert!(authorize_secret(&app, &pg, &params("prod.db", Some("tn-secret-prod"))).is_ok());
+        assert!(
+            authorize_secret(&app, &pg, &params("evil.example", Some("tn-secret-prod"))).is_err()
+        );
+        let mut other_user = params("prod.db", Some("tn-secret-prod"));
+        other_user.username = "postgres".into();
+        assert!(authorize_secret(&app, &pg, &other_user).is_err());
+        assert!(authorize_secret(&app, &pg, &params("anywhere", None)).is_ok());
+        // A password typed into the form this session may be tried anywhere.
+        pg.fresh_secrets
+            .lock()
+            .unwrap()
+            .insert("tn-secret-new".into());
+        assert!(authorize_secret(&app, &pg, &params("new.db", Some("tn-secret-new"))).is_ok());
     }
 
     #[test]
