@@ -92,6 +92,19 @@ describe("ExplorerTree — shell", () => {
     expect(onToggle).toHaveBeenCalledWith("s:public");
   });
 
+  it("can be driven from the keyboard: rows are focusable treeitems", async () => {
+    // Exploring the schema used to be mouse-only: plain divs with onClick.
+    const onToggle = vi.fn();
+    render(<ExplorerTree {...base} onToggle={onToggle} />);
+    expect(screen.getByRole("tree", { name: "Database objects" })).toBeInTheDocument();
+    const row = screen.getByText("public").closest('[role="treeitem"]') as HTMLElement;
+    expect(row).toHaveAttribute("tabindex", "0");
+    expect(row).toHaveAttribute("aria-expanded");
+    row.focus();
+    await userEvent.keyboard(" ");
+    expect(onToggle).toHaveBeenCalledWith("s:public");
+  });
+
   it("filters objects within a schema, and shows the ratio it kept", async () => {
     // Schemas stay put: hiding them would make an empty tree look like a lost
     // connection. The group badge reports matched/total instead.

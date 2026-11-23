@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { serverInTransaction } from "../lib/tx";
 import type { QueryResult } from "../ipc/types";
 import { buildStatements, type CellEdit, type EditTarget } from "../lib/dml";
 
@@ -96,7 +97,8 @@ export function useRowEdits(epoch: number): RowEdits {
       setApplying(true);
       setApplyError(null);
       const statements = buildStatements(target, edits);
-      const joinExisting = inTx;
+      // `inTx` misses a BEGIN typed in the editor; the server does not.
+      const joinExisting = inTx || (await serverInTransaction());
       try {
         if (joinExisting) {
           // Inside the user's transaction we cannot BEGIN, and we must not

@@ -1,6 +1,6 @@
 name: UX feedback
 description: Nothing broke — it just felt wrong, slow, confusing, or undiscoverable.
-labels: [ux-feedback]
+labels: [enhancement]
 body:
   - type: markdown
     attributes:

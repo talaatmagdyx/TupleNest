@@ -22,6 +22,16 @@ export type CsvTable = { header: string[]; rows: string[][] };
  * seen is retained until the rest arrives. `end` flushes the last row, which
  * matters because a file need not end with a newline.
  */
+/**
+ * A field written as `""`: an empty string, not a missing value.
+ *
+ * Unquoted-empty and quoted-empty both parsed to "", so an import could not
+ * tell them apart and wrote NULL for both. COPY … CSV keeps them distinct;
+ * so do we. NUL is the marker because it can never be real data: PostgreSQL
+ * text cannot contain it.
+ */
+export const QUOTED_EMPTY = "\u0000";
+
 export class CsvStreamParser {
   private row: string[] = [];
   private field = "";
@@ -61,7 +71,7 @@ export class CsvStreamParser {
     }
 
     const endField = () => {
-      this.row.push(this.field);
+      this.row.push(this.field === "" && this.fieldWasQuoted ? QUOTED_EMPTY : this.field);
       this.field = "";
       this.fieldWasQuoted = false;
     };
@@ -128,7 +138,7 @@ export class CsvStreamParser {
     // A chunk that ended mid-escape closed the field; nothing more is coming.
     this.pendingQuote = false;
     if (this.field !== "" || this.fieldWasQuoted || this.row.length > 0) {
-      this.row.push(this.field);
+      this.row.push(this.field === "" && this.fieldWasQuoted ? QUOTED_EMPTY : this.field);
       const last = this.row;
       this.field = "";
       this.fieldWasQuoted = false;
@@ -157,7 +167,7 @@ const BOOL_RE = /^(true|false|t|f|yes|no|y|n|0|1)$/i;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TS_RE = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[-+]\d{2}:?\d{2})?$/;
 
-const isBlank = (v: string) => v.trim() === "";
+const isBlank = (v: string) => v === QUOTED_EMPTY || v.trim() === "";
 
 /** Best Postgres type for a column of raw CSV strings.
  *  Conservative: anything that doesn't fit cleanly becomes `text`, because a
@@ -193,11 +203,27 @@ export function normalizeColumnName(raw: string, taken: Set<string>): string {
   if (/^\d/.test(n)) n = `c_${n}`; // can't start with a digit
   n = n.slice(0, 63); // Postgres identifier limit
 
+  // The suffix must fit inside the 63 bytes too: truncating first and then
+  // appending `_2` made 65 bytes, which PostgreSQL cut back to the first
+  // name — "column specified more than once". Names are [a-z0-9_] by now, so
+  // characters are bytes.
   let out = n;
   let k = 2;
-  while (taken.has(out)) out = `${n}_${k++}`;
+  while (taken.has(out)) {
+    const suffix = `_${k++}`;
+    out = `${n.slice(0, 63 - suffix.length)}${suffix}`;
+  }
   taken.add(out);
   return out;
+}
+
+/** PostgreSQL's bind-parameter limit: the wire protocol counts them in a u16. */
+export const MAX_BIND_PARAMS = 65535;
+
+/** Rows per INSERT so that rows × columns stays under the parameter limit.
+ *  A fixed 500 failed every batch of any CSV wider than 131 columns. */
+export function batchRows(columnCount: number, preferred = 500): number {
+  return Math.max(1, Math.min(preferred, Math.floor(MAX_BIND_PARAMS / Math.max(1, columnCount))));
 }
 
 export function normalizeHeader(header: string[]): string[] {
@@ -257,13 +283,20 @@ export function buildInsert(
   };
 }
 
-/** One CSV cell as the text Postgres will cast, or NULL for a blank.
- *  A blank cell means NULL rather than an empty string — matching COPY's
- *  default `\N` semantics and avoiding '' in a numeric column. */
+/** One CSV cell as the text Postgres will cast, or NULL.
+ *
+ *  As COPY … CSV reads it: an unquoted empty field is NULL, a quoted `""` is
+ *  an empty string. Both used to become NULL, and so did a text cell of only
+ *  spaces — data quietly replaced. Non-text columns still read blank as NULL,
+ *  since `''` is not a number or a date. */
 export function coerceCell(raw: string, type: InferredType): string | null {
+  if (raw === QUOTED_EMPTY) return type === "text" ? "" : null;
+  if (type === "text") return raw === "" ? null : raw;
+  // Everything else is a literal Postgres parses, where surrounding
+  // whitespace is noise.
   const v = raw.trim();
-  if (v === "") return null;
-  // Text keeps its original spacing; everything else is a literal Postgres
-  // parses, where surrounding whitespace is noise.
-  return type === "text" ? raw : v;
+  return v === "" ? null : v;
 }
+
+/** A cell as the preview shows it: the marker reads as the empty string it is. */
+export const displayCell = (raw: string | undefined): string => (raw === QUOTED_EMPTY ? "" : (raw ?? ""));

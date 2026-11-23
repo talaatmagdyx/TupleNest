@@ -314,7 +314,17 @@ export default function Grid(p: Props) {
             role="columnheader"
             aria-sort={sortCol === ci && sortDir ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
             style={{ width: colWidth(c) }}
+            tabIndex={0}
             onClick={() => sortBy(ci)}
+            onKeyDown={(e) => {
+              // Sorting was mouse-only. Stop the grid's own key handling from
+              // treating this Enter as a cell edit.
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                void sortBy(ci);
+              }
+            }}
           >
             <span className={`cn ${sortCol === ci && sortDir ? "sorted" : ""}`}>{c.name}</span>
             <span className="ct">{c.dbType}</span>

@@ -90,7 +90,7 @@
       <tr><th>Mode</th><th>Behaviour</th><th>Use</th></tr>
       <tr><td>Disabled</td><td class="how">No TLS.</td><td class="how">Trusted local environments only</td></tr>
       <tr><td>Prefer</td><td class="how">Attempts TLS, may fall back to plaintext.</td><td class="how">Not recommended for remote/production</td></tr>
-      <tr><td>Verify CA</td><td class="how">TLS required; certificate chain verified; hostname knowingly skipped.</td><td class="how">The mode SSH tunnels actually need</td></tr>
+      <tr><td>Verify CA</td><td class="how">TLS required; certificate chain verified against <b>your CA file only</b> (never the OS trust store); hostname knowingly skipped.</td><td class="how">The mode SSH tunnels actually need</td></tr>
       <tr><td>Verify Full</td><td class="how">TLS required; certificate <b>and</b> hostname verified.</td><td class="how">Recommended for production</td></tr>
     </table>
     <div class="callout ok" style="margin-top:22px"><b>Downgrade protection is implemented and tested.</b> The client previously never set the SSL mode, so it defaulted to <em>prefer</em> and could be stripped to plaintext even under verify-full. The verify modes now require TLS and refuse a plaintext server — proven against a real <code class="inline">ssl=off</code> server with a negative control. The form also warns when <em>prefer</em> is chosen for a remote host.</div>

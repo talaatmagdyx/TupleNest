@@ -59,7 +59,7 @@ jobs:
       matrix:
         include:
           # Match the runner the release is built on. Building on 22.04 sets a
-          # glibc 2.34 floor; testing on a newer image would silently pass on a
+          # glibc 2.35 floor; testing on a newer image would silently pass on a
           # binary that no 22.04 user can start.
           - os: ubuntu-22.04
             name: Ubuntu 22.04 (x86_64)
@@ -68,6 +68,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: runner.os == 'Linux'

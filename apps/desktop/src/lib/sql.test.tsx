@@ -352,6 +352,34 @@ describe("toMarkdown", () => {
   });
 });
 
+describe("needsGuard — bypasses the audit found", () => {
+  const guarded = (sql: string) => needsGuard(sql, "prod");
+  it("a WHERE in a CTE does not bound the DELETE after it", () => {
+    expect(guarded("WITH d AS (DELETE FROM a WHERE false) DELETE FROM users")).toBe(true);
+    expect(guarded("WITH d AS (DELETE FROM a) SELECT 1")).toBe(true);
+  });
+  it("a WHERE inside a subquery does not bound the outer statement", () => {
+    expect(guarded("DELETE FROM t USING (SELECT id FROM x WHERE y) s")).toBe(true);
+    expect(guarded("UPDATE t SET a = (SELECT b FROM c WHERE d)")).toBe(true);
+  });
+  it("still lets a bounded statement through, subquery or not", () => {
+    expect(guarded("DELETE FROM t WHERE id IN (SELECT id FROM x WHERE y)")).toBe(false);
+    expect(guarded("WITH d AS (DELETE FROM a WHERE id = 1) DELETE FROM b WHERE id = 2")).toBe(false);
+  });
+  it("asks before statements whose effect is not in the text", () => {
+    for (const sql of ["DO $$ BEGIN DELETE FROM t; END $$", "CALL purge()", "MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE", "COPY t FROM '/tmp/x.csv'"]) {
+      expect(guarded(sql)).toBe(true);
+    }
+  });
+  it("does not cry wolf on upserts, row locks and COPY … TO", () => {
+    expect(guarded("INSERT INTO t VALUES (1) ON CONFLICT (id) DO UPDATE SET a = 1")).toBe(false);
+    expect(guarded("SELECT * FROM t WHERE id = 1 FOR UPDATE")).toBe(false);
+    expect(guarded("SELECT * FROM t WHERE id = 1 FOR NO KEY UPDATE")).toBe(false);
+    expect(guarded("COPY (SELECT * FROM t) TO STDOUT")).toBe(false);
+    expect(guarded("COPY t TO STDOUT")).toBe(false);
+  });
+});
+
 describe("needsGuard", () => {
   it("fires on prod UPDATE/DELETE with no WHERE", () => {
     expect(needsGuard("update t set a=1", "prod")).toBe(true);
@@ -506,6 +534,13 @@ describe("paramCount", () => {
 });
 
 describe("coerceParam", () => {
+  it("keeps integers past 2^53 as exact text instead of rounding them", () => {
+    // Number("9007199254740993") is …992: a different key.
+    expect(coerceParam("9007199254740993")).toBe("9007199254740993");
+    expect(coerceParam("-9007199254740993")).toBe("-9007199254740993");
+    expect(coerceParam("9007199254740991")).toBe(9007199254740991);
+  });
+
   it("maps empty and the word null to null", () => {
     expect(coerceParam("")).toBeNull();
     expect(coerceParam("  ")).toBeNull();

@@ -252,6 +252,62 @@ describe("ImportModal — streaming a file it never holds whole", () => {
     await waitFor(() => expect(onDone).toHaveBeenCalledWith(expect.stringContaining("600")));
   });
 
+  it("is a real dialog, and Escape cannot close it while an import runs", async () => {
+    // It used to sit outside the shared Overlay: no focus trap, no dialog
+    // role, and the app-wide Escape closed it mid-import while the import
+    // carried on with no UI.
+    invokeMock.mockImplementation(async (_cmd: string, a?: unknown) => {
+      const sql = String((a as { sql?: string } | undefined)?.sql ?? "");
+      if (/^insert into/i.test(sql)) return new Promise(() => {}); // never finishes
+      return { columns: [], rows: [], rowsAffected: 0, durationMs: 1 };
+    });
+    const onClose = vi.fn();
+    const { container } = render(<ImportModal {...base} onClose={onClose} />);
+    await choose(container, csv(GOOD));
+    expect(screen.getByRole("dialog", { name: "Import CSV" })).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: /Import 2 rows/ }));
+    await waitFor(() =>
+      expect(invokeMock.mock.calls.some((c) => /insert into/i.test(String((c[1] as { sql?: string })?.sql)))).toBe(true),
+    );
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("inside the user's own transaction, a cancel undoes only the import", async () => {
+    // The user typed BEGIN, so the UI's inTx is false but the server has a
+    // transaction open. The import must not BEGIN again, and a cancel must
+    // neither ROLLBACK their transaction nor write the batch still pending.
+    const many = "id,name\n" + Array.from({ length: 2000 }, (_, i) => `${i},n${i}`).join("\n") + "\n";
+    let cancelBtn: HTMLElement | null = null;
+    let inserts = 0;
+    invokeMock.mockImplementation(async (cmd: string, a?: unknown) => {
+      if (cmd === "pg_in_transaction") return true;
+      const sql = String((a as { sql?: string } | undefined)?.sql ?? "");
+      if (/^insert into/i.test(sql)) {
+        inserts++;
+        if (cancelBtn) fireEvent.click(cancelBtn);
+      }
+      return { columns: [], rows: [], rowsAffected: 0, durationMs: 1 };
+    });
+    const onDone = vi.fn();
+    const { container } = render(<ImportModal {...base} onDone={onDone} />);
+    await choose(container, csv(many, "big.csv"));
+    const importBtn = await screen.findByRole("button", { name: /Import all rows/ });
+    cancelBtn = screen.getByRole("button", { name: "Cancel" });
+    await userEvent.click(importBtn);
+
+    await waitFor(() => expect(screen.getByText(/cancelled/i)).toBeInTheDocument());
+    const names = invokeMock.mock.calls.map((c) => c[0]);
+    const sqls = invokeMock.mock.calls.map((c) => String((c[1] as { sql?: string } | undefined)?.sql ?? ""));
+    expect(names).not.toContain("pg_begin");
+    expect(names).not.toContain("pg_rollback");
+    expect(names).not.toContain("pg_commit");
+    expect(sqls).toContain("SAVEPOINT tuplenest_import");
+    expect(sqls).toContain("ROLLBACK TO SAVEPOINT tuplenest_import");
+    expect(inserts).toBe(1); // the batch pending at cancel was not flushed
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
   it("cancels mid-import and rolls back rather than leaving a half-filled table", async () => {
     const many = "id,name\n" + Array.from({ length: 2000 }, (_, i) => `${i},n${i}`).join("\n") + "\n";
     // Flip cancel as soon as the first batch insert goes out.

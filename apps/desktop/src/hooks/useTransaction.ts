@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { serverInTransaction } from "../lib/tx";
 
 export type TxOutcome = { ok: true } | { ok: false; message: string };
 
@@ -74,9 +75,16 @@ export function useTransaction(): Transaction {
       setOwner(null);
       return { ok: true };
     } catch (e) {
-      // Deliberately leaves `inTx` set. A COMMIT that failed did not commit:
-      // the transaction is still open on the server, and clearing the flag
-      // here is how someone ends up believing their write landed.
+      // A COMMIT that failed did not commit — but it usually did *end* the
+      // transaction: the server rolls it back. Keeping `inTx` set then showed a
+      // transaction that no longer existed, and Commit and Rollback both kept
+      // failing. Ask the server. If it cannot say, keep the flag: believing a
+      // transaction is open when it is not is the safe mistake.
+      if (!(await serverInTransaction())) {
+        setInTx(false);
+        setOpenSince(null);
+        setOwner(null);
+      }
       return { ok: false, message: String(e) };
     }
   }, []);

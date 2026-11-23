@@ -1077,6 +1077,145 @@ async fn read_only_session_refuses_writes_at_the_server() {
     );
 }
 
+/// The connect-time `READ ONLY` is only a session default, and one statement
+/// can change it. Each of these used to turn a read-only profile writable;
+/// the write after it must still be refused.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn read_only_session_cannot_be_switched_back_to_read_write() {
+    for flip in [
+        "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE",
+        "SET default_transaction_read_only = off",
+        "RESET ALL",
+        "SELECT set_config('default_transaction_read_only', 'off', false)",
+        "BEGIN READ WRITE",
+        "START TRANSACTION ISOLATION LEVEL READ COMMITTED, READ WRITE",
+    ] {
+        let mut cfg = test_config();
+        cfg.read_only = true;
+        let mut s = PostgresDriver
+            .connect_concrete_with_password(cfg, None)
+            .await
+            .expect("connect");
+        // The flip itself may be refused or may run; either way the write
+        // that follows must not.
+        let _ = s.execute(req(flip), &NullSink).await;
+        let write = s
+            .execute(req("CREATE TEMP TABLE tn_ro_flip (id int)"), &NullSink)
+            .await;
+        assert!(
+            write.is_err(),
+            "write succeeded after `{flip}` on a read-only session"
+        );
+        // And an open transaction can always be closed again.
+        s.execute(req("ROLLBACK"), &NullSink)
+            .await
+            .unwrap_or_else(|e| panic!("ROLLBACK refused after `{flip}`: {e:?}"));
+        s.execute(req("SELECT 1"), &NullSink)
+            .await
+            .unwrap_or_else(|e| panic!("reads broken after `{flip}`: {e:?}"));
+    }
+}
+
+/// A COMMIT that fails at a deferred constraint rolls the transaction back.
+/// The driver used to have cleared its flag *and* left the UI believing the
+/// transaction was open; afterwards it must agree with the server, and a new
+/// transaction must work.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn a_failed_commit_leaves_the_driver_agreeing_with_the_server() {
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    s.execute(
+        req("CREATE TEMP TABLE IF NOT EXISTS tn_parent (id int PRIMARY KEY)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    s.execute(
+        req("CREATE TEMP TABLE IF NOT EXISTS tn_child (p int REFERENCES tn_parent DEFERRABLE INITIALLY DEFERRED)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    s.begin(TransactionOptions::default()).await.unwrap();
+    s.execute(req("INSERT INTO tn_child VALUES (42)"), &NullSink)
+        .await
+        .unwrap();
+    assert!(
+        s.commit().await.is_err(),
+        "the deferred FK must fail at COMMIT"
+    );
+    assert!(
+        !s.server_in_transaction().await.unwrap(),
+        "the server rolled it back"
+    );
+    // Not wedged: a fresh transaction opens and commits.
+    s.begin(TransactionOptions::default())
+        .await
+        .expect("begin after a failed commit");
+    s.commit().await.expect("commit after a failed commit");
+}
+
+/// A bigint past 2^53 travels from the WebView as text and must bind to the
+/// int8 column exactly, so a WHERE on it matches the right row and only it.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn bigint_keys_past_2_pow_53_bind_exactly_as_text() {
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    // Divides by zero unless the bound key is exactly 2^53 + 1.
+    let mut r = req("SELECT 1 / (CASE WHEN 9007199254740993::int8 = $1 THEN 1 ELSE 0 END)");
+    r.params = vec![tuplenest_driver_api::ParamValue::Text(
+        "9007199254740993".into(),
+    )];
+    s.execute(r, &NullSink)
+        .await
+        .expect("text 9007199254740993 must bind to int8 exactly");
+    let mut r = req("SELECT 1 WHERE 1::int2 = $1");
+    r.params = vec![tuplenest_driver_api::ParamValue::Int(65_537)];
+    assert!(
+        s.execute(r, &NullSink).await.is_err(),
+        "65537 must not bind to smallint as 1"
+    );
+}
+
+/// A `BEGIN` typed in the editor goes through `execute`, which the driver's
+/// own transaction flag never sees. The import and row edits ask the server
+/// instead; this is what they ask.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn server_in_transaction_sees_a_typed_begin() {
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    assert!(
+        !s.server_in_transaction().await.unwrap(),
+        "no transaction yet"
+    );
+    s.execute(req("BEGIN"), &NullSink).await.unwrap();
+    assert!(
+        s.server_in_transaction().await.unwrap(),
+        "typed BEGIN must count"
+    );
+    // An aborted transaction is still open until it is rolled back.
+    let _ = s.execute(req("SELECT 1/0"), &NullSink).await;
+    assert!(
+        s.server_in_transaction().await.unwrap(),
+        "aborted transaction is still open"
+    );
+    s.execute(req("ROLLBACK"), &NullSink).await.unwrap();
+    assert!(
+        !s.server_in_transaction().await.unwrap(),
+        "closed after ROLLBACK"
+    );
+}
+
 /// The same connection without the flag must be unaffected — otherwise the
 /// test above would pass for the wrong reason.
 #[tokio::test]

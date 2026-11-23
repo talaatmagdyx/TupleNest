@@ -32,8 +32,8 @@ a paid SLA.
 
 ## Supported versions
 
-Only the latest release. There is no back-porting branch — 0.1.0 is the first
-public version and the project is pre-1.0.
+Only the latest release. There is no back-porting branch; the project is
+pre-1.0.
 
 ## What we consider a vulnerability
 
@@ -43,6 +43,11 @@ Things we want to hear about:
   workspace, crash reports, IPC payloads, exported files, the WebView.
 - TLS or SSH host-key verification accepting something it should refuse.
   `verify-ca` / `verify-full` and pinned host keys are meant to fail closed.
+  `verify-ca` trusts only the CA file you give it, never the OS store.
+- A stored password reaching a server other than the one its profile names.
+  A secret reference is honoured only for its own profile's host, port,
+  database and user, or when it was typed this session.
+- A read-only profile executing a write.
 - A path from database *content* to code execution or to the filesystem — a
   malicious table name, column comment, or cell value that escapes the grid.
 - A Tauri command that does more than its name suggests, or a capability
@@ -57,7 +62,14 @@ Reporting these is not useful; they are documented decisions.
 - **The destructive-statement guard is best-effort.** It masks comments and
   strings before matching, but it is not a SQL parser, and `pg_query` will
   execute whatever the editor sends. It is a seatbelt light. Use a read-only
-  profile if you need enforcement — that one is the server's job.
+  profile if you need enforcement — PostgreSQL enforces it, and the driver
+  re-checks the transaction's mode before every statement. A database role
+  without write privileges is stronger still.
+- **An SSH tunnel's local port is reachable by other local processes** while
+  it is open, exactly like `ssh -L`: it listens on `127.0.0.1` on a random
+  port. It has to accept more than one connection (query cancellation dials
+  it separately). On a shared machine, anyone who can reach your loopback
+  interface can reach the database through it for that time.
 - **`RUSTSEC-2023-0071` (Marvin Attack)** is accepted, with reasoning in
   `deny.toml`. RSA private-key timing sidechannel via `russh`; no patched
   version exists. **Ed25519 SSH keys do not touch that code path — prefer

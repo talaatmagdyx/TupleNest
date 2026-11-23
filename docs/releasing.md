@@ -12,6 +12,23 @@ runner and opens a draft GitHub release with the installers attached:
 | `ubuntu-22.04` | `.deb`, `.rpm`, `.AppImage` |
 | `windows-latest` | `.msi`, `.exe` (NSIS) |
 
+### Every release raises the app version — betas included
+
+The updater installs only a version strictly newer than the one running, and it
+compares the **app** version (`tauri.conf.json`), not the tag. The beta label
+lives only in the tag, because WiX refuses pre-release suffixes in MSI
+versions. So bump the numeric version on every release, beta or not:
+
+| Tag | `version` in `Cargo.toml`, `tauri.conf.json`, `package.json` |
+| --- | --- |
+| `v0.1.1-beta.12` | `0.1.1` |
+| `v0.1.2-beta.13` | `0.1.2` |
+| `v0.2.0` (stable) | `0.2.0` |
+
+Betas 1–11 all shipped as `0.1.0`, which is why none of them ever offered an
+update to the next. Reusing a version means installed copies never see the
+release.
+
 A Tauri app cannot be usefully cross-compiled — Windows needs MSVC and WebView2,
 Linux needs webkit2gtk, macOS needs the Apple toolchain — so there is no script
 that builds all four from one machine, and there is no point writing one. The
@@ -27,7 +44,24 @@ older distros.
 | --- | --- | --- |
 | `TAURI_SIGNING_PRIVATE_KEY` | updater artifacts, every platform | the build fails **after** producing the installers |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | as above | the build fails at signing — the key is passphrase-protected, so this is **not** optional |
-| `APPLE_*` (see below) | notarizing the macOS builds | mac builds are ad-hoc signed; Gatekeeper warns |
+| `APPLE_*` (see below) | notarizing the macOS builds | mac builds are not Developer ID signed or notarized; Gatekeeper warns |
+
+### Keep the signing key behind an approval
+
+The build job runs in the `release` environment. Until it is configured, that
+changes nothing; configured, it is what stands between the updater key and
+any workflow run — a dispatch from an arbitrary branch, or a compromised npm
+package in the build:
+
+1. Settings → Environments → `release` → **Required reviewers**: yourself.
+2. **Deployment branches and tags**: selected, `v*` tags (and `main` if you
+   dispatch test builds from it).
+3. Move `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` and
+   the `APPLE_*` secrets from repository secrets into the environment's
+   secrets, so nothing outside it can read them.
+
+Every checkout sets `persist-credentials: false`, so the job's write token is
+not left in `.git/config` for the third-party code `npm ci` runs.
 
 Windows installers are unsigned unless you add an Authenticode certificate, so
 SmartScreen shows "Windows protected your PC" and an unknown publisher.

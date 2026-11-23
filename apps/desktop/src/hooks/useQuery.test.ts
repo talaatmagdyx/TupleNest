@@ -283,3 +283,48 @@ describe("isConnectionLost", () => {
     expect(isConnectionLost("hint: Connection lost: is a prefix, not a substring")).toBe(false);
   });
 });
+
+describe("useQuery — one query at a time, and never a stale one", () => {
+  /** A pg_query that stays pending until `finish` is called. */
+  const pending = () => {
+    let finish!: (r: QueryResult) => void;
+    invokeMock.mockReturnValueOnce(new Promise<QueryResult>((r) => (finish = r)) as never);
+    return (r: QueryResult) => finish(r);
+  };
+
+  it("refuses a second run while one is in flight", async () => {
+    // Cmd+Enter during a query used to start a second pg_query; whichever
+    // finished last won, and the first one's finish cleared the spinner.
+    const { result } = renderHook(() => useQuery());
+    const finish = pending();
+    let first!: Promise<unknown>;
+    act(() => void (first = result.current.run("select 1", dev)));
+    let second;
+    await act(async () => void (second = await result.current.run("select 2", dev)));
+    expect(second).toEqual({ kind: "blocked", reason: "busy" });
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      finish(res());
+      await first;
+    });
+    expect(result.current.running).toBe(false);
+  });
+
+  it("drops a result that arrives after reset (disconnect or switch)", async () => {
+    // The old session's late result used to be painted under the new
+    // connection's name.
+    const { result } = renderHook(() => useQuery());
+    const finish = pending();
+    let first!: Promise<unknown>;
+    act(() => void (first = result.current.run("select 1", dev)));
+    act(() => result.current.reset());
+    let out;
+    await act(async () => {
+      finish(res({ totalRows: 99 }));
+      out = await first;
+    });
+    expect(out).toEqual({ kind: "blocked", reason: "stale" });
+    expect(result.current.result).toBeNull();
+    expect(result.current.running).toBe(false);
+  });
+});

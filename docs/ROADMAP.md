@@ -1,5 +1,13 @@
 # TupleNest Roadmap
 
+**Where things stand (v0.1.1, beta).** Phases 0 and 1 are done. Several later
+items shipped early, for PostgreSQL only: the CSV import wizard, ER diagrams,
+snippets, the formatter, query parameters, find-usages, plan and schema
+comparison (phases 2–3), charts (4), and the activity monitor and production
+audit log (6). Nothing else from phases 2–9 has started — in particular there
+is no second database engine yet. The table below is the long-range plan, not
+a list of what exists.
+
 | Phase | Theme | Outcome |
 |---|---|---|
 | **0** | Product & technical foundation | Cross-platform Tauri shell, Rust workspace, command/tab/pane system, settings, themes, SQLite store, keychain, capability model, logging, crash handling, update foundation, driver API, PostgreSQL connect/stream/cancel PoC. → [phase-0-plan.md](phase-0-plan.md) |

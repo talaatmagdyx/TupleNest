@@ -139,7 +139,7 @@ describe("useRowEdits — applying on its own", () => {
     stage(result, edit());
     const out = await apply(result);
     expect(out).toEqual({ kind: "applied", count: 1 });
-    expect(cmds()).toEqual(["pg_begin", "pg_query", "pg_commit"]);
+    expect(cmds()).toEqual(["pg_in_transaction", "pg_begin", "pg_query", "pg_commit"]);
   });
 
   it("sends the values as parameters, not as SQL text", async () => {
@@ -278,6 +278,22 @@ describe("useRowEdits — joining the user's transaction", () => {
     const out = await apply(result, true);
     expect(out).toEqual({ kind: "staged", count: 1 });
     expect(cmds()).not.toContain("pg_begin");
+  });
+
+  it("joins a transaction the user typed BEGIN for, even though inTx is false", async () => {
+    // inTx only follows the Begin button. Here the server says a transaction
+    // is open; committing it would commit the user's own unrelated work.
+    const { result } = renderHook(() => useRowEdits(0));
+    stage(result, edit());
+    invokeMock.mockImplementation(async (c: string) => {
+      if (c === "pg_in_transaction") return true as never;
+      return { rowsAffected: 1 } as never;
+    });
+    const out = await apply(result, false);
+    expect(out).toEqual({ kind: "staged", count: 1 });
+    expect(cmds()).not.toContain("pg_begin");
+    expect(cmds()).not.toContain("pg_commit");
+    expect(sqls()[0]).toBe("SAVEPOINT tuplenest_edit");
   });
 
   it("brackets its writes in a savepoint so a failure cannot half-apply", async () => {

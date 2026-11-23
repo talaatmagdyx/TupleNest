@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { QueryResult } from "../ipc/types";
 import { needsGuard, paramCount } from "../lib/sql";
@@ -31,7 +31,7 @@ export type RunStatus = { icon: string; text: string; color: string };
  * is told what is needed rather than being asked to guess from state.
  */
 export type RunOutcome =
-  | { kind: "blocked"; reason: "empty" | "disconnected" }
+  | { kind: "blocked"; reason: "empty" | "disconnected" | "busy" | "stale" }
   | { kind: "needs-guard" }
   | { kind: "needs-params"; count: number }
   | { kind: "ok"; result: QueryResult }
@@ -80,7 +80,18 @@ export function useQuery(): Query {
   const [epoch, setEpoch] = useState(0);
   const [status, setStatus] = useState<RunStatus | null>(null);
 
+  /** One query at a time: the backend has one session and one result store. */
+  const busy = useRef(false);
+  /** Bumped by every run and by reset(); a response for an older token is
+   *  dropped rather than painted over whatever is current now. */
+  const token = useRef(0);
+
   const reset = useCallback(() => {
+    // Disconnect or a connection switch: whatever is still in flight belongs
+    // to the old session and must not land under the new one's name.
+    token.current += 1;
+    busy.current = false;
+    setRunning(false);
     setResult(null);
     setLastError(null);
     setStatus(null);
@@ -97,10 +108,18 @@ export function useQuery(): Query {
     const pc = paramCount(sql);
     if (pc > 0 && opts.params === undefined) return { kind: "needs-params", count: pc };
 
+    // Cmd+Enter used to start a second pg_query alongside the first: the
+    // later response won, and the first one's finish cleared the spinner
+    // while the second was still running.
+    if (busy.current) return { kind: "blocked", reason: "busy" };
+    busy.current = true;
+    const mine = ++token.current;
+
     setRunning(true);
     setStatus(null);
     try {
       const r = await invoke<QueryResult>("pg_query", { sql, params: opts.params ?? null });
+      if (mine !== token.current) return { kind: "blocked", reason: "stale" };
       setResult(r);
       setRanSql(sql);
       setLastError(null);
@@ -108,6 +127,7 @@ export function useQuery(): Query {
       setStatus({ icon: "✓", text: statusText(r), color: "var(--tn-success)" });
       return { kind: "ok", result: r };
     } catch (e) {
+      if (mine !== token.current) return { kind: "blocked", reason: "stale" };
       const message = String(e);
       // A failed run must not leave the previous result on screen next to an
       // error — that reads as "this is what your query returned".
@@ -119,7 +139,10 @@ export function useQuery(): Query {
       setStatus({ icon: "✕", text: firstLine(message), color: "var(--tn-danger)" });
       return { kind: "error", message, connectionLost: isConnectionLost(message) };
     } finally {
-      setRunning(false);
+      if (mine === token.current) {
+        busy.current = false;
+        setRunning(false);
+      }
     }
   }, []);
 

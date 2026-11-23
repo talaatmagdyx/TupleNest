@@ -1,10 +1,14 @@
 import { useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { serverInTransaction } from "../lib/tx";
+import { Overlay } from "./Overlays";
 import type { QueryResult } from "../ipc/types";
 import {
+  batchRows,
   buildCreateTable,
   buildInsert,
   CsvStreamParser,
+  displayCell,
   inferTypes,
   normalizeHeader,
   type CsvTable,
@@ -58,6 +62,8 @@ type Props = {
 
 const TYPES: InferredType[] = ["int8", "numeric", "boolean", "timestamptz", "date", "text"];
 const BATCH = 500;
+/** Brackets an import inside the user's own transaction. */
+const SAVEPOINT = "tuplenest_import";
 const PREVIEW_ROWS = 8;
 /** Rows read up front, to show a preview and infer types. Deliberately small:
  *  the point of streaming is never to hold the file, and `inferTypes` samples
@@ -151,15 +157,21 @@ export default function ImportModal(p: Props) {
     setProgress(0);
     setInserted(0);
     cancelRef.current = false;
-    const joinExisting = p.inTx;
+    // `inTx` misses a BEGIN typed in the editor; the server does not.
+    const joinExisting = p.inTx || (await serverInTransaction());
     let count = 0;
     try {
-      if (!joinExisting) await invoke("pg_begin");
+      // Inside the user's transaction we must not BEGIN, COMMIT or ROLLBACK:
+      // that would decide the fate of their work. A savepoint lets a cancel or
+      // a failure undo the import — table and rows — and nothing of theirs.
+      if (joinExisting) await invoke("pg_query", { sql: `SAVEPOINT ${SAVEPOINT}`, params: [] });
+      else await invoke("pg_begin");
       await invoke<QueryResult>("pg_query", { sql: createSql, params: null });
 
       // The file is read again rather than kept from the preview: that is the
       // point. At most BATCH rows are held at once, so peak memory is set by
       // the batch size, not the file size.
+      const batchSize = batchRows(columns.length, BATCH);
       let pending: string[][] = [];
       let isHeader = true;
       const flush = async () => {
@@ -178,26 +190,31 @@ export default function ImportModal(p: Props) {
             continue;
           }
           pending.push(r);
-          if (pending.length >= BATCH) await flush();
+          if (pending.length >= batchSize) await flush();
         }
         setProgress(file.size ? Math.min(100, (bytes / file.size) * 100) : 0);
         return !cancelRef.current;
       });
+      // A cancel must not write the batch still pending.
+      if (cancelRef.current) throw new Error("Import cancelled — nothing was written.");
       await flush();
 
-      if (cancelRef.current) throw new Error("Import cancelled — nothing was written.");
-
-      if (!joinExisting) await invoke("pg_commit");
+      if (joinExisting) await invoke("pg_query", { sql: `RELEASE SAVEPOINT ${SAVEPOINT}`, params: [] });
+      else await invoke("pg_commit");
       p.onDone(`Imported ${count.toLocaleString()} rows into ${schema}.${target}`);
       p.onClose();
     } catch (e) {
       setError(String(e));
-      if (!joinExisting) {
-        try {
+      try {
+        if (joinExisting) {
+          // Undo the import and only the import; their transaction stays usable.
+          await invoke("pg_query", { sql: `ROLLBACK TO SAVEPOINT ${SAVEPOINT}`, params: [] });
+          await invoke("pg_query", { sql: `RELEASE SAVEPOINT ${SAVEPOINT}`, params: [] });
+        } else {
           await invoke("pg_rollback");
-        } catch {
-          /* session may be gone; the original error is what matters */
         }
+      } catch {
+        /* session may be gone; the original error is what matters */
       }
     } finally {
       setBusy(false);
@@ -207,7 +224,10 @@ export default function ImportModal(p: Props) {
   const isProd = p.env === "prod";
 
   return (
-    <div className="overlay center" onClick={busy ? undefined : p.onClose}>
+    // The shared Overlay: focus trap, role="dialog", and an Escape that stops
+    // here — the global Escape handler used to close this mid-import and leave
+    // the import running with no UI. While busy, closing is refused outright.
+    <Overlay center label="Import CSV" onClose={busy ? () => {} : p.onClose}>
       <div className="modal import" onClick={(e) => e.stopPropagation()}>
         {/* Fourth copy of ModalHead in this codebase; all four had lost the
             close button's accessible label. This one also has to refuse to
@@ -301,8 +321,8 @@ export default function ImportModal(p: Props) {
               <div className="imp-cols">
                 {names.map((n, i) => (
                   <div key={i} className="imp-col">
-                    <span className="imp-src" title={table.header[i]}>
-                      {table.header[i]}
+                    <span className="imp-src" title={displayCell(table.header[i])}>
+                      {displayCell(table.header[i])}
                     </span>
                     <input
                       className="intel-input"
@@ -340,7 +360,7 @@ export default function ImportModal(p: Props) {
                     {table.rows.slice(0, PREVIEW_ROWS).map((r, i) => (
                       <tr key={i}>
                         {names.map((_, j) => (
-                          <td key={j}>{r[j] ?? ""}</td>
+                          <td key={j}>{displayCell(r[j])}</td>
                         ))}
                       </tr>
                     ))}
@@ -391,6 +411,6 @@ export default function ImportModal(p: Props) {
           </div>
         )}
       </div>
-    </div>
+    </Overlay>
   );
 }

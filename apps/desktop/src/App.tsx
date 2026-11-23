@@ -63,7 +63,7 @@ import { suggestName, useSnippets } from "./hooks/useSnippets";
 import HealthModal, { type HealthTab } from "./overlays/HealthModal";
 import SearchModal from "./overlays/SearchModal";
 import PartitionsModal from "./overlays/PartitionsModal";
-import { analyzeEditability } from "./lib/dml";
+import { analyzeEditability, qualifiedName } from "./lib/dml";
 import EditReviewModal from "./overlays/EditReviewModal";
 import SchemaModal, { type SchemaExtra } from "./overlays/SchemaModal";
 import MonitorModal from "./overlays/MonitorModal";
@@ -202,6 +202,8 @@ export default function App() {
   const copyable = useRef<string | null>(null);
   const [guardSql, setGuardSql] = useState<string | null>(null);
   const [paramValues, setParamValues] = useState<string[]>([]);
+  /** The statement the parameter prompt is binding values for. */
+  const [paramSql, setParamSql] = useState<string | null>(null);
   const [connLostDetail, setConnLostDetail] = useState("");
   const [rowsInfo, setRowsInfo] = useState("");
   const [chart, setChart] = useState<{ title: string; sub: string; data: ChartDatum[] } | null>(null);
@@ -249,6 +251,10 @@ export default function App() {
 
   const { items: snippets, refresh: refreshSnippets, save: saveSnippetRecord } = useSnippets();
 
+  /** True while an export pages rows out of the backend's single result
+   *  store. Anything that runs SQL would replace that store mid-export and
+   *  the file would get the old header over the new query's rows. */
+  const exportingRef = useRef(false);
   const showToast = useCallback((t: string) => {
     setToast(t);
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -678,7 +684,7 @@ export default function App() {
 
   const insertSelect = useCallback(
     (schema: string, name: string) => {
-      setActiveSql(`select * from "${schema}"."${name}" limit 100`);
+      setActiveSql(`select * from ${qualifiedName(schema, name)} limit 100`);
       showToast(`Inserted select for ${schema}.${name}`);
     },
     [setActiveSql, showToast]
@@ -754,8 +760,15 @@ export default function App() {
   const currentSql = tabs[activeTab]?.sql ?? "";
 
   const doRun = useCallback(
-    async (force = false, boundParams?: unknown[]) => {
-      const sql = tabs[activeTab]?.sql ?? "";
+    async (force = false, boundParams?: unknown[], sqlOverride?: string) => {
+      if (exportingRef.current) {
+        showToast("Wait for the export to finish — it is still reading this result");
+        return;
+      }
+      // `sqlOverride` runs a specific statement (the guarded one, or the one
+      // behind the grid) instead of whatever the editor holds right now.
+      const editorSql = tabs[activeTab]?.sql ?? "";
+      const sql = sqlOverride ?? editorSql;
       if (!connected) return;
       // The hook decides what is needed and reports back; App owns the
       // overlays, so nothing here has to re-derive that from state.
@@ -766,6 +779,7 @@ export default function App() {
         return;
       }
       if (out.kind === "needs-params") {
+        setParamSql(sql);
         setParamValues(Array(out.count).fill(""));
         setOverlay("params");
         return;
@@ -776,7 +790,7 @@ export default function App() {
       if (out.kind === "ok") {
         setResultTab("results");
         // The tab matches what the server just ran, so it is no longer dirty.
-        setTabs((ts) => {
+        if (sql === editorSql) setTabs((ts) => {
           const o = [...ts];
           if (o[activeTab]) o[activeTab] = { ...o[activeTab], dirty: false };
           return o;
@@ -789,7 +803,7 @@ export default function App() {
       }
       void refreshHistory();
     },
-    [tabs, activeTab, connected, connectedEnv, query, tx, setTabs, refreshHistory, session]
+    [tabs, activeTab, connected, connectedEnv, query, tx, setTabs, refreshHistory, session, showToast]
   );
 
   /* ---------------- safe row editing ---------------- */
@@ -826,8 +840,10 @@ export default function App() {
     // Re-read so the grid shows what is actually stored. Only safe once the
     // commit has landed: re-reading inside the user's open transaction would
     // show uncommitted rows as though they were.
-    void doRun(true);
-  }, [applyRowEdits, editTarget, inTx, doRun, refreshHistory, showToast]);
+    // Re-run the statement behind the grid, not the editor's current text,
+    // and never with `force`: the editor may hold something else by now.
+    void doRun(false, undefined, ranSql);
+  }, [applyRowEdits, editTarget, inTx, doRun, ranSql, refreshHistory, showToast]);
 
   const doCancel = useCallback(async () => {
     try {
@@ -946,6 +962,11 @@ export default function App() {
    */
   const runExplain = useCallback(
     async (override?: unknown) => {
+      // EXPLAIN replaces the backend row store too (see below).
+      if (exportingRef.current) {
+        showToast("Wait for the export to finish — it is still reading this result");
+        return;
+      }
       const title = tabs[activeTab]?.name ?? "query";
       const out = await runExplainRaw({
         sql: tabs[activeTab]?.sql ?? "",
@@ -967,7 +988,7 @@ export default function App() {
         );
       }
     },
-    [tabs, activeTab, connected, runExplainRaw, query, catalog],
+    [tabs, activeTab, connected, runExplainRaw, query, catalog, showToast],
   );
 
   /** Everything the exporters need from the current plan. */
@@ -1054,6 +1075,7 @@ export default function App() {
       let written = 0;
       cancelExport.current = false;
       setExportRun({ written: 0, total });
+      exportingRef.current = true;
       try {
         await writeChunk(exportPrefix(kind, result.columns, mode));
         // pg_rows serves at most 1000 per call, so that is the page size.
@@ -1082,6 +1104,7 @@ export default function App() {
         await abortSave().catch(() => {});
         showToast(`Export failed: ${String(e).slice(0, 60)}`);
       } finally {
+        exportingRef.current = false;
         setExportRun(null);
       }
     },
@@ -1640,7 +1663,7 @@ export default function App() {
         buildLabel={buildLabel()}
       />
 
-      {toast && <div className="toast">{toast}</div>}
+      {toast && <div className="toast" role="status" aria-live="polite">{toast}</div>}
 
       {/* A running export gets its own persistent strip rather than the toast:
           it lasts longer than a toast should, and it needs a way out. */}
@@ -1843,9 +1866,11 @@ export default function App() {
             setOverlay(null);
           }}
           onRun={() => {
+            const confirmed = guardSql;
             setGuardSql(null);
             setOverlay(null);
-            void doRun(true);
+            // Run exactly what the user confirmed, not the editor's text.
+            void doRun(true, undefined, confirmed);
           }}
         />
       )}
@@ -1876,7 +1901,9 @@ export default function App() {
           onChange={(i, v) => setParamValues((vs) => vs.map((x, j) => (j === i ? v : x)))}
           onRun={() => {
             setOverlay(null);
-            void doRun(true, paramValues.map(coerceParam));
+            // Bind to the statement the prompt was opened for. The guard has
+            // already been answered for it, which is why `force` is safe here.
+            void doRun(true, paramValues.map(coerceParam), paramSql ?? undefined);
           }}
           onCancel={() => setOverlay(null)}
         />

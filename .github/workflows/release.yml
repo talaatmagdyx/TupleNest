@@ -36,6 +36,11 @@ jobs:
 
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.platform }}
+    # The signing key is reachable from this job. Holding it in the `release`
+    # environment lets the repo require an approval (Settings → Environments →
+    # release → Required reviewers) before any run — a dispatch from any
+    # branch included — can see it. See docs/releasing.md.
+    environment: release
 
     # The `secrets` context cannot be read from a step-level `if:`, so the
     # "does this secret exist" question is answered once here and the steps
@@ -47,6 +52,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -160,13 +167,20 @@ jobs:
       # `secrets` context is not available in a step-level `if:`.
       - name: Apple signing — only when a certificate actually exists
         if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
+        # Secrets arrive as environment variables, never interpolated into the
+        # script text: `${{ secrets.X }}` inside `run:` is pasted into the
+        # shell source before it runs, the expression-injection pattern.
+        env:
+          S_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          S_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          S_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           {
             echo "APPLE_CERTIFICATE<<__TN_EOF__"
-            echo "${{ secrets.APPLE_CERTIFICATE }}"
+            echo "$S_APPLE_CERTIFICATE"
             echo "__TN_EOF__"
-            echo "APPLE_CERTIFICATE_PASSWORD=${{ secrets.APPLE_CERTIFICATE_PASSWORD }}"
-            echo "APPLE_SIGNING_IDENTITY=${{ secrets.APPLE_SIGNING_IDENTITY }}"
+            echo "APPLE_CERTIFICATE_PASSWORD=$S_APPLE_CERTIFICATE_PASSWORD"
+            echo "APPLE_SIGNING_IDENTITY=$S_APPLE_SIGNING_IDENTITY"
           } >> "$GITHUB_ENV"
           echo "Apple certificate present — bundles will be Developer ID signed."
 
@@ -175,11 +189,15 @@ jobs:
       # rather than skipping.
       - name: Apple notarization — only when the Apple ID exists too
         if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true' && env.HAS_APPLE_ID == 'true'
+        env:
+          S_APPLE_ID: ${{ secrets.APPLE_ID }}
+          S_APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          S_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           {
-            echo "APPLE_ID=${{ secrets.APPLE_ID }}"
-            echo "APPLE_PASSWORD=${{ secrets.APPLE_PASSWORD }}"
-            echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}"
+            echo "APPLE_ID=$S_APPLE_ID"
+            echo "APPLE_PASSWORD=$S_APPLE_PASSWORD"
+            echo "APPLE_TEAM_ID=$S_APPLE_TEAM_ID"
           } >> "$GITHUB_ENV"
           echo "Apple ID present — bundles will be notarized and stapled."
 
@@ -192,16 +210,16 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # APPLE_* deliberately absent here — see the two steps above. Without
-          # an Apple Developer account the macOS bundles are ad-hoc signed and
-          # Gatekeeper warns on first launch; that is the documented, tested
-          # state, and now actually the behaviour.
+          # an Apple Developer account the macOS bundles are not Developer ID
+          # signed or notarized, and Gatekeeper warns on first launch.
         with:
           projectPath: apps/desktop
           args: --target ${{ matrix.target }}
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-dev', github.run_number) }}
           releaseName: TupleNest ${{ github.ref_type == 'tag' && github.ref_name || 'dev build' }}
           releaseBody: |
-            See the assets below. Every platform is built on its own runner.
+            See the assets below, and CHANGELOG.md for what changed. Every
+            platform is built in CI from the tagged commit.
 
             The macOS builds are not notarized unless an Apple Developer
             certificate is configured, so the first launch needs Gatekeeper
@@ -250,6 +268,8 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Collect the release artifacts
         env:

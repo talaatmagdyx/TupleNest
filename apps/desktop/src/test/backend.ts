@@ -129,6 +129,7 @@ const defaults = (): Record<string, (args: Record<string, unknown>) => unknown> 
   pg_connect: () => undefined,
   pg_disconnect: () => undefined,
   pg_begin: () => undefined,
+  pg_in_transaction: () => false,
   pg_commit: () => undefined,
   pg_rollback: () => undefined,
   pg_cancel: () => undefined,

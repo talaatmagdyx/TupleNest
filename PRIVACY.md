@@ -1,9 +1,11 @@
 # Privacy
 
-**Nothing you do in TupleNest leaves your computer.** There is no account, no
-sign-in, no analytics endpoint, and no server run by this project. The app
-talks to two things: the databases you point it at, and — once, at startup —
-GitHub, to ask whether a newer release exists.
+**Nothing you do in TupleNest leaves your computer, except to the databases you
+connect to and one update check.** There is no account, no sign-in, no
+analytics endpoint, and no server run by this project. The app talks to two
+things: the databases you point it at, and — once, at startup — GitHub, to ask
+whether a newer release exists. That check sends no data about you or your
+work, and it currently cannot be turned off.
 
 This document says where things are kept so you can go and look, or delete
 them.

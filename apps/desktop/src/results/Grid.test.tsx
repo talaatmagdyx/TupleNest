@@ -315,6 +315,14 @@ describe("Grid — keyboard and screen readers", () => {
     expect(screen.getAllByRole("columnheader")[1]).toHaveAttribute("aria-sort", "ascending");
   });
 
+  it("sorts from the keyboard as well as the mouse", async () => {
+    await gridRows();
+    const head = screen.getAllByRole("columnheader")[1];
+    head.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(screen.getAllByRole("columnheader")[1]).toHaveAttribute("aria-sort", "ascending");
+  });
+
   it("has exactly one tab stop, not one per cell", async () => {
     // A 100,000-row result would otherwise be 100,000 tab stops.
     await gridRows();

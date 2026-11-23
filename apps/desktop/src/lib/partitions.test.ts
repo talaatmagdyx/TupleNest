@@ -134,3 +134,11 @@ describe("sql generation", () => {
     expect(dropPartitionSql("s", "p", 5)).toContain("Detach it first");
   });
 });
+
+describe("generated partition DDL quotes identifiers", () => {
+  it("escapes a double quote in a table name instead of breaking out", () => {
+    // A name like a"b used to produce "a"b", which is broken SQL.
+    expect(dropPartitionSql("public", 'a"b', 0)).toContain('DROP TABLE "public"."a""b";');
+    expect(detachSql("s", 'p"1', "parent")).toContain('DETACH PARTITION "s"."p""1"');
+  });
+});

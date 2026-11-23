@@ -1,4 +1,5 @@
 import type { PartitionRow } from "../ipc/types";
+import { qualifiedName as q } from "./dml";
 
 /** One RANGE partition's parsed bounds. `raw` is kept so the UI can always
  *  fall back to showing exactly what Postgres said. */
@@ -60,8 +61,8 @@ export function createPartitionSql(
   suffix: string,
 ): string {
   return (
-    `CREATE TABLE "${schema}"."${parent}_${suffix}"\n` +
-    `  PARTITION OF "${schema}"."${parent}"\n` +
+    `CREATE TABLE ${q(schema, `${parent}_${suffix}`)}\n` +
+    `  PARTITION OF ${q(schema, parent)}\n` +
     `  FOR VALUES FROM (${g.from}) TO (${g.to});`
   );
 }
@@ -73,7 +74,7 @@ export function detachSql(schema: string, part: string, parent: string): string 
     `-- Detach keeps the data as a standalone table. Reversible with ATTACH.\n` +
     `-- CONCURRENTLY avoids a long ACCESS EXCLUSIVE lock, and cannot run\n` +
     `-- inside a transaction block.\n` +
-    `ALTER TABLE "${schema}"."${parent}" DETACH PARTITION "${schema}"."${part}" CONCURRENTLY;`
+    `ALTER TABLE ${q(schema, parent)} DETACH PARTITION ${q(schema, part)} CONCURRENTLY;`
   );
 }
 
@@ -82,6 +83,6 @@ export function dropPartitionSql(schema: string, part: string, rows: number): st
     `-- DESTRUCTIVE: this deletes the partition and every row in it` +
     (rows > 0 ? ` (~${rows.toLocaleString()} rows).` : ".") +
     `\n-- Detach it first if you may want the data back.\n` +
-    `DROP TABLE "${schema}"."${part}";`
+    `DROP TABLE ${q(schema, part)};`
   );
 }

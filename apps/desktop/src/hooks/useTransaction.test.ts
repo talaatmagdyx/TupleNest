@@ -9,7 +9,9 @@ const invokeMock = vi.mocked(invoke);
 const OWNER = { tabId: "t1", tabName: "a.sql" };
 beforeEach(() => {
   invokeMock.mockReset();
-  invokeMock.mockResolvedValue(undefined);
+  // After a failed COMMIT/ROLLBACK the hook asks the server whether the
+  // transaction survived. By default it did (e.g. the connection dropped).
+  invokeMock.mockImplementation(async (c: string) => (c === "pg_in_transaction" ? true : undefined) as never);
 });
 afterEach(() => vi.useRealTimers());
 
@@ -78,6 +80,21 @@ describe("useTransaction — commit", () => {
     expect(out).toMatchObject({ ok: false, message: expect.stringContaining("serialize") });
     expect(result.current.inTx).toBe(true);
     expect(result.current.openSince).not.toBeNull();
+  });
+
+  it("clears the flag when the server says the failed COMMIT ended the transaction", async () => {
+    // The usual case: a deferred constraint or serialization failure at
+    // COMMIT rolls the transaction back. Showing it as still open left Commit
+    // and Rollback both failing with "No open transaction".
+    const { result } = renderHook(() => useTransaction());
+    await open(result);
+    invokeMock.mockImplementation(async (c: string) => (c === "pg_in_transaction" ? false : undefined) as never);
+    failOnce("violates foreign key constraint");
+    let out;
+    await act(async () => void (out = await result.current.commit()));
+    expect(out).toMatchObject({ ok: false });
+    expect(result.current.inTx).toBe(false);
+    expect(result.current.owner).toBeNull();
   });
 
   it("can be retried after a failure", async () => {

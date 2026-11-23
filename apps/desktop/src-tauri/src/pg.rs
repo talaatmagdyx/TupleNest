@@ -130,6 +130,9 @@ pub struct PgState {
     cache: StdMutex<tuplenest_metadata_cache::MetadataCache>,
     /// Cache key of the currently connected session.
     cache_key: StdMutex<Option<String>>,
+    /// Secret refs written by `pg_secret_save` in this app session — the
+    /// password the user just typed into the form. See `authorize_secret`.
+    fresh_secrets: StdMutex<std::collections::HashSet<String>>,
     /// Last query's rows, held backend-side for windowed paging.
     result: StdMutex<Option<StoredResult>>,
     /// Environment tag of the connected profile (prod → history text off).
@@ -139,12 +142,30 @@ pub struct PgState {
 }
 
 impl PgState {
+    /// Drops cached metadata for a database nothing points at any more.
+    /// `invalidate` existed and was never called, so the cache kept every
+    /// schema of every profile ever deleted.
+    /// Was this secret ref written by `pg_secret_save` in this app session?
+    pub fn is_fresh_secret(&self, key: &str) -> bool {
+        self.fresh_secrets
+            .lock()
+            .map(|s| s.contains(key))
+            .unwrap_or(false)
+    }
+
+    pub fn forget_cached_metadata(&self, key: &str) {
+        if let Ok(cache) = self.cache.lock() {
+            let _ = cache.invalidate(key);
+        }
+    }
+
     pub fn new(cache: tuplenest_metadata_cache::MetadataCache) -> Self {
         Self {
             session: AsyncMutex::new(None),
             cancel: StdMutex::new(None),
             cache: StdMutex::new(cache),
             cache_key: StdMutex::new(None),
+            fresh_secrets: StdMutex::new(Default::default()),
             result: StdMutex::new(None),
             connected_env: StdMutex::new(None),
             tunnel: StdMutex::new(None),
@@ -154,7 +175,62 @@ impl PgState {
 
 /// Stable, secret-free cache identity for a connection target.
 fn cache_key_of(p: &PgParams) -> String {
-    format!("{}@{}:{}/{}", p.username, p.host, p.port, p.database)
+    cache_key(&p.username, &p.host, p.port, &p.database)
+}
+
+/// The metadata cache's key for one database as one user.
+pub fn cache_key(username: &str, host: &str, port: u16, database: &str) -> String {
+    format!("{username}@{host}:{port}/{database}")
+}
+
+/*
+ * May these parameters use this stored secret?
+ *
+ * The WebView names the secret by reference and also names the host, so a
+ * compromised WebView could send a production profile's ref with
+ * `host: "attacker"`, `tlsMode: "disabled"` — and a server asking for
+ * cleartext auth would receive the password. The ref is honoured only when:
+ *  - it was written in this app session (the password the user just typed
+ *    into this form), or
+ *  - it belongs to a saved profile for the same host, port, database and
+ *    user — that profile's own connection.
+ * Editing a saved profile's host without re-entering its password therefore
+ * asks for the password again, which is exactly the case being prevented.
+ */
+fn authorize_secret(
+    app: &crate::AppState,
+    state: &PgState,
+    params: &PgParams,
+) -> Result<(), String> {
+    let Some(key) = params.secret_ref.as_deref() else {
+        return Ok(());
+    };
+    if state
+        .fresh_secrets
+        .lock()
+        .map_err(|_| "secret lock poisoned")?
+        .contains(key)
+    {
+        return Ok(());
+    }
+    let profiles = app
+        .store
+        .lock()
+        .map_err(|_| "store lock poisoned")?
+        .connection_list()
+        .map_err(|e| e.to_string())?;
+    let owned = profiles.iter().any(|r| {
+        r.secret_ref.as_deref() == Some(key)
+            && r.host == params.host
+            && r.port == params.port
+            && r.database == params.database
+            && r.username == params.username
+    });
+    if owned {
+        Ok(())
+    } else {
+        Err("The saved password belongs to a different server or user. Enter the password again to use it here.".into())
+    }
 }
 
 fn resolve_password(secret_ref: &Option<String>) -> Result<Option<Secret>, String> {
@@ -322,7 +398,45 @@ mod err_to_string_tests {
 /// Stores a password in the OS keychain; returns the opaque reference key.
 /// This is the ONLY command that ever sees a secret, and it does not log it.
 #[tauri::command]
-pub fn pg_secret_save(password: String, reuse_ref: Option<String>) -> Result<String, String> {
+pub fn pg_secret_save(
+    app: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, PgState>,
+    password: String,
+    reuse_ref: Option<String>,
+) -> Result<String, String> {
+    // Overwriting is limited to refs this app wrote: one minted this session,
+    // or a saved profile's own. Any other key in the service was a free
+    // overwrite for whatever could call this command.
+    if let Some(k) = reuse_ref.as_deref().filter(|k| !k.is_empty()) {
+        let fresh = state
+            .fresh_secrets
+            .lock()
+            .map_err(|_| "secret lock poisoned")?
+            .contains(k);
+        let saved = || -> Result<bool, String> {
+            Ok(app
+                .store
+                .lock()
+                .map_err(|_| "store lock poisoned")?
+                .connection_list()
+                .map_err(|e| e.to_string())?
+                .iter()
+                .any(|r| r.secret_ref.as_deref() == Some(k)))
+        };
+        if !fresh && !saved()? {
+            return Err("Unknown secret reference".into());
+        }
+    }
+    let key = save_secret(password, reuse_ref)?;
+    state
+        .fresh_secrets
+        .lock()
+        .map_err(|_| "secret lock poisoned")?
+        .insert(key.clone());
+    Ok(key)
+}
+
+fn save_secret(password: String, reuse_ref: Option<String>) -> Result<String, String> {
     let store = KeychainStore::new();
     // Reuse the ref the form already holds instead of minting a new keychain
     // entry every time. Previously each Test/connect of a typed password
@@ -376,7 +490,12 @@ fn stage_out(s: tuplenest_driver_api::TestStage) -> TestStageOut {
 /// failure. With SSH configured the network probe targets the SSH host and
 /// the driver connects through a temporary tunnel.
 #[tauri::command]
-pub async fn pg_test(params: PgParams) -> Result<TestReportOut, String> {
+pub async fn pg_test(
+    app: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, PgState>,
+    params: PgParams,
+) -> Result<TestReportOut, String> {
+    authorize_secret(&app, &state, &params)?;
     let (probe_host, probe_port) = match &params.ssh {
         Some(ssh) => (ssh.host.clone(), ssh.port),
         None => (params.host.clone(), params.port),
@@ -429,7 +548,12 @@ pub async fn pg_test(params: PgParams) -> Result<TestReportOut, String> {
         Some(t) => params.to_config_endpoint("127.0.0.1", t.local_port())?,
         None => params.to_config()?,
     };
-    let password = resolve_password(&params.secret_ref)?;
+    // The keychain can block — on a permission prompt, for as long as the
+    // user takes — so it runs off the async workers.
+    let secret_ref = params.secret_ref.clone();
+    let password = tauri::async_runtime::spawn_blocking(move || resolve_password(&secret_ref))
+        .await
+        .map_err(|e| e.to_string())??;
     let report = PostgresDriver
         .test_with_password(&config, password.as_ref().map(|s| s.expose()))
         .await
@@ -449,8 +573,18 @@ pub async fn pg_test(params: PgParams) -> Result<TestReportOut, String> {
 }
 
 #[tauri::command]
-pub async fn pg_connect(state: tauri::State<'_, PgState>, params: PgParams) -> Result<(), String> {
-    let password = resolve_password(&params.secret_ref)?;
+pub async fn pg_connect(
+    app: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, PgState>,
+    params: PgParams,
+) -> Result<(), String> {
+    authorize_secret(&app, &state, &params)?;
+    // The keychain can block — on a permission prompt, for as long as the
+    // user takes — so it runs off the async workers.
+    let secret_ref = params.secret_ref.clone();
+    let password = tauri::async_runtime::spawn_blocking(move || resolve_password(&secret_ref))
+        .await
+        .map_err(|e| e.to_string())??;
 
     // E1.2: with SSH configured, open the tunnel first and point the
     // driver at its local end. The tunnel lives as long as the session.
@@ -470,8 +604,14 @@ pub async fn pg_connect(state: tauri::State<'_, PgState>, params: PgParams) -> R
         .connect_concrete_with_password(config, password.as_ref().map(|s| s.expose()))
         .await
         .map_err(|e| err_to_string(&e))?;
-    *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = Some(session.cancel_handle());
-    *state.session.lock().await = Some(session);
+    // Take the session slot first, then publish the new cancel handle. The
+    // other order pointed Cancel at the new, idle backend while the old
+    // session's query was still running (and still holding the lock).
+    let mut slot = lock_session(&state).await?;
+    *slot = Some(session);
+    *state.cancel.lock().map_err(|_| "cancel lock poisoned")? =
+        slot.as_ref().map(|s| s.cancel_handle());
+    drop(slot);
     *state.tunnel.lock().map_err(|_| "tunnel lock poisoned")? = tunnel;
     *state.cache_key.lock().map_err(|_| "key lock poisoned")? = Some(cache_key_of(&params));
     *state
@@ -490,7 +630,7 @@ pub async fn pg_connect(state: tauri::State<'_, PgState>, params: PgParams) -> R
 
 #[tauri::command]
 pub async fn pg_disconnect(state: tauri::State<'_, PgState>) -> Result<(), String> {
-    *state.session.lock().await = None;
+    *lock_session(&state).await? = None;
     *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = None;
     *state.result.lock().map_err(|_| "result lock poisoned")? = None;
     // Dropping the tunnel closes the SSH session.
@@ -516,10 +656,17 @@ fn json_to_param(v: serde_json::Value) -> tuplenest_driver_api::ParamValue {
     }
 }
 
+/// `Number.MAX_SAFE_INTEGER`: the largest integer a JavaScript number holds exactly.
+const JS_MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
 fn cell_to_json(cell: CellValue) -> serde_json::Value {
     match cell {
         CellValue::Null => serde_json::Value::Null,
         CellValue::Bool(b) => b.into(),
+        // JavaScript numbers are doubles: past 2^53 an int8 is silently
+        // rounded (9007199254740993 arrives as …992), in the grid, in exports
+        // and in the WHERE of a row edit. Send those as exact text.
+        CellValue::Int(i) if i.unsigned_abs() > JS_MAX_SAFE_INTEGER => i.to_string().into(),
         CellValue::Int(i) => i.into(),
         CellValue::Float(f) => serde_json::Number::from_f64(f)
             .map(serde_json::Value::Number)
@@ -532,7 +679,15 @@ fn cell_to_json(cell: CellValue) -> serde_json::Value {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    // One pre-sized buffer. `format!` per byte was one heap allocation per
+    // byte: a 5 MB bytea cost five million of them (measured 51× slower).
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(DIGITS[(b >> 4) as usize] as char);
+        out.push(DIGITS[(b & 0x0f) as usize] as char);
+    }
+    out
 }
 
 /// Backend-held result of the last query: the WebView pages windows out of
@@ -564,20 +719,33 @@ const RESULT_STORE_BYTES: usize = 256 * 1024 * 1024;
 /// `serde_json::to_string` on every row would be a real cost on the hot path
 /// to buy precision nobody needs.
 fn approx_bytes(row: &[serde_json::Value]) -> usize {
-    fn one(v: &serde_json::Value) -> usize {
+    /*
+     * What a row really costs. Every cell is a `serde_json::Value` held inline
+     * in the row's Vec — 32 bytes, even for NULL — and every heap allocation
+     * carries allocator overhead. Counting a NULL as 8 bytes let a 200-column,
+     * mostly-NULL result of 100k rows reach 1.1 GB while the estimate said it
+     * was under the 256 MB budget (measured).
+     */
+    const VALUE: usize = std::mem::size_of::<serde_json::Value>();
+    const ALLOC: usize = 16; // per heap allocation: header and rounding
+    fn heap(v: &serde_json::Value) -> usize {
         match v {
-            serde_json::Value::Null | serde_json::Value::Bool(_) => 8,
-            serde_json::Value::Number(_) => 16,
-            // The bytes of the text, plus the String header.
-            serde_json::Value::String(s) => s.len() + 24,
-            serde_json::Value::Array(a) => 24 + a.iter().map(one).sum::<usize>(),
-            serde_json::Value::Object(o) => {
-                24 + o.iter().map(|(k, v)| k.len() + 24 + one(v)).sum::<usize>()
+            serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
+                0
             }
+            serde_json::Value::String(s) => ALLOC + s.capacity(),
+            serde_json::Value::Array(a) => {
+                ALLOC + a.len() * VALUE + a.iter().map(heap).sum::<usize>()
+            }
+            serde_json::Value::Object(o) => o
+                .iter()
+                // key String + value + a map node
+                .map(|(k, v)| ALLOC + k.len() + VALUE + 48 + heap(v))
+                .sum::<usize>(),
         }
     }
-    // The Vec header, plus every cell.
-    24 + row.iter().map(one).sum::<usize>()
+    // The row's own Vec header in the store, its buffer, and every cell.
+    24 + ALLOC + row.len() * VALUE + row.iter().map(heap).sum::<usize>()
 }
 
 /// Streams batches into a bounded RowStore.
@@ -597,6 +765,13 @@ impl BatchSink for StoreSink {
                 .collect();
         }
         for row in batch.rows {
+            // Past the cap the row is only counted. Converting it first was
+            // all the work of storing it, for a row thrown away (a 1M-row
+            // query converted 900k rows it then dropped).
+            if inner.store.is_full() {
+                inner.store.skip();
+                continue;
+            }
             let json: Vec<serde_json::Value> = row.into_iter().map(cell_to_json).collect();
             let bytes = approx_bytes(&json);
             inner.store.push_sized(json, bytes);
@@ -908,10 +1083,13 @@ pub fn pg_rows(
     state: tauri::State<'_, PgState>,
     offset: usize,
     limit: usize,
-) -> Result<Vec<Vec<serde_json::Value>>, String> {
+) -> Result<Box<serde_json::value::RawValue>, String> {
     let guard = state.result.lock().map_err(|_| "result lock poisoned")?;
     let stored = guard.as_ref().ok_or("no result")?;
-    Ok(stored.store.window(offset, limit.min(1_000)).to_vec())
+    // Serialized straight from the store. `.to_vec()` deep-cloned every row
+    // of the window first, only to serialize the clone and drop it.
+    let window = stored.store.window(offset, limit.min(1_000));
+    serde_json::value::to_raw_value(window).map_err(|e| e.to_string())
 }
 
 #[derive(serde::Serialize)]
@@ -1170,6 +1348,18 @@ pub async fn pg_begin(state: tauri::State<'_, PgState>) -> Result<(), String> {
         .map_err(|e| err_to_string(&e))
 }
 
+/// Whether the server has a transaction open on this session — including one
+/// the user began by typing `BEGIN`, which `pg_begin` never saw.
+#[tauri::command]
+pub async fn pg_in_transaction(state: tauri::State<'_, PgState>) -> Result<bool, String> {
+    let guard = state.session.lock().await;
+    let session = guard.as_ref().ok_or("not connected")?;
+    session
+        .server_in_transaction()
+        .await
+        .map_err(|e| err_to_string(&e))
+}
+
 #[tauri::command]
 pub async fn pg_commit(state: tauri::State<'_, PgState>) -> Result<(), String> {
     let mut guard = state.session.lock().await;
@@ -1184,6 +1374,32 @@ pub async fn pg_rollback(state: tauri::State<'_, PgState>) -> Result<(), String>
     session.rollback().await.map_err(|e| err_to_string(&e))
 }
 
+/*
+ * The session slot, for replacing or dropping it.
+ *
+ * `pg_query` holds the session lock for the whole query, so Disconnect (or a
+ * reconnect) used to wait until a long query finished by itself — minutes, on
+ * a big table. If the lock is busy, cancel what holds it first. The cancel is
+ * bounded: it dials the server, which after a network loss may never answer.
+ */
+async fn lock_session<'a>(
+    state: &'a PgState,
+) -> Result<tokio::sync::MutexGuard<'a, Option<tuplenest_driver_postgres::PostgresSession>>, String>
+{
+    if let Ok(guard) = state.session.try_lock() {
+        return Ok(guard);
+    }
+    let handle = state
+        .cancel
+        .lock()
+        .map_err(|_| "cancel lock poisoned")?
+        .clone();
+    if let Some(h) = handle {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), h.cancel()).await;
+    }
+    Ok(state.session.lock().await)
+}
+
 /// Cancels the in-flight query via the wire-protocol cancel key. Does not
 /// require the session lock, so it works while `pg_query` is blocked.
 #[tauri::command]
@@ -1195,4 +1411,172 @@ pub async fn pg_cancel(state: tauri::State<'_, PgState>) -> Result<(), String> {
         .clone()
         .ok_or("not connected")?;
     handle.cancel().await.map_err(|e| err_to_string(&e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Disconnect used to wait for a running query to finish by itself, since
+    /// `pg_query` holds the session lock throughout. It must cancel instead.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "requires live PostgreSQL (TUPLENEST_TEST_PG_*)"]
+    async fn taking_the_session_cancels_a_running_query_instead_of_waiting() {
+        let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.into());
+        let config = tuplenest_driver_api::ConnectionConfig {
+            driver_id: "postgres".into(),
+            name: "t".into(),
+            environment: tuplenest_driver_api::Environment::Dev,
+            read_only: false,
+            host: env("TUPLENEST_TEST_PG_HOST", "localhost"),
+            port: env("TUPLENEST_TEST_PG_PORT", "5432").parse().unwrap(),
+            database: env("TUPLENEST_TEST_PG_DB", "postgres"),
+            username: env("TUPLENEST_TEST_PG_USER", "postgres"),
+            secret_ref: None,
+            tls_mode: tuplenest_driver_api::TlsMode::Disabled,
+            tls_ca_path: None,
+            options: Default::default(),
+            default_statement_timeout_ms: 0,
+        };
+        let pw = std::env::var("TUPLENEST_TEST_PG_PASSWORD").ok();
+        let session = tuplenest_driver_postgres::PostgresDriver
+            .connect_concrete_with_password(config, pw.as_deref())
+            .await
+            .unwrap();
+        let state = std::sync::Arc::new(PgState::new(
+            tuplenest_metadata_cache::MetadataCache::open_in_memory().unwrap(),
+        ));
+        *state.cancel.lock().unwrap() = Some(session.cancel_handle());
+        *state.session.lock().await = Some(session);
+
+        let held = state.clone();
+        let query = tokio::spawn(async move {
+            let mut g = held.session.lock().await;
+            let req = QueryRequest {
+                execution_id: ExecutionId::new(),
+                sql: "SELECT pg_sleep(30)".into(),
+                params: vec![],
+                row_limit: 0,
+                timeout_ms: 0,
+            };
+            struct NullSink;
+            #[async_trait]
+            impl BatchSink for NullSink {
+                async fn deliver(&self, _: RowBatch) -> Result<(), Box<DriverError>> {
+                    Ok(())
+                }
+            }
+            g.as_mut().unwrap().execute(req, &NullSink).await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        let started = std::time::Instant::now();
+        let slot = lock_session(&state).await.unwrap();
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(6),
+            "waited for the query"
+        );
+        drop(slot);
+        assert!(
+            query.await.unwrap().is_err(),
+            "the running query should have been cancelled"
+        );
+    }
+
+    fn app_with_profile() -> crate::AppState {
+        let store = tuplenest_workspace_store::Store::open_in_memory().unwrap();
+        store
+            .connection_upsert(&tuplenest_workspace_store::ConnectionRecord {
+                id: "p1".into(),
+                name: "prod".into(),
+                driver: "postgres".into(),
+                environment: Some("prod".into()),
+                color: None,
+                read_only: false,
+                host: "prod.db".into(),
+                port: 5432,
+                database: "app".into(),
+                username: "svc".into(),
+                secret_ref: Some("tn-secret-prod".into()),
+                tls_mode: "verify-full".into(),
+                tls_ca_path: None,
+                ssh_json: None,
+                options_json: None,
+                statement_timeout_ms: 0,
+            })
+            .unwrap();
+        crate::AppState {
+            store: std::sync::Mutex::new(store),
+            _log_guard: None,
+        }
+    }
+
+    fn params(host: &str, secret: Option<&str>) -> PgParams {
+        serde_json::from_value(serde_json::json!({
+            "host": host, "port": 5432, "database": "app", "username": "svc",
+            "secretRef": secret, "tlsMode": "disabled"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_saved_password_only_goes_to_its_own_server() {
+        // A compromised WebView could send a prod profile's ref with
+        // host: "evil" and TLS off, and receive the password in cleartext.
+        let app = app_with_profile();
+        let pg = PgState::new(tuplenest_metadata_cache::MetadataCache::open_in_memory().unwrap());
+        assert!(authorize_secret(&app, &pg, &params("prod.db", Some("tn-secret-prod"))).is_ok());
+        assert!(
+            authorize_secret(&app, &pg, &params("evil.example", Some("tn-secret-prod"))).is_err()
+        );
+        let mut other_user = params("prod.db", Some("tn-secret-prod"));
+        other_user.username = "postgres".into();
+        assert!(authorize_secret(&app, &pg, &other_user).is_err());
+        assert!(authorize_secret(&app, &pg, &params("anywhere", None)).is_ok());
+        // A password typed into the form this session may be tried anywhere.
+        pg.fresh_secrets
+            .lock()
+            .unwrap()
+            .insert("tn-secret-new".into());
+        assert!(authorize_secret(&app, &pg, &params("new.db", Some("tn-secret-new"))).is_ok());
+    }
+
+    #[test]
+    fn hex_matches_the_per_byte_format() {
+        let bytes: Vec<u8> = (0..=255).collect();
+        let slow: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex(&bytes), slow);
+        assert_eq!(hex(&[]), "");
+    }
+
+    #[test]
+    fn a_null_cell_costs_what_a_value_costs() {
+        // 200 NULL columns: the old estimate said 1,624 bytes; the row really
+        // holds 200 inline Values of 32 bytes each.
+        let row = vec![serde_json::Value::Null; 200];
+        assert!(approx_bytes(&row) >= 200 * std::mem::size_of::<serde_json::Value>());
+    }
+
+    #[test]
+    fn int8_past_2_pow_53_reaches_the_webview_as_exact_text() {
+        // As a JSON number this would be rounded by JSON.parse in the WebView.
+        assert_eq!(
+            cell_to_json(CellValue::Int(9_007_199_254_740_993)),
+            serde_json::json!("9007199254740993")
+        );
+        assert_eq!(
+            cell_to_json(CellValue::Int(-9_007_199_254_740_993)),
+            serde_json::json!("-9007199254740993")
+        );
+        assert_eq!(
+            cell_to_json(CellValue::Int(i64::MIN)),
+            serde_json::json!(i64::MIN.to_string())
+        );
+        // Safe integers stay numbers, so nothing else changes shape.
+        assert_eq!(
+            cell_to_json(CellValue::Int(9_007_199_254_740_991)),
+            serde_json::json!(9_007_199_254_740_991_i64)
+        );
+        assert_eq!(cell_to_json(CellValue::Int(42)), serde_json::json!(42));
+    }
 }
