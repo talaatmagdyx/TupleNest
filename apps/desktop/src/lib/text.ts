@@ -50,7 +50,13 @@ export function cellExport(v: unknown): string {
  * value, so it is opt-out via the "raw" export mode.
  */
 const FORMULA_PREFIX = /^[=+\-@\t\r]/;
+/** A plain number, which a spreadsheet reads as a number, not a formula. */
+const PLAIN_NUMBER = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;
 export function neutralizeFormula(value: string): string {
+  // `-5` is a number, not a formula. Prefixing it made every negative value
+  // text in Excel; anything more than a bare number (`-2+3`, `-A1`) still is
+  // a formula and is still neutralised.
+  if (PLAIN_NUMBER.test(value)) return value;
   return FORMULA_PREFIX.test(value) ? `'${value}` : value;
 }
 

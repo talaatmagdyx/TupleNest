@@ -154,7 +154,7 @@ export default function App() {
   const [updateInfo, setUpdateInfo] = useState<{ version: string; notes: string } | null>(null);
   // Execution and its result state live in a hook; App keeps the overlays.
   const query = useQuery();
-  const { running, result, lastError, ranSql } = query;
+  const { running, result, lastError, ranSql, ranParams } = query;
   const queryEpoch = query.epoch;
   /** Recent EXPLAIN summaries, oldest first — Phase 3 plan comparison. */
   // The raw root is kept beside the summary: a node-by-node diff needs the tree,
@@ -857,8 +857,10 @@ export default function App() {
     // show uncommitted rows as though they were.
     // Re-run the statement behind the grid, not the editor's current text,
     // and never with `force`: the editor may hold something else by now.
-    void doRun(false, undefined, ranSql);
-  }, [applyRowEdits, editTarget, inTx, doRun, ranSql, refreshHistory, showToast]);
+    // With the values it was run with: a parameterised query used to prompt
+    // for its `$1` again here, and leave the grid stale if dismissed.
+    void doRun(false, ranParams, ranSql);
+  }, [applyRowEdits, editTarget, inTx, doRun, ranSql, ranParams, refreshHistory, showToast]);
 
   const doCancel = useCallback(async () => {
     try {

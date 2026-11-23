@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cellText } from "../lib/text";
+import { compareNumeric, isNumericType } from "../lib/chart";
 import { invoke } from "@tauri-apps/api/core";
 import { fetchAllRows } from "../lib/sql";
 import { coerceValue, rowKey, type CellEdit, type EditTarget } from "../lib/dml";
@@ -50,7 +51,7 @@ function cellClass(c: GridColumn, v: unknown): string {
   const t = c.dbType;
   if (t === "jsonb" || t === "json") return "t-json";
   if (t === "bool" || t === "boolean") return v === true ? "t-true" : "t-null";
-  if (/int|numeric|float|double|real|money/.test(t)) return "t-num";
+  if (isNumericType(t)) return "t-num";
   if (t.startsWith("timestamp") || t === "date" || t.startsWith("time")) return "t-time";
   return "";
 }
@@ -148,15 +149,17 @@ export default function Grid(p: Props) {
     if (sortCol === null || !sortDir) return allRows;
     const ci = sortCol;
     const dir = sortDir === "asc" ? 1 : -1;
+    const numeric = isNumericType(p.columns[ci]?.dbType ?? "");
     return [...allRows].sort((a, b) => {
       const x = a[ci];
       const y = b[ci];
-      if (x === null || x === undefined) return 1;
+      if (x === null || x === undefined) return y === null || y === undefined ? 0 : 1;
       if (y === null || y === undefined) return -1;
+      if (numeric) return compareNumeric(x, y) * dir;
       if (typeof x === "number" && typeof y === "number") return (x - y) * dir;
       return cellText(x).localeCompare(cellText(y)) * dir;
     });
-  }, [allRows, sortCol, sortDir]);
+  }, [allRows, sortCol, sortDir, p.columns]);
 
   const rowAt = (i: number): unknown[] | null =>
     sorted ? sorted[i] ?? null : blocks[Math.floor(i / BLOCK)]?.[i % BLOCK] ?? null;

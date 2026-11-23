@@ -289,6 +289,30 @@ fn resolve_password(secret_ref: &Option<String>) -> Result<Option<Secret>, Strin
 /// in the frontend matches a prefix of the first line, and the status bar
 /// shows only the first line; everything below it is the full report for the
 /// error box. All fields are sanitized upstream by design (no credentials).
+/// A network-category failure means the session is gone. Close it (with its
+/// cancel handle and tunnel, before the slot is released) and say "Connection
+/// lost:", which the WebView recognises — it used to notice only on Run, so
+/// a failed Commit or Begin left it showing a live session and an open
+/// transaction that no longer existed.
+fn lost_or_error(state: &PgState, slot: &mut Option<PostgresSession>, e: &DriverError) -> String {
+    let msg = err_to_string(e);
+    if !matches!(e.category, tuplenest_driver_api::ErrorCategory::Network) {
+        return msg;
+    }
+    *slot = None;
+    if let Ok(mut c) = state.cancel.lock() {
+        *c = None;
+    }
+    if let Ok(mut t) = state.tunnel.lock() {
+        *t = None;
+    }
+    tracing::warn!(
+        component = "pg",
+        "session marked broken after network error"
+    );
+    format!("Connection lost: {msg} — the session was closed. Reconnect to continue; nothing was re-run.")
+}
+
 fn err_to_string(e: &DriverError) -> String {
     let mut out = e.title.clone();
     if let Some(code) = &e.native_code {
@@ -702,9 +726,19 @@ fn cell_to_json(cell: CellValue) -> serde_json::Value {
         // and in the WHERE of a row edit. Send those as exact text.
         CellValue::Int(i) if i.unsigned_abs() > JS_MAX_SAFE_INTEGER => i.to_string().into(),
         CellValue::Int(i) => i.into(),
+        // JSON has no NaN or Infinity. Mapping them to null showed (and
+        // exported) a real value as NULL; PostgreSQL's own spelling is exact.
         CellValue::Float(f) => serde_json::Number::from_f64(f)
             .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
+            .unwrap_or_else(|| {
+                if f.is_nan() {
+                    "NaN".into()
+                } else if f > 0.0 {
+                    "Infinity".into()
+                } else {
+                    "-Infinity".into()
+                }
+            }),
         CellValue::Text(t) => t.into(),
         CellValue::Bytes(b) => format!("\\x{}", hex(&b)).into(),
         CellValue::Json(v) => v,
@@ -1010,8 +1044,12 @@ pub async fn pg_query(
     sql: String,
     params: Option<Vec<serde_json::Value>>,
 ) -> Result<QueryResultOut, String> {
-    // Drop the previous result before running (frees memory immediately).
-    *state.result.lock().map_err(|_| "result lock poisoned")? = None;
+    // The previous result is kept until a new row set replaces it. Clearing
+    // it up front freed memory a little sooner, but every statement — a row
+    // edit's UPDATE, a SAVEPOINT, an import's INSERT, a failed EXPLAIN — then
+    // emptied the store the grid was still paging, so its rows came back
+    // empty, sort blanked it and export wrote a header-only file. The cost:
+    // while a new query runs, the old result (at most the store budget) stays.
 
     let started_wall = std::time::Instant::now();
     let mut guard = state.session.lock().await;
@@ -1117,7 +1155,9 @@ pub async fn pg_query(
         rows_affected: summary.rows_affected,
         elapsed_ms: summary.duration_ms,
     };
-    *state.result.lock().map_err(|_| "result lock poisoned")? = Some(stored);
+    if !stored.columns.is_empty() {
+        *state.result.lock().map_err(|_| "result lock poisoned")? = Some(stored);
+    }
     Ok(out)
 }
 
@@ -1331,13 +1371,12 @@ pub async fn pg_metadata(
 /// Live server activity for the monitoring panel (Phase 6). Not cached.
 #[tauri::command]
 pub async fn pg_activity(state: tauri::State<'_, PgState>) -> Result<serde_json::Value, String> {
-    let guard = state.session.lock().await;
+    let mut guard = state.session.lock().await;
     let session = guard.as_ref().ok_or("not connected")?;
-    session
-        .metadata(MetadataRequest::ServerActivity)
-        .await
-        .map(|r| r.payload)
-        .map_err(|e| err_to_string(&e))
+    match session.metadata(MetadataRequest::ServerActivity).await {
+        Ok(r) => Ok(r.payload),
+        Err(e) => Err(lost_or_error(&state, &mut guard, &e)),
+    }
 }
 
 /// Foreign-key relationships for the ER view (Phase 2).
@@ -1387,37 +1426,45 @@ pub fn pg_metadata_cached(
 pub async fn pg_begin(state: tauri::State<'_, PgState>) -> Result<(), String> {
     let mut guard = state.session.lock().await;
     let session = guard.as_mut().ok_or("not connected")?;
-    session
+    match session
         .begin(tuplenest_driver_api::TransactionOptions::default())
         .await
-        .map(|_| ())
-        .map_err(|e| err_to_string(&e))
+    {
+        Ok(_) => Ok(()),
+        Err(e) => Err(lost_or_error(&state, &mut guard, &e)),
+    }
 }
 
 /// Whether the server has a transaction open on this session — including one
 /// the user began by typing `BEGIN`, which `pg_begin` never saw.
 #[tauri::command]
 pub async fn pg_in_transaction(state: tauri::State<'_, PgState>) -> Result<bool, String> {
-    let guard = state.session.lock().await;
+    let mut guard = state.session.lock().await;
     let session = guard.as_ref().ok_or("not connected")?;
-    session
-        .server_in_transaction()
-        .await
-        .map_err(|e| err_to_string(&e))
+    match session.server_in_transaction().await {
+        Ok(v) => Ok(v),
+        Err(e) => Err(lost_or_error(&state, &mut guard, &e)),
+    }
 }
 
 #[tauri::command]
 pub async fn pg_commit(state: tauri::State<'_, PgState>) -> Result<(), String> {
     let mut guard = state.session.lock().await;
     let session = guard.as_mut().ok_or("not connected")?;
-    session.commit().await.map_err(|e| err_to_string(&e))
+    match session.commit().await {
+        Ok(()) => Ok(()),
+        Err(e) => Err(lost_or_error(&state, &mut guard, &e)),
+    }
 }
 
 #[tauri::command]
 pub async fn pg_rollback(state: tauri::State<'_, PgState>) -> Result<(), String> {
     let mut guard = state.session.lock().await;
     let session = guard.as_mut().ok_or("not connected")?;
-    session.rollback().await.map_err(|e| err_to_string(&e))
+    match session.rollback().await {
+        Ok(()) => Ok(()),
+        Err(e) => Err(lost_or_error(&state, &mut guard, &e)),
+    }
 }
 
 /*
@@ -1629,6 +1676,23 @@ mod tests {
         // Once its profile is saved, a fresh ref is bound like any other.
         pg.bind_secret("tn-secret-new");
         assert!(authorize_secret(&app, &pg, &params("new.db", Some("tn-secret-new"))).is_err());
+    }
+
+    #[test]
+    fn non_finite_floats_are_shown_as_postgres_spells_them_not_as_null() {
+        assert_eq!(
+            cell_to_json(CellValue::Float(f64::NAN)),
+            serde_json::json!("NaN")
+        );
+        assert_eq!(
+            cell_to_json(CellValue::Float(f64::INFINITY)),
+            serde_json::json!("Infinity")
+        );
+        assert_eq!(
+            cell_to_json(CellValue::Float(f64::NEG_INFINITY)),
+            serde_json::json!("-Infinity")
+        );
+        assert_eq!(cell_to_json(CellValue::Float(1.5)), serde_json::json!(1.5));
     }
 
     #[test]

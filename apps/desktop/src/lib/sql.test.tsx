@@ -20,6 +20,7 @@ import {
   toExportText,
   exportPrefix,
   exportChunk,
+  uniqueKeys,
   exportSuffix,
   toggleLineComment,
   indentSelection,
@@ -296,11 +297,12 @@ describe("toCSV", () => {
     });
 
     it("leaves ordinary values, incl. negative numbers written as numbers, unquoted", () => {
-      // A real negative numeric arrives as a JS number, stringified to "-5" —
-      // still formula-leading as text, so it IS neutralized. Documenting the
-      // trade-off: safety wins over pristine minus signs; raw mode is the escape.
+      // A bare number cannot carry a formula: no operator, no reference, no
+      // function. Prefixing "-5" made every negative value text in Excel for
+      // no safety gain. Anything beyond a bare number still is neutralised.
       expect(toCSV([{ name: "c" }], [["hello"]]).split("\n")[1]).toBe("hello");
-      expect(toCSV([{ name: "c" }], [[-5]]).split("\n")[1]).toBe("'-5");
+      expect(toCSV([{ name: "c" }], [[-5]]).split("\n")[1]).toBe("-5");
+      expect(toCSV([{ name: "c" }], [["-2+3"]]).split("\n")[1]).toBe("'-2+3");
     });
 
     it("raw mode preserves the exact bytes (opt-out)", () => {
@@ -809,5 +811,22 @@ describe("replaceMatch / replaceAllMatches", () => {
 
   it("leaves the text alone when nothing matches", () => {
     expect(replaceAllMatches("select 1", "zzz", "x")).toBe("select 1");
+  });
+});
+
+describe("exports keep every value", () => {
+  it("JSON export keeps both of two same-named columns", () => {
+    const cols = [{ name: "id", dbType: "int4" }, { name: "id", dbType: "int4" }];
+    const out = exportChunk("json", cols, [[1, 2]], true);
+    expect(JSON.parse(`[${out}]`)).toEqual([{ id: 1, id_2: 2 }]);
+    expect(uniqueKeys(["a", "a", "a_2", "a"])).toEqual(["a", "a_2", "a_2_2", "a_3"]);
+  });
+  it("spreadsheet-safe CSV leaves a negative number a number, and still neutralises formulas", () => {
+    const cols = [{ name: "n", dbType: "numeric" }];
+    const out = exportChunk("csv", cols, [["-5"], ["-2.5e3"], ["-2+3"], ["=cmd"]], true, "spreadsheet-safe");
+    expect(out).toContain("\n-5");
+    expect(out).toContain("-2.5e3");
+    expect(out).toContain("'-2+3");
+    expect(out).toContain("'=cmd");
   });
 });
