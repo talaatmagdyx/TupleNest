@@ -755,6 +755,13 @@ struct StoreSink {
 
 #[async_trait]
 impl BatchSink for StoreSink {
+    fn wants_rows(&self) -> bool {
+        self.inner
+            .lock()
+            .map(|i| !i.store.is_full())
+            .unwrap_or(false)
+    }
+
     async fn deliver(&self, batch: RowBatch) -> Result<(), Box<DriverError>> {
         let mut inner = self.inner.lock().expect("sink lock");
         if inner.columns.is_empty() {
@@ -1048,13 +1055,13 @@ pub async fn pg_query(
         &sql,
         "success",
         None,
-        stored.store.total_seen(),
+        summary.rows_returned.max(stored.store.total_seen()),
         summary.rows_affected,
         summary.duration_ms,
     );
     tracing::info!(
         component = "pg",
-        rows = stored.store.total_seen(),
+        rows = summary.rows_returned.max(stored.store.total_seen()),
         duration_ms = summary.duration_ms,
         "query finished" // NOTE: query text is deliberately not logged
     );
@@ -1067,9 +1074,11 @@ pub async fn pg_query(
                 db_type: db_type.clone(),
             })
             .collect(),
-        total_rows: stored.store.total_seen(),
+        // The driver stops handing rows over once the store is full, so the
+        // store has not seen them all; the driver has counted them.
+        total_rows: summary.rows_returned.max(stored.store.total_seen()),
         stored_rows: stored.store.stored(),
-        truncated: stored.store.truncated(),
+        truncated: stored.store.truncated() || summary.rows_returned > stored.store.stored() as u64,
         rows_affected: summary.rows_affected,
         elapsed_ms: summary.duration_ms,
     };

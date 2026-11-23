@@ -1117,6 +1117,65 @@ async fn read_only_session_cannot_be_switched_back_to_read_write() {
     }
 }
 
+/// Batches are cut by bytes as well as rows, bytea/json cells over 1 MB are
+/// not decoded, and a sink that is full stops being fed — while the summary
+/// still counts every row. 600 rows of 1 MB bytea used to be decoded into one
+/// batch (882 MB peak) before the store's 256 MB budget could apply.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn large_cells_are_bounded_before_they_are_decoded() {
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+
+    let sink = CountingSink::default();
+    s.execute(
+        req("SELECT decode(repeat('ab', 1000000), 'hex') FROM generate_series(1, 40)"),
+        &sink,
+    )
+    .await
+    .unwrap();
+    assert_eq!(sink.rows.load(Ordering::SeqCst), 40);
+    assert!(
+        sink.max_batch_rows.load(Ordering::SeqCst) <= 9,
+        "an 8 MB batch holds at most 8 rows of 1 MB, got {}",
+        sink.max_batch_rows.load(Ordering::SeqCst)
+    );
+
+    let cell = FirstCellSink(Mutex::new(None));
+    s.execute(req("SELECT decode(repeat('ab', 2000000), 'hex')"), &cell)
+        .await
+        .unwrap();
+    let shown = cell.0.lock().unwrap().clone().unwrap_or_default();
+    assert!(
+        shown.contains("too large to show"),
+        "a 2 MB bytea must not be decoded: {shown:.80}"
+    );
+
+    struct FullAfterOne(AtomicU64);
+    #[async_trait]
+    impl BatchSink for FullAfterOne {
+        async fn deliver(&self, b: RowBatch) -> Result<(), Box<DriverError>> {
+            self.0.fetch_add(b.rows.len() as u64, Ordering::SeqCst);
+            Ok(())
+        }
+        fn wants_rows(&self) -> bool {
+            self.0.load(Ordering::SeqCst) == 0
+        }
+    }
+    let full = FullAfterOne(AtomicU64::new(0));
+    let summary = s
+        .execute(req("SELECT g FROM generate_series(1, 5000) g"), &full)
+        .await
+        .unwrap();
+    assert_eq!(summary.rows_returned, 5000, "every row is still counted");
+    assert!(
+        full.0.load(Ordering::SeqCst) < 5000,
+        "a full sink must stop being fed"
+    );
+}
+
 /// Row edits bind every value as text and cast it (`$n::text::uuid`), the shape
 /// `buildUpdate` emits. Binary-bound text was refused for uuid, timestamptz and
 /// numeric ("error serializing parameter"), which made editing most real tables

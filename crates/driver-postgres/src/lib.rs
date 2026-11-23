@@ -119,6 +119,12 @@ use tuplenest_driver_api::*;
 /// between `deliver` calls.
 pub const BATCH_SIZE: usize = 1_000;
 
+/// A batch is also cut at this many bytes of wire data. Rows alone are not a
+/// size: 1,000 rows of 1 MB bytea is a gigabyte decoded before the sink can
+/// apply its budget (measured: 600 such rows peaked at 882 MB under a 256 MB
+/// store budget).
+pub const BATCH_BYTES: usize = 8 * 1024 * 1024;
+
 /// Oldest PostgreSQL this build serves.
 ///
 /// The binding constraint is `pg_partition_tree` / `pg_partition_root`, which
@@ -623,6 +629,8 @@ impl DatabaseSession for PostgresSession {
         let mut buffer: Vec<Vec<CellValue>> = Vec::with_capacity(BATCH_SIZE);
         let mut sequence = 0u64;
         let mut rows_returned = 0u64;
+        let mut batch_bytes = 0usize;
+        let mut counting_only = false;
 
         while let Some(item) = stream.next().await {
             let row = item.map_err(normalize_error)?;
@@ -637,9 +645,15 @@ impl DatabaseSession for PostgresSession {
                     })
                     .collect();
             }
-            buffer.push(convert_row(&row));
             rows_returned += 1;
-            if buffer.len() >= BATCH_SIZE {
+            // The sink is full: count the rest, decode none of it.
+            if counting_only {
+                continue;
+            }
+            batch_bytes += row_wire_bytes(&row);
+            buffer.push(convert_row(&row));
+            if buffer.len() >= BATCH_SIZE || batch_bytes >= BATCH_BYTES {
+                batch_bytes = 0;
                 sink.deliver(RowBatch {
                     execution_id: request.execution_id,
                     sequence,
@@ -650,6 +664,7 @@ impl DatabaseSession for PostgresSession {
                 .await?;
                 sequence += 1;
                 buffer.reserve(BATCH_SIZE);
+                counting_only = !sink.wants_rows();
             }
         }
 
@@ -1911,6 +1926,30 @@ async fn object_details(
     Ok(serde_json::json!({ "title": name, "kind": kind, "sections": sections }))
 }
 
+/// The length of a value's wire bytes, without copying them.
+struct RawLen(usize);
+
+impl<'a> FromSql<'a> for RawLen {
+    fn from_sql(_: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        Ok(RawLen(raw.len()))
+    }
+    fn accepts(_: &Type) -> bool {
+        true
+    }
+}
+
+fn raw_len(row: &Row, i: usize) -> usize {
+    row.try_get::<_, Option<RawLen>>(i)
+        .ok()
+        .flatten()
+        .map_or(0, |r| r.0)
+}
+
+/// Wire size of a row: what decoding it will cost, roughly.
+fn row_wire_bytes(row: &Row) -> usize {
+    (0..row.len()).map(|i| raw_len(row, i)).sum()
+}
+
 fn convert_row(row: &Row) -> Vec<CellValue> {
     (0..row.len()).map(|i| convert_cell(row, i)).collect()
 }
@@ -2154,6 +2193,21 @@ fn convert_cell(row: &Row, i: usize) -> CellValue {
 
 fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
     let ty = row.columns()[i].type_().clone();
+    // Text is capped after rendering; bytea and json used to be decoded whole
+    // first (a full copy, and a full serde tree), with no cap at all. Decide
+    // from the wire length before paying for either.
+    if matches!(ty, Type::BYTEA | Type::JSON | Type::JSONB) {
+        let len = raw_len(row, i);
+        if len > MAX_RENDERED_CELL_BYTES {
+            return CellValue::Other {
+                rendered: format!(
+                    "<{} of {len} bytes — too large to show in a cell>",
+                    ty.name()
+                ),
+                db_type: ty.name().to_string(),
+            };
+        }
+    }
     macro_rules! take {
         ($t:ty, $wrap:expr) => {
             match row.try_get::<_, Option<$t>>(i) {
