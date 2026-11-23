@@ -37,6 +37,16 @@ ignore = [
   # Revisit when RustCrypto/RSA#626 lands: this line should then be deleted,
   # not renewed.
   "RUSTSEC-2023-0071",
+
+  # RUSTSEC-2026-0543 — chrono is unmaintained. No vulnerability, no fixed
+  # version. We use it directly in tuplenest-driver-postgres to format
+  # TIMESTAMP/TIMESTAMPTZ/DATE/TIME cells, and it also arrives via
+  # tokio-postgres (`with-chrono-0_4`) and russh-util, so dropping our own
+  # dependency would not remove it from the tree.
+  #
+  # Revisit by moving driver-postgres to tokio-postgres `with-time-0_3` and
+  # the `time` crate; once nothing we own depends on chrono, delete this line.
+  "RUSTSEC-2026-0543",
 ]
 
 [licenses]
