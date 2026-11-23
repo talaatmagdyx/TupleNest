@@ -1,5 +1,5 @@
 import { buildStatements, previewSql, type CellEdit, type EditTarget } from "../lib/dml";
-import { ModalHead } from "./Overlays";
+import { ModalHead, Overlay } from "./Overlays";
 
 type Props = {
   target: EditTarget;
@@ -21,7 +21,7 @@ export default function EditReviewModal(p: Props) {
   const isProd = p.env === "prod";
 
   return (
-    <div className="overlay center" onClick={p.onClose}>
+    <Overlay center label="Review changes" onClose={p.onClose}>
       <div className="modal edit-review" onClick={(e) => e.stopPropagation()}>
         {/* Was a hand-rolled copy of ModalHead, which meant it missed the
             accessible label on the close button. Use the real one. */}
@@ -69,6 +69,6 @@ export default function EditReviewModal(p: Props) {
           </button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }

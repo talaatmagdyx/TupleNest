@@ -1663,7 +1663,7 @@ export default function App() {
         buildLabel={buildLabel()}
       />
 
-      {toast && <div className="toast">{toast}</div>}
+      {toast && <div className="toast" role="status" aria-live="polite">{toast}</div>}
 
       {/* A running export gets its own persistent strip rather than the toast:
           it lasts longer than a toast should, and it needs a way out. */}

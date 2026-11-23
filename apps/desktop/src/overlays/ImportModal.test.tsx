@@ -252,6 +252,27 @@ describe("ImportModal — streaming a file it never holds whole", () => {
     await waitFor(() => expect(onDone).toHaveBeenCalledWith(expect.stringContaining("600")));
   });
 
+  it("is a real dialog, and Escape cannot close it while an import runs", async () => {
+    // It used to sit outside the shared Overlay: no focus trap, no dialog
+    // role, and the app-wide Escape closed it mid-import while the import
+    // carried on with no UI.
+    invokeMock.mockImplementation(async (cmd: string, a?: unknown) => {
+      const sql = String((a as { sql?: string } | undefined)?.sql ?? "");
+      if (/^insert into/i.test(sql)) return new Promise(() => {}); // never finishes
+      return { columns: [], rows: [], rowsAffected: 0, durationMs: 1 };
+    });
+    const onClose = vi.fn();
+    const { container } = render(<ImportModal {...base} onClose={onClose} />);
+    await choose(container, csv(GOOD));
+    expect(screen.getByRole("dialog", { name: "Import CSV" })).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: /Import 2 rows/ }));
+    await waitFor(() =>
+      expect(invokeMock.mock.calls.some((c) => /insert into/i.test(String((c[1] as { sql?: string })?.sql)))).toBe(true),
+    );
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("inside the user's own transaction, a cancel undoes only the import", async () => {
     // The user typed BEGIN, so the UI's inTx is false but the server has a
     // transaction open. The import must not BEGIN again, and a cancel must

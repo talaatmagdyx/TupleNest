@@ -85,6 +85,23 @@ function Row(p: {
       className={`tree-row ${p.className ?? ""}`}
       style={{ paddingLeft: 8 + p.depth * 13 }}
       title={p.title}
+      // Keyboard and screen readers: each row is a focusable treeitem. Space
+      // is the click (expand, select); Enter is the double-click (open,
+      // insert), falling back to the click where a row has only that.
+      role="treeitem"
+      aria-level={p.depth + 1}
+      aria-expanded={p.arrow ? !!p.open : undefined}
+      tabIndex={p.onClick || p.onDoubleClick ? 0 : -1}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return; // a button inside the row
+        if (e.key === " ") {
+          e.preventDefault();
+          p.onClick?.();
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          (p.onDoubleClick ?? p.onClick)?.();
+        }
+      }}
       onClick={p.onClick}
       onDoubleClick={p.onDoubleClick}
     >
@@ -456,7 +473,7 @@ export default function ExplorerTree(p: Props) {
           />
         </div>
       )}
-      <div className="tree">
+      <div className="tree" role="tree" aria-label="Database objects">
         {p.schemas === null && p.connected && <div className="note">Loading schemas…</div>}
         {p.schemas === null && !p.connected && (
           <div className="explorer-empty">

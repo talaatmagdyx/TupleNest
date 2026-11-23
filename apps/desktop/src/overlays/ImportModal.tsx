@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { serverInTransaction } from "../lib/tx";
+import { Overlay } from "./Overlays";
 import type { QueryResult } from "../ipc/types";
 import {
   batchRows,
@@ -222,7 +223,10 @@ export default function ImportModal(p: Props) {
   const isProd = p.env === "prod";
 
   return (
-    <div className="overlay center" onClick={busy ? undefined : p.onClose}>
+    // The shared Overlay: focus trap, role="dialog", and an Escape that stops
+    // here — the global Escape handler used to close this mid-import and leave
+    // the import running with no UI. While busy, closing is refused outright.
+    <Overlay center label="Import CSV" onClose={busy ? () => {} : p.onClose}>
       <div className="modal import" onClick={(e) => e.stopPropagation()}>
         {/* Fourth copy of ModalHead in this codebase; all four had lost the
             close button's accessible label. This one also has to refuse to
@@ -406,6 +410,6 @@ export default function ImportModal(p: Props) {
           </div>
         )}
       </div>
-    </div>
+    </Overlay>
   );
 }
