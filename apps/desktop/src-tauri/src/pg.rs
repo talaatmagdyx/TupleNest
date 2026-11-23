@@ -470,8 +470,14 @@ pub async fn pg_connect(state: tauri::State<'_, PgState>, params: PgParams) -> R
         .connect_concrete_with_password(config, password.as_ref().map(|s| s.expose()))
         .await
         .map_err(|e| err_to_string(&e))?;
-    *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = Some(session.cancel_handle());
-    *state.session.lock().await = Some(session);
+    // Take the session slot first, then publish the new cancel handle. The
+    // other order pointed Cancel at the new, idle backend while the old
+    // session's query was still running (and still holding the lock).
+    let mut slot = lock_session(&state).await?;
+    *slot = Some(session);
+    *state.cancel.lock().map_err(|_| "cancel lock poisoned")? =
+        slot.as_ref().map(|s| s.cancel_handle());
+    drop(slot);
     *state.tunnel.lock().map_err(|_| "tunnel lock poisoned")? = tunnel;
     *state.cache_key.lock().map_err(|_| "key lock poisoned")? = Some(cache_key_of(&params));
     *state
@@ -490,7 +496,7 @@ pub async fn pg_connect(state: tauri::State<'_, PgState>, params: PgParams) -> R
 
 #[tauri::command]
 pub async fn pg_disconnect(state: tauri::State<'_, PgState>) -> Result<(), String> {
-    *state.session.lock().await = None;
+    *lock_session(&state).await? = None;
     *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = None;
     *state.result.lock().map_err(|_| "result lock poisoned")? = None;
     // Dropping the tunnel closes the SSH session.
@@ -1230,6 +1236,27 @@ pub async fn pg_rollback(state: tauri::State<'_, PgState>) -> Result<(), String>
     session.rollback().await.map_err(|e| err_to_string(&e))
 }
 
+/*
+ * The session slot, for replacing or dropping it.
+ *
+ * `pg_query` holds the session lock for the whole query, so Disconnect (or a
+ * reconnect) used to wait until a long query finished by itself — minutes, on
+ * a big table. If the lock is busy, cancel what holds it first. The cancel is
+ * bounded: it dials the server, which after a network loss may never answer.
+ */
+async fn lock_session<'a>(
+    state: &'a PgState,
+) -> Result<tokio::sync::MutexGuard<'a, Option<tuplenest_driver_postgres::PostgresSession>>, String> {
+    if let Ok(guard) = state.session.try_lock() {
+        return Ok(guard);
+    }
+    let handle = state.cancel.lock().map_err(|_| "cancel lock poisoned")?.clone();
+    if let Some(h) = handle {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), h.cancel()).await;
+    }
+    Ok(state.session.lock().await)
+}
+
 /// Cancels the in-flight query via the wire-protocol cancel key. Does not
 /// require the session lock, so it works while `pg_query` is blocked.
 #[tauri::command]
@@ -1246,6 +1273,66 @@ pub async fn pg_cancel(state: tauri::State<'_, PgState>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Disconnect used to wait for a running query to finish by itself, since
+    /// `pg_query` holds the session lock throughout. It must cancel instead.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "requires live PostgreSQL (TUPLENEST_TEST_PG_*)"]
+    async fn taking_the_session_cancels_a_running_query_instead_of_waiting() {
+        let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.into());
+        let config = tuplenest_driver_api::ConnectionConfig {
+            driver_id: "postgres".into(),
+            name: "t".into(),
+            environment: tuplenest_driver_api::Environment::Dev,
+            read_only: false,
+            host: env("TUPLENEST_TEST_PG_HOST", "localhost"),
+            port: env("TUPLENEST_TEST_PG_PORT", "5432").parse().unwrap(),
+            database: env("TUPLENEST_TEST_PG_DB", "postgres"),
+            username: env("TUPLENEST_TEST_PG_USER", "postgres"),
+            secret_ref: None,
+            tls_mode: tuplenest_driver_api::TlsMode::Disabled,
+            tls_ca_path: None,
+            options: Default::default(),
+            default_statement_timeout_ms: 0,
+        };
+        let pw = std::env::var("TUPLENEST_TEST_PG_PASSWORD").ok();
+        let session = tuplenest_driver_postgres::PostgresDriver
+            .connect_concrete_with_password(config, pw.as_deref())
+            .await
+            .unwrap();
+        let state = std::sync::Arc::new(PgState::new(
+            tuplenest_metadata_cache::MetadataCache::open_in_memory().unwrap(),
+        ));
+        *state.cancel.lock().unwrap() = Some(session.cancel_handle());
+        *state.session.lock().await = Some(session);
+
+        let held = state.clone();
+        let query = tokio::spawn(async move {
+            let mut g = held.session.lock().await;
+            let req = QueryRequest {
+                execution_id: ExecutionId::new(),
+                sql: "SELECT pg_sleep(30)".into(),
+                params: vec![],
+                row_limit: 0,
+                timeout_ms: 0,
+            };
+            struct NullSink;
+            #[async_trait]
+            impl BatchSink for NullSink {
+                async fn deliver(&self, _: RowBatch) -> Result<(), Box<DriverError>> {
+                    Ok(())
+                }
+            }
+            g.as_mut().unwrap().execute(req, &NullSink).await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        let started = std::time::Instant::now();
+        let slot = lock_session(&state).await.unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(6), "waited for the query");
+        drop(slot);
+        assert!(query.await.unwrap().is_err(), "the running query should have been cancelled");
+    }
 
     #[test]
     fn hex_matches_the_per_byte_format() {
