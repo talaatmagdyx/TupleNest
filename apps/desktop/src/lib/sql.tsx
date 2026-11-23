@@ -282,7 +282,7 @@ export function guardReason(sql: string, env: string | null): GuardReason | null
  * "Its own clause" is the text from the verb to the end of the enclosing
  * parentheses (a CTE body) or the statement, at the verb's nesting level: a
  * WHERE inside a subquery bounds the subquery, not the DELETE. Works on masked
- * text, so quoted or commented WHEREs never count. `DO UPDATE` (upsert) and
+ * text, so quoted or commented WHERE clauses never count. `DO UPDATE` (upsert) and
  * `FOR [NO KEY] UPDATE` (row locks) are not row-wide writes and are skipped.
  */
 export function dmlWithoutWhere(masked: string): string | null {
