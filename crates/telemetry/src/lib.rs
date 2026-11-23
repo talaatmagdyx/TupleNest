@@ -126,7 +126,11 @@ pub fn redact_text(s: &str) -> String {
         "authorization",
     ] {
         let mut result = String::with_capacity(out.len());
-        let lower = out.to_lowercase();
+        // ASCII-only lowering keeps every byte offset identical to `out`'s.
+        // `to_lowercase` does not (`İ` is 2 bytes, lowered 3), so offsets
+        // found in it sliced `out` mid-character — a panic — or missed the
+        // key altogether and left the secret in place.
+        let lower = out.to_ascii_lowercase();
         let mut i = 0;
         while let Some(found) = lower[i..].find(key) {
             let start = i + found;
@@ -282,6 +286,20 @@ pub fn redact_pairs<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn non_ascii_text_neither_panics_nor_skips_redaction() {
+        // Each of these panicked ("byte index … is not a char boundary") or
+        // came back unredacted before.
+        // Not assignments (the key runs on into `é`), so left as they are —
+        // the point is that they return at all.
+        assert_eq!(redact_text("İpasswordé"), "İpasswordé");
+        assert_eq!(redact_text("İ tokené=1"), "İ tokené=1");
+        let out = redact_text("İ password=hunter2");
+        assert!(!out.contains("hunter2"), "secret survived: {out}");
+        let out = redact_text("SELECT 'İ' -- PASSWORD=hunter2 ü");
+        assert!(!out.contains("hunter2"), "secret survived: {out}");
+    }
 
     #[test]
     fn redacts_sensitive_keys_case_insensitively() {

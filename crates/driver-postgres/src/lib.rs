@@ -378,6 +378,28 @@ impl PostgresSession {
         }
     }
 
+    /*
+     * COMMIT or ROLLBACK, keeping `in_transaction` true to the server.
+     *
+     * The flag used to be cleared before the statement was sent, so a COMMIT
+     * that failed (a deferred constraint, a serialization failure) left the
+     * driver sure there was no transaction while the UI still showed one —
+     * and from then on Commit and Rollback both answered "No open
+     * transaction". A failed COMMIT usually does end the transaction (the
+     * server rolls it back), but not always (a lost connection), so after a
+     * failure the server is asked rather than either side guessing.
+     */
+    async fn end_transaction(&mut self, sql: &str) -> Result<(), Box<DriverError>> {
+        let Some(id) = self.in_transaction.take() else {
+            return Err(DriverError::new(ErrorCategory::Internal, "No open transaction").into());
+        };
+        let result = self.client.batch_execute(sql).await.map_err(normalize_error);
+        if result.is_err() && self.server_in_transaction().await.unwrap_or(false) {
+            self.in_transaction = Some(id);
+        }
+        result
+    }
+
     async fn ensure_read_only(&self) -> Result<(), Box<DriverError>> {
         let msgs = self
             .client
@@ -1165,23 +1187,11 @@ impl DatabaseSession for PostgresSession {
     }
 
     async fn commit(&mut self) -> Result<(), Box<DriverError>> {
-        if self.in_transaction.take().is_none() {
-            return Err(DriverError::new(ErrorCategory::Internal, "No open transaction").into());
-        }
-        self.client
-            .batch_execute("COMMIT")
-            .await
-            .map_err(normalize_error)
+        self.end_transaction("COMMIT").await
     }
 
     async fn rollback(&mut self) -> Result<(), Box<DriverError>> {
-        if self.in_transaction.take().is_none() {
-            return Err(DriverError::new(ErrorCategory::Internal, "No open transaction").into());
-        }
-        self.client
-            .batch_execute("ROLLBACK")
-            .await
-            .map_err(normalize_error)
+        self.end_transaction("ROLLBACK").await
     }
 
     fn is_broken(&self) -> bool {

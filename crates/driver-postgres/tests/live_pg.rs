@@ -1117,6 +1117,33 @@ async fn read_only_session_cannot_be_switched_back_to_read_write() {
     }
 }
 
+/// A COMMIT that fails at a deferred constraint rolls the transaction back.
+/// The driver used to have cleared its flag *and* left the UI believing the
+/// transaction was open; afterwards it must agree with the server, and a new
+/// transaction must work.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn a_failed_commit_leaves_the_driver_agreeing_with_the_server() {
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    s.execute(req("CREATE TEMP TABLE IF NOT EXISTS tn_parent (id int PRIMARY KEY)"), &NullSink).await.unwrap();
+    s.execute(
+        req("CREATE TEMP TABLE IF NOT EXISTS tn_child (p int REFERENCES tn_parent DEFERRABLE INITIALLY DEFERRED)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    s.begin(TransactionOptions::default()).await.unwrap();
+    s.execute(req("INSERT INTO tn_child VALUES (42)"), &NullSink).await.unwrap();
+    assert!(s.commit().await.is_err(), "the deferred FK must fail at COMMIT");
+    assert!(!s.server_in_transaction().await.unwrap(), "the server rolled it back");
+    // Not wedged: a fresh transaction opens and commits.
+    s.begin(TransactionOptions::default()).await.expect("begin after a failed commit");
+    s.commit().await.expect("commit after a failed commit");
+}
+
 /// A bigint past 2^53 travels from the WebView as text and must bind to the
 /// int8 column exactly, so a WHERE on it matches the right row and only it.
 #[tokio::test]
