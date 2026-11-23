@@ -8,8 +8,9 @@ versions follow [Semantic Versioning](https://semver.org/).
 A safety and correctness release, from an end-to-end audit. Several places
 where the promise — *asks before it writes* — was stronger than the mechanism
 now hold. **The version number now rises with every release** (betas 1–11 all
-reported 0.1.0), so this is the first beta the updater will offer to the ones
-before it, and every later one will be offered too.
+reported 0.1.0). Betas are still published as GitHub pre-releases, which the
+updater never sees (it reads `releases/latest`), so **install this beta by
+downloading it** — the app will not offer it.
 
 ### Safety
 
@@ -746,7 +747,7 @@ app promised and did not do.
   (BOM handling is not RFC-4180), and "tested cancellation" (now true — the
   tests run).
 
-## [0.1.0] — unreleased
+## [0.1.0] — planned (shipped so far as betas 1–11)
 
 First public release. PostgreSQL only.
 

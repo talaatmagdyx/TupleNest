@@ -7,7 +7,8 @@
 //!   hostname **not** checked
 //! - `VerifyFull`  → chain + hostname verified. Default; fails closed.
 //!
-//! Roots = OS trust store, plus `tls_ca_path` PEM file when provided.
+//! Roots: `VerifyFull` uses the OS trust store plus `tls_ca_path` when
+//! provided; `VerifyCa` uses only `tls_ca_path`, which it requires.
 //!
 //! `VerifyCa` used to be a lie: it built the same verifier as `VerifyFull`,
 //! because rustls checks the hostname whenever a real verifier is used, and

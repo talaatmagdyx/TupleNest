@@ -60,7 +60,7 @@
       <div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>TupleNest — production · read-only</span></div>
       <img src="shots/hero.png" alt="TupleNest showing a production connection in read-only mode: SQL editor, schema explorer, and result grid.">
     </div>
-    <p class="honest"><b>Public beta.</b> Real engineers are using it, but nobody has lived with it for years yet. macOS builds are not notarized and Windows installers are unsigned, so first launch needs one extra click — every release is signed and checksummed so you can verify the bytes yourself.</p>
+    <p class="honest"><b>Public beta.</b> Real engineers are using it, but nobody has lived with it for years yet. macOS builds are not notarized and Windows installers are unsigned, so first launch needs one extra click — every file is checksummed and every one except the macOS <code class="inline">.dmg</code> carries a minisign signature, so you can verify the bytes yourself.</p>
   </div>
 </section>
 
@@ -71,7 +71,7 @@
       <div class="t"><div class="ico">🖥️</div><h4>100% local-first</h4><p>The app talks to your database and nothing else. No backend of ours sits in the middle.</p></div>
       <div class="t"><div class="ico">🛡️</div><h4>PostgreSQL-enforced safety</h4><p>Read-only mode uses a real Postgres session characteristic — the server refuses writes, not just the UI.</p></div>
       <div class="t"><div class="ico">🔑</div><h4>Credentials in the OS keychain</h4><p>Passwords live in the macOS Keychain, Windows Credential Manager, or the Secret Service — never in a config file.</p></div>
-      <div class="t"><div class="ico">✍️</div><h4>Signed releases</h4><p>Every build ships with a minisign signature, SHA-256 checksums, an SBOM, and GitHub build provenance.</p></div>
+      <div class="t"><div class="ico">✍️</div><h4>Signed releases</h4><p>Every file except the macOS <code class="inline">.dmg</code> ships with a minisign signature, plus SHA-256 checksums, an SBOM, and GitHub build provenance.</p></div>
       <div class="t"><div class="ico">🚫</div><h4>No telemetry</h4><p>No analytics SDK, no phone-home, no crash upload. Even a pasted query plan is analysed locally, never uploaded.</p></div>
       <div class="t"><div class="ico">⚙️</div><h4>Native Rust backend</h4><p>A Rust core over the PostgreSQL wire protocol, in a Tauri shell. Streaming, bounded memory, fast start.</p></div>
     </div>
@@ -293,7 +293,7 @@
         <ul><li>AppImage &amp; .deb</li><li><code class="inline">chmod +x</code> the AppImage</li><li>Verify with the published SHA-256</li></ul>
         <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Download for Linux</a></div>
     </div>
-    <div class="callout" style="margin-top:26px"><b>Verify your download.</b> Each release includes <code class="inline">SHA256SUMS</code>, a minisign signature, the minisign public key, an SBOM, and release notes. Full instructions on the <a href="download.html">Download page</a>.</div>
+    <div class="callout" style="margin-top:26px"><b>Verify your download.</b> Each release includes <code class="inline">SHA256SUMS</code>, minisign signatures (all but the <code class="inline">.dmg</code>), an SBOM, and release notes; the public key is on the Download page. Full instructions on the <a href="download.html">Download page</a>.</div>
   </div>
 </section>
 
