@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { serverInTransaction } from "../lib/tx";
 import type { QueryResult } from "../ipc/types";
 import {
+  batchRows,
   buildCreateTable,
   buildInsert,
   CsvStreamParser,
@@ -168,6 +169,7 @@ export default function ImportModal(p: Props) {
       // The file is read again rather than kept from the preview: that is the
       // point. At most BATCH rows are held at once, so peak memory is set by
       // the batch size, not the file size.
+      const batchSize = batchRows(columns.length, BATCH);
       let pending: string[][] = [];
       let isHeader = true;
       const flush = async () => {
@@ -186,7 +188,7 @@ export default function ImportModal(p: Props) {
             continue;
           }
           pending.push(r);
-          if (pending.length >= BATCH) await flush();
+          if (pending.length >= batchSize) await flush();
         }
         setProgress(file.size ? Math.min(100, (bytes / file.size) * 100) : 0);
         return !cancelRef.current;

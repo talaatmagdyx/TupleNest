@@ -193,11 +193,27 @@ export function normalizeColumnName(raw: string, taken: Set<string>): string {
   if (/^\d/.test(n)) n = `c_${n}`; // can't start with a digit
   n = n.slice(0, 63); // Postgres identifier limit
 
+  // The suffix must fit inside the 63 bytes too: truncating first and then
+  // appending `_2` made 65 bytes, which PostgreSQL cut back to the first
+  // name — "column specified more than once". Names are [a-z0-9_] by now, so
+  // characters are bytes.
   let out = n;
   let k = 2;
-  while (taken.has(out)) out = `${n}_${k++}`;
+  while (taken.has(out)) {
+    const suffix = `_${k++}`;
+    out = `${n.slice(0, 63 - suffix.length)}${suffix}`;
+  }
   taken.add(out);
   return out;
+}
+
+/** PostgreSQL's bind-parameter limit: the wire protocol counts them in a u16. */
+export const MAX_BIND_PARAMS = 65535;
+
+/** Rows per INSERT so that rows × columns stays under the parameter limit.
+ *  A fixed 500 failed every batch of any CSV wider than 131 columns. */
+export function batchRows(columnCount: number, preferred = 500): number {
+  return Math.max(1, Math.min(preferred, Math.floor(MAX_BIND_PARAMS / Math.max(1, columnCount))));
 }
 
 export function normalizeHeader(header: string[]): string[] {
