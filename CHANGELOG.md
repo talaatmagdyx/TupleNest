@@ -3,6 +3,75 @@
 Notable changes to TupleNest. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.1-beta.12] — 2026-11-23
+
+A safety and correctness release, from an end-to-end audit. Several places
+where the promise — *asks before it writes* — was stronger than the mechanism
+now hold. **The version number now rises with every release** (betas 1–11 all
+reported 0.1.0), so this is the first beta the updater will offer to the ones
+before it, and every later one will be offered too.
+
+### Safety
+
+- **Applying row edits no longer runs the editor's current SQL.** The re-read
+  after Apply re-ran whatever the editor held, with the production guard
+  skipped — type `DELETE FROM users`, apply an unrelated edit, and it ran. It
+  now re-runs the query behind the grid, guard intact.
+- **Read-only profiles can no longer be switched back to read-write** from the
+  editor (`SET SESSION CHARACTERISTICS … READ WRITE`,
+  `default_transaction_read_only`, `RESET ALL`, `BEGIN READ WRITE`). The driver
+  re-checks the server's transaction mode before every statement.
+- **Import and row edits respect a transaction you began by typing `BEGIN`.**
+  They used to issue their own BEGIN and then commit or roll back your work.
+  They now ask the server and work inside a savepoint. A cancelled import no
+  longer writes its last pending batch.
+- **The destructive-statement guard checks each UPDATE/DELETE's own WHERE**, so
+  a data-modifying CTE or a WHERE inside a subquery no longer disarms it; `DO`,
+  `CALL`, `MERGE` and `COPY … FROM` now ask on production.
+
+### Security
+
+- **`verify-ca` trusts only the CA file you give it** (now required), never the
+  OS trust store. With the hostname unchecked, any publicly trusted certificate
+  for any domain used to pass.
+- **A saved password only goes to the server its profile names.** Moving a
+  profile to another host or user asks for the password again.
+- Release workflow: no persisted git credentials, secrets passed through
+  `env:`, and a `release` environment that can require approval before the
+  signing key is reachable.
+
+### Correctness
+
+- Integer parameters are range-checked instead of wrapped (65537 bound to a
+  `smallint` used to become 1); bigints beyond 2^53 are shown, exported and
+  edited exactly instead of rounded.
+- After a failed COMMIT, the transaction state follows the server instead of
+  leaving Commit and Rollback both failing.
+- CSV import: wide files (over 131 columns) and long duplicate headers no
+  longer fail; a quoted `""` imports as an empty string and a bare empty field
+  as NULL, as `COPY … CSV` reads them.
+- Query history no longer crashes on some non-ASCII SQL, and redacts secrets in
+  it reliably.
+- Disconnect and reconnect cancel a running query instead of waiting for it;
+  Cancel during a reconnect reaches the running query.
+- One query at a time; a late result after a disconnect is discarded; Run and
+  EXPLAIN wait for a running export.
+
+### Performance
+
+- The 256 MB result budget now holds for wide and NULL-heavy results (a
+  200-column, 100k-row result peaked at 1.1 GB; now truncated at ~430 MB peak).
+  `bytea` columns load ~20× faster. Rows past the cap are counted, not
+  converted.
+
+### Accessibility
+
+- The schema explorer and grid sorting work from the keyboard; Import, Review
+  changes and Schema intelligence are proper dialogs with focus trapping; toasts
+  are announced to screen readers.
+
+[0.1.1-beta.12]: https://github.com/talaatmagdyx/TupleNest/releases/tag/v0.1.1-beta.12
+
 ## [0.1.0-beta.11] — 2026-08-29
 
 Exporting a large result no longer freezes the app, and the editor stops

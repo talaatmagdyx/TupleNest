@@ -40,13 +40,19 @@ build-essential on Linux).
 ```bash
 git clone https://github.com/talaatmagdyx/TupleNest
 cd TupleNest/apps/desktop
-npm install
+npm ci                 # exact lockfile; plain `npm install` drops devDependencies under NODE_ENV=production
 npm run tauri dev      # run the app in development
 ```
 
-Some tests talk to a real database. Point them at a local PostgreSQL with the
-`TUPLENEST_TEST_PG_*` environment variables (host, port, db, user, password);
-tests that need a server skip cleanly when it isn't configured.
+Tests that need a real PostgreSQL or sshd are `#[ignore]`d, so the default
+`cargo test --workspace` and `npm test` need neither. Run them with
+`-- --include-ignored` against a local server named by the
+`TUPLENEST_TEST_PG_*` environment variables (host, port, db, user, password).
+
+One exception on Linux: `live_os_keychain_contract` (credential-store) talks
+to the real Secret Service, so without a running keyring daemon it fails
+rather than skips. CI starts `gnome-keyring` for it (see `ci.yml`); locally,
+skip it with `cargo test --workspace -- --skip live_os_keychain_contract`.
 
 ### Building a real .app locally
 
@@ -54,20 +60,17 @@ tests that need a server skip cleanly when it isn't configured.
 so the app goes blank the moment that server stops. To get something you can
 actually launch and keep, build the bundle instead.
 
-One snag: releases ship signed updater artifacts, so the build asks for a
-signing key that only CI has. For a local build, generate a throwaway one —
-it signs an update nobody will install:
+Releases ship signed updater artifacts, which need a key only CI has. A local
+build doesn't need them:
 
 ```bash
-npx tauri signer generate -w /tmp/tn-local.key -p ""
-export TAURI_SIGNING_PRIVATE_KEY="$(cat /tmp/tn-local.key)"
-export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
-npm run tauri build -- --bundles app
+npm run build:app -- --bundles app   # bundles without updater artifacts, so no key
 ```
 
-The result lands in `target/release/bundle/`. Tauri warns that the key doesn't
-match the configured public key — expected, and irrelevant unless you are
-testing auto-update.
+The result lands in `target/release/bundle/`. Testing auto-update itself is
+the one case that needs a key; generate a throwaway one with
+`npx tauri signer generate -w /tmp/tn-local.key -p ""` and export it as
+`TAURI_SIGNING_PRIVATE_KEY` (with an empty `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`).
 
 **If two copies are installed, check the build stamp.** The status bar shows
 the commit and build time of the bundle that window is running (a trailing `+`
@@ -96,8 +99,8 @@ NODE_ENV=test npm run test:coverage
 npm run build
 ```
 
-The suite is large on purpose — roughly 1,800 automated tests (about 1,661
-frontend, 157 Rust). The frontend has a coverage floor; a change that drops it
+The suite is large on purpose — over 2,000 frontend tests and about 180 Rust
+tests (a quarter of them live tests that need a server). The frontend has a coverage floor; a change that drops it
 fails CI. If a legitimate change lowers the floor, move the number in
 `vitest.config.ts` and say why in the commit — don't delete the block.
 

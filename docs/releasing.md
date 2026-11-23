@@ -44,7 +44,7 @@ older distros.
 | --- | --- | --- |
 | `TAURI_SIGNING_PRIVATE_KEY` | updater artifacts, every platform | the build fails **after** producing the installers |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | as above | the build fails at signing — the key is passphrase-protected, so this is **not** optional |
-| `APPLE_*` (see below) | notarizing the macOS builds | mac builds are ad-hoc signed; Gatekeeper warns |
+| `APPLE_*` (see below) | notarizing the macOS builds | mac builds are not Developer ID signed or notarized; Gatekeeper warns |
 
 ### Keep the signing key behind an approval
 

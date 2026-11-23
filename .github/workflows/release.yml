@@ -210,16 +210,16 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # APPLE_* deliberately absent here — see the two steps above. Without
-          # an Apple Developer account the macOS bundles are ad-hoc signed and
-          # Gatekeeper warns on first launch; that is the documented, tested
-          # state, and now actually the behaviour.
+          # an Apple Developer account the macOS bundles are not Developer ID
+          # signed or notarized, and Gatekeeper warns on first launch.
         with:
           projectPath: apps/desktop
           args: --target ${{ matrix.target }}
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-dev', github.run_number) }}
           releaseName: TupleNest ${{ github.ref_type == 'tag' && github.ref_name || 'dev build' }}
           releaseBody: |
-            See the assets below. Every platform is built on its own runner.
+            See the assets below, and CHANGELOG.md for what changed. Every
+            platform is built in CI from the tagged commit.
 
             The macOS builds are not notarized unless an Apple Developer
             certificate is configured, so the first launch needs Gatekeeper

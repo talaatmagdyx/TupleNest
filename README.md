@@ -192,8 +192,6 @@ trust a README that does.
 
 - **One engine.** PostgreSQL 13+, done properly, before anything else is
   attempted. Need MySQL today? TupleNest isn't your tool today.
-- **CSV import reads the whole file into memory.** Fine for real-world
-  imports; not yet fine for the 10 GB one.
 - **The statement guard is best-effort.** It survived thirteen bypass
   attempts, but it's the seatbelt light. Read-only profiles are the seatbelt —
   the *server* enforces those. The airbag is a database role with no write
@@ -209,7 +207,9 @@ trust a README that does.
 ## 📦 Install
 
 **[Download the latest release](https://github.com/talaatmagdyx/TupleNest/releases/latest).**
-Every platform builds from the same source on its own CI runner.
+Every platform builds from the same source in CI: Linux and Windows on their
+own runners, both macOS builds on Apple Silicon (Intel is cross-compiled, and
+its binary is not run in CI).
 
 Nothing is code-signed yet, so **every OS objects once** — each dialog and its
 exact click-path is below, written from what the first beta testers actually

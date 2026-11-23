@@ -61,7 +61,7 @@
         <ul><li>AppImage &amp; .deb</li><li><code class="inline">chmod +x</code> the AppImage to run</li><li>Or <code class="inline">sudo dpkg -i</code> the .deb</li></ul>
         <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Download for Linux</a></div>
     </div>
-    <div class="callout warn" style="margin-top:26px"><b>Why the warnings?</b> macOS notarization and a Windows code-signing certificate are a funding matter, not a trust matter. Until then, first launch needs one extra click on macOS and Windows — and every build is signed with minisign and checksummed so you can verify it yourself.</div>
+    <div class="callout warn" style="margin-top:26px"><b>Why the warnings?</b> macOS notarization and a Windows code-signing certificate are a funding matter, not a trust matter. Until then, first launch needs one extra click on macOS and Windows — and every file is checksummed, and every one except the macOS <code class="inline">.dmg</code> is signed with minisign, so you can verify it yourself.</div>
   </div>
 </section>
 
@@ -73,7 +73,7 @@
     <table style="margin-top:20px">
       <tr><th>Item</th><th>Requirement</th></tr>
       <tr><td>Operating systems</td><td class="how">macOS 10.15+, Windows 10/11, Linux with webkit2gtk</td></tr>
-      <tr><td>Linux, precisely</td><td class="how">x86_64, <b>glibc 2.34 or newer</b> and <code class="inline">libwebkit2gtk-4.1</code> — Ubuntu 22.04+, Debian 12+, Fedora 36+. Ubuntu 20.04 has glibc 2.31 and cannot start the binary. “Or equivalent” is vague if you are not on Ubuntu; check with <code class="inline">ldd --version</code>.</td></tr>
+      <tr><td>Linux, precisely</td><td class="how">x86_64, <b>glibc 2.35 or newer</b> and <code class="inline">libwebkit2gtk-4.1</code> — Ubuntu 22.04+, Debian 12+, Fedora 36+. Ubuntu 20.04 has glibc 2.31 and cannot start the binary. “Or equivalent” is vague if you are not on Ubuntu; check with <code class="inline">ldd --version</code>.</td></tr>
       <tr><td>CPU architecture</td><td class="how">Apple Silicon &amp; Intel on macOS; x86_64 on Windows and Linux</td></tr>
       <tr><td>Minimum RAM</td><td class="how">~256&nbsp;MB for the app; results are bounded, but very wide result sets use more</td></tr>
       <tr><td>Recommended RAM</td><td class="how">4&nbsp;GB or more for comfortable large-result work</td></tr>
@@ -106,7 +106,7 @@ sha256sum &lt;filename&gt;</pre></div>
 minisign -Vm &lt;artifact&gt; -P &lt;public-key&gt;</pre></div>
       </div>
     </div>
-    <div class="callout" style="margin-top:22px">Each release also carries a <code class="inline">SHA256SUMS</code> file, per-artifact signatures, the minisign public key, an SBOM (CycloneDX), and a GitHub build-provenance attestation you can check with <code class="inline">gh attestation verify</code>.</div>
+    <div class="callout" style="margin-top:22px">Each release also carries a <code class="inline">SHA256SUMS</code> file, a <code class="inline">.sig</code> beside every artifact except the <code class="inline">.dmg</code> files (base64-encoded minisign signatures: <code class="inline">base64 -d X.sig &gt; X.minisig</code>, then <code class="inline">minisign -Vm X -x X.minisig -P RWQbzK7INNRew+Mo6Yu5/m4pd5wSYwPq+hlbG4pPuKytbR1oZ8LkTgQi</code>; key ID C35ED434C8AECC1B, the same key the updater pins in <code class="inline">tauri.conf.json</code>), an SBOM (CycloneDX), and a GitHub build-provenance attestation you can check with <code class="inline">gh attestation verify</code>.</div>
   </div>
 </section>
 
