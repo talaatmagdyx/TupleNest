@@ -1216,6 +1216,95 @@ async fn server_in_transaction_sees_a_typed_begin() {
     );
 }
 
+/// `DO` and `CALL` can COMMIT inside, and the next transaction takes the
+/// default the block just set — one statement that flips the mode *and*
+/// writes. Both must be refused on a read-only profile.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn read_only_session_refuses_do_and_call() {
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    s.execute(
+        req("CREATE TABLE IF NOT EXISTS tn_ro_do (x int)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    s.execute(req("TRUNCATE tn_ro_do"), &NullSink)
+        .await
+        .unwrap();
+    s.execute(req("INSERT INTO tn_ro_do VALUES (1)"), &NullSink)
+        .await
+        .unwrap();
+    s.execute(
+        req("CREATE OR REPLACE PROCEDURE tn_ro_wipe() LANGUAGE plpgsql AS $$ BEGIN \
+             SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE; COMMIT; DELETE FROM tn_ro_do; END $$"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+
+    let mut cfg = test_config();
+    cfg.read_only = true;
+    let mut ro = PostgresDriver
+        .connect_concrete_with_password(cfg, None)
+        .await
+        .expect("connect");
+    for sql in [
+        "DO $$ BEGIN SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE; COMMIT; DELETE FROM tn_ro_do; END $$",
+        "/* hidden */ do $$ BEGIN DELETE FROM tn_ro_do; END $$",
+        "CALL tn_ro_wipe()",
+    ] {
+        assert!(ro.execute(req(sql), &NullSink).await.is_err(), "`{sql}` ran on a read-only session");
+    }
+    drop(ro);
+
+    let left = CountingSink::default();
+    s.execute(req("SELECT x FROM tn_ro_do"), &left)
+        .await
+        .unwrap();
+    assert_eq!(
+        left.rows.load(Ordering::SeqCst),
+        1,
+        "the row must still be there"
+    );
+    s.execute(req("DROP PROCEDURE tn_ro_wipe()"), &NullSink)
+        .await
+        .ok();
+    s.execute(req("DROP TABLE tn_ro_do"), &NullSink).await.ok();
+}
+
+/// The per-statement check must not break what a read-only session may do:
+/// SET TRANSACTION as the first statement of a transaction, and the first
+/// statement after the session default was flipped back.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn read_only_check_does_not_refuse_legitimate_reads() {
+    let mut cfg = test_config();
+    cfg.read_only = true;
+    let mut ro = PostgresDriver
+        .connect_concrete_with_password(cfg, None)
+        .await
+        .expect("connect");
+    ro.execute(req("BEGIN"), &NullSink).await.unwrap();
+    ro.execute(
+        req("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"),
+        &NullSink,
+    )
+    .await
+    .expect("SET TRANSACTION must be allowed as the first statement");
+    ro.execute(req("SELECT 1"), &NullSink).await.unwrap();
+    ro.execute(req("ROLLBACK"), &NullSink).await.unwrap();
+    let _ = ro
+        .execute(req("SET default_transaction_read_only = off"), &NullSink)
+        .await;
+    ro.execute(req("SELECT 1"), &NullSink)
+        .await
+        .expect("a read outside any transaction must not be refused after a flip");
+}
+
 /// The same connection without the flag must be unaffected — otherwise the
 /// test above would pass for the wrong reason.
 #[tokio::test]

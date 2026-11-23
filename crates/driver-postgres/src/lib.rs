@@ -342,8 +342,10 @@ impl PostgresSession {
      * restore the read-only default and to say whether the transaction this
      * statement will run in is read-only. Outside a transaction that is always
      * yes. Inside one opened `READ WRITE`, it is no, and the statement is
-     * refused — whatever it is. One statement cannot both flip the mode and
-     * write: PostgreSQL fixes a transaction's mode before its first query.
+     * refused — whatever it is. An ordinary statement cannot both flip the
+     * mode and write: PostgreSQL fixes a transaction's mode before its first
+     * query. `DO` and `CALL` can, by committing partway through, so `execute`
+     * refuses those on a read-only profile before this check ever runs.
      */
     /*
      * Is a transaction open on the server right now?
@@ -405,12 +407,16 @@ impl PostgresSession {
     }
 
     async fn ensure_read_only(&self) -> Result<(), Box<DriverError>> {
+        // Two round trips, not one: sent together they run in one implicit
+        // transaction, which began under the old default, so the statement
+        // right after a mode flip was refused even with no transaction open.
+        self.client
+            .batch_execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
+            .await
+            .map_err(normalize_error)?;
         let msgs = self
             .client
-            .simple_query(
-                "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY; \
-                 SELECT current_setting('transaction_read_only')",
-            )
+            .simple_query("SELECT current_setting('transaction_read_only')")
             .await
             .map_err(normalize_error)?;
         let read_only = msgs.iter().any(|m| match m {
@@ -574,8 +580,29 @@ impl DatabaseSession for PostgresSession {
         use futures_util::StreamExt;
         let started = Instant::now();
 
-        if self.read_only && !ends_transaction(&request.sql) {
-            self.ensure_read_only().await?;
+        if self.read_only {
+            let words = leading_words(&request.sql, 2);
+            let first = words.first().map(String::as_str).unwrap_or("");
+            // DO and CALL may COMMIT partway through, and the transaction after
+            // that takes whatever default the block just set: one statement can
+            // both flip the mode and write. Nothing can be checked between the
+            // two, so they are refused outright on a read-only profile.
+            if first == "do" || first == "call" {
+                return Err(DriverError::new(
+                    ErrorCategory::Authorization,
+                    "DO blocks and CALL are refused on a read-only connection: they can \
+                     commit and change the transaction mode from inside. Nothing was run.",
+                )
+                .into());
+            }
+            // Ending a transaction must always work, and SET TRANSACTION has to
+            // be the first statement of one, so the check's own query would
+            // break it. Both are safe unchecked: the statement after is checked.
+            let set_transaction =
+                first == "set" && words.get(1).is_some_and(|w| w == "transaction");
+            if !ends_transaction(&request.sql) && !set_transaction {
+                self.ensure_read_only().await?;
+            }
         }
 
         // Bind typed parameters ($1..$n). Passed as owned boxed ToSql so the
@@ -2329,8 +2356,16 @@ fn param_to_sql(p: &ParamValue) -> Box<dyn tokio_postgres::types::ToSql + Sync +
 /// profile, or a read-write transaction it refused could never be closed —
 /// and they cannot write anything themselves.
 fn ends_transaction(sql: &str) -> bool {
+    matches!(
+        leading_words(sql, 1).first().map(String::as_str),
+        Some("commit" | "rollback" | "end" | "abort")
+    )
+}
+
+/// The first `n` words of a statement, lowercased, skipping leading comments
+/// the way the server would.
+fn leading_words(sql: &str, n: usize) -> Vec<String> {
     let mut s = sql.trim_start();
-    // Skip leading comments, the way the server would.
     loop {
         if let Some(rest) = s.strip_prefix("--") {
             s = rest.split_once('\n').map_or("", |(_, r)| r).trim_start();
@@ -2340,12 +2375,11 @@ fn ends_transaction(sql: &str) -> bool {
             break;
         }
     }
-    let word: String = s
-        .chars()
-        .take_while(|c| c.is_ascii_alphabetic())
-        .collect::<String>()
-        .to_ascii_lowercase();
-    matches!(word.as_str(), "commit" | "rollback" | "end" | "abort")
+    s.split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|w| !w.is_empty())
+        .take(n)
+        .map(str::to_ascii_lowercase)
+        .collect()
 }
 
 /// Map a tokio-postgres error into the normalized taxonomy (spec §54).
