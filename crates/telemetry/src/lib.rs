@@ -304,7 +304,11 @@ mod tests {
 
     #[test]
     fn json_shaped_secrets_are_redacted() {
-        for text in [r#"{"password":"hunter2"}"#, r#"{"token" : "abc123"}"#, r#"{'secret': 'x9'}"#] {
+        for text in [
+            r#"{"password":"hunter2"}"#,
+            r#"{"token" : "abc123"}"#,
+            r#"{'secret': 'x9'}"#,
+        ] {
             let out = redact_text(text);
             assert!(
                 !out.contains("hunter2") && !out.contains("abc123") && !out.contains("x9"),
@@ -312,7 +316,10 @@ mod tests {
             );
         }
         // A quoted word that is not followed by a value stays as it is.
-        assert_eq!(redact_text(r#"the "password" field"#), r#"the "password" field"#);
+        assert_eq!(
+            redact_text(r#"the "password" field"#),
+            r#"the "password" field"#
+        );
     }
 
     #[test]

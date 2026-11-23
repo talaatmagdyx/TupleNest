@@ -50,10 +50,17 @@ pub fn connection_save(
     pg: tauri::State<'_, crate::pg::PgState>,
     input: ConnectionInput,
 ) -> Result<ConnectionRecord, String> {
-    let store = state.store.lock().map_err(|_| "store lock poisoned")?;
-
     let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
-    let existing = store.connection_get(&id).map_err(|e| e.to_string())?;
+    // The store lock is held only to read and to write, never across the
+    // keychain calls below: a keychain permission prompt held it for as long
+    // as the prompt was open, and every history write (inside a running
+    // query) and settings read waited behind it.
+    let existing = state
+        .store
+        .lock()
+        .map_err(|_| "store lock poisoned")?
+        .connection_get(&id)
+        .map_err(|e| e.to_string())?;
     let typed_password = input.password.as_deref().is_some_and(|p| !p.is_empty());
 
     // A stored password is bound to the connection it was saved for (see
@@ -148,7 +155,10 @@ pub fn connection_save(
         options_json: None,
         statement_timeout_ms: input.statement_timeout_ms,
     };
-    store
+    state
+        .store
+        .lock()
+        .map_err(|_| "store lock poisoned")?
         .connection_upsert(&record)
         .map_err(|e| e.to_string())?;
     // Saved: the ref is now bound to this profile's connection.

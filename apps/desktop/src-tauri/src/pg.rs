@@ -267,6 +267,31 @@ pub fn profile_matches(r: &tuplenest_workspace_store::ConnectionRecord, p: &PgPa
         && saved_ssh == p.ssh
 }
 
+/*
+ * A saved profile's environment and read-only flag win over the WebView's.
+ *
+ * Both came from the WebView alone, and they decide what is protected: prod
+ * suppresses query text in history and writes the audit log; read-only is the
+ * server-enforced seatbelt. When the connection is exactly a saved profile's,
+ * the profile's tag is used, and read-only holds if either side asks for it.
+ * An unsaved connection (the form being tested) keeps what it was given.
+ */
+fn with_profile_policy(app: &crate::AppState, mut params: PgParams) -> PgParams {
+    let Ok(store) = app.store.lock() else {
+        return params;
+    };
+    let Ok(profiles) = store.connection_list() else {
+        return params;
+    };
+    if let Some(p) = profiles.iter().find(|r| profile_matches(r, &params)) {
+        if p.environment.is_some() {
+            params.environment = p.environment.clone();
+        }
+        params.read_only = Some(params.read_only.unwrap_or(false) || p.read_only);
+    }
+    params
+}
+
 fn resolve_password(secret_ref: &Option<String>) -> Result<Option<Secret>, String> {
     match secret_ref {
         None => Ok(None),
@@ -627,6 +652,7 @@ pub async fn pg_connect(
     params: PgParams,
 ) -> Result<(), String> {
     authorize_secret(&app, &state, &params)?;
+    let params = with_profile_policy(&app, params);
     // The keychain can block — on a permission prompt, for as long as the
     // user takes — so it runs off the async workers.
     let secret_ref = params.secret_ref.clone();
@@ -1693,6 +1719,26 @@ mod tests {
             serde_json::json!("-Infinity")
         );
         assert_eq!(cell_to_json(CellValue::Float(1.5)), serde_json::json!(1.5));
+    }
+
+    #[test]
+    fn a_saved_profile_decides_its_environment_and_read_only() {
+        // The WebView used to decide both: it could drop "prod" (no audit log,
+        // query text in history) or read-only on a profile tagged otherwise.
+        let app = app_with_profile();
+        let mut p = params("prod.db", Some("tn-secret-prod"));
+        p.environment = Some("dev".into());
+        p.read_only = Some(false);
+        let out = with_profile_policy(&app, p);
+        assert_eq!(out.environment.as_deref(), Some("prod"));
+        assert_eq!(out.read_only, Some(false)); // the profile is not read-only
+                                                // An unsaved connection keeps what it was given.
+        let mut q = params("other.db", None);
+        q.environment = Some("dev".into());
+        assert_eq!(
+            with_profile_policy(&app, q).environment.as_deref(),
+            Some("dev")
+        );
     }
 
     #[test]
