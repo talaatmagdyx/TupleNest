@@ -61,17 +61,17 @@ describe("Titlebar", () => {
 
   it("greys the dot when disconnected", () => {
     const { container } = render(<Titlebar {...base} connected={false} />);
-    expect(container.querySelector(".conn-switch .dot")).toHaveStyle({ background: "#4a4f57" });
+    expect(container.querySelector(".conn-switch .dot")).toHaveStyle({ backgroundColor: "#4a4f57" });
   });
 
   it("reddens the dot on prod — the warning that has to be visible at a glance", () => {
     const { container } = render(<Titlebar {...base} activeEnv="prod" />);
-    expect(container.querySelector(".conn-switch .dot")).toHaveStyle({ background: "#ef4d4d" });
+    expect(container.querySelector(".conn-switch .dot")).toHaveStyle({ backgroundColor: "#ef4d4d" });
   });
 
   it("greens the dot off prod", () => {
     const { container } = render(<Titlebar {...base} />);
-    expect(container.querySelector(".conn-switch .dot")).toHaveStyle({ background: "#3fb950" });
+    expect(container.querySelector(".conn-switch .dot")).toHaveStyle({ backgroundColor: "#3fb950" });
   });
 
   it("keeps the connection menu shut until asked", () => {
@@ -99,7 +99,7 @@ describe("Titlebar", () => {
 
   it("does not mark a profile active when its session is closed", () => {
     const { container } = render(<Titlebar {...base} connMenu connected={false} />);
-    expect(container.querySelector(".conn-menu .row .dot")).toHaveStyle({ background: "#4a4f57" });
+    expect(container.querySelector(".conn-menu .row .dot")).toHaveStyle({ backgroundColor: "#4a4f57" });
   });
 
   it("defaults a profile with no environment to dev", () => {

@@ -30,17 +30,17 @@ describe("StatusBar", () => {
 
   it("greys the dot when disconnected", () => {
     const { container } = render(<StatusBar {...base} connected={false} />);
-    expect(container.querySelector(".dot")).toHaveStyle({ background: "#4a4f57" });
+    expect(container.querySelector(".dot")).toHaveStyle({ backgroundColor: "#4a4f57" });
   });
 
   it("greens the dot for a non-prod connection", () => {
     const { container } = render(<StatusBar {...base} />);
-    expect(container.querySelector(".dot")).toHaveStyle({ background: "#3fb950" });
+    expect(container.querySelector(".dot")).toHaveStyle({ backgroundColor: "#3fb950" });
   });
 
   it("reddens the dot on prod — the one place colour carries a warning", () => {
     const { container } = render(<StatusBar {...base} isProd />);
-    expect(container.querySelector(".dot")).toHaveStyle({ background: "#ef4d4d" });
+    expect(container.querySelector(".dot")).toHaveStyle({ backgroundColor: "#ef4d4d" });
   });
 
   it("shows the TLS mode with a lock", () => {
