@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type {
   DbColumn,
   DbConstraint,
@@ -91,7 +91,10 @@ function Row(p: {
       role="treeitem"
       aria-level={p.depth + 1}
       aria-expanded={p.arrow ? !!p.open : undefined}
-      tabIndex={p.onClick || p.onDoubleClick ? 0 : -1}
+      // Roving focus: rows are reached with the arrow keys, not Tab — one tab
+      // stop for the whole tree instead of one per table (thousands, on a big
+      // schema). The tree hands focus to a row; see `onTreeKey`.
+      tabIndex={-1}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return; // a button inside the row
         if (e.key === " ") {
@@ -124,6 +127,64 @@ const Chip = ({ ch, color }: { ch: string; color: string }) => (
 
 export default function ExplorerTree(p: Props) {
   const [filter, setFilter] = useState("");
+  const treeRef = useRef<HTMLDivElement | null>(null);
+  const lastRow = useRef<HTMLElement | null>(null);
+  const treeRows = () =>
+    [...(treeRef.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [])];
+
+  /** The WAI-ARIA tree keys: Up/Down move, Right opens (or steps in), Left
+   *  closes (or steps out to the parent), Home/End jump to the ends. */
+  const onTreeKey = (e: React.KeyboardEvent) => {
+    const rows = treeRows();
+    const current = document.activeElement as HTMLElement | null;
+    const i = current ? rows.indexOf(current) : -1;
+    if (i === -1) return;
+    const go = (j: number) => {
+      const row = rows[Math.max(0, Math.min(rows.length - 1, j))];
+      if (row) {
+        lastRow.current = row;
+        row.focus();
+      }
+    };
+    const expanded = current?.getAttribute("aria-expanded");
+    const level = Number(current?.getAttribute("aria-level") ?? 1);
+    switch (e.key) {
+      case "ArrowDown":
+        go(i + 1);
+        break;
+      case "ArrowUp":
+        go(i - 1);
+        break;
+      case "Home":
+        go(0);
+        break;
+      case "End":
+        go(rows.length - 1);
+        break;
+      case "ArrowRight":
+        if (expanded === "false") current?.click();
+        else if (expanded === "true") go(i + 1);
+        else return;
+        break;
+      case "ArrowLeft": {
+        if (expanded === "true") {
+          current?.click();
+          break;
+        }
+        // Step out: the nearest row above with a lower level is the parent.
+        for (let j = i - 1; j >= 0; j--) {
+          if (Number(rows[j].getAttribute("aria-level") ?? 1) < level) {
+            go(j);
+            break;
+          }
+        }
+        break;
+      }
+      default:
+        return;
+    }
+    e.preventDefault();
+  };
   const f = filter.trim().toLowerCase();
   const match = (name: string) => !f || name.toLowerCase().includes(f);
   const isOpen = (k: NodeKey) => !!p.open[k];
@@ -475,7 +536,20 @@ export default function ExplorerTree(p: Props) {
           />
         </div>
       )}
-      <div className="tree" role="tree" aria-label="Database objects">
+      <div
+        className="tree"
+        role="tree"
+        aria-label="Database objects"
+        ref={treeRef}
+        tabIndex={0}
+        onFocus={(e) => {
+          // Tabbing into the tree lands on the row last used, or the first.
+          if (e.target !== e.currentTarget) return;
+          const rows = treeRows();
+          (rows.find((r) => r === lastRow.current) ?? rows[0])?.focus();
+        }}
+        onKeyDown={onTreeKey}
+      >
         {p.schemas === null && p.connected && <div className="note">Loading schemas…</div>}
         {p.schemas === null && !p.connected && (
           <div className="explorer-empty">

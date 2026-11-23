@@ -1712,7 +1712,11 @@ export default function App() {
         buildLabel={buildLabel()}
       />
 
-      {toast && <div className="toast" role="status" aria-live="polite">{toast}</div>}
+      {/* The live region stays mounted and only its text changes: screen readers
+          often skip a region that appears already holding its message. */}
+      <div role="status" aria-live="polite" className="toast-live">
+        {toast && <div className="toast">{toast}</div>}
+      </div>
 
       {/* A running export gets its own persistent strip rather than the toast:
           it lasts longer than a toast should, and it needs a way out. */}

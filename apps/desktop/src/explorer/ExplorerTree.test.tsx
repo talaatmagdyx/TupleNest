@@ -98,11 +98,28 @@ describe("ExplorerTree — shell", () => {
     render(<ExplorerTree {...base} onToggle={onToggle} />);
     expect(screen.getByRole("tree", { name: "Database objects" })).toBeInTheDocument();
     const row = screen.getByText("public").closest('[role="treeitem"]') as HTMLElement;
-    expect(row).toHaveAttribute("tabindex", "0");
+    // One tab stop for the whole tree; rows are reached with the arrow keys.
+    expect(screen.getByRole("tree")).toHaveAttribute("tabindex", "0");
+    expect(row).toHaveAttribute("tabindex", "-1");
     expect(row).toHaveAttribute("aria-expanded");
     row.focus();
     await userEvent.keyboard(" ");
     expect(onToggle).toHaveBeenCalledWith("s:public");
+  });
+
+  it("moves between rows with the arrow keys and opens with ArrowRight", async () => {
+    const onToggle = vi.fn();
+    render(<ExplorerTree {...base} schemas={["public", "app"]} onToggle={onToggle} />);
+    const tree = screen.getByRole("tree");
+    tree.focus(); // Tab into the tree lands on the first row
+    const first = screen.getByText("public").closest('[role="treeitem"]') as HTMLElement;
+    expect(document.activeElement).toBe(first);
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(screen.getByText("app").closest('[role="treeitem"]'));
+    await userEvent.keyboard("{ArrowRight}");
+    expect(onToggle).toHaveBeenCalledWith("s:app");
+    await userEvent.keyboard("{Home}");
+    expect(document.activeElement).toBe(first);
   });
 
   it("filters objects within a schema, and shows the ratio it kept", async () => {
