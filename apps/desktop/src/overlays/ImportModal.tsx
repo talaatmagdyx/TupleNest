@@ -56,6 +56,8 @@ type Props = {
   schemas: string[];
   env: string | null;
   inTx: boolean;
+  /** Told when an import starts and ends: while it runs, it owns a transaction. */
+  onBusy?: (busy: boolean) => void;
   onDone: (msg: string) => void;
   onClose: () => void;
 };
@@ -153,6 +155,7 @@ export default function ImportModal(p: Props) {
   const run = async () => {
     if (!table || !target || !file) return;
     setBusy(true);
+    p.onBusy?.(true);
     setError(null);
     setProgress(0);
     setInserted(0);
@@ -218,6 +221,7 @@ export default function ImportModal(p: Props) {
       }
     } finally {
       setBusy(false);
+      p.onBusy?.(false);
     }
   };
 

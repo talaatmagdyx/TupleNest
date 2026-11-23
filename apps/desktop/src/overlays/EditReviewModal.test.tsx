@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import EditReviewModal from "./EditReviewModal";
 import type { CellEdit, EditTarget } from "../lib/dml";
@@ -86,6 +86,13 @@ describe("EditReviewModal", () => {
     await userEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(onApply).toHaveBeenCalled();
     expect(onDiscard).toHaveBeenCalled();
+  });
+
+  it("cannot be dismissed with Escape while the write is in flight", () => {
+    const onClose = vi.fn();
+    render(<EditReviewModal {...base} applying onClose={onClose} />);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("locks both buttons while applying, so a write cannot be double-sent", () => {

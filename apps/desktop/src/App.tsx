@@ -255,6 +255,11 @@ export default function App() {
    *  store. Anything that runs SQL would replace that store mid-export and
    *  the file would get the old header over the new query's rows. */
   const exportingRef = useRef(false);
+  /** True while row edits are applying or an import is running: each holds
+   *  its own BEGIN…COMMIT on the one shared session. Anything run then lands
+   *  inside that transaction — committed with it, or silently rolled back
+   *  with it after the status bar already called it done. */
+  const writingRef = useRef(false);
   const showToast = useCallback((t: string) => {
     setToast(t);
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -765,6 +770,10 @@ export default function App() {
         showToast("Wait for the export to finish — it is still reading this result");
         return;
       }
+      if (writingRef.current) {
+        showToast("Wait — the app is writing in its own transaction, and this would run inside it");
+        return;
+      }
       // `sqlOverride` runs a specific statement (the guarded one, or the one
       // behind the grid) instead of whatever the editor holds right now.
       const editorSql = tabs[activeTab]?.sql ?? "";
@@ -829,7 +838,13 @@ export default function App() {
   /** Apply the staged edits and tell the user what became of them. The hook
    *  owns the transaction; this owns what the rest of the app does after. */
   const applyEdits = useCallback(async () => {
-    const out = await applyRowEdits({ target: editTarget, inTx });
+    writingRef.current = true;
+    let out: Awaited<ReturnType<typeof applyRowEdits>>;
+    try {
+      out = await applyRowEdits({ target: editTarget, inTx });
+    } finally {
+      writingRef.current = false;
+    }
     if (out.kind === "noop" || out.kind === "error") return;
     void refreshHistory();
     if (out.kind === "staged") {
@@ -965,6 +980,10 @@ export default function App() {
       // EXPLAIN replaces the backend row store too (see below).
       if (exportingRef.current) {
         showToast("Wait for the export to finish — it is still reading this result");
+        return;
+      }
+      if (writingRef.current) {
+        showToast("Wait — the app is writing in its own transaction, and this would run inside it");
         return;
       }
       const title = tabs[activeTab]?.name ?? "query";
@@ -1771,6 +1790,7 @@ export default function App() {
           schemas={schemas ?? ["public"]}
           env={connectedEnv}
           inTx={inTx}
+          onBusy={(b) => (writingRef.current = b)}
           onDone={(m) => {
             showToast(m);
             // An import can create a table, so the catalog has to be re-read —

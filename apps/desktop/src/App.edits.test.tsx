@@ -184,6 +184,34 @@ describe("App — the re-read after applying", () => {
   });
 });
 
+describe("App — nothing runs inside the app's own write", () => {
+  it("refuses Cmd+Enter while row edits are applying", async () => {
+    // Apply holds BEGIN…COMMIT on the shared session. A statement run then
+    // landed between them: committed with the edits, or rolled back with them
+    // after the status bar had already reported it done.
+    const user = await withGrid();
+    await editCell(user, "new@b.c");
+    const ta = screen.getByRole("textbox", { name: /sql editor/i });
+    await user.click(ta);
+    await user.clear(ta);
+    await user.type(ta, "delete from audit_log where id = 7");
+    await user.click(await screen.findByRole("button", { name: /review/i }));
+    let release!: (v: unknown) => void;
+    be.on("pg_query", (a) => {
+      if (/^update/i.test(String(a.sql))) return new Promise((r) => (release = r));
+      return { ...EDITABLE, rowsAffected: 1 };
+    });
+    await user.click(await screen.findByRole("button", { name: /^Apply/i }));
+    await waitFor(() => expect(be.sent("pg_query").some((x) => /^update/i.test(String(x.sql)))).toBe(true));
+    await user.keyboard("{Meta>}{Enter}{/Meta}");
+    expect(await screen.findByText(/writing in its own transaction/i)).toBeInTheDocument();
+    release({ ...EDITABLE, rowsAffected: 1 });
+    await waitFor(() => expect(be.sent("pg_commit").length).toBeGreaterThan(0));
+    const sqls = be.sent("pg_query").map((x) => String(x.sql));
+    expect(sqls).not.toContain("delete from audit_log where id = 7");
+  });
+});
+
 describe("App — leaving a cell editor", () => {
   it("keeps the edit when you click away rather than pressing Enter", async () => {
     // Clicking elsewhere is how people leave a field. Throwing the edit away
