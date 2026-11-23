@@ -46,6 +46,23 @@ older distros.
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | as above | the build fails at signing — the key is passphrase-protected, so this is **not** optional |
 | `APPLE_*` (see below) | notarizing the macOS builds | mac builds are ad-hoc signed; Gatekeeper warns |
 
+### Keep the signing key behind an approval
+
+The build job runs in the `release` environment. Until it is configured, that
+changes nothing; configured, it is what stands between the updater key and
+any workflow run — a dispatch from an arbitrary branch, or a compromised npm
+package in the build:
+
+1. Settings → Environments → `release` → **Required reviewers**: yourself.
+2. **Deployment branches and tags**: selected, `v*` tags (and `main` if you
+   dispatch test builds from it).
+3. Move `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` and
+   the `APPLE_*` secrets from repository secrets into the environment's
+   secrets, so nothing outside it can read them.
+
+Every checkout sets `persist-credentials: false`, so the job's write token is
+not left in `.git/config` for the third-party code `npm ci` runs.
+
 Windows installers are unsigned unless you add an Authenticode certificate, so
 SmartScreen shows "Windows protected your PC" and an unknown publisher.
 
