@@ -8,6 +8,7 @@ import {
   buildCreateTable,
   buildInsert,
   CsvStreamParser,
+  displayCell,
   inferTypes,
   normalizeHeader,
   type CsvTable,
@@ -320,8 +321,8 @@ export default function ImportModal(p: Props) {
               <div className="imp-cols">
                 {names.map((n, i) => (
                   <div key={i} className="imp-col">
-                    <span className="imp-src" title={table.header[i]}>
-                      {table.header[i]}
+                    <span className="imp-src" title={displayCell(table.header[i])}>
+                      {displayCell(table.header[i])}
                     </span>
                     <input
                       className="intel-input"
@@ -359,7 +360,7 @@ export default function ImportModal(p: Props) {
                     {table.rows.slice(0, PREVIEW_ROWS).map((r, i) => (
                       <tr key={i}>
                         {names.map((_, j) => (
-                          <td key={j}>{r[j] ?? ""}</td>
+                          <td key={j}>{displayCell(r[j])}</td>
                         ))}
                       </tr>
                     ))}

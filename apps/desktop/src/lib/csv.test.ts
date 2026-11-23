@@ -5,6 +5,7 @@ import {
   CsvStreamParser,
   buildInsert,
   coerceCell,
+  QUOTED_EMPTY,
   inferType,
   inferTypes,
   normalizeColumnName,
@@ -43,8 +44,9 @@ describe("parseCsv", () => {
     expect(parseCsv('a,b\n"line1\nline2",2\n').rows).toEqual([["line1\nline2", "2"]]);
   });
 
-  it("preserves an empty quoted field", () => {
-    expect(parseCsv('a,b\n"",2\n').rows).toEqual([["", "2"]]);
+  it("keeps an empty quoted field distinct from an empty one", () => {
+    // `""` is an empty string; a bare empty field is a missing value.
+    expect(parseCsv('a,b,c\n"",2,\n').rows).toEqual([[QUOTED_EMPTY, "2", ""]]);
   });
 
   it("supports tabs as a delimiter", () => {
@@ -301,5 +303,22 @@ describe("import limits PostgreSQL enforces", () => {
     for (const n of names) expect(n.length).toBeLessThanOrEqual(63);
     // The first 63 bytes must differ too — that is what the server compares.
     expect(new Set(names.map((n) => n.slice(0, 63))).size).toBe(3);
+  });
+});
+
+describe("empty string versus NULL, as COPY … CSV reads them", () => {
+  it("writes '' for a quoted empty text cell and NULL for a bare one", () => {
+    expect(coerceCell(QUOTED_EMPTY, "text")).toBe("");
+    expect(coerceCell("", "text")).toBeNull();
+    // Spaces in a text cell are data, not a blank.
+    expect(coerceCell("   ", "text")).toBe("   ");
+  });
+  it("reads any blank as NULL in a typed column", () => {
+    expect(coerceCell(QUOTED_EMPTY, "int8")).toBeNull();
+    expect(coerceCell("  ", "numeric")).toBeNull();
+    expect(coerceCell(" 42 ", "int8")).toBe("42");
+  });
+  it("does not let quoted empties spoil type inference", () => {
+    expect(inferType(["1", QUOTED_EMPTY, "3"])).toBe("int8");
   });
 });
