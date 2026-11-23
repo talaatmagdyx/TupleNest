@@ -60,13 +60,24 @@ pub fn secure_file(path: &std::path::Path) {
 
 /// Query text and credentials must never reach a log call site; redaction
 /// helpers below are defense in depth.
+/// How many daily log files are kept before the oldest is deleted.
+pub const LOG_DAYS_KEPT: usize = 14;
+
 pub fn init_app(log_dir: &std::path::Path, json: bool) -> std::io::Result<LogGuard> {
     std::fs::create_dir_all(log_dir)?;
     // Lock the log directory to the owner. On Unix a 0700 directory keeps other
     // local users from reaching the log files at all, whatever their file mode —
     // the rolling appender creates them with the process umask. (FILE-02.)
     secure_dir(log_dir);
-    let appender = tracing_appender::rolling::daily(log_dir, "tuplenest.log");
+    // Daily files, the last two weeks kept. `rolling::daily` never deleted
+    // any, so the host and database names in session lines piled up forever.
+    // Same file names as before, so existing logs are pruned too.
+    let appender = tracing_appender::rolling::RollingFileAppender::builder()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix("tuplenest.log")
+        .max_log_files(LOG_DAYS_KEPT)
+        .build(log_dir)
+        .map_err(std::io::Error::other)?;
     let (writer, guard) = tracing_appender::non_blocking(appender);
     let mut filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     // In release, cap chatty transport/crypto crates to `warn` regardless of
@@ -135,7 +146,11 @@ pub fn redact_text(s: &str) -> String {
         while let Some(found) = lower[i..].find(key) {
             let start = i + found;
             let after = start + key.len();
-            // Must be followed by an assignment, or it is just the word.
+            // Must be followed by an assignment, or it is just the word. A
+            // quoted key — JSON's `"password": "x"` — has its closing quote
+            // first; without allowing it, JSON-shaped secrets survived.
+            let quote = usize::from(out[after..].starts_with(['"', '\'']));
+            let after = after + quote;
             let rest = &out[after..];
             let sep = rest.find(|c: char| !c.is_whitespace());
             let is_assign = sep.is_some_and(|s| {
@@ -286,6 +301,19 @@ pub fn redact_pairs<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_shaped_secrets_are_redacted() {
+        for text in [r#"{"password":"hunter2"}"#, r#"{"token" : "abc123"}"#, r#"{'secret': 'x9'}"#] {
+            let out = redact_text(text);
+            assert!(
+                !out.contains("hunter2") && !out.contains("abc123") && !out.contains("x9"),
+                "secret survived: {out}"
+            );
+        }
+        // A quoted word that is not followed by a value stays as it is.
+        assert_eq!(redact_text(r#"the "password" field"#), r#"the "password" field"#);
+    }
 
     #[test]
     fn non_ascii_text_neither_panics_nor_skips_redaction() {

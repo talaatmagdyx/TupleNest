@@ -24,6 +24,7 @@ Windows, `~/.local/share/app.tuplenest.desktop` on Linux.
 | **Production audit log** | `<data>` SQLite | Separate from history and deliberately the opposite trade: on prod-tagged connections the SQL is **retained in full** (secret literals still scrubbed) so there is a record of what was run against production. This is an accountability record: `-- tuplenest:no-history` does **not** suppress it. If you do not want it, do not tag the connection prod. |
 | **Cached schema** | `<data>` SQLite | Table, column and index names, so the explorer works offline. Not row data. |
 | **Snippets, layout, settings** | `<data>` SQLite | |
+| **Logs** | `<data>/logs/tuplenest.log.*` | One file a day, the last 14 kept. Session events — connected/disconnected, with host and database name — timings, row counts and redacted errors. **Never query text**, never passwords. |
 | **Crash reports** | `<data>/crashes/*.txt` | Written locally on a panic. **Never uploaded.** Timestamp, thread, source location, panic message. Delete them freely. |
 | **Exports** | wherever you choose | CSV/JSON/Markdown go only where the save dialog puts them. |
 
@@ -67,6 +68,7 @@ TupleNest makes exactly these connections:
 - **Passwords** — these are the keychain's, not ours; remove entries named
   `tn-secret-*` in Keychain Access, Credential Manager, or Seahorse. Deleting a
   profile in the app removes its keychain entry too.
+- **Logs** — delete `<data>/logs` (older than 14 days are deleted automatically).
 - **Crash reports** — delete `<data>/crashes`.
 
 Uninstalling the app does **not** remove the `<data>` directory or keychain
