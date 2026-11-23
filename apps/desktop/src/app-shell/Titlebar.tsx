@@ -38,7 +38,7 @@ export default function Titlebar(p: Props) {
           <span
             className="dot"
             style={{
-              background: p.connected ? (p.activeEnv === "prod" ? "#ef4d4d" : "#3fb950") : "#4a4f57",
+              backgroundColor: p.connected ? (p.activeEnv === "prod" ? "#ef4d4d" : "#3fb950") : "#4a4f57",
               boxShadow: p.connected ? `0 0 8px ${p.activeEnv === "prod" ? "rgba(239,77,77,.5)" : "rgba(63,185,80,.5)"}` : "none",
             }}
           />
@@ -64,7 +64,7 @@ export default function Titlebar(p: Props) {
                 >
                   <span
                     className="dot"
-                    style={{ background: c.id === p.activeId && p.connected ? "#3fb950" : "#4a4f57" }}
+                    style={{ backgroundColor: c.id === p.activeId && p.connected ? "#3fb950" : "#4a4f57" }}
                   />
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ display: "block", fontSize: 12, fontWeight: 650 }}>{c.name}</span>

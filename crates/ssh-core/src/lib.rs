@@ -94,8 +94,14 @@ impl client::Handler for HostKeyChecker {
 
     async fn check_server_key(
         &mut self,
-        key: &russh::keys::PublicKey,
+        key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        // ponytail: host certificates fail closed — nothing here checks a CA,
+        // so trusting one would skip verification. Add @cert-authority support
+        // if someone needs cert-signed bastions.
+        let russh::keys::PublicKeyOrCertificate::PublicKey { key, .. } = key else {
+            return Ok(false);
+        };
         match &self.policy {
             HostKeyPolicy::PinnedFingerprint(expected) => {
                 let actual = key.fingerprint(HashAlg::Sha256).to_string();
