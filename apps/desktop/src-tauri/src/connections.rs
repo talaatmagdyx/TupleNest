@@ -56,14 +56,28 @@ pub fn connection_save(
     let existing = store.connection_get(&id).map_err(|e| e.to_string())?;
     let typed_password = input.password.as_deref().is_some_and(|p| !p.is_empty());
 
-    // A stored password is bound to the server and user it was saved for (see
-    // `pg::authorize_secret`). Moving a profile to another server or user
-    // without re-entering it would carry the old password to the new place.
+    // A stored password is bound to the connection it was saved for (see
+    // `pg::authorize_secret`): address *and* TLS mode, CA file and SSH hop.
+    // Changing any of them without re-entering it would carry the password to
+    // a different place — or to the same place over a weaker channel.
     if let Some(old) = &existing {
+        let tls = |m: Option<&str>| {
+            m.filter(|m| !m.is_empty())
+                .unwrap_or("verify-full")
+                .to_string()
+        };
+        let ca = |c: Option<&str>| c.filter(|c| !c.trim().is_empty()).map(str::to_string);
+        let ssh = |j: Option<&str>| {
+            j.filter(|j| !j.trim().is_empty())
+                .and_then(|j| serde_json::from_str::<crate::pg::SshParams>(j).ok())
+        };
         let moved = old.host != input.host
             || old.port != input.port
             || old.database != input.database
-            || old.username != input.username;
+            || old.username != input.username
+            || tls(Some(&old.tls_mode)) != tls(input.tls_mode.as_deref())
+            || ca(old.tls_ca_path.as_deref()) != ca(input.tls_ca_path.as_deref())
+            || ssh(old.ssh_json.as_deref()) != ssh(input.ssh_json.as_deref());
         let carried = old.secret_ref.is_some()
             && !typed_password
             && !input
@@ -72,7 +86,7 @@ pub fn connection_save(
                 .is_some_and(|k| pg.is_fresh_secret(k));
         if moved && carried {
             return Err(
-                "Enter the password again: this profile now points at a different server or user."
+                "Enter the password again: this profile now connects differently (server, user, TLS or SSH)."
                     .into(),
             );
         }
@@ -137,6 +151,10 @@ pub fn connection_save(
     store
         .connection_upsert(&record)
         .map_err(|e| e.to_string())?;
+    // Saved: the ref is now bound to this profile's connection.
+    if let Some(k) = &record.secret_ref {
+        pg.bind_secret(k);
+    }
     tracing::info!(component = "connections", id = %record.id, "profile saved");
     Ok(record)
 }

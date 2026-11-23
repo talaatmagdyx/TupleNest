@@ -45,7 +45,7 @@ pub struct PgParams {
 
 /// SSH tunnel parameters (E1.2). Key-file auth; passphrase-less keys or
 /// agent-managed keys for now. No secrets are stored here.
-#[derive(serde::Deserialize, serde::Serialize, Clone)]
+#[derive(serde::Deserialize, serde::Serialize, Clone, PartialEq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct SshParams {
     pub host: String,
@@ -142,9 +142,6 @@ pub struct PgState {
 }
 
 impl PgState {
-    /// Drops cached metadata for a database nothing points at any more.
-    /// `invalidate` existed and was never called, so the cache kept every
-    /// schema of every profile ever deleted.
     /// Was this secret ref written by `pg_secret_save` in this app session?
     pub fn is_fresh_secret(&self, key: &str) -> bool {
         self.fresh_secrets
@@ -153,6 +150,17 @@ impl PgState {
             .unwrap_or(false)
     }
 
+    /// The ref now belongs to a saved profile: from here on it is bound to
+    /// that profile's connection, not usable anywhere.
+    pub fn bind_secret(&self, key: &str) {
+        if let Ok(mut s) = self.fresh_secrets.lock() {
+            s.remove(key);
+        }
+    }
+
+    /// Drops cached metadata for a database nothing points at any more.
+    /// `invalidate` existed and was never called, so the cache kept every
+    /// schema of every profile ever deleted.
     pub fn forget_cached_metadata(&self, key: &str) {
         if let Ok(cache) = self.cache.lock() {
             let _ = cache.invalidate(key);
@@ -219,18 +227,44 @@ fn authorize_secret(
         .map_err(|_| "store lock poisoned")?
         .connection_list()
         .map_err(|e| e.to_string())?;
-    let owned = profiles.iter().any(|r| {
-        r.secret_ref.as_deref() == Some(key)
-            && r.host == params.host
-            && r.port == params.port
-            && r.database == params.database
-            && r.username == params.username
-    });
+    let owned = profiles
+        .iter()
+        .any(|r| r.secret_ref.as_deref() == Some(key) && profile_matches(r, params));
     if owned {
         Ok(())
     } else {
         Err("The saved password belongs to a different server or user. Enter the password again to use it here.".into())
     }
+}
+
+/*
+ * Does `params` describe exactly this saved profile's connection?
+ *
+ * Not just where (host, port, database, user) but how: the TLS mode, the CA
+ * file and the SSH hop. Matching only the address let a compromised WebView
+ * keep a profile's host and send its password with `tlsMode: "disabled"`, or
+ * through an SSH bastion of its own choosing, to a server that asks for
+ * cleartext auth.
+ */
+pub fn profile_matches(r: &tuplenest_workspace_store::ConnectionRecord, p: &PgParams) -> bool {
+    let tls = |m: Option<&str>| {
+        m.filter(|m| !m.is_empty())
+            .unwrap_or("verify-full")
+            .to_string()
+    };
+    let ca = |c: Option<&str>| c.filter(|c| !c.trim().is_empty()).map(str::to_string);
+    let saved_ssh: Option<SshParams> = r
+        .ssh_json
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .and_then(|s| serde_json::from_str(s).ok());
+    r.host == p.host
+        && r.port == p.port
+        && r.database == p.database
+        && r.username == p.username
+        && tls(Some(&r.tls_mode)) == tls(p.tls_mode.as_deref())
+        && ca(r.tls_ca_path.as_deref()) == ca(p.tls_ca_path.as_deref())
+        && saved_ssh == p.ssh
 }
 
 fn resolve_password(secret_ref: &Option<String>) -> Result<Option<Secret>, String> {
@@ -399,35 +433,25 @@ mod err_to_string_tests {
 /// This is the ONLY command that ever sees a secret, and it does not log it.
 #[tauri::command]
 pub fn pg_secret_save(
-    app: tauri::State<'_, crate::AppState>,
     state: tauri::State<'_, PgState>,
     password: String,
     reuse_ref: Option<String>,
 ) -> Result<String, String> {
-    // Overwriting is limited to refs this app wrote: one minted this session,
-    // or a saved profile's own. Any other key in the service was a free
-    // overwrite for whatever could call this command.
-    if let Some(k) = reuse_ref.as_deref().filter(|k| !k.is_empty()) {
-        let fresh = state
-            .fresh_secrets
-            .lock()
-            .map_err(|_| "secret lock poisoned")?
-            .contains(k);
-        let saved = || -> Result<bool, String> {
-            Ok(app
-                .store
+    // Only a ref written this session may be overwritten. A saved profile's
+    // ref is never touched here: the password goes into a new entry, and
+    // `connection_save` swaps it in (deleting the old one) when the profile
+    // is saved. That keeps saved passwords out of reach of anything that can
+    // call this command, and keeps the new password unbound — fresh — only
+    // until its profile is saved.
+    let reuse = reuse_ref.filter(|k| {
+        !k.is_empty()
+            && state
+                .fresh_secrets
                 .lock()
-                .map_err(|_| "store lock poisoned")?
-                .connection_list()
-                .map_err(|e| e.to_string())?
-                .iter()
-                .any(|r| r.secret_ref.as_deref() == Some(k)))
-        };
-        if !fresh && !saved()? {
-            return Err("Unknown secret reference".into());
-        }
-    }
-    let key = save_secret(password, reuse_ref)?;
+                .map(|s| s.contains(k))
+                .unwrap_or(false)
+    });
+    let key = save_secret(password, reuse)?;
     state
         .fresh_secrets
         .lock()
@@ -1523,7 +1547,7 @@ mod tests {
     fn params(host: &str, secret: Option<&str>) -> PgParams {
         serde_json::from_value(serde_json::json!({
             "host": host, "port": 5432, "database": "app", "username": "svc",
-            "secretRef": secret, "tlsMode": "disabled"
+            "secretRef": secret, "tlsMode": "verify-full"
         }))
         .unwrap()
     }
@@ -1542,12 +1566,34 @@ mod tests {
         other_user.username = "postgres".into();
         assert!(authorize_secret(&app, &pg, &other_user).is_err());
         assert!(authorize_secret(&app, &pg, &params("anywhere", None)).is_ok());
+        // Same address, weaker channel: the downgrade this binding stops.
+        let mut plaintext = params("prod.db", Some("tn-secret-prod"));
+        plaintext.tls_mode = Some("disabled".into());
+        assert!(
+            authorize_secret(&app, &pg, &plaintext).is_err(),
+            "TLS downgrade must be refused"
+        );
+        let mut via_bastion = params("prod.db", Some("tn-secret-prod"));
+        via_bastion.ssh = Some(SshParams {
+            host: "attacker.example".into(),
+            port: 22,
+            username: "x".into(),
+            key_path: "~/.ssh/id_ed25519".into(),
+            fingerprint: "SHA256:attacker".into(),
+        });
+        assert!(
+            authorize_secret(&app, &pg, &via_bastion).is_err(),
+            "a different SSH hop must be refused"
+        );
         // A password typed into the form this session may be tried anywhere.
         pg.fresh_secrets
             .lock()
             .unwrap()
             .insert("tn-secret-new".into());
         assert!(authorize_secret(&app, &pg, &params("new.db", Some("tn-secret-new"))).is_ok());
+        // Once its profile is saved, a fresh ref is bound like any other.
+        pg.bind_secret("tn-secret-new");
+        assert!(authorize_secret(&app, &pg, &params("new.db", Some("tn-secret-new"))).is_err());
     }
 
     #[test]
