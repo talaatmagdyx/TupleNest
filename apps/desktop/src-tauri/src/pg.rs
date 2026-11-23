@@ -516,10 +516,17 @@ fn json_to_param(v: serde_json::Value) -> tuplenest_driver_api::ParamValue {
     }
 }
 
+/// `Number.MAX_SAFE_INTEGER`: the largest integer a JavaScript number holds exactly.
+const JS_MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
 fn cell_to_json(cell: CellValue) -> serde_json::Value {
     match cell {
         CellValue::Null => serde_json::Value::Null,
         CellValue::Bool(b) => b.into(),
+        // JavaScript numbers are doubles: past 2^53 an int8 is silently
+        // rounded (9007199254740993 arrives as …992), in the grid, in exports
+        // and in the WHERE of a row edit. Send those as exact text.
+        CellValue::Int(i) if i.unsigned_abs() > JS_MAX_SAFE_INTEGER => i.to_string().into(),
         CellValue::Int(i) => i.into(),
         CellValue::Float(f) => serde_json::Number::from_f64(f)
             .map(serde_json::Value::Number)
@@ -1170,6 +1177,18 @@ pub async fn pg_begin(state: tauri::State<'_, PgState>) -> Result<(), String> {
         .map_err(|e| err_to_string(&e))
 }
 
+/// Whether the server has a transaction open on this session — including one
+/// the user began by typing `BEGIN`, which `pg_begin` never saw.
+#[tauri::command]
+pub async fn pg_in_transaction(state: tauri::State<'_, PgState>) -> Result<bool, String> {
+    let guard = state.session.lock().await;
+    let session = guard.as_ref().ok_or("not connected")?;
+    session
+        .server_in_transaction()
+        .await
+        .map_err(|e| err_to_string(&e))
+}
+
 #[tauri::command]
 pub async fn pg_commit(state: tauri::State<'_, PgState>) -> Result<(), String> {
     let mut guard = state.session.lock().await;
@@ -1195,4 +1214,32 @@ pub async fn pg_cancel(state: tauri::State<'_, PgState>) -> Result<(), String> {
         .clone()
         .ok_or("not connected")?;
     handle.cancel().await.map_err(|e| err_to_string(&e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn int8_past_2_pow_53_reaches_the_webview_as_exact_text() {
+        // As a JSON number this would be rounded by JSON.parse in the WebView.
+        assert_eq!(
+            cell_to_json(CellValue::Int(9_007_199_254_740_993)),
+            serde_json::json!("9007199254740993")
+        );
+        assert_eq!(
+            cell_to_json(CellValue::Int(-9_007_199_254_740_993)),
+            serde_json::json!("-9007199254740993")
+        );
+        assert_eq!(
+            cell_to_json(CellValue::Int(i64::MIN)),
+            serde_json::json!(i64::MIN.to_string())
+        );
+        // Safe integers stay numbers, so nothing else changes shape.
+        assert_eq!(
+            cell_to_json(CellValue::Int(9_007_199_254_740_991)),
+            serde_json::json!(9_007_199_254_740_991_i64)
+        );
+        assert_eq!(cell_to_json(CellValue::Int(42)), serde_json::json!(42));
+    }
 }

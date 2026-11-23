@@ -219,7 +219,9 @@ export default function ConnectionForm(p: Props) {
             </div>
             {(p.tlsMode === "verify-full" || p.tlsMode === "verify-ca") && (
               <div className="field">
-                <label htmlFor={f("ca")}>CA file (optional)</label>
+                <label htmlFor={f("ca")}>
+                  {p.tlsMode === "verify-ca" ? "CA file (required)" : "CA file (optional)"}
+                </label>
                 <input id={f("ca")}
                   className="mono" {...IDENT}
                   placeholder="/etc/ssl/ca.pem"

@@ -12,6 +12,23 @@ runner and opens a draft GitHub release with the installers attached:
 | `ubuntu-22.04` | `.deb`, `.rpm`, `.AppImage` |
 | `windows-latest` | `.msi`, `.exe` (NSIS) |
 
+### Every release raises the app version — betas included
+
+The updater installs only a version strictly newer than the one running, and it
+compares the **app** version (`tauri.conf.json`), not the tag. The beta label
+lives only in the tag, because WiX refuses pre-release suffixes in MSI
+versions. So bump the numeric version on every release, beta or not:
+
+| Tag | `version` in `Cargo.toml`, `tauri.conf.json`, `package.json` |
+| --- | --- |
+| `v0.1.1-beta.12` | `0.1.1` |
+| `v0.1.2-beta.13` | `0.1.2` |
+| `v0.2.0` (stable) | `0.2.0` |
+
+Betas 1–11 all shipped as `0.1.0`, which is why none of them ever offered an
+update to the next. Reusing a version means installed copies never see the
+release.
+
 A Tauri app cannot be usefully cross-compiled — Windows needs MSVC and WebView2,
 Linux needs webkit2gtk, macOS needs the Apple toolchain — so there is no script
 that builds all four from one machine, and there is no point writing one. The

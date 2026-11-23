@@ -506,6 +506,13 @@ describe("paramCount", () => {
 });
 
 describe("coerceParam", () => {
+  it("keeps integers past 2^53 as exact text instead of rounding them", () => {
+    // Number("9007199254740993") is …992: a different key.
+    expect(coerceParam("9007199254740993")).toBe("9007199254740993");
+    expect(coerceParam("-9007199254740993")).toBe("-9007199254740993");
+    expect(coerceParam("9007199254740991")).toBe(9007199254740991);
+  });
+
   it("maps empty and the word null to null", () => {
     expect(coerceParam("")).toBeNull();
     expect(coerceParam("  ")).toBeNull();

@@ -202,6 +202,8 @@ export default function App() {
   const copyable = useRef<string | null>(null);
   const [guardSql, setGuardSql] = useState<string | null>(null);
   const [paramValues, setParamValues] = useState<string[]>([]);
+  /** The statement the parameter prompt is binding values for. */
+  const [paramSql, setParamSql] = useState<string | null>(null);
   const [connLostDetail, setConnLostDetail] = useState("");
   const [rowsInfo, setRowsInfo] = useState("");
   const [chart, setChart] = useState<{ title: string; sub: string; data: ChartDatum[] } | null>(null);
@@ -754,8 +756,11 @@ export default function App() {
   const currentSql = tabs[activeTab]?.sql ?? "";
 
   const doRun = useCallback(
-    async (force = false, boundParams?: unknown[]) => {
-      const sql = tabs[activeTab]?.sql ?? "";
+    async (force = false, boundParams?: unknown[], sqlOverride?: string) => {
+      // `sqlOverride` runs a specific statement (the guarded one, or the one
+      // behind the grid) instead of whatever the editor holds right now.
+      const editorSql = tabs[activeTab]?.sql ?? "";
+      const sql = sqlOverride ?? editorSql;
       if (!connected) return;
       // The hook decides what is needed and reports back; App owns the
       // overlays, so nothing here has to re-derive that from state.
@@ -766,6 +771,7 @@ export default function App() {
         return;
       }
       if (out.kind === "needs-params") {
+        setParamSql(sql);
         setParamValues(Array(out.count).fill(""));
         setOverlay("params");
         return;
@@ -776,7 +782,7 @@ export default function App() {
       if (out.kind === "ok") {
         setResultTab("results");
         // The tab matches what the server just ran, so it is no longer dirty.
-        setTabs((ts) => {
+        if (sql === editorSql) setTabs((ts) => {
           const o = [...ts];
           if (o[activeTab]) o[activeTab] = { ...o[activeTab], dirty: false };
           return o;
@@ -826,8 +832,10 @@ export default function App() {
     // Re-read so the grid shows what is actually stored. Only safe once the
     // commit has landed: re-reading inside the user's open transaction would
     // show uncommitted rows as though they were.
-    void doRun(true);
-  }, [applyRowEdits, editTarget, inTx, doRun, refreshHistory, showToast]);
+    // Re-run the statement behind the grid, not the editor's current text,
+    // and never with `force`: the editor may hold something else by now.
+    void doRun(false, undefined, ranSql);
+  }, [applyRowEdits, editTarget, inTx, doRun, ranSql, refreshHistory, showToast]);
 
   const doCancel = useCallback(async () => {
     try {
@@ -1843,9 +1851,11 @@ export default function App() {
             setOverlay(null);
           }}
           onRun={() => {
+            const confirmed = guardSql;
             setGuardSql(null);
             setOverlay(null);
-            void doRun(true);
+            // Run exactly what the user confirmed, not the editor's text.
+            void doRun(true, undefined, confirmed);
           }}
         />
       )}
@@ -1876,7 +1886,9 @@ export default function App() {
           onChange={(i, v) => setParamValues((vs) => vs.map((x, j) => (j === i ? v : x)))}
           onRun={() => {
             setOverlay(null);
-            void doRun(true, paramValues.map(coerceParam));
+            // Bind to the statement the prompt was opened for. The guard has
+            // already been answered for it, which is why `force` is safe here.
+            void doRun(true, paramValues.map(coerceParam), paramSql ?? undefined);
           }}
           onCancel={() => setOverlay(null)}
         />

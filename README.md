@@ -145,7 +145,7 @@ careful"* is not an architecture:
 
 | Layer | What it does | What enforces it |
 |---|---|---|
-| 🔒 **Read-only profiles** | Writes are refused | **PostgreSQL itself** (`SET SESSION CHARACTERISTICS … READ ONLY`) — the server, not a promise |
+| 🔒 **Read-only profiles** | Writes are refused | **PostgreSQL itself** (`SET SESSION CHARACTERISTICS … READ ONLY`), with the transaction's mode re-checked on the server before every statement, so the editor can't switch it back. A role without write privileges is the hard boundary |
 | ⚠️ **Destructive-statement guard** | No-`WHERE` `UPDATE`/`DELETE`, `DROP`, `TRUNCATE`, `ALTER`, `GRANT`… ask before running on prod *and* staging | SQL is masked (comments, strings, dollar-quotes) before matching — `-- where` can't disarm it. Best-effort by design: the seatbelt *light*, not the seatbelt |
 | ✏️ **Safe row editing** | Only single-table SELECTs with the full primary key are editable; joins, CTEs, groups refused *with a reason* | You review the exact `UPDATE`s first. Parameter-bound, keyed by the full PK, guarded with `IS NOT DISTINCT FROM` — a racing edit affects 0 rows and is **refused**, not silently won |
 | 🔁 **Transactions** | The tab that opened a transaction owns it | Committing from another tab is refused and names the owner. Closing mid-transaction always prompts |
@@ -196,7 +196,8 @@ trust a README that does.
   imports; not yet fine for the 10 GB one.
 - **The statement guard is best-effort.** It survived thirteen bypass
   attempts, but it's the seatbelt light. Read-only profiles are the seatbelt —
-  the *server* enforces those.
+  the *server* enforces those. The airbag is a database role with no write
+  privileges: use one for production if a write must be impossible.
 - **Nothing is code-signed.** Each OS objects once; the docs walk you through
   it, and the [attestation check](#-verifying-a-download) proves more than the
   dialogs do.

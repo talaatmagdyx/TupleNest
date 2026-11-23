@@ -303,7 +303,10 @@ export function coerceParam(raw: string): unknown {
   if (t === "" || t.toLowerCase() === "null") return null;
   if (t.toLowerCase() === "true") return true;
   if (t.toLowerCase() === "false") return false;
-  if (/^-?\d+$/.test(t)) return Number(t);
+  // Past 2^53 Number() rounds (9007199254740993 → …992), so a bigint key
+  // would match a different row. Keep those as exact text; the driver
+  // parses digits for integer columns.
+  if (/^-?\d+$/.test(t)) return Number.isSafeInteger(Number(t)) ? Number(t) : t;
   if (/^-?\d*\.\d+$/.test(t)) return Number(t);
   return raw; // text as-is
 }

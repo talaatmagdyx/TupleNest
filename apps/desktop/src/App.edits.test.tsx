@@ -164,6 +164,26 @@ describe("App — applying staged edits", () => {
   });
 });
 
+describe("App — the re-read after applying", () => {
+  it("re-runs the statement behind the grid, not whatever the editor holds now", async () => {
+    // The re-read used to call the general run path with `force`, reading the
+    // editor's current text. Type a DELETE after staging an edit, apply, and
+    // that DELETE ran on prod with the guard skipped.
+    const user = await withGrid(PROD.name);
+    await editCell(user, "new@b.c");
+    const ta = screen.getByRole("textbox", { name: /sql editor/i });
+    await user.click(ta);
+    await user.clear(ta);
+    await user.type(ta, "delete from users");
+    await user.click(await screen.findByRole("button", { name: /review/i }));
+    await user.click(await screen.findByRole("button", { name: /^Apply/i }));
+    await waitFor(() => expect(be.sent("pg_query").length).toBeGreaterThan(2));
+    const sqls = be.sent("pg_query").map((a) => String((a as { sql: string }).sql));
+    expect(sqls).not.toContain("delete from users");
+    expect(sqls[sqls.length - 1]).toBe("select id, email from users");
+  });
+});
+
 describe("App — leaving a cell editor", () => {
   it("keeps the edit when you click away rather than pressing Enter", async () => {
     // Clicking elsewhere is how people leave a field. Throwing the edit away

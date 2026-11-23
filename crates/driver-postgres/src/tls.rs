@@ -3,7 +3,8 @@
 //! Modes (driver-api `TlsMode`):
 //! - `Disabled`    → plain TCP (local development only)
 //! - `Prefer`      → TLS negotiated, certificate NOT verified (discouraged)
-//! - `VerifyCa`    → chain verified against roots; hostname **not** checked
+//! - `VerifyCa`    → chain verified against the user's CA file **only**;
+//!   hostname **not** checked
 //! - `VerifyFull`  → chain + hostname verified. Default; fails closed.
 //!
 //! Roots = OS trust store, plus `tls_ca_path` PEM file when provided.
@@ -74,7 +75,24 @@ pub fn build(config: &ConnectionConfig) -> Result<TlsSetup, Box<DriverError>> {
             Ok(TlsSetup::Rustls(Arc::new(tls_config)))
         }
         TlsMode::VerifyCa => {
-            let roots = build_roots(config)?;
+            /*
+             * Only the user's CA, never the OS trust store.
+             *
+             * This mode forgives the hostname, so the roots are the only thing
+             * that says *which* server is trusted. With the OS store in there,
+             * any publicly trusted certificate for any domain — a free one for
+             * a domain the attacker owns — would pass. libpq's verify-ca trusts
+             * only root.crt for the same reason.
+             */
+            if config.tls_ca_path.is_none() {
+                return Err(DriverError::new(
+                    ErrorCategory::Tls,
+                    "verify-ca needs a CA file: it skips the hostname check, so it trusts \
+                     only the CA you give it. Choose the CA file, or use verify-full.",
+                )
+                .into());
+            }
+            let roots = build_roots(config, false)?;
             // Delegate the entire chain check to rustls and forgive exactly one
             // error: the name mismatch. Everything else — expiry, an unknown
             // issuer, a bad signature, a cert not valid for server auth — still
@@ -96,7 +114,7 @@ pub fn build(config: &ConnectionConfig) -> Result<TlsSetup, Box<DriverError>> {
             Ok(TlsSetup::Rustls(Arc::new(tls_config)))
         }
         TlsMode::VerifyFull => {
-            let roots = build_roots(config)?;
+            let roots = build_roots(config, true)?;
             let tls_config = rustls::ClientConfig::builder()
                 .with_root_certificates(roots)
                 .with_no_client_auth();
@@ -105,16 +123,22 @@ pub fn build(config: &ConnectionConfig) -> Result<TlsSetup, Box<DriverError>> {
     }
 }
 
-/// OS trust store plus the caller's CA file. Fails closed: an unreadable or
-/// empty CA file is an error, never a silent downgrade to fewer roots.
+/// The caller's CA file, plus the OS trust store when `with_native` is set.
+/// Fails closed: an unreadable or empty CA file is an error, never a silent
+/// downgrade to fewer roots.
 #[allow(clippy::result_large_err)]
-fn build_roots(config: &ConnectionConfig) -> Result<rustls::RootCertStore, Box<DriverError>> {
+fn build_roots(
+    config: &ConnectionConfig,
+    with_native: bool,
+) -> Result<rustls::RootCertStore, Box<DriverError>> {
     let mut roots = rustls::RootCertStore::empty();
-    let native = rustls_native_certs::load_native_certs();
-    for cert in native.certs {
-        // Ignore individual unparseable system certs; an empty store
-        // still fails closed below.
-        let _ = roots.add(cert);
+    if with_native {
+        let native = rustls_native_certs::load_native_certs();
+        for cert in native.certs {
+            // Ignore individual unparseable system certs; an empty store
+            // still fails closed below.
+            let _ = roots.add(cert);
+        }
     }
     if let Some(path) = &config.tls_ca_path {
         /*
@@ -421,6 +445,31 @@ mod tests {
             build(&cfg(TlsMode::Disabled, None)).unwrap(),
             TlsSetup::None
         ));
+    }
+
+    #[test]
+    fn verify_ca_without_a_ca_file_is_refused() {
+        // Without a CA of its own, verify-ca would have nothing to trust but
+        // the OS store, which (with no hostname check) trusts every domain.
+        assert!(build(&cfg(TlsMode::VerifyCa, None)).is_err());
+    }
+
+    #[test]
+    fn verify_ca_trusts_only_the_given_ca_not_the_os_store() {
+        // The audit finding: verify-ca loaded the OS trust store as well, so
+        // any publicly trusted certificate for any hostname passed.
+        let key = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(Vec::new()).unwrap();
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let pem = params.self_signed(&key).unwrap().pem();
+        let path = std::env::temp_dir().join(format!("tn-verify-ca-{}.pem", std::process::id()));
+        std::fs::write(&path, pem).unwrap();
+        let p = path.to_str().unwrap();
+
+        let roots = build_roots(&cfg(TlsMode::VerifyCa, Some(p)), false).unwrap();
+        assert_eq!(roots.len(), 1, "verify-ca must trust exactly the user's CA");
+        assert!(build(&cfg(TlsMode::VerifyCa, Some(p))).is_ok());
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

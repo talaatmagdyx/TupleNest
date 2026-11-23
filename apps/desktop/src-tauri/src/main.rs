@@ -517,6 +517,7 @@ fn main() {
             pg::pg_relationships,
             pg::pg_admin_backend,
             pg::pg_begin,
+            pg::pg_in_transaction,
             pg::pg_commit,
             pg::pg_rollback,
             pg::pg_cancel

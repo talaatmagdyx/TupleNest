@@ -308,6 +308,9 @@ pub struct PostgresSession {
     tls: TlsSetup,
     _conn_task: tokio::task::JoinHandle<()>,
     in_transaction: Option<TransactionId>,
+    /// The profile is read-only: every statement is checked against the
+    /// server's own transaction state first (see `ensure_read_only`).
+    read_only: bool,
 }
 
 /// A cloneable handle that can cancel the session's running query without
@@ -326,6 +329,79 @@ impl PgCancelHandle {
 }
 
 impl PostgresSession {
+    /*
+     * Keeps a read-only profile read-only.
+     *
+     * The connect-time `SET SESSION CHARACTERISTICS … READ ONLY` is only a
+     * default, and any statement can change it: `SET SESSION CHARACTERISTICS
+     * AS TRANSACTION READ WRITE`, `SET default_transaction_read_only = off`,
+     * `RESET ALL`, `set_config(…)`, or `BEGIN READ WRITE`. Recognising those
+     * in the SQL text would be a filter, and filters get talked around.
+     *
+     * So before every statement the server is asked, in one round trip, to
+     * restore the read-only default and to say whether the transaction this
+     * statement will run in is read-only. Outside a transaction that is always
+     * yes. Inside one opened `READ WRITE`, it is no, and the statement is
+     * refused — whatever it is. One statement cannot both flip the mode and
+     * write: PostgreSQL fixes a transaction's mode before its first query.
+     */
+    /*
+     * Is a transaction open on the server right now?
+     *
+     * The driver's own `in_transaction` only knows about `begin()`. A `BEGIN`
+     * typed in the editor goes through `execute`, so the import and row edits
+     * used to issue a second BEGIN and then COMMIT or ROLLBACK the user's own
+     * work. The server is the only thing that knows.
+     *
+     * Outside a transaction every statement is its own, so `now()` (start of
+     * transaction) equals `statement_timestamp()`. Inside one, this statement
+     * started after `BEGIN` did. An aborted transaction refuses the query
+     * with 25P02 — which also means one is open.
+     */
+    pub async fn server_in_transaction(&self) -> Result<bool, Box<DriverError>> {
+        match self
+            .client
+            .simple_query("SELECT now() <> statement_timestamp()")
+            .await
+        {
+            Ok(msgs) => Ok(msgs.iter().any(|m| match m {
+                tokio_postgres::SimpleQueryMessage::Row(r) => r.get(0) == Some("t"),
+                _ => false,
+            })),
+            Err(e)
+                if e.code()
+                    == Some(&tokio_postgres::error::SqlState::IN_FAILED_SQL_TRANSACTION) =>
+            {
+                Ok(true)
+            }
+            Err(e) => Err(normalize_error(e)),
+        }
+    }
+
+    async fn ensure_read_only(&self) -> Result<(), Box<DriverError>> {
+        let msgs = self
+            .client
+            .simple_query(
+                "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY; \
+                 SELECT current_setting('transaction_read_only')",
+            )
+            .await
+            .map_err(normalize_error)?;
+        let read_only = msgs.iter().any(|m| match m {
+            tokio_postgres::SimpleQueryMessage::Row(r) => r.get(0) == Some("on"),
+            _ => false,
+        });
+        if read_only {
+            return Ok(());
+        }
+        Err(DriverError::new(
+            ErrorCategory::Authorization,
+            "This connection is read-only, but the open transaction is read-write. \
+             Roll it back (or commit) to continue; nothing was run.",
+        )
+        .into())
+    }
+
     /// Cancel (soft) or terminate (hard) another backend by pid — powers the
     /// monitoring panel's actions. Returns whether the admin call succeeded.
     pub async fn admin_backend(&self, pid: i32, terminate: bool) -> Result<bool, Box<DriverError>> {
@@ -457,6 +533,7 @@ impl PostgresDriver {
             tls: setup,
             _conn_task: conn_task,
             in_transaction: None,
+            read_only: config.read_only,
         })
     }
 }
@@ -470,6 +547,10 @@ impl DatabaseSession for PostgresSession {
     ) -> Result<ExecutionSummary, Box<DriverError>> {
         use futures_util::StreamExt;
         let started = Instant::now();
+
+        if self.read_only && !ends_transaction(&request.sql) {
+            self.ensure_read_only().await?;
+        }
 
         // Bind typed parameters ($1..$n). Passed as owned boxed ToSql so the
         // borrow lives for the whole query_raw call (Phase 3).
@@ -2137,6 +2218,37 @@ fn fallback(row: &Row, i: usize, ty: &Type) -> CellValue {
 /// An integer bind value that adapts to whatever integer width Postgres
 /// infers for the placeholder (int2/int4/int8), so `where id = $1` works
 /// whether the column is int4 or int8.
+/// A text parameter. Bound as text, except for integer columns, where digits
+/// are parsed and range-checked: a bigint beyond 2^53 cannot survive the trip
+/// through JavaScript as a number, so the WebView sends it as a string.
+#[derive(Debug)]
+struct AnyText(String);
+
+impl tokio_postgres::types::ToSql for AnyText {
+    fn to_sql(
+        &self,
+        ty: &Type,
+        out: &mut tokio_postgres::types::private::BytesMut,
+    ) -> Result<tokio_postgres::types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
+        match *ty {
+            Type::INT2 | Type::INT4 | Type::INT8 => {
+                let n: i64 = self
+                    .0
+                    .trim()
+                    .parse()
+                    .map_err(|_| format!("{:?} is not an integer", self.0))?;
+                AnyInt(n).to_sql(ty, out)
+            }
+            _ => self.0.to_sql(ty, out),
+        }
+    }
+    fn accepts(ty: &Type) -> bool {
+        matches!(*ty, Type::INT2 | Type::INT4 | Type::INT8)
+            || <String as tokio_postgres::types::ToSql>::accepts(ty)
+    }
+    tokio_postgres::types::to_sql_checked!();
+}
+
 #[derive(Debug)]
 struct AnyInt(i64);
 
@@ -2146,9 +2258,15 @@ impl tokio_postgres::types::ToSql for AnyInt {
         ty: &Type,
         out: &mut tokio_postgres::types::private::BytesMut,
     ) -> Result<tokio_postgres::types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
+        // Checked, never `as`: `65537 as i16` is 1, so a parameter one past
+        // the column's range silently became a different, valid key.
         match *ty {
-            Type::INT2 => (self.0 as i16).to_sql(ty, out),
-            Type::INT4 => (self.0 as i32).to_sql(ty, out),
+            Type::INT2 => i16::try_from(self.0)
+                .map_err(|_| format!("{} is out of range for smallint", self.0))?
+                .to_sql(ty, out),
+            Type::INT4 => i32::try_from(self.0)
+                .map_err(|_| format!("{} is out of range for integer", self.0))?
+                .to_sql(ty, out),
             _ => self.0.to_sql(ty, out),
         }
     }
@@ -2186,10 +2304,34 @@ fn param_to_sql(p: &ParamValue) -> Box<dyn tokio_postgres::types::ToSql + Sync +
         ParamValue::Bool(b) => Box::new(*b),
         ParamValue::Int(i) => Box::new(AnyInt(*i)),
         ParamValue::Float(f) => Box::new(AnyFloat(*f)),
-        ParamValue::Text(s) => Box::new(s.clone()),
+        ParamValue::Text(s) => Box::new(AnyText(s.clone())),
         ParamValue::Bytes(b) => Box::new(b.clone()),
         ParamValue::Json(v) => Box::new(v.clone()),
     }
+}
+
+/// Does this statement only end the current transaction (`COMMIT`,
+/// `ROLLBACK`, `END`, `ABORT`)? Those must always get through on a read-only
+/// profile, or a read-write transaction it refused could never be closed —
+/// and they cannot write anything themselves.
+fn ends_transaction(sql: &str) -> bool {
+    let mut s = sql.trim_start();
+    // Skip leading comments, the way the server would.
+    loop {
+        if let Some(rest) = s.strip_prefix("--") {
+            s = rest.split_once('\n').map_or("", |(_, r)| r).trim_start();
+        } else if let Some(rest) = s.strip_prefix("/*") {
+            s = rest.split_once("*/").map_or("", |(_, r)| r).trim_start();
+        } else {
+            break;
+        }
+    }
+    let word: String = s
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    matches!(word.as_str(), "commit" | "rollback" | "end" | "abort")
 }
 
 /// Map a tokio-postgres error into the normalized taxonomy (spec §54).
@@ -2337,6 +2479,65 @@ mod begin_statement_tests {
         ];
         for (level, want) in cases {
             assert_eq!(begin_statement(&opts(Some(level), false, false)), want);
+        }
+    }
+
+    #[test]
+    fn integer_parameters_are_range_checked_not_wrapped() {
+        use tokio_postgres::types::ToSql;
+        let mut buf = tokio_postgres::types::private::BytesMut::new();
+        // `65537 as i16` is 1: this used to bind as a different, valid key.
+        assert!(AnyInt(65_537).to_sql(&Type::INT2, &mut buf).is_err());
+        assert!(AnyInt(4_294_967_297).to_sql(&Type::INT4, &mut buf).is_err());
+        assert!(AnyInt(-32_769).to_sql(&Type::INT2, &mut buf).is_err());
+        buf.clear();
+        AnyInt(32_767).to_sql(&Type::INT2, &mut buf).unwrap();
+        assert_eq!(&buf[..], &32_767_i16.to_be_bytes());
+    }
+
+    #[test]
+    fn digit_strings_bind_exactly_to_integer_columns() {
+        use tokio_postgres::types::ToSql;
+        // How a bigint past 2^53 arrives from the WebView: as text.
+        let mut buf = tokio_postgres::types::private::BytesMut::new();
+        AnyText("9007199254740993".into())
+            .to_sql(&Type::INT8, &mut buf)
+            .unwrap();
+        assert_eq!(&buf[..], &9_007_199_254_740_993_i64.to_be_bytes());
+        assert!(AnyText("abc".into()).to_sql(&Type::INT8, &mut buf).is_err());
+        assert!(AnyText("70000".into())
+            .to_sql(&Type::INT2, &mut buf)
+            .is_err());
+        buf.clear();
+        AnyText("hello".into())
+            .to_sql(&Type::TEXT, &mut buf)
+            .unwrap();
+        assert_eq!(&buf[..], b"hello");
+    }
+
+    #[test]
+    fn only_transaction_enders_skip_the_read_only_check() {
+        for sql in [
+            "COMMIT",
+            "rollback",
+            "  END",
+            "ABORT;",
+            "-- why\nROLLBACK",
+            "/* x */ commit",
+            "ROLLBACK TO SAVEPOINT a",
+        ] {
+            assert!(ends_transaction(sql), "{sql:?} should be let through");
+        }
+        for sql in [
+            "SELECT 1",
+            "BEGIN READ WRITE",
+            "SET default_transaction_read_only = off",
+            "committed",
+            "-- commit\nDELETE FROM t",
+            "/* rollback */ DELETE FROM t",
+            "",
+        ] {
+            assert!(!ends_transaction(sql), "{sql:?} must be checked");
         }
     }
 
