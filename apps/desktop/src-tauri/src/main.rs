@@ -295,7 +295,12 @@ fn export_begin(
     // Checked before and again after the dialog, without holding the lock
     // while it is open: a modal dialog can sit there for minutes, and every
     // other export command would wait on the lock behind it.
-    if state.0.lock().map_err(|_| "export lock poisoned")?.is_some() {
+    if state
+        .0
+        .lock()
+        .map_err(|_| "export lock poisoned")?
+        .is_some()
+    {
         return Err("an export is already in progress".into());
     }
 
