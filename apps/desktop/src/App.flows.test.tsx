@@ -222,6 +222,27 @@ describe("App — exporting", () => {
     }
   });
 
+  it("refuses to run SQL while an export is still reading the result", async () => {
+    // pg_rows pages from the backend's single result store. A query run
+    // mid-export replaced it, and the file got the old header over the new
+    // query's rows — and still said "Saved".
+    const user = await connected();
+    await run(user, "select kind, n from t");
+    let release!: () => void;
+    be.on("export_write", () => new Promise<void>((r) => (release = r)));
+    await user.click(screen.getByRole("button", { name: /^Export/ }));
+    const menu = document.querySelector(".drop-menu") as HTMLElement;
+    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    await waitFor(() => expect(be.sent("export_write").length).toBeGreaterThan(0));
+    const before = be.sent("pg_query").length;
+    await user.click(screen.getByRole("button", { name: /^Run/ }));
+    expect(await screen.findByText(/wait for the export to finish/i)).toBeInTheDocument();
+    expect(be.sent("pg_query")).toHaveLength(before);
+    be.on("export_write", () => undefined);
+    release();
+    await waitFor(() => expect(be.sent("export_finish")).toHaveLength(1));
+  });
+
   it("surfaces a cancelled save without error (backend returns null)", async () => {
     be.on("export_begin", () => null);
     const user = await connected();

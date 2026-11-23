@@ -251,6 +251,10 @@ export default function App() {
 
   const { items: snippets, refresh: refreshSnippets, save: saveSnippetRecord } = useSnippets();
 
+  /** True while an export pages rows out of the backend's single result
+   *  store. Anything that runs SQL would replace that store mid-export and
+   *  the file would get the old header over the new query's rows. */
+  const exportingRef = useRef(false);
   const showToast = useCallback((t: string) => {
     setToast(t);
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -757,6 +761,10 @@ export default function App() {
 
   const doRun = useCallback(
     async (force = false, boundParams?: unknown[], sqlOverride?: string) => {
+      if (exportingRef.current) {
+        showToast("Wait for the export to finish — it is still reading this result");
+        return;
+      }
       // `sqlOverride` runs a specific statement (the guarded one, or the one
       // behind the grid) instead of whatever the editor holds right now.
       const editorSql = tabs[activeTab]?.sql ?? "";
@@ -795,7 +803,7 @@ export default function App() {
       }
       void refreshHistory();
     },
-    [tabs, activeTab, connected, connectedEnv, query, tx, setTabs, refreshHistory, session]
+    [tabs, activeTab, connected, connectedEnv, query, tx, setTabs, refreshHistory, session, showToast]
   );
 
   /* ---------------- safe row editing ---------------- */
@@ -954,6 +962,11 @@ export default function App() {
    */
   const runExplain = useCallback(
     async (override?: unknown) => {
+      // EXPLAIN replaces the backend row store too (see below).
+      if (exportingRef.current) {
+        showToast("Wait for the export to finish — it is still reading this result");
+        return;
+      }
       const title = tabs[activeTab]?.name ?? "query";
       const out = await runExplainRaw({
         sql: tabs[activeTab]?.sql ?? "",
@@ -975,7 +988,7 @@ export default function App() {
         );
       }
     },
-    [tabs, activeTab, connected, runExplainRaw, query, catalog],
+    [tabs, activeTab, connected, runExplainRaw, query, catalog, showToast],
   );
 
   /** Everything the exporters need from the current plan. */
@@ -1062,6 +1075,7 @@ export default function App() {
       let written = 0;
       cancelExport.current = false;
       setExportRun({ written: 0, total });
+      exportingRef.current = true;
       try {
         await writeChunk(exportPrefix(kind, result.columns, mode));
         // pg_rows serves at most 1000 per call, so that is the page size.
@@ -1090,6 +1104,7 @@ export default function App() {
         await abortSave().catch(() => {});
         showToast(`Export failed: ${String(e).slice(0, 60)}`);
       } finally {
+        exportingRef.current = false;
         setExportRun(null);
       }
     },
