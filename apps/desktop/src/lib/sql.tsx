@@ -256,12 +256,53 @@ export function guardReason(sql: string, env: string | null): GuardReason | null
   if (DDL_VERBS.test(effective)) {
     return { verb: effective.toUpperCase(), why: "This changes or removes database objects, not just rows." };
   }
-  if (effective === "update" || effective === "delete") {
-    // `\bwhere\b` on masked text: a commented-out or quoted WHERE no longer
-    // counts as one.
-    if (!/\bwhere\b/i.test(masked)) {
-      return { verb: effective.toUpperCase(), why: "It has no WHERE clause, so it affects every row in the table." };
+  // Their effect is not visible in the text, so there is nothing to check:
+  // a DO block or procedure can delete anything, MERGE can delete matched
+  // rows, and COPY … FROM writes a whole file into a table.
+  if (effective === "do" || effective === "call" || effective === "merge") {
+    return { verb: effective.toUpperCase(), why: "What this changes cannot be seen from the statement itself." };
+  }
+  // Top level only: `COPY (SELECT … FROM t) TO STDOUT` reads, it does not write.
+  if (effective === "copy" && /\bfrom\b/i.test(masked.replace(/\([^()]*\)/g, " ").replace(/\([^()]*\)/g, " "))) {
+    return { verb: "COPY", why: "COPY … FROM writes rows straight into the table." };
+  }
+  // Every UPDATE/DELETE needs its own WHERE. One WHERE anywhere in the text
+  // used to count, so `WITH d AS (DELETE FROM a WHERE false) DELETE FROM
+  // users` — or a WHERE only inside a subquery — disarmed the guard.
+  const unbounded = dmlWithoutWhere(masked);
+  if (unbounded) {
+    return { verb: unbounded.toUpperCase(), why: "It has no WHERE clause, so it affects every row in the table." };
+  }
+  return null;
+}
+
+/**
+ * The first UPDATE or DELETE whose own clause has no WHERE, or null.
+ *
+ * "Its own clause" is the text from the verb to the end of the enclosing
+ * parentheses (a CTE body) or the statement, at the verb's nesting level: a
+ * WHERE inside a subquery bounds the subquery, not the DELETE. Works on masked
+ * text, so quoted or commented WHEREs never count. `DO UPDATE` (upsert) and
+ * `FOR [NO KEY] UPDATE` (row locks) are not row-wide writes and are skipped.
+ */
+export function dmlWithoutWhere(masked: string): string | null {
+  const re = /\b(update|delete)\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(masked))) {
+    const before = masked.slice(0, m.index).trimEnd().toLowerCase();
+    if (/\b(do|for|key)$/.test(before)) continue;
+    let depth = 0;
+    let own = "";
+    for (let i = m.index; i < masked.length; i++) {
+      const c = masked[i];
+      if (c === "(") depth++;
+      else if (c === ")") {
+        if (depth === 0) break; // end of the CTE body this verb lives in
+        depth--;
+      } else if (c === ";" && depth === 0) break;
+      if (depth === 0) own += c;
     }
+    if (!/\bwhere\b/i.test(own)) return m[1].toLowerCase();
   }
   return null;
 }
