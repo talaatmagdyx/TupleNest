@@ -633,15 +633,20 @@ pub async fn pg_connect(
     // session's query was still running (and still holding the lock).
     let mut slot = lock_session(&state).await?;
     *slot = Some(session);
+    // All of it published before the slot is released: a metadata request
+    // queued behind this connect must see the new cache key, not file the
+    // new database's schema under the old profile's. The previous result
+    // belongs to the old database; paging it now would show its rows.
     *state.cancel.lock().map_err(|_| "cancel lock poisoned")? =
         slot.as_ref().map(|s| s.cancel_handle());
-    drop(slot);
     *state.tunnel.lock().map_err(|_| "tunnel lock poisoned")? = tunnel;
     *state.cache_key.lock().map_err(|_| "key lock poisoned")? = Some(cache_key_of(&params));
     *state
         .connected_env
         .lock()
         .map_err(|_| "env lock poisoned")? = params.environment.clone();
+    *state.result.lock().map_err(|_| "result lock poisoned")? = None;
+    drop(slot);
     tracing::info!(
         component = "pg",
         host = %params.host,
@@ -654,11 +659,16 @@ pub async fn pg_connect(
 
 #[tauri::command]
 pub async fn pg_disconnect(state: tauri::State<'_, PgState>) -> Result<(), String> {
-    *lock_session(&state).await? = None;
+    let mut slot = lock_session(&state).await?;
+    *slot = None;
+    // Cleared while the session slot is still held. After it is released, a
+    // reconnect waiting on the lock can install its own cancel handle and
+    // tunnel — and a late clear here would drop them.
     *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = None;
     *state.result.lock().map_err(|_| "result lock poisoned")? = None;
     // Dropping the tunnel closes the SSH session.
     *state.tunnel.lock().map_err(|_| "tunnel lock poisoned")? = None;
+    drop(slot);
     tracing::info!(component = "pg", "session closed");
     Ok(())
 }
@@ -1058,9 +1068,10 @@ pub async fn pg_query(
             );
             if broken {
                 *guard = None; // session
-                drop(guard);
+                               // Before releasing the slot, for the same reason as Disconnect.
                 *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = None;
                 *state.tunnel.lock().map_err(|_| "tunnel lock poisoned")? = None;
+                drop(guard);
                 tracing::warn!(
                     component = "pg",
                     "session marked broken after network error"
@@ -1279,12 +1290,14 @@ pub async fn pg_metadata(
     state: tauri::State<'_, PgState>,
     request: MetadataRequest,
 ) -> Result<MetadataOut, String> {
+    let guard = state.session.lock().await;
+    // Read under the session lock: taken before it, a request queued behind
+    // a reconnect cached the new database's schema under the old key.
     let key = state
         .cache_key
         .lock()
         .map_err(|_| "key lock poisoned")?
         .clone();
-    let guard = state.session.lock().await;
     let session = guard.as_ref().ok_or("not connected")?;
     match session.metadata(request.clone()).await {
         Ok(response) => {
@@ -1422,15 +1435,26 @@ async fn lock_session<'a>(
     if let Ok(guard) = state.session.try_lock() {
         return Ok(guard);
     }
-    let handle = state
-        .cancel
-        .lock()
-        .map_err(|_| "cancel lock poisoned")?
-        .clone();
-    if let Some(h) = handle {
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), h.cancel()).await;
+    // Cancel, then wait a bounded time — and again: tokio's mutex is FIFO, so
+    // a query queued behind the running one gets the lock first and must be
+    // cancelled too; and a cancel that lands before the statement reaches the
+    // server does nothing. Three rounds, then say so rather than hang (a
+    // half-open socket used to block here until the OS gave up on TCP).
+    let step = std::time::Duration::from_secs(5);
+    for _ in 0..3 {
+        let handle = state
+            .cancel
+            .lock()
+            .map_err(|_| "cancel lock poisoned")?
+            .clone();
+        if let Some(h) = handle {
+            let _ = tokio::time::timeout(step, h.cancel()).await;
+        }
+        if let Ok(guard) = tokio::time::timeout(step, state.session.lock()).await {
+            return Ok(guard);
+        }
     }
-    Ok(state.session.lock().await)
+    Err("The running query did not stop after three cancel requests. Try again, or restart the app if the server is unreachable.".into())
 }
 
 /// Cancels the in-flight query via the wire-protocol cancel key. Does not
@@ -1482,37 +1506,48 @@ mod tests {
         *state.cancel.lock().unwrap() = Some(session.cancel_handle());
         *state.session.lock().await = Some(session);
 
-        let held = state.clone();
-        let query = tokio::spawn(async move {
-            let mut g = held.session.lock().await;
-            let req = QueryRequest {
-                execution_id: ExecutionId::new(),
-                sql: "SELECT pg_sleep(30)".into(),
-                params: vec![],
-                row_limit: 0,
-                timeout_ms: 0,
-            };
-            struct NullSink;
-            #[async_trait]
-            impl BatchSink for NullSink {
-                async fn deliver(&self, _: RowBatch) -> Result<(), Box<DriverError>> {
-                    Ok(())
+        // One query running, and a second one queued behind it on the lock —
+        // tokio's mutex is FIFO, so the queued one gets the lock next and has
+        // to be cancelled as well.
+        let sleep = |st: std::sync::Arc<PgState>| {
+            tokio::spawn(async move {
+                let mut g = st.session.lock().await;
+                let req = QueryRequest {
+                    execution_id: ExecutionId::new(),
+                    sql: "SELECT pg_sleep(30)".into(),
+                    params: vec![],
+                    row_limit: 0,
+                    timeout_ms: 0,
+                };
+                struct NullSink;
+                #[async_trait]
+                impl BatchSink for NullSink {
+                    async fn deliver(&self, _: RowBatch) -> Result<(), Box<DriverError>> {
+                        Ok(())
+                    }
                 }
-            }
-            g.as_mut().unwrap().execute(req, &NullSink).await
-        });
+                g.as_mut().unwrap().execute(req, &NullSink).await
+            })
+        };
+        let running = sleep(state.clone());
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let queued = sleep(state.clone());
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let started = std::time::Instant::now();
         let slot = lock_session(&state).await.unwrap();
         assert!(
-            started.elapsed() < std::time::Duration::from_secs(6),
-            "waited for the query"
+            started.elapsed() < std::time::Duration::from_secs(16),
+            "waited for the queries instead of cancelling them"
         );
         drop(slot);
         assert!(
-            query.await.unwrap().is_err(),
+            running.await.unwrap().is_err(),
             "the running query should have been cancelled"
+        );
+        assert!(
+            queued.await.unwrap().is_err(),
+            "the queued query should have been cancelled"
         );
     }
 

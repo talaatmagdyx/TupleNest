@@ -171,6 +171,13 @@ impl PostgresDriver {
             TlsMode::VerifyCa | TlsMode::VerifyFull => tokio_postgres::config::SslMode::Require,
         };
         c.ssl_mode(ssl_mode);
+        // A half-open socket (laptop sleep, a dropped VPN, a dead NAT entry)
+        // used to block until the OS gave up on TCP — many minutes — and with
+        // it Disconnect, which waits for the running query. Keepalives notice
+        // in about a minute; a server that never answers the dial fails fast.
+        c.connect_timeout(std::time::Duration::from_secs(15));
+        c.keepalives(true);
+        c.keepalives_idle(std::time::Duration::from_secs(30));
         c
     }
 
