@@ -596,9 +596,13 @@ fn approx_bytes(row: &[serde_json::Value]) -> usize {
     const ALLOC: usize = 16; // per heap allocation: header and rounding
     fn heap(v: &serde_json::Value) -> usize {
         match v {
-            serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => 0,
+            serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
+                0
+            }
             serde_json::Value::String(s) => ALLOC + s.capacity(),
-            serde_json::Value::Array(a) => ALLOC + a.len() * VALUE + a.iter().map(heap).sum::<usize>(),
+            serde_json::Value::Array(a) => {
+                ALLOC + a.len() * VALUE + a.iter().map(heap).sum::<usize>()
+            }
             serde_json::Value::Object(o) => o
                 .iter()
                 // key String + value + a map node
@@ -1246,11 +1250,16 @@ pub async fn pg_rollback(state: tauri::State<'_, PgState>) -> Result<(), String>
  */
 async fn lock_session<'a>(
     state: &'a PgState,
-) -> Result<tokio::sync::MutexGuard<'a, Option<tuplenest_driver_postgres::PostgresSession>>, String> {
+) -> Result<tokio::sync::MutexGuard<'a, Option<tuplenest_driver_postgres::PostgresSession>>, String>
+{
     if let Ok(guard) = state.session.try_lock() {
         return Ok(guard);
     }
-    let handle = state.cancel.lock().map_err(|_| "cancel lock poisoned")?.clone();
+    let handle = state
+        .cancel
+        .lock()
+        .map_err(|_| "cancel lock poisoned")?
+        .clone();
     if let Some(h) = handle {
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), h.cancel()).await;
     }
@@ -1329,9 +1338,15 @@ mod tests {
 
         let started = std::time::Instant::now();
         let slot = lock_session(&state).await.unwrap();
-        assert!(started.elapsed() < std::time::Duration::from_secs(6), "waited for the query");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(6),
+            "waited for the query"
+        );
         drop(slot);
-        assert!(query.await.unwrap().is_err(), "the running query should have been cancelled");
+        assert!(
+            query.await.unwrap().is_err(),
+            "the running query should have been cancelled"
+        );
     }
 
     #[test]

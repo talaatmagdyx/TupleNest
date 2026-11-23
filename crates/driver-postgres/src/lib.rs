@@ -393,7 +393,11 @@ impl PostgresSession {
         let Some(id) = self.in_transaction.take() else {
             return Err(DriverError::new(ErrorCategory::Internal, "No open transaction").into());
         };
-        let result = self.client.batch_execute(sql).await.map_err(normalize_error);
+        let result = self
+            .client
+            .batch_execute(sql)
+            .await
+            .map_err(normalize_error);
         if result.is_err() && self.server_in_transaction().await.unwrap_or(false) {
             self.in_transaction = Some(id);
         }

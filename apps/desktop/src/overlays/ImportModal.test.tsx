@@ -256,7 +256,7 @@ describe("ImportModal — streaming a file it never holds whole", () => {
     // It used to sit outside the shared Overlay: no focus trap, no dialog
     // role, and the app-wide Escape closed it mid-import while the import
     // carried on with no UI.
-    invokeMock.mockImplementation(async (cmd: string, a?: unknown) => {
+    invokeMock.mockImplementation(async (_cmd: string, a?: unknown) => {
       const sql = String((a as { sql?: string } | undefined)?.sql ?? "");
       if (/^insert into/i.test(sql)) return new Promise(() => {}); // never finishes
       return { columns: [], rows: [], rowsAffected: 0, durationMs: 1 };

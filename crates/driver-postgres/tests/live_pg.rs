@@ -1128,7 +1128,12 @@ async fn a_failed_commit_leaves_the_driver_agreeing_with_the_server() {
         .connect_concrete_with_password(test_config(), None)
         .await
         .expect("connect");
-    s.execute(req("CREATE TEMP TABLE IF NOT EXISTS tn_parent (id int PRIMARY KEY)"), &NullSink).await.unwrap();
+    s.execute(
+        req("CREATE TEMP TABLE IF NOT EXISTS tn_parent (id int PRIMARY KEY)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
     s.execute(
         req("CREATE TEMP TABLE IF NOT EXISTS tn_child (p int REFERENCES tn_parent DEFERRABLE INITIALLY DEFERRED)"),
         &NullSink,
@@ -1136,11 +1141,21 @@ async fn a_failed_commit_leaves_the_driver_agreeing_with_the_server() {
     .await
     .unwrap();
     s.begin(TransactionOptions::default()).await.unwrap();
-    s.execute(req("INSERT INTO tn_child VALUES (42)"), &NullSink).await.unwrap();
-    assert!(s.commit().await.is_err(), "the deferred FK must fail at COMMIT");
-    assert!(!s.server_in_transaction().await.unwrap(), "the server rolled it back");
+    s.execute(req("INSERT INTO tn_child VALUES (42)"), &NullSink)
+        .await
+        .unwrap();
+    assert!(
+        s.commit().await.is_err(),
+        "the deferred FK must fail at COMMIT"
+    );
+    assert!(
+        !s.server_in_transaction().await.unwrap(),
+        "the server rolled it back"
+    );
     // Not wedged: a fresh transaction opens and commits.
-    s.begin(TransactionOptions::default()).await.expect("begin after a failed commit");
+    s.begin(TransactionOptions::default())
+        .await
+        .expect("begin after a failed commit");
     s.commit().await.expect("commit after a failed commit");
 }
 

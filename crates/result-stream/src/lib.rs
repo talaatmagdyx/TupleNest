@@ -131,7 +131,10 @@ mod tests {
         let mut store = RowStore::with_budget(10, 100);
         assert!(store.push_sized(1, 60));
         assert!(!store.push_sized(2, 60));
-        assert!(!store.push_sized(3, 10), "a later small row must not leapfrog the refused one");
+        assert!(
+            !store.push_sized(3, 10),
+            "a later small row must not leapfrog the refused one"
+        );
         assert_eq!(store.window(0, 10), &[1]);
         assert!(store.is_full());
         assert_eq!(store.total_seen(), 3);
