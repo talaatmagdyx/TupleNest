@@ -10,7 +10,7 @@ import { tableKey } from "./nodes";
  */
 
 import type { Catalog } from "./complete";
-import { fromClauseShape, maskLiterals, parseTableRefs, statementAt } from "./complete";
+import { fromClauseShape, maskLiterals, maskStrings, parseTableRefs, statementAt, unquoteIdent } from "./complete";
 
 export type GridCol = { name: string; dbType: string };
 
@@ -29,6 +29,14 @@ export type EditTarget = {
    * rounded before it ever left JavaScript.
    */
   types?: Record<string, string>;
+  /**
+   * The table as the query named it, when it named no schema: `users`, not
+   * `public.users`. Which schema that means is the server's decision, made
+   * from the session's `search_path` — which the app does not know. `schema`
+   * above is a guess from the catalog, so every UPDATE carries a test that the
+   * name still resolves to the table being written (see `buildUpdate`).
+   */
+  resolvedFrom?: string;
 };
 
 export type Editability = { editable: true; target: EditTarget } | { editable: false; reason: string };
@@ -122,6 +130,57 @@ const BLOCKERS: [RegExp, string][] = [
   [/\blateral\b/i, "the query uses LATERAL"],
 ];
 
+/**
+ * Which output columns are a table column and nothing else.
+ *
+ * Columns are matched to the table by name, and a name is whatever the query
+ * says it is: `select parent_id as id` and `select id + 1 as id` both produce a
+ * column called `id`. Treating that as the primary key keyed the UPDATE on a
+ * value that is not the key. So a column counts only when its select-list item
+ * is a bare reference — `id`, `u.id`, `"Id"` — or it arrived through `*`.
+ *
+ * Works on text with strings and comments masked but quoted identifiers kept,
+ * and steps over those, since `"a, b"` and `"from"` are legal names.
+ */
+export function directColumns(stmt: string): { star: boolean; names: Set<string> } {
+  const masked = maskStrings(stmt);
+  const out = { star: false, names: new Set<string>() };
+  const start = /\bselect\b/i.exec(masked);
+  if (!start) return out;
+
+  const items: string[] = [];
+  let depth = 0;
+  let from = start.index + start[0].length;
+  let i = from;
+  for (; i < masked.length; i++) {
+    const c = masked[i];
+    if (c === '"') {
+      i++;
+      while (i < masked.length && (masked[i] !== '"' || masked[i + 1] === '"')) i += masked[i] === '"' ? 2 : 1;
+    } else if (c === "(") depth++;
+    else if (c === ")") depth--;
+    else if (depth === 0 && c === ",") {
+      items.push(masked.slice(from, i));
+      from = i + 1;
+    } else if (depth === 0 && /^from\b/i.test(masked.slice(i)) && !/[\w$]/.test(masked[i - 1] ?? " ")) break;
+  }
+  items.push(masked.slice(from, i));
+
+  const ident = String.raw`(?:[A-Za-z_][\w$]*|"(?:[^"]|"")*")`;
+  const star = new RegExp(String.raw`^(?:${ident}\s*\.\s*)?\*$`);
+  const bare = new RegExp(String.raw`^(?:${ident}\s*\.\s*)?(${ident})$`);
+  for (const raw of items) {
+    const item = raw.trim();
+    if (star.test(item)) out.star = true;
+    else {
+      const m = bare.exec(item);
+      // Unquoted names fold to lower case, as the server folds them.
+      if (m) out.names.add(m[1].startsWith('"') ? unquoteIdent(m[1]).toLowerCase() : m[1].toLowerCase());
+    }
+  }
+  return out;
+}
+
 /** Can rows of this result be traced back to single rows of one table? */
 export function analyzeEditability(sql: string, cols: GridCol[], cat: Catalog | undefined): Editability {
   if (!cat) return { editable: false, reason: "schema is still loading" };
@@ -179,10 +238,16 @@ export function analyzeEditability(sql: string, cols: GridCol[], cat: Catalog | 
   const pkCols = tableCols.filter((c) => c.primaryKey);
   if (pkCols.length === 0) return { editable: false, reason: `${ref.name} has no primary key` };
 
+  const direct = directColumns(stmt);
+  const isDirect = (name: string) => direct.star || direct.names.has(name.toLowerCase());
+
   const pk: { name: string; index: number }[] = [];
   for (const c of pkCols) {
     const idx = names.indexOf(c.name.toLowerCase());
     if (idx === -1) return { editable: false, reason: `add the primary key (${c.name}) to the result to edit it` };
+    if (!isDirect(c.name)) {
+      return { editable: false, reason: `the key column ${c.name} is renamed or computed in this query` };
+    }
     pk.push({ name: c.name, index: idx });
   }
 
@@ -199,11 +264,16 @@ export function analyzeEditability(sql: string, cols: GridCol[], cat: Catalog | 
   // is not computed by the server.
   const writable = cols.map((c) => {
     const n = c.name.toLowerCase();
-    return real.has(n) && !pkNames.has(n) && !generated.has(n);
+    return real.has(n) && !pkNames.has(n) && !generated.has(n) && isDirect(n);
   });
 
   const types = Object.fromEntries(tableCols.map((c) => [c.name, c.dbType]));
-  return { editable: true, target: { schema, table: ref.name, pk, writable, types } };
+  // Only an unqualified name is at the mercy of `search_path`. Written back
+  // the way the query wrote it, so the server folds or keeps its case the same
+  // way both times.
+  const quoted = quoteIdent(ref.name);
+  const resolvedFrom = ref.schema ? undefined : stmt.includes(quoted) ? quoted : ref.name;
+  return { editable: true, target: { schema, table: ref.name, pk, writable, types, resolvedFrom } };
 }
 
 /** A type name safe to splice into `::type` — catalog-supplied, so checked. */
@@ -256,9 +326,18 @@ function unchangedTest(target: Pick<EditTarget, "types">, column: string, params
  * `IS NOT DISTINCT FROM` and not `=`, because `= NULL` is never true: with `=`,
  * editing any cell that was NULL would match nothing and every such edit would
  * be reported as a conflict.
+ *
+ * And the table itself is checked. `select * from users` reads whichever
+ * `users` the session's `search_path` finds first; `target.schema` is where
+ * the catalog guessed it was. When those differ — two tenants with the same
+ * tables, a temp table shadowing a real one — an UPDATE to the guess changed a
+ * row of a table the grid never showed, and passed the one-row check doing it.
+ * So the statement asks the server, in the same breath as the write, whether
+ * the name the query used still means the table being written. If not, it
+ * matches zero rows.
  */
 export function buildUpdate(
-  target: Pick<EditTarget, "schema" | "table" | "pk" | "types">,
+  target: Pick<EditTarget, "schema" | "table" | "pk" | "types" | "resolvedFrom">,
   pkValues: unknown[],
   sets: { column: string; value: unknown; oldValue: unknown }[]
 ): Statement {
@@ -271,7 +350,12 @@ export function buildUpdate(
     .join(", ");
   const keyed = target.pk.map((k, i) => `${quoteIdent(k.name)} = ${placeholder(target, k.name, params, pkValues[i])}`);
   const unchanged = sets.map((s) => unchangedTest(target, s.column, params, s.oldValue));
-  const whereSql = [...keyed, ...unchanged].join(" AND ");
+  const same: string[] = [];
+  if (target.resolvedFrom) {
+    params.push(target.resolvedFrom, qualifiedName(target.schema, target.table));
+    same.push(`to_regclass($${params.length - 1}) = to_regclass($${params.length})`);
+  }
+  const whereSql = [...keyed, ...unchanged, ...same].join(" AND ");
 
   return { sql: `UPDATE ${qualifiedName(target.schema, target.table)} SET ${setSql} WHERE ${whereSql}`, params };
 }

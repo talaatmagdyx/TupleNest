@@ -224,6 +224,28 @@ describe("useRowEdits — checking what the server actually did", () => {
     expect(out).toMatchObject({ message: expect.stringContaining("changed since you loaded it") });
   });
 
+  it("says the table may not be the one the query read, when the name was unqualified", async () => {
+    // TN-002: zero rows is also what the server-side table test returns when
+    // `users` means another schema's table on this session.
+    const { result } = renderHook(() => useRowEdits(0));
+    stage(result, edit());
+    affects(0);
+    const out = await apply(result, false, { ...TARGET, resolvedFrom: "users" });
+    expect(out).toMatchObject({
+      kind: "error",
+      message: expect.stringMatching(/users does not mean public\.users on this session.*name the schema/s),
+    });
+    expect(cmds()).toContain("pg_rollback");
+  });
+
+  it("does not mention the search path when the query named the schema", async () => {
+    const { result } = renderHook(() => useRowEdits(0));
+    stage(result, edit());
+    affects(0);
+    const out = await apply(result);
+    expect(out).toMatchObject({ message: expect.not.stringContaining("search_path") });
+  });
+
   it("rolls back rather than committing a write that hit nothing", async () => {
     const { result } = renderHook(() => useRowEdits(0));
     stage(result, edit());

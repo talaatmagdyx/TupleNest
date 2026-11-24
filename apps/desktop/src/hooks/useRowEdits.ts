@@ -146,7 +146,11 @@ export function useRowEdits(epoch: number): RowEdits {
           if (n !== null && n !== 1) {
             throw new Error(
               n === 0
-                ? "This row changed since you loaded it — another session edited or deleted it. " +
+                ? "This row changed since you loaded it — another session edited or deleted it" +
+                  (target.resolvedFrom
+                    ? `, or ${target.resolvedFrom} does not mean ${target.schema}.${target.table} on this ` +
+                      "session (its search_path points elsewhere; name the schema in the query). "
+                    : ". ") +
                   "Nothing was written and your edits are still here. Re-run the query to see " +
                   "the current values, then decide."
                 : `Expected to change 1 row but matched ${n}. Nothing was written.`,

@@ -5,6 +5,7 @@ import {
   buildStatements,
   buildUpdate,
   coerceValue,
+  directColumns,
   previewSql,
   qualifiedName,
   quoteIdent,
@@ -575,5 +576,132 @@ describe("buildUpdate with column types: everything bound as text and cast", () 
     const st = buildUpdate(target, ["k"], [{ column: "bad", value: "1", oldValue: "0" }]);
     expect(st.sql).not.toContain("DROP");
     expect(st.sql).toContain('"bad" = $1');
+  });
+});
+
+// Audit TN-002. `select … from users` reads whichever `users` the session's
+// search_path finds; the catalog's guess at its schema is only a guess. The
+// UPDATE carries a server-side test that both mean the same table.
+describe("buildUpdate — the table the query read is the table written", () => {
+  it("adds the test for a name the query did not qualify", () => {
+    const st = buildUpdate({ ...target, resolvedFrom: "users" }, [7], [
+      { column: "email", value: "a@b.c", oldValue: "before" },
+    ]);
+    expect(st.sql).toBe(
+      'UPDATE "public"."users" SET "email" = $1 WHERE "id" = $2 AND "email" IS NOT DISTINCT FROM $3' +
+        " AND to_regclass($4) = to_regclass($5)",
+    );
+    expect(st.params).toEqual(["a@b.c", 7, "before", "users", '"public"."users"']);
+  });
+
+  it("binds both names as parameters — a hostile table name is data, not SQL", () => {
+    const evil = { ...target, schema: 'pu"blic', table: "u'; drop table users; --", resolvedFrom: `"u'; drop table users; --"` };
+    const st = buildUpdate(evil, [1], [{ column: "email", value: "x", oldValue: "y" }]);
+    // In the statement the name appears once, as a quoted identifier after
+    // UPDATE. The test itself is placeholders only.
+    expect(st.sql.slice(st.sql.indexOf(" WHERE "))).not.toContain("drop table");
+    expect(st.sql.endsWith("to_regclass($4) = to_regclass($5)")).toBe(true);
+    expect(st.params.slice(3)).toEqual([`"u'; drop table users; --"`, `"pu""blic"."u'; drop table users; --"`]);
+  });
+
+  it("adds nothing when the query named the schema — there is nothing to resolve", () => {
+    const st = buildUpdate(target, [7], [{ column: "email", value: "a@b.c", oldValue: "before" }]);
+    expect(st.sql).not.toContain("to_regclass");
+    expect(st.params).toHaveLength(3);
+  });
+
+  it("shows the test in the preview the user reviews", () => {
+    const st = buildUpdate({ ...target, resolvedFrom: "users" }, [7], [
+      { column: "email", value: "a@b.c", oldValue: "before" },
+    ]);
+    expect(previewSql(st)).toContain(`to_regclass('users') = to_regclass('"public"."users"')`);
+  });
+});
+
+describe("analyzeEditability — how the query named the table", () => {
+  const from = (sql: string) => {
+    const r = analyzeEditability(sql, gcols("id", "email"), cat);
+    if (!r.editable) throw new Error(r.reason);
+    return r.target.resolvedFrom;
+  };
+
+  it("keeps an unqualified name as written", () => {
+    expect(from("select id, email from users")).toBe("users");
+    expect(from("select id, email from users u where u.id = 1")).toBe("users");
+  });
+
+  it("keeps the quotes of a quoted name, so its case survives", () => {
+    expect(from('select id, email from "users"')).toBe('"users"');
+  });
+
+  it("is absent when the schema was named", () => {
+    expect(from("select id, email from public.users")).toBeUndefined();
+    expect(from('select id, email from "public"."users"')).toBeUndefined();
+  });
+});
+
+// Audit TN-022. Columns are matched to the table by name, and a query can call
+// anything `id`.
+describe("directColumns", () => {
+  const names = (sql: string) => [...directColumns(sql).names].sort();
+
+  it.each([
+    ["select id, email from users", ["email", "id"]],
+    ["select u.id, u.email from users u", ["email", "id"]],
+    ['select "Id", "e mail" from users', ["e mail", "id"]],
+    ["SELECT\n  id ,\n  Email\nFROM users", ["email", "id"]],
+    ["select id /* the key */, email -- contact\nfrom users", ["email", "id"]],
+  ])("counts bare references in %s", (sql, expected) => expect(names(sql)).toEqual(expected));
+
+  it.each([
+    ["select parent_id as id from users"],
+    ["select parent_id id from users"],
+    ["select id + 1 as id from users"],
+    ["select coalesce(id, 0) as id from users"],
+    ["select (select max(id) from users) as id from users"],
+    ["select id::text as id from users"],
+    ["select upper(email) as email from users"],
+    ["select 'id' as id from users"],
+  ])("does not count the renamed or computed column in %s", (sql) => expect(names(sql)).toEqual([]));
+
+  it("sees a star, alone or qualified", () => {
+    expect(directColumns("select * from users").star).toBe(true);
+    expect(directColumns("select u.* from users u").star).toBe(true);
+    expect(directColumns("select id, count(*) from users").star).toBe(false);
+  });
+
+  it("is not confused by names that look like syntax", () => {
+    expect(names('select "from", "a, b", id from users')).toEqual(["a, b", "from", "id"]);
+    expect(names("select id, 'x from y, z' as note from users")).toEqual(["id"]);
+    expect(names("select fromage, id from users")).toEqual(["fromage", "id"]);
+  });
+});
+
+describe("analyzeEditability — a column is only what the table says it is", () => {
+  const check = (sql: string, ...colNames: string[]) => analyzeEditability(sql, gcols(...colNames), cat);
+
+  it.each([
+    ["select age as id, email from users"],
+    ["select age id, email from users"],
+    ["select id + 1 as id, email from users"],
+    ["select coalesce(id, 0) as id, email from users"],
+  ])("refuses when the key is renamed or computed: %s", (sql) => {
+    const r = check(sql, "id", "email");
+    expect(r.editable).toBe(false);
+    if (!r.editable) expect(r.reason).toMatch(/key column id is renamed or computed/);
+  });
+
+  it("makes a computed column read-only without refusing the rest", () => {
+    const r = check("select id, upper(email) as email, age from users", "id", "email", "age");
+    expect(r.editable).toBe(true);
+    if (r.editable) expect(r.target.writable).toEqual([false, false, true]);
+  });
+
+  it("still edits through a star, an alias on the table, and quoted names", () => {
+    for (const sql of ["select * from users", "select u.id, u.email from users u", 'select "id", "email" from users']) {
+      const r = check(sql, "id", "email");
+      expect(r.editable).toBe(true);
+      if (r.editable) expect(r.target.writable[1]).toBe(true);
+    }
   });
 });

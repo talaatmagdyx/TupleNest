@@ -15,6 +15,17 @@ trusting it.
   rows, and `SELECT … INTO t` created the table. The whole statement is read
   now, not its first word. With ANALYZE ticked by hand on a prod or staging
   connection, a statement Run would stop for is refused (audit TN-003).
+- A row edit can no longer land in a table the grid never showed.
+  `select … from users` reads whichever `users` the session's `search_path`
+  finds first, while the edit's target schema was a guess from the catalog
+  (always `public` when it exists). With two same-named tables the UPDATE
+  changed a row of the wrong one and still reported one row updated. Every
+  such UPDATE now asks the server, in the same statement, whether the name the
+  query used still means the table being written, and matches nothing if not
+  (audit TN-002).
+- A column the query renamed or computed is no longer taken for a table
+  column: `select parent_id as id …` is not editable, because that `id` is not
+  the key, and `upper(email) as email` is read-only (audit TN-022).
 - **Read-only profiles refuse `DO` and `CALL`.** Either can commit partway
   through and switch the session back to read-write, so one pasted block could
   delete rows on a profile marked read-only. `SET TRANSACTION` works again on
