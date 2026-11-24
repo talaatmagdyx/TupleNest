@@ -30,4 +30,6 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 uuid = { workspace = true }
+# Accent-insensitive text sorting (already in the tree through url/idna).
+unicode-normalization = "0.1"
 tauri-plugin-opener = "2.5.4"

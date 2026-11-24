@@ -40,10 +40,29 @@ pub enum Key {
     Null,
     Number(f64),
     /// Exact text: `numeric` always arrives as a string, int8 past 2^53 too.
+    /// `base` and `accents` are the collation keys, see [`collate`].
     Text {
-        lower: String,
+        base: String,
+        accents: String,
         raw: String,
     },
+}
+
+/// Collation keys for one string, approximating the WebView's
+/// `localeCompare`: letters first compare without case or accents (`é` sorts
+/// with `e`, `Z` with `z`), then by accent (`e` before `é`), then lowercase
+/// before uppercase. Not a full Unicode collation — that needs ICU data
+/// several megabytes large — but right for Latin, Greek and Cyrillic text.
+fn collate(s: &str) -> (String, String) {
+    use unicode_normalization::{char::is_combining_mark, UnicodeNormalization};
+    let accents: String = s.nfd().flat_map(char::to_lowercase).collect();
+    let base = accents.chars().filter(|c| !is_combining_mark(*c)).collect();
+    (base, accents)
+}
+
+fn text_key(raw: String) -> Key {
+    let (base, accents) = collate(&raw);
+    Key::Text { base, accents, raw }
 }
 
 impl Key {
@@ -51,17 +70,8 @@ impl Key {
         match v {
             Value::Null => Key::Null,
             Value::Number(n) => n.as_f64().map(Key::Number).unwrap_or(Key::Null),
-            Value::String(s) => Key::Text {
-                lower: s.to_lowercase(),
-                raw: s,
-            },
-            other => {
-                let s = other.to_string();
-                Key::Text {
-                    lower: s.to_lowercase(),
-                    raw: s,
-                }
-            }
+            Value::String(s) => text_key(s),
+            other => text_key(other.to_string()),
         }
     }
 
@@ -82,11 +92,18 @@ pub fn compare(x: &Key, y: &Key, numeric: bool, desc: bool) -> Ordering {
         (_, Key::Null) => return Ordering::Less,
         (Key::Number(a), Key::Number(b)) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
         _ if numeric => compare_decimal(&x.text(), &y.text()),
-        // Case-insensitive first, then lowercase before uppercase — close to
-        // the WebView's `localeCompare`, without a collation library.
-        (Key::Text { lower: a, raw: ra }, Key::Text { lower: b, raw: rb }) => {
-            a.cmp(b).then_with(|| rb.cmp(ra))
-        }
+        (
+            Key::Text {
+                base: a,
+                accents: aa,
+                raw: ra,
+            },
+            Key::Text {
+                base: b,
+                accents: ba,
+                raw: rb,
+            },
+        ) => a.cmp(b).then_with(|| aa.cmp(ba)).then_with(|| rb.cmp(ra)),
         _ => x.text().cmp(&y.text()),
     };
     if desc {
@@ -287,6 +304,28 @@ mod tests {
         assert_eq!(
             sorted(&xs, false, false),
             [json!("a"), json!("a"), json!("A"), json!("b"), json!("B")]
+        );
+    }
+
+    #[test]
+    fn accents_sort_with_their_letter() {
+        // Byte order put every accented letter after `z`.
+        let xs = [
+            json!("zoe"),
+            json!("Émile"),
+            json!("eve"),
+            json!("émile"),
+            json!("emile"),
+        ];
+        assert_eq!(
+            sorted(&xs, false, false),
+            [
+                json!("emile"),
+                json!("émile"),
+                json!("Émile"),
+                json!("eve"),
+                json!("zoe")
+            ]
         );
     }
 

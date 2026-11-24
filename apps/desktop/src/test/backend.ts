@@ -153,6 +153,11 @@ const defaults = (): Record<string, (args: Record<string, unknown>) => unknown> 
   audit_list: () => [],
   pg_query: () => RESULT,
   pg_rows: () => ROWS,
+  // ROWS summed the way pg.rs `chart` does: label column 0, value column 1.
+  pg_chart: () => ({
+    rows: ROWS.length,
+    bars: ROWS.map(([label, v]) => ({ label, v })).sort((a, b) => (b.v as number) - (a.v as number)),
+  }),
   pg_test: () => ({
     stages: [{ name: "dns", passed: true, ms: 1, detail: "" }],
     serverVersion: "18.0",

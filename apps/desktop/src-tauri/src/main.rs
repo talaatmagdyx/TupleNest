@@ -523,6 +523,7 @@ fn main() {
             pg::pg_disconnect,
             pg::pg_query,
             pg::pg_rows,
+            pg::pg_chart,
             pg::pg_metadata,
             pg::pg_metadata_cached,
             pg::pg_activity,

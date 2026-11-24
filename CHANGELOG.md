@@ -52,6 +52,11 @@ trusting it.
   and the grid pages the sorted rows. It used to copy up to 50,000 rows into
   the window to sort them there, and refused past that; now every stored row
   sorts (100,000 wide rows: about 0.2 s the first time, then instant).
+  Accented text sorts with its letter (`émile` beside `emile`, not after `z`).
+- The chart is summed in the backend over every stored row; only the bars
+  reach the window. It used to copy up to 50,000 rows in, and chart only those.
+- Copy as CSV/JSON/Markdown builds its text a page at a time instead of
+  loading every row first.
 - Query history is written off the async runtime, so a slow disk no longer
   delays the query's result.
 

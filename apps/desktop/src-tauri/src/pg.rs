@@ -1245,6 +1245,75 @@ pub async fn pg_rows(
     page(stored, offset, limit, sort.as_ref())
 }
 
+/// One bar: a label and the sum of its values.
+#[derive(serde::Serialize, Debug, PartialEq)]
+pub struct ChartBar {
+    label: String,
+    v: f64,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChartOut {
+    /// Rows the bars were computed from: every stored row.
+    rows: usize,
+    bars: Vec<ChartBar>,
+}
+
+/// Sum `value` per `label` over the stored result, biggest first.
+///
+/// The chart used to copy up to 50,000 rows into the WebView to add them up
+/// there; this reads one cell of each, and only the bars cross the bridge —
+/// over every stored row, not a 50,000-row sample. The rules are the old
+/// ones: NULL values skipped as SQL's SUM does, NULL labels kept as "null".
+#[tauri::command]
+pub async fn pg_chart(
+    state: tauri::State<'_, PgState>,
+    label: usize,
+    value: usize,
+    max_bars: usize,
+) -> Result<ChartOut, String> {
+    let guard = state.result.lock().map_err(|_| "result lock poisoned")?;
+    let stored = guard.as_ref().ok_or("no result")?;
+    Ok(chart(stored, label, value, max_bars))
+}
+
+fn chart(stored: &StoredResult, label: usize, value: usize, max_bars: usize) -> ChartOut {
+    use std::collections::HashMap;
+    let rows = stored.store.stored();
+    let mut at: HashMap<String, usize> = HashMap::new();
+    let mut bars: Vec<ChartBar> = Vec::new();
+    for i in 0..rows {
+        let Some(row) = stored.store.get(i) else {
+            break;
+        };
+        let v = match crate::sort::cell_at(row.get(), value) {
+            serde_json::Value::Number(n) => n.as_f64(),
+            serde_json::Value::String(s) => s.trim().parse::<f64>().ok(),
+            _ => None,
+        };
+        let Some(v) = v.filter(|v| v.is_finite()) else {
+            continue;
+        };
+        let name = match crate::sort::cell_at(row.get(), label) {
+            serde_json::Value::Null => "null".to_owned(),
+            serde_json::Value::String(s) => s,
+            other => other.to_string(),
+        };
+        match at.get(&name) {
+            Some(&j) => bars[j].v += v,
+            None => {
+                at.insert(name.clone(), bars.len());
+                bars.push(ChartBar { label: name, v });
+            }
+        }
+    }
+    // Stable: equal sums keep first-seen order, as the grid's Map did.
+    bars.sort_by(|a, b| b.v.partial_cmp(&a.v).unwrap_or(std::cmp::Ordering::Equal));
+    bars.truncate(max_bars);
+    ChartOut { rows, bars }
+}
+
 fn page(
     stored: &mut StoredResult,
     offset: usize,
@@ -1821,6 +1890,40 @@ mod tests {
         let row = serde_json::value::to_raw_value(&vec![serde_json::Value::Null; 200]).unwrap();
         assert_eq!(row.get().len(), 200 * 4 + 199 + 2);
         assert_eq!(row_bytes(&row), 1_001 + 16 + 16);
+    }
+
+    #[test]
+    fn chart_sums_per_label_like_sql() {
+        let mut stored = StoredResult {
+            columns: vec![("s".into(), "text".into()), ("n".into(), "numeric".into())],
+            store: tuplenest_result_stream::RowStore::new(10),
+            order: None,
+        };
+        for row in [
+            serde_json::json!(["a", "1.5"]),
+            serde_json::json!(["b", 4]),
+            serde_json::json!([null, 2]),
+            serde_json::json!(["a", 1]),
+            serde_json::json!(["c", null]),
+            serde_json::json!(["d", "NaN"]),
+            serde_json::json!(["f", "not a number"]),
+            serde_json::json!(["g", "Infinity"]),
+            serde_json::json!(["e", 2]),
+        ] {
+            stored
+                .store
+                .push(serde_json::value::to_raw_value(&row).unwrap());
+        }
+        let out = chart(&stored, 0, 1, 3);
+        assert_eq!(out.rows, 9);
+        let bar = |l: &str, v: f64| ChartBar { label: l.into(), v };
+        // c (only NULLs), d (NaN), f (not a number) and g (Infinity) have no
+        // bar; null labels are a group;
+        // the tie between null and e keeps first-seen order; cut to 3.
+        assert_eq!(
+            out.bars,
+            vec![bar("b", 4.0), bar("a", 2.5), bar("null", 2.0)]
+        );
     }
 
     #[test]

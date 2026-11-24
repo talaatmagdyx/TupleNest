@@ -42,7 +42,7 @@ import {
   type ExportablePlan,
 } from "./lib/explain";
 import { FILTERS, abortSave, baseName, beginSave, finishSave, saveText, writeChunk } from "./lib/save";
-import { MAX_CHART_ROWS, aggregateChart, chartSubtitle, chartTitle, pickChartColumns } from "./lib/chart";
+import { MAX_BARS, chartSubtitle, chartTitle, pickChartColumns } from "./lib/chart";
 import IntelModal, { type Pane as IntelPane } from "./overlays/IntelModal";
 import ImportModal from "./overlays/ImportModal";
 import DetailsModal, { type ObjectDetails } from "./overlays/DetailsModal";
@@ -79,10 +79,8 @@ import {
   exportChunk,
   exportPrefix,
   exportSuffix,
-  fetchAllRows,
   formatSQL,
   rowCountNote,
-  toExportText,
   type ExportKind,
 } from "./lib/sql";
 import type {
@@ -1169,10 +1167,21 @@ export default function App() {
       // something is not a thing anyone does on purpose, and building the
       // string to find out costs the same freeze the file export just lost.
       const cap = Math.min(EXPORT_CAPS[kind] ?? COPY_ROW_CAP, COPY_ROW_CAP);
-      const rows = await fetchAllRows(Math.min(result.storedRows, cap));
+      const n = Math.min(result.storedRows, cap);
       const mode = csvSafe ? "spreadsheet-safe" : "raw";
-      await navigator.clipboard.writeText(toExportText(kind, result.columns, rows, mode));
-      showToast(`${kind.toUpperCase()} copied — ${rowCountNote(rows.length, result)}`);
+      // Formatted a page at a time, so only the text and one page of rows are
+      // held — not every row as objects and then the text built from them.
+      let text = exportPrefix(kind, result.columns, mode);
+      let written = 0;
+      for (let off = 0; off < n; off += 1000) {
+        const page = await invoke<unknown[][]>("pg_rows", { offset: off, limit: Math.min(1000, n - off) });
+        if (page.length === 0) break;
+        text += exportChunk(kind, result.columns, page, written === 0, mode);
+        written += page.length;
+      }
+      text += exportSuffix(kind, written > 0);
+      await navigator.clipboard.writeText(text);
+      showToast(`${kind.toUpperCase()} copied — ${rowCountNote(written, result)}`);
     },
     [result, showToast, csvSafe]
   );
@@ -1183,11 +1192,16 @@ export default function App() {
       setChart(null);
       return;
     }
-    const rows = await fetchAllRows(Math.min(result.storedRows, MAX_CHART_ROWS));
+    // Summed in the backend over every stored row; only the bars come back.
+    const out = await invoke<{ rows: number; bars: ChartDatum[] }>("pg_chart", {
+      label: pick.label,
+      value: pick.value,
+      maxBars: MAX_BARS,
+    });
     setChart({
       title: chartTitle(result.columns, pick),
-      sub: chartSubtitle(rows.length, result.totalRows),
-      data: aggregateChart(rows, pick.label, pick.value),
+      sub: chartSubtitle(out.rows, result.totalRows),
+      data: out.bars,
     });
   }, [result]);
 

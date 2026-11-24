@@ -6288,6 +6288,7 @@ dependencies = [
  "tuplenest-ssh-core",
  "tuplenest-telemetry",
  "tuplenest-workspace-store",
+ "unicode-normalization",
  "uuid",
 ]
 
