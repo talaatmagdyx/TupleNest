@@ -334,8 +334,8 @@ impl RowStore {
 
     fn each_in(&self, text: &str, first: usize, last: usize, f: &mut impl FnMut(usize, &str)) {
         let mut start = 0;
-        for row in first..last {
-            let end = self.ends[row] as usize;
+        for (row, &end) in (first..).zip(&self.ends[first..last]) {
+            let end = end as usize;
             f(row, &text[start..end]);
             start = end;
         }
