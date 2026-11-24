@@ -19,8 +19,16 @@ const BLOCK = 200;
 const OVERSCAN = 12;
 /** Blocks kept on each side of the one just fetched. Scrolling through 100k
  *  rows used to keep every block it passed — the whole result, in the
- *  WebView, on top of the copy Rust holds. 10 each way is ~4,200 rows. */
-const KEEP_BLOCKS = 10;
+ *  WebView, on top of the copy Rust holds. 2 each way is 1,000 rows — forty
+ *  screens of scroll-back before anything is fetched again, and on a
+ *  200-column result a fifth of the cells 10 each way held. */
+const KEEP_BLOCKS = 2;
+/** Columns drawn either side of the visible ones. */
+const COL_OVERSCAN = 3;
+/** Horizontal scroll is tracked in steps this wide, so a sideways drag
+ *  re-renders once per step rather than once per pixel. */
+const COL_STEP = 64;
+const NUM_W = 56;
 
 /** The cache with only the blocks near `center`; far ones are fetched again
  *  if scrolled back to. */
@@ -70,7 +78,9 @@ function cellClass(c: GridColumn, v: unknown): string {
 export default function Grid(p: Props) {
   const [blocks, setBlocks] = useState<Record<number, unknown[][]>>({});
   const [scrollTop, setScrollTop] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
   const [viewH, setViewH] = useState(360);
+  const [viewW, setViewW] = useState(0);
   const [sortCol, setSortCol] = useState<number | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc" | null>(null);
   const [selCell, setSelCell] = useState<{ r: number; c: number } | null>(null);
@@ -108,6 +118,7 @@ export default function Grid(p: Props) {
     setPrevEpoch(p.epoch);
     setBlocks({});
     setScrollTop(0);
+    setScrollLeft(0);
     setSortCol(null);
     setSortDir(null);
     setSelCell(null);
@@ -116,18 +127,26 @@ export default function Grid(p: Props) {
   }
 
   useEffect(() => {
+    sortGen.current++; // a page still in flight belongs to the previous result
     pending.current.clear();
     p.onCopyable(null);
-    if (viewRef.current) viewRef.current.scrollTop = 0;
+    if (viewRef.current) {
+      viewRef.current.scrollTop = 0;
+      viewRef.current.scrollLeft = 0;
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.epoch]);
 
   useEffect(() => {
     const el = viewRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setViewH(el.clientHeight));
+    const measure = () => {
+      setViewH(el.clientHeight);
+      setViewW(el.clientWidth);
+    };
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    setViewH(el.clientHeight);
+    measure();
     return () => ro.disconnect();
   }, []);
 
@@ -234,7 +253,32 @@ export default function Grid(p: Props) {
 
   const indices: number[] = [];
   for (let i = first; i < last; i++) indices.push(i);
-  const totalW = 56 + p.columns.reduce((a, c) => a + colWidth(c), 0);
+
+  /** Column widths and their running left edges (`offs[n]` is the full width). */
+  const layout = useMemo(() => {
+    const widths = p.columns.map(colWidth);
+    const offs = [0];
+    for (const w of widths) offs.push(offs[offs.length - 1] + w);
+    return { widths, offs };
+  }, [p.columns]);
+  const { widths, offs } = layout;
+  const nCols = p.columns.length;
+  const bodyW = offs[nCols];
+  const totalW = NUM_W + bodyW;
+
+  // The columns in view. A 200-column result used to draw every cell of every
+  // visible row — some 12,000 nodes — where a screen shows a dozen columns.
+  // Cells outside the window are replaced by one spacer each side.
+  let c0 = 0;
+  while (c0 < nCols && offs[c0 + 1] <= scrollLeft) c0++;
+  let c1 = c0;
+  while (c1 < nCols && offs[c1] < scrollLeft + COL_STEP + viewW) c1++;
+  c0 = Math.max(0, c0 - COL_OVERSCAN);
+  c1 = Math.min(nCols, c1 + COL_OVERSCAN);
+  const colIdx: number[] = [];
+  for (let c = c0; c < c1; c++) colIdx.push(c);
+  const padL = offs[c0];
+  const padR = bodyW - offs[c1];
 
   /*
    * Keyboard navigation.
@@ -265,6 +309,13 @@ export default function Grid(p: Props) {
       if (top < view.scrollTop) view.scrollTop = top;
       else if (bottom > view.scrollTop + view.clientHeight) {
         view.scrollTop = bottom - view.clientHeight;
+      }
+      // Sideways too: a column outside the drawn window has no cell to focus,
+      // so the browser cannot bring it into view for us.
+      if (dc !== 0) {
+        const room = view.clientWidth - NUM_W;
+        if (offs[c] < view.scrollLeft) view.scrollLeft = offs[c];
+        else if (room > 0 && offs[c + 1] > view.scrollLeft + room) view.scrollLeft = offs[c + 1] - room;
       }
     }
   };
@@ -298,17 +349,23 @@ export default function Grid(p: Props) {
       aria-colcount={p.columns.length}
       aria-label="Query results"
       onKeyDown={onGridKey}
-      onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+      onScroll={(e) => {
+        // Snapped to a row / a column step: the same value is no state change,
+        // so a scroll re-renders when the window moves, not on every pixel.
+        const el = e.currentTarget;
+        setScrollTop(Math.floor(el.scrollTop / ROW_H) * ROW_H);
+        setScrollLeft(Math.floor(el.scrollLeft / COL_STEP) * COL_STEP);
+      }}
     >
       <div className="g-head" role="row" style={{ minWidth: totalW }}>
-        <div className="g-rownum" role="columnheader" aria-label="Row number" style={{ width: 56 }} />
+        <div className="g-rownum" role="columnheader" aria-label="Row number" style={{ width: NUM_W }} />
         {p.columns.map((c, ci) => (
           <div
             key={ci}
             className="g-hcell"
             role="columnheader"
             aria-sort={sortCol === ci && sortDir ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
-            style={{ width: colWidth(c) }}
+            style={{ width: widths[ci] }}
             tabIndex={0}
             onClick={() => sortBy(ci)}
             onKeyDown={(e) => {
@@ -330,6 +387,9 @@ export default function Grid(p: Props) {
       {first > 0 && <div style={{ height: first * ROW_H }} />}
       {indices.map((i) => {
         const row = rowAt(i);
+        // Identity by primary key, not row position — the grid may be
+        // sorted after an edit was staged. Once per row, not per cell.
+        const rk = row && p.target ? rowKey(p.target.pk.map((k) => row[k.index])) : "";
         return (
           <div
             key={i}
@@ -341,22 +401,22 @@ export default function Grid(p: Props) {
             style={{ minWidth: totalW }}
             onClick={() => setSelRow(i)}
           >
-            <div className="g-rownum" role="rowheader" style={{ width: 56 }}>
+            <div className="g-rownum" role="rowheader" style={{ width: NUM_W }}>
               {i + 1}
             </div>
+            {row !== null && padL > 0 && <div aria-hidden="true" style={{ flex: "none", width: padL }} />}
             {row === null ? (
-              <div className="g-cell loading" style={{ width: totalW - 56 }}>
+              <div className="g-cell loading" style={{ width: bodyW }}>
                 …
               </div>
             ) : (
-              p.columns.map((c, ci) => {
+              colIdx.map((ci) => {
+                const c = p.columns[ci];
                 const original = row[ci];
-                // Identity by primary key, not row position — the grid may be
-                // sorted after an edit was staged.
-                const rk = p.target ? rowKey(p.target.pk.map((k) => row[k.index])) : "";
                 const key = `${rk}:${c.name}`;
-                const isStaged = !!p.target && staged.has(key);
+                const isStaged = !!p.target && staged.size > 0 && staged.has(key);
                 const v = isStaged ? staged.get(key) : original;
+                const text = cellText(v);
                 // Boolean, not `selCell && …`: that yields null when nothing is
                 // selected, and `aria-selected` must be a real true/false.
                 const isSel = !!selCell && selCell.r === i && selCell.c === ci;
@@ -365,7 +425,7 @@ export default function Grid(p: Props) {
 
                 if (isEditing) {
                   return (
-                    <div key={ci} className="g-cell editing" style={{ width: colWidth(c) }}>
+                    <div key={ci} className="g-cell editing" style={{ width: widths[ci] }}>
                       <input
                         autoFocus
                         className="g-edit"
@@ -398,29 +458,31 @@ export default function Grid(p: Props) {
                     // The roving stop: exactly one cell is tabbable, so Tab
                     // reaches the grid and the arrows move inside it.
                     tabIndex={isSel ? 0 : -1}
-                    ref={(el) => {
+                    ref={
                       // Focus follows selection, but only once it is really the
                       // selected cell — otherwise every render steals focus.
-                      if (isSel && el && document.activeElement !== el && viewRef.current?.contains(document.activeElement)) {
-                        el.focus();
-                      }
-                    }}
-                    style={{ width: colWidth(c) }}
+                      // Only the selected cell gets a ref at all.
+                      isSel
+                        ? (el) => {
+                            if (el && document.activeElement !== el && viewRef.current?.contains(document.activeElement)) {
+                              el.focus();
+                            }
+                          }
+                        : undefined
+                    }
+                    style={{ width: widths[ci] }}
                     title={
-                      isStaged
-                        ? `${cellText(original)} → ${cellText(v)} (pending)`
-                        : canEdit
-                          ? `${cellText(v)} — double-click to edit`
-                          : cellText(v)
+                      isStaged ? `${cellText(original)} → ${text} (pending)` : canEdit ? `${text} — double-click to edit` : text
                     }
                     onClick={() => select(i, ci, c, v)}
                     onDoubleClick={() => beginEdit(i, ci, original)}
                   >
-                    {cellText(v)}
+                    {text}
                   </div>
                 );
               })
             )}
+            {row !== null && padR > 0 && <div aria-hidden="true" style={{ flex: "none", width: padR }} />}
           </div>
         );
       })}

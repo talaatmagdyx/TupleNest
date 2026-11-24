@@ -38,6 +38,14 @@ trusting it.
 - Secrets in JSON shapes are redacted; logs keep 14 days.
 
 ### Performance and reliability
+- Very wide results draw only the columns on screen (200 columns: about 12,000
+  cell nodes down to about 1,500), and the grid keeps 1,000 rows near the
+  viewport instead of 4,200.
+- An open transaction no longer re-renders the whole window once a second; the
+  status bar keeps its own clock.
+- Less copying per cell while reading, sorting and exporting rows; numeric
+  sorts skip collation. The async runtime uses 2 to 4 threads, not one per core.
+- Release builds use thin LTO and one codegen unit.
 - One query can no longer exceed the result budget many times over: batches are
   cut by size, and bytea/json cells over 1 MB are not decoded (600 × 1 MB bytea:
   882 → 296 MB). Rows past the cap are counted, not decoded.

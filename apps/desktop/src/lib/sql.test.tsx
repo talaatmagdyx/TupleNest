@@ -6,7 +6,6 @@ import {
   ENV_COLORS,
   rowCountNote,
   envMeta,
-  fetchAllRows,
   formatSQL,
   looksLikeSelect,
   needsGuard,
@@ -212,37 +211,6 @@ describe("deletePair", () => {
     expect(deletePair("abc", 3, 3)).toBeNull();
     expect(deletePair("abc", 0, 0)).toBeNull();
     expect(deletePair("()", 0, 2)).toBeNull();
-  });
-});
-
-describe("fetchAllRows", () => {
-  it("returns nothing when there are no rows", async () => {
-    expect(await fetchAllRows(0)).toEqual([]);
-    expect(invokeMock).not.toHaveBeenCalled();
-  });
-
-  it("pages in 1000-row windows", async () => {
-    invokeMock.mockResolvedValueOnce([[1]]).mockResolvedValueOnce([[2]]);
-    await fetchAllRows(2000);
-    expect(invokeMock).toHaveBeenNthCalledWith(1, "pg_rows", { offset: 0, limit: 1000 });
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "pg_rows", { offset: 1000, limit: 1000 });
-  });
-
-  it("concatenates the pages in order", async () => {
-    invokeMock.mockResolvedValueOnce([[1], [2]]).mockResolvedValueOnce([[3]]);
-    expect(await fetchAllRows(2000)).toEqual([[1], [2], [3]]);
-  });
-
-  it("stops early on a short page rather than looping to the stated total", async () => {
-    invokeMock.mockResolvedValueOnce([]);
-    expect(await fetchAllRows(50_000)).toEqual([]);
-    expect(invokeMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("honours the cap so a huge result cannot exhaust memory", async () => {
-    invokeMock.mockResolvedValue([[1]]);
-    await fetchAllRows(10_000_000, 2000);
-    expect(invokeMock).toHaveBeenCalledTimes(2);
   });
 });
 

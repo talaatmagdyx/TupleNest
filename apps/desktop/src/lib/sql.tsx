@@ -1,6 +1,5 @@
 import React from "react";
 import { maskLiterals } from "./complete";
-import { invoke } from "@tauri-apps/api/core";
 
 /** SQL syntax highlighting (from the HUD design's tokenizer). */
 const SQL_RE =
@@ -74,18 +73,6 @@ export function rowCountNote(written: number, result: { totalRows: number; trunc
   // would be the same lie the flag exists to prevent.
   if (result.totalRows <= written) return `${written.toLocaleString()} rows`;
   return `${written.toLocaleString()} of ${result.totalRows.toLocaleString()} rows (truncated)`;
-}
-
-/** Pages the backend row store until `stored` rows are collected. */
-export async function fetchAllRows(stored: number, cap = 100_000): Promise<unknown[][]> {
-  const n = Math.min(stored, cap);
-  const out: unknown[][] = [];
-  for (let off = 0; off < n; off += 1000) {
-    const page = await invoke<unknown[][]>("pg_rows", { offset: off, limit: 1000 });
-    out.push(...page);
-    if (page.length === 0) break;
-  }
-  return out;
 }
 
 /** CSV export safety: neutralize spreadsheet formulas, or preserve raw bytes. */

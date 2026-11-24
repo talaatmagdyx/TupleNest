@@ -816,6 +816,9 @@ impl StoredResult {
                 .columns
                 .get(sort.column)
                 .is_some_and(|(_, t)| crate::sort::is_numeric_type(t));
+            // The order being replaced goes first, not after the new one is
+            // built beside it.
+            self.order = None;
             // One cell per row, parsed out of the row's text. Transient: only
             // the 4-byte indexes are kept.
             let keys: Vec<crate::sort::Key> = (0..self.store.stored())
@@ -825,10 +828,11 @@ impl StoredResult {
                         .get(i)
                         .map(|row| crate::sort::cell_at(row.get(), sort.column))
                         .unwrap_or(serde_json::Value::Null);
-                    crate::sort::Key::of(cell)
+                    crate::sort::Key::of_column(cell, numeric)
                 })
                 .collect();
             let order = crate::sort::order(&keys, numeric, sort.desc);
+            drop(keys);
             self.order = Some((sort.column, sort.desc, order));
         }
         self.order
@@ -885,6 +889,8 @@ impl BatchSink for StoreSink {
                 .collect();
         }
         let mut buf = Vec::new();
+        // One Vec of cells reused for every row of the batch.
+        let mut json: Vec<serde_json::Value> = Vec::new();
         for row in batch.rows {
             // Past the cap the row is only counted. Converting it first was
             // all the work of storing it, for a row thrown away (a 1M-row
@@ -893,7 +899,8 @@ impl BatchSink for StoreSink {
                 inner.store.skip();
                 continue;
             }
-            let json: Vec<serde_json::Value> = row.into_iter().map(cell_to_json).collect();
+            json.clear();
+            json.extend(row.into_iter().map(cell_to_json));
             // The Values live only for this line; what is kept is the text.
             // Written into one reused buffer, then copied out at its exact
             // length: serializing straight into a fresh String grew it by
@@ -1188,7 +1195,9 @@ pub async fn pg_query(
             return Err(msg);
         }
     };
-    let stored = sink.inner.into_inner().map_err(|_| "sink lock poisoned")?;
+    let mut stored = sink.inner.into_inner().map_err(|_| "sink lock poisoned")?;
+    // The result is complete: give back what the row index grew past.
+    stored.store.shrink_to_fit();
     record_history(
         &app,
         &state,
@@ -1333,8 +1342,9 @@ pub async fn pg_chart(
 fn chart(stored: &StoredResult, label: usize, value: usize, max_bars: usize) -> ChartOut {
     use std::collections::HashMap;
     let rows = stored.store.stored();
-    let mut at: HashMap<String, usize> = HashMap::new();
-    let mut bars: Vec<ChartBar> = Vec::new();
+    // Each label is held once, as the map's key, with its first-seen position
+    // and running sum. A second copy per bar doubled a high-cardinality chart.
+    let mut at: HashMap<String, (usize, f64)> = HashMap::new();
     for i in 0..rows {
         let Some(row) = stored.store.get(i) else {
             break;
@@ -1352,14 +1362,15 @@ fn chart(stored: &StoredResult, label: usize, value: usize, max_bars: usize) -> 
             serde_json::Value::String(s) => s,
             other => other.to_string(),
         };
-        match at.get(&name) {
-            Some(&j) => bars[j].v += v,
-            None => {
-                at.insert(name.clone(), bars.len());
-                bars.push(ChartBar { label: name, v });
-            }
-        }
+        let next = at.len();
+        at.entry(name).or_insert((next, 0.0)).1 += v;
     }
+    let mut seen: Vec<(usize, ChartBar)> = at
+        .into_iter()
+        .map(|(label, (i, v))| (i, ChartBar { label, v }))
+        .collect();
+    seen.sort_unstable_by_key(|(i, _)| *i);
+    let mut bars: Vec<ChartBar> = seen.into_iter().map(|(_, b)| b).collect();
     // Stable: equal sums keep first-seen order, as the grid's Map did.
     bars.sort_by(|a, b| b.v.partial_cmp(&a.v).unwrap_or(std::cmp::Ordering::Equal));
     bars.truncate(max_bars);

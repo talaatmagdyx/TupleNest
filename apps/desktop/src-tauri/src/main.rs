@@ -463,7 +463,33 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<tau
     Ok(menu)
 }
 
+/// How many threads run async work.
+///
+/// Tauri's default runtime starts one worker per core. This app's async work
+/// is a handful of sockets and the commands the one window sends, so on a
+/// 12-core laptop that was a dozen threads — each with a stack and an
+/// allocator cache — with almost nothing to do. Two is the floor rather than
+/// one because some commands format or sort on the worker they run on, and a
+/// second lets a cancel through meanwhile.
+fn worker_threads(cores: usize) -> usize {
+    cores.clamp(2, 4)
+}
+
 fn main() {
+    // Must be handed over before anything touches `tauri::async_runtime`, and
+    // must outlive `run` — hence a binding that lives to the end of `main`.
+    let cores = std::thread::available_parallelism().map_or(2, |n| n.get());
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads(cores))
+        // spawn_blocking threads are created on demand; 512 is tokio's cap
+        // for servers. Idle ones exit after the keep-alive.
+        .max_blocking_threads(16)
+        .thread_keep_alive(std::time::Duration::from_secs(5))
+        .enable_all()
+        .build()
+        .expect("the async runtime starts");
+    tauri::async_runtime::set(runtime.handle().clone());
+
     tauri::Builder::default()
         .menu(build_menu)
         .on_menu_event(|app, event| {
@@ -611,6 +637,16 @@ fn main() {
 /// at runtime; only launching the app does that. It catches the one piece that
 /// is mechanically checkable: a call the source really makes, with the
 /// matching permission silently absent.
+#[cfg(test)]
+mod runtime_tests {
+    #[test]
+    fn worker_threads_stay_between_two_and_four() {
+        assert_eq!(super::worker_threads(1), 2);
+        assert_eq!(super::worker_threads(3), 3);
+        assert_eq!(super::worker_threads(16), 4);
+    }
+}
+
 #[cfg(test)]
 mod capability_tests {
     use std::collections::BTreeSet;

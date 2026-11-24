@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 import Grid, { keepNear, type GridColumn } from "./Grid";
@@ -396,6 +396,33 @@ describe("Grid — block cache", () => {
     const kept = keepNear(m, 30, 10);
     expect(Object.keys(kept).map(Number)).toEqual([...Array(21)].map((_, i) => 20 + i));
     expect(kept[30]).toBe("block 30");
+  });
+});
+
+describe("Grid — wide results", () => {
+  it("draws only the columns near the viewport, and follows the selection sideways", async () => {
+    const wide: GridColumn[] = [...Array(60)].map((_, i) => ({ name: `c${i}`, dbType: "text" }));
+    invokeMock.mockResolvedValue([wide.map((_, i) => `v${i}`)]);
+    const { container } = render(<Grid {...base} columns={wide} storedRows={1} />);
+    await screen.findByText("v0");
+    // Every header, but a window of cells and one spacer for the rest.
+    expect(screen.getAllByRole("columnheader")).toHaveLength(61);
+    expect(screen.getAllByRole("gridcell").length).toBeLessThan(10);
+    expect(screen.queryByText("v59")).toBeNull();
+    expect(container.querySelectorAll(".g-row > div[aria-hidden]")).toHaveLength(1);
+
+    const view = container.querySelector(".vgrid") as HTMLElement;
+    view.scrollLeft = 150 * 50;
+    fireEvent.scroll(view);
+    expect(await screen.findByText("v50")).toBeInTheDocument();
+    expect(screen.queryByText("v0")).toBeNull();
+    expect(container.querySelectorAll(".g-row > div[aria-hidden]")).toHaveLength(2);
+
+    // Arrowing left of the drawn window scrolls the view to the column.
+    await userEvent.click(screen.getByText("v50"));
+    view.scrollLeft = 150 * 52;
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(view.scrollLeft).toBe(150 * 49);
   });
 });
 

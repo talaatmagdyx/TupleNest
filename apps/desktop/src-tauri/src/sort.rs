@@ -41,9 +41,12 @@ pub enum Key {
     Number(f64),
     /// Exact text: `numeric` always arrives as a string, int8 past 2^53 too.
     /// `sort` is its Unicode collation key, see [`collation_key`].
+    /// Both boxed at their exact length: a key is 40 bytes, not 48, and
+    /// carries no spare capacity. `sort` is empty for a numeric column, which
+    /// never compares by collation.
     Text {
-        sort: Vec<u8>,
-        raw: String,
+        sort: Box<[u8]>,
+        raw: Box<str>,
     },
 }
 
@@ -52,38 +55,59 @@ pub enum Key {
 /// Letters order by base letter first, then accent, then case, in every
 /// script ICU covers. Computed once per cell, so the sort itself compares
 /// bytes; calling the collator for every comparison was several times slower.
-fn collation_key(s: &str) -> Vec<u8> {
+fn collation_key(s: &str) -> Box<[u8]> {
     use icu_collator::{options::CollatorOptions, Collator, CollatorBorrowed};
     static COLLATOR: std::sync::OnceLock<CollatorBorrowed<'static>> = std::sync::OnceLock::new();
     let collator = COLLATOR.get_or_init(|| {
         Collator::try_new(Default::default(), CollatorOptions::default())
             .expect("the root collation is compiled in")
     });
-    let mut key = Vec::with_capacity(s.len() * 2);
-    let Ok(()) = collator.write_sort_key_to(s, &mut key);
-    key
+    // Written into one reused buffer and copied out at its exact length: a
+    // Vec sized by guess kept its spare capacity for the whole sort.
+    thread_local! {
+        static SCRATCH: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    SCRATCH.with(|scratch| {
+        let mut key = scratch.borrow_mut();
+        key.clear();
+        let Ok(()) = collator.write_sort_key_to(s, &mut *key);
+        let out: Box<[u8]> = key.as_slice().into();
+        // One huge cell must not pin its buffer to the thread for good.
+        if key.capacity() > 64 * 1024 {
+            *key = Vec::new();
+        }
+        out
+    })
 }
 
-fn text_key(raw: String) -> Key {
+fn text_key(raw: String, numeric: bool) -> Key {
     Key::Text {
-        sort: collation_key(&raw),
-        raw,
+        // A numeric column compares its text as a decimal; the collation key
+        // would be computed and held for nothing.
+        sort: if numeric {
+            Box::default()
+        } else {
+            collation_key(&raw)
+        },
+        raw: raw.into_boxed_str(),
     }
 }
 
 impl Key {
-    pub fn of(v: Value) -> Key {
+    /// The key for a cell, given how its column is compared (the `numeric`
+    /// later passed to [`compare`] and [`order`]).
+    pub fn of_column(v: Value, numeric: bool) -> Key {
         match v {
             Value::Null => Key::Null,
             Value::Number(n) => n.as_f64().map(Key::Number).unwrap_or(Key::Null),
-            Value::String(s) => text_key(s),
-            other => text_key(other.to_string()),
+            Value::String(s) => text_key(s, numeric),
+            other => text_key(other.to_string(), numeric),
         }
     }
 
     fn text(&self) -> std::borrow::Cow<'_, str> {
         match self {
-            Key::Text { raw, .. } => raw.as_str().into(),
+            Key::Text { raw, .. } => (&**raw).into(),
             Key::Number(n) => n.to_string().into(),
             Key::Null => "".into(),
         }
@@ -217,7 +241,11 @@ mod tests {
     use serde_json::json;
 
     fn sorted(xs: &[Value], numeric: bool, desc: bool) -> Vec<Value> {
-        let keys: Vec<Key> = xs.iter().cloned().map(Key::of).collect();
+        let keys: Vec<Key> = xs
+            .iter()
+            .cloned()
+            .map(|v| Key::of_column(v, numeric))
+            .collect();
         order(&keys, numeric, desc)
             .into_iter()
             .map(|i| xs[i as usize].clone())
@@ -357,6 +385,19 @@ mod tests {
             sorted(&xs, false, false),
             [json!({"a": 1}), json!({"b": 1})]
         );
+    }
+
+    #[test]
+    fn a_key_holds_no_spare_capacity_and_no_unused_collation() {
+        assert!(std::mem::size_of::<Key>() <= 40);
+        let Key::Text { sort, .. } = Key::of_column(json!("12.50"), true) else {
+            panic!("text key");
+        };
+        assert!(sort.is_empty(), "numeric columns never collate");
+        let Key::Text { sort, .. } = Key::of_column(json!("abc"), false) else {
+            panic!("text key");
+        };
+        assert!(!sort.is_empty());
     }
 
     #[test]

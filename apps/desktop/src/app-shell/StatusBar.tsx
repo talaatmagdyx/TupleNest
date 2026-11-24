@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 type Props = {
   connected: boolean;
   isProd: boolean;
@@ -6,11 +7,6 @@ type Props = {
   explorerSource: "live" | "cached" | "—";
   rowsInfo: string;
   txOpenSince: number | null; // epoch ms
-  /** Now, as of the last tick. Passed in rather than read here: a component
-   *  that calls `Date.now()` while rendering gives a different answer every
-   *  time it is asked, which is neither testable nor safe to re-render. The
-   *  owner of the timer owns the clock. */
-  now: number;
   serverVersion: string | null;
   osLabel: string;
   /** Commit and time this bundle was built, so the window can identify itself.
@@ -20,7 +16,16 @@ type Props = {
 };
 
 export default function StatusBar(p: Props) {
-  const txSecs = p.txOpenSince ? Math.floor((p.now - p.txOpenSince) / 1000) : 0;
+  // The clock ticks here, not in App: a tick re-renders this bar only, not
+  // the whole window once a second for as long as a transaction is open.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!p.txOpenSince) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [p.txOpenSince]);
+  // `now` is as of the last tick, so it can trail a transaction that just opened.
+  const txSecs = p.txOpenSince ? Math.max(0, Math.floor((now - p.txOpenSince) / 1000)) : 0;
   const txLabel =
     txSecs >= 60 ? `${Math.floor(txSecs / 60)}m ${String(txSecs % 60).padStart(2, "0")}s` : `${txSecs}s`;
   return (

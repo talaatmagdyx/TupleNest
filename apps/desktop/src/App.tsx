@@ -168,7 +168,6 @@ export default function App() {
   const txOpenSince = tx.openSince;
   /** Now, refreshed once a second while a transaction is open. The status
    *  bar reads the clock from here so that it stays a pure function of props. */
-  const [now, setNow] = useState(() => Date.now());
 
   // Workspace / UI
   // Tabs live in a hook so their invariants (valid active index, dirty means
@@ -323,12 +322,6 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!txOpenSince) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [txOpenSince]);
-
   const applyTheme = useCallback(async (t: "dark" | "light") => {
     setTheme(t);
     await invoke("settings_set", { key: "theme", value: t }).catch(() => {});
@@ -409,6 +402,13 @@ export default function App() {
     tx.forget(); // the session is gone; the transaction went with it
     setOverlay(null);
     resetExplorer();
+    // Nothing below can be shown without a session, and each is refetched on
+    // open — holding the last payloads only pins them in memory until then.
+    setChart(null);
+    setDetails(null);
+    setParts(null);
+    setSchemaCols(null);
+    setSchemaExtra(null);
   }, [session, resetExplorer, query, tx]);
 
   const doDisconnect = useCallback(async () => {
@@ -1707,7 +1707,6 @@ export default function App() {
         explorerSource={explorerSource}
         rowsInfo={result && result.columns.length > 0 ? rowsInfo : ""}
         txOpenSince={txOpenSince}
-        now={now}
         serverVersion={serverVersion}
         osLabel={info?.os ?? ""}
         buildLabel={buildLabel()}

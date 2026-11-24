@@ -78,12 +78,12 @@ pub fn rows<'a>(
                     if j > 0 {
                         out.push(',');
                     }
-                    out.push_str(&csv_field(&cell_export(v), mode));
+                    push_csv_field(out, &cell_text(v), mode);
                 }
             }
             Kind::Md => {
                 out.push_str("\n| ");
-                let cells: Vec<String> = row.iter().map(|v| md_cell(&cell_export(v))).collect();
+                let cells: Vec<String> = row.iter().map(|v| md_cell(&cell_text(v))).collect();
                 out.push_str(&cells.join(" | "));
                 out.push_str(" |");
             }
@@ -130,16 +130,17 @@ pub fn unique_keys(names: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// A cell as it is written to a file: NULL is an empty field, the convention
-/// every spreadsheet expects; json is its compact text, as on screen.
-pub fn cell_export(v: &Value) -> String {
+/// A cell as it is written to a file (NULL is an empty field): a text cell is borrowed from the stored
+/// row. Most cells of most results are text, and an export visits every one.
+fn cell_text(v: &Value) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
     match v {
-        Value::Null => String::new(),
-        Value::String(s) => s.clone(),
+        Value::Null => Cow::Borrowed(""),
+        Value::String(s) => Cow::Borrowed(s),
         other => {
             let mut out = String::new();
             js_json(&mut out, other, None);
-            out
+            Cow::Owned(out)
         }
     }
 }
@@ -150,15 +151,36 @@ pub fn cell_export(v: &Value) -> String {
 /// leading `'` inside the quotes where a spreadsheet still sees `="..."`.
 /// The quote trigger includes `\r`, so a CR-bearing value is always wrapped.
 pub fn csv_field(raw: &str, mode: Mode) -> String {
-    let s = match mode {
-        Mode::SpreadsheetSafe => neutralize_formula(raw),
-        Mode::Raw => raw.to_owned(),
-    };
-    if s.contains(['"', ',', '\r', '\n']) {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    } else {
-        s
+    let mut out = String::with_capacity(raw.len() + 3);
+    push_csv_field(&mut out, raw, mode);
+    out
+}
+
+/// `csv_field`, appended to `out` with no intermediate strings. The export
+/// loop calls this once per cell, where the three allocations the obvious
+/// version makes (neutralize, escape, wrap) were most of its work.
+fn push_csv_field(out: &mut String, raw: &str, mode: Mode) {
+    let prefix = mode == Mode::SpreadsheetSafe && needs_formula_prefix(raw);
+    // The `'` prefix is none of the quote triggers, so testing `raw` is
+    // testing the neutralized value.
+    if !raw.contains(['"', ',', '\r', '\n']) {
+        if prefix {
+            out.push('\'');
+        }
+        out.push_str(raw);
+        return;
     }
+    out.push('"');
+    if prefix {
+        out.push('\'');
+    }
+    for (i, part) in raw.split('"').enumerate() {
+        if i > 0 {
+            out.push_str("\"\"");
+        }
+        out.push_str(part);
+    }
+    out.push('"');
 }
 
 /// A value made safe against spreadsheet formula injection (CSV injection).
@@ -168,14 +190,20 @@ pub fn csv_field(raw: &str, mode: Mode) -> String {
 /// in a database client is often attacker-influenced, so the value gets
 /// OWASP's single-quote prefix — except a plain number: `-5` is a number, and
 /// prefixing it made every negative value text in Excel.
+#[cfg(test)]
 pub fn neutralize_formula(value: &str) -> String {
-    if is_plain_number(value) {
-        return value.to_owned();
+    if needs_formula_prefix(value) {
+        format!("'{value}")
+    } else {
+        value.to_owned()
     }
-    match value.chars().next() {
-        Some('=' | '+' | '-' | '@' | '\t' | '\r') => format!("'{value}"),
-        _ => value.to_owned(),
-    }
+}
+
+fn needs_formula_prefix(value: &str) -> bool {
+    matches!(
+        value.as_bytes().first(),
+        Some(b'=' | b'+' | b'-' | b'@' | b'\t' | b'\r')
+    ) && !is_plain_number(value)
 }
 
 /// `^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$`
