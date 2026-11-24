@@ -1,0 +1,380 @@
+   Compiling tuplenest-driver-api v0.1.1 (/Users/talaatmagdyx/work_talaat/TupleNest/crates/driver-api)
+   Compiling tuplenest-credential-store v0.1.1 (/Users/talaatmagdyx/work_talaat/TupleNest/crates/credential-store)
+   Compiling tuplenest-driver-postgres v0.1.1 (/Users/talaatmagdyx/work_talaat/TupleNest/crates/driver-postgres)
+   Compiling tuplenest-connection-core v0.1.1 (/Users/talaatmagdyx/work_talaat/TupleNest/crates/connection-core)
+   Compiling tuplenest-desktop v0.1.1 (/Users/talaatmagdyx/work_talaat/TupleNest/apps/desktop/src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.38s
+     Running unittests src/lib.rs (target/debug/deps/tuplenest_connection_core-423673cfcdfa9066)
+
+running 3 tests
+test tests::probe_succeeds_against_local_listener ... ok
+test tests::probe_fails_tcp_on_closed_port ... ok
+test tests::probe_fails_dns_for_invalid_host ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running unittests src/lib.rs (target/debug/deps/tuplenest_credential_store-8674183f3730b109)
+
+running 2 tests
+test secret::tests::debug_is_redacted ... ok
+test secret::tests::expose_returns_value ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/store_contract.rs (target/debug/deps/store_contract-0902cc9fd2cd5500)
+
+running 3 tests
+test refs_serialize_but_secrets_do_not_leak_via_debug ... ok
+test memory_store_contract ... ok
+test live_os_keychain_contract ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.61s
+
+     Running unittests src/main.rs (target/debug/deps/tuplenest_desktop-d2942dbf152a8fe3)
+
+running 56 tests
+test export::tests::plain_numbers_are_not_formulas ... ok
+test export::tests::numbers_are_written_as_javascript_writes_them ... ok
+test export_sink_tests::abort_takes_the_partial_file_with_it ... ok
+test export::tests::csv_header_rows_and_quoting ... ok
+test export::tests::json_is_laid_out_as_json_stringify_with_two_spaces ... ok
+test export::tests::markdown_header_escaping ... ok
+test export::tests::pages_concatenate_to_the_same_document ... ok
+test export::tests::csv_neutralizes_every_formula_lead ... ok
+test limit_tests::a_huge_limit_is_clamped ... ok
+test limit_tests::a_missing_limit_takes_the_default ... ok
+test export::tests::json_maps_columns_onto_unique_keys ... ok
+test pg::err_to_string_tests::keeps_every_field_the_driver_collected ... ok
+test export_sink_tests::chunks_land_end_to_end_in_order ... ok
+test pg::err_to_string_tests::no_duplicate_when_message_equals_title ... ok
+test pg::err_to_string_tests::suggested_actions_render_as_try_lines ... ok
+test pg::err_to_string_tests::title_owns_the_first_line_alone ... ok
+test pg::persisted_error_tests::keeps_title_sqlstate_category_but_drops_row_values ... ok
+test pg::persisted_error_tests::works_without_a_sqlstate ... ok
+test pg::redact_sql_tests::defers_to_telemetry_for_kv_and_urls ... ok
+test pg::redact_sql_tests::leaves_ordinary_sql_alone ... ok
+test pg::redact_sql_tests::no_history_directive_detected_case_insensitively ... ok
+test pg::redact_sql_tests::scrubs_create_role_password_literal ... ok
+test pg::redact_sql_tests::scrubs_alter_user_and_identified_by ... ok
+test export_sink_tests::nothing_is_on_disk_until_finish_flushes ... ok
+test pg::tests::a_page_is_the_stored_rows_joined_unchanged ... ok
+test pg::tests::int8_past_2_pow_53_reaches_the_webview_as_exact_text ... ok
+test pg::tests::hex_matches_the_per_byte_format ... ok
+test pg::tests::taking_the_session_cancels_a_running_query_instead_of_waiting ... ignored, requires live PostgreSQL (TUPLENEST_TEST_PG_*)
+test pg::tests::chart_sums_per_label_like_sql ... ok
+test pg::tests::non_finite_floats_are_shown_as_postgres_spells_them_not_as_null ... ok
+test pg::tests::a_stored_row_counts_its_text ... ok
+test pg::wide_bench::wide_result_memory ... ignored
+test pg::tests::the_old_result_goes_when_the_new_one_has_rows_and_only_then ... ok
+test runtime_tests::worker_threads_stay_between_two_and_four ... ok
+test limit_tests::blocking_work_reports_its_result_and_its_error ... ok
+test pg::tests::a_row_written_cell_by_cell_is_the_bytes_the_value_tree_serialized_to ... ok
+test sort::tests::bigints_past_2_pow_53_stay_exact ... ok
+test sort::tests::cell_at_reads_one_cell ... ok
+test sort::tests::a_key_holds_no_spare_capacity_and_no_unused_collation ... ok
+test pg::tests::sorted_pages_read_through_the_order ... ok
+test sort::tests::accents_sort_with_their_letter ... ok
+test sort::tests::decimal_edge_cases_match_the_grid ... ok
+test sort::tests::decimals_sort_as_numbers_not_text ... ok
+test sort::tests::numeric_type_names_are_whole_words ... ok
+test sort::tests::text_ignores_case_first_and_is_stable ... ok
+test sort::tests::json_cells_sort_by_their_text ... ok
+test sort::tests::nulls_are_last_in_both_directions ... ok
+test sort::tests::other_scripts_sort_by_the_unicode_collation ... ok
+test pg::tests::a_saved_profile_decides_its_environment_and_read_only ... ok
+test pg::tests::a_saved_password_only_goes_to_its_own_server ... ok
+test trim::tests::releasing_after_a_large_drop_is_safe_to_call_repeatedly ... ok
+test pg::tests::truncates_at_the_row_cap ... ok
+test capability_tests::every_window_call_the_frontend_makes_is_granted ... ok
+test capability_tests::scan_finds_the_calls_it_is_checking ... ok
+test pg::tests::a_sorted_page_across_blocks_and_a_spill_is_the_rows_reordered ... ok
+test pg::tests::truncates_at_the_byte_budget ... ok
+
+test result: ok. 54 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 4.36s
+
+     Running unittests src/lib.rs (target/debug/deps/tuplenest_driver_api-e036757ddb07590c)
+
+running 5 tests
+test request::tests::a_cell_is_24_bytes ... ok
+test error::tests::deadlock_is_retryable_by_default ... ok
+test error::tests::syntax_error_is_not_retryable ... ok
+test error::tests::serializes_snake_case_categories ... ok
+test request::tests::other_and_bytes_serialize_as_before ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/contract_mock.rs (target/debug/deps/contract_mock-73c5a46c4af4d815)
+
+running 6 tests
+test secret_ref_debug_is_redacted ... ok
+test error_contract_normalized_syntax_error ... ok
+test transaction_contract_begin_commit_rollback ... ok
+test connection_contract_connect_and_execute ... ok
+test cancellation_contract ... ok
+test auth_contract_missing_secret_is_normalized ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/tuplenest_driver_postgres-e7f6e29746b7a106)
+
+running 48 tests
+test array_element_tests::quotes_braces_and_whitespace ... ok
+test array_element_tests::escapes_quotes_and_backslashes ... ok
+test array_element_tests::quotes_the_empty_string_so_it_is_not_nothing ... ok
+test begin_statement_tests::a_plain_begin_when_nothing_is_asked_for ... ok
+test array_element_tests::leaves_a_plain_element_alone ... ok
+test begin_statement_tests::deferrable_only_where_postgres_honours_it ... ok
+test begin_statement_tests::maps_every_isolation_level_to_its_postgres_spelling ... ok
+test array_element_tests::quotes_the_literal_text_null ... ok
+test array_element_tests::quotes_an_element_containing_a_comma ... ok
+test begin_statement_tests::read_only_without_an_isolation_level ... ok
+test begin_statement_tests::only_transaction_enders_skip_the_read_only_check ... ok
+test begin_statement_tests::digit_strings_bind_exactly_to_integer_columns ... ok
+test begin_statement_tests::the_default_options_are_a_plain_begin ... ok
+test cell_cap_tests::cap_cell_only_touches_string_bearing_variants ... ok
+test begin_statement_tests::integer_parameters_are_range_checked_not_wrapped ... ok
+test cell_cap_tests::short_values_are_untouched ... ok
+test numeric_decode_tests::decodes_a_normal_value_with_trailing_zero ... ok
+test cell_cap_tests::capping_a_borrowed_value_matches_capping_an_owned_one ... ok
+test numeric_decode_tests::decodes_negative_and_specials ... ok
+test numeric_decode_tests::rejects_a_short_header_without_panic ... ok
+test numeric_decode_tests::rejects_a_value_too_large_to_render ... ok
+test numeric_decode_tests::rejects_dscale_high_bit_the_review_payload ... ok
+test render_raw_tests::a_domain_over_an_enum_is_text ... ok
+test numeric_decode_tests::rejects_implausible_digit_count ... ok
+test render_raw_tests::a_domain_follows_the_type_it_wraps ... ok
+test render_raw_tests::an_enum_renders_as_its_label ... ok
+test render_raw_tests::an_empty_enum_value_is_empty_text_not_hex ... ok
+test render_raw_tests::interval_with_printable_bytes_is_also_hex ... ok
+test render_raw_tests::invalid_utf8_in_a_text_type_falls_back_to_hex_rather_than_panicking ... ok
+test render_raw_tests::xml_is_text_because_its_binary_form_is_the_document ... ok
+test render_raw_tests::printable_binary_of_a_non_text_type_is_not_read_as_text ... ok
+test numeric_decode_tests::rejects_dscale_just_over_the_max ... ok
+test tls::tests::disabled_yields_no_tls ... ok
+test tls::tests::verify_ca_without_a_ca_file_is_refused ... ok
+test decoder_fuzz_tests::numeric_with_crafted_oversized_headers_is_always_bounded ... ok
+test tls::ca_only_tests::refuses_a_certificate_from_an_untrusted_issuer ... ok
+test tls::ca_only_tests::verify_full_refuses_the_very_same_certificate ... ok
+test tls::ca_only_tests::accepts_a_trusted_certificate_that_names_a_different_host ... ok
+test tls::ca_only_tests::accepts_the_matching_host_when_the_chain_is_good ... ok
+test tls::tests::verify_ca_trusts_only_the_given_ca_not_the_os_store ... ok
+test cell_cap_tests::over_long_values_are_truncated_with_a_note ... ok
+test cell_cap_tests::truncation_lands_on_a_char_boundary_for_multibyte_text ... ok
+test decoder_fuzz_tests::numeric_decoder_never_panics_or_over_allocates_on_random_bytes ... ok
+test decoder_fuzz_tests::numeric_decoder_matches_the_reference_on_valid_headers ... ok
+test tls::tests::verify_full_with_missing_ca_file_fails_closed ... ok
+test tls::tests::verify_full_with_garbage_ca_file_fails_closed ... ok
+test tls::tests::verify_full_and_prefer_build_tls_configs ... ok
+test decoder_fuzz_tests::render_raw_never_panics_or_over_allocates_on_random_bytes ... ok
+
+test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.72s
+
+     Running tests/live_pg.rs (target/debug/deps/live_pg-a29655fcdfa573d9)
+
+running 49 tests
+test a_failed_commit_leaves_the_driver_agreeing_with_the_server ... ignored, requires live PostgreSQL
+test a_normal_session_still_writes ... ignored, requires live PostgreSQL
+test a_null_old_value_still_matches ... ignored, requires live PostgreSQL
+test a_read_only_transaction_refuses_writes ... ignored, requires live PostgreSQL
+test aborted_transaction_is_named_and_says_how_to_recover ... ignored, requires live PostgreSQL
+test array_elements_are_quoted_like_postgres_does ... ignored, requires live PostgreSQL
+test bigint_keys_past_2_pow_53_bind_exactly_as_text ... ignored, requires live PostgreSQL
+test cancellation_terminates_server_side_query_quickly ... ignored, requires live PostgreSQL
+test constraint_violation_keeps_detail_and_constraint_name ... ignored, requires live PostgreSQL
+test describe_object_flags_generated_and_identity_columns ... ignored, requires live PostgreSQL
+test isolation_level_reaches_the_server ... ignored, requires live PostgreSQL
+test json_cells_are_the_compact_text_a_value_tree_serialized_to ... ignored, requires live PostgreSQL
+test killed_backend_yields_network_error_and_broken_session ... ignored
+test large_cells_are_bounded_before_they_are_decoded ... ignored, requires live PostgreSQL
+test live_metadata_schema_objects_columns_roundtrip ... ignored
+test live_relationships_lists_foreign_keys ... ignored
+test live_server_activity_reports_sessions_and_db_stats ... ignored
+test live_terminate_backend_kills_target_session ... ignored
+test live_tls_cancel_works_over_tls ... ignored
+test live_tls_disabled_connects_to_a_plaintext_server ... ignored, requires a plaintext (ssl=off) PostgreSQL server
+test live_tls_prefer_allows_a_plaintext_server ... ignored, requires a plaintext (ssl=off) PostgreSQL server
+test live_tls_prefer_encrypts_without_verification ... ignored
+test live_tls_verify_ca_refuses_a_plaintext_server ... ignored, requires a plaintext (ssl=off) PostgreSQL server
+test live_tls_verify_full_refuses_a_plaintext_server ... ignored, requires a plaintext (ssl=off) PostgreSQL server
+test live_tls_verify_full_with_ca_passes_and_encrypts ... ignored
+test live_tls_verify_full_without_ca_fails_closed ... ignored
+test live_typed_parameters_bind_correctly ... ignored
+test no_timeout_is_configured_by_default ... ignored, requires live PostgreSQL
+test nulls_of_exotic_types_are_null_not_rendered ... ignored, requires live PostgreSQL
+test optimistic_where_clause_catches_a_concurrent_change ... ignored, requires live PostgreSQL
+test read_only_check_does_not_refuse_legitimate_reads ... ignored, requires live PostgreSQL
+test read_only_session_cannot_be_switched_back_to_read_write ... ignored, requires live PostgreSQL
+test read_only_session_refuses_do_and_call ... ignored, requires live PostgreSQL
+test read_only_session_refuses_writes_at_the_server ... ignored, requires live PostgreSQL
+test renders_arrays_and_network_types ... ignored, requires live PostgreSQL
+test renders_interval_money_and_xml_via_fallback ... ignored, requires live PostgreSQL
+test renders_numeric_without_losing_precision ... ignored, requires live PostgreSQL
+test renders_timestamps_and_dates ... ignored, requires live PostgreSQL
+test renders_user_defined_enums ... ignored, requires live PostgreSQL
+test row_edits_bind_as_text_and_cast_for_every_common_type ... ignored, requires live PostgreSQL
+test rows_affected_is_reported_for_writes ... ignored, requires live PostgreSQL
+test server_in_transaction_sees_a_typed_begin ... ignored, requires live PostgreSQL
+test staged_connection_test_reports_server_version ... ignored, requires live PostgreSQL
+test statement_timeout_is_enforced_by_the_server ... ignored, requires live PostgreSQL
+test streams_100k_rows_in_bounded_ordered_batches_without_corruption ... ignored, requires live PostgreSQL
+test syntax_error_is_normalized_with_sqlstate_and_position ... ignored, requires live PostgreSQL
+test transaction_commands_follow_the_server_not_the_flag ... ignored, requires live PostgreSQL
+test transactions_visible_only_after_commit ... ignored, requires live PostgreSQL
+test unknown_types_render_from_the_type_not_from_a_guess ... ignored, requires live PostgreSQL
+
+test result: ok. 0 passed; 0 failed; 49 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/tuplenest_metadata_cache-8ae074913e1ee04a)
+
+running 5 tests
+test tests::put_get_upserts_column_payloads ... ok
+test tests::search_matches_substring_case_insensitive_and_invalidate_clears ... ok
+test tests::replace_list_roundtrip_and_stale_removal ... ok
+test tests::scopes_are_isolated_by_connection_type_and_schema ... ok
+test tests::connection_is_tuned_for_a_small_cache ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (target/debug/deps/tuplenest_result_stream-a8561ec6a257a81f)
+
+running 19 tests
+test byte_budget_tests::stops_at_the_byte_budget_before_the_row_cap ... ok
+test byte_budget_tests::stops_at_the_row_cap_before_the_byte_budget ... ok
+test byte_budget_tests::counts_rows_it_dropped_so_the_total_stays_true ... ok
+test byte_budget_tests::always_keeps_the_first_row_however_large ... ok
+test byte_budget_tests::a_saturating_budget_does_not_overflow ... ok
+test tests::not_truncated_when_under_capacity ... ok
+test tests::skip_counts_without_storing ... ok
+test tests::stays_a_prefix_once_a_row_is_refused ... ok
+test tests::stores_up_to_capacity_and_counts_overflow ... ok
+test tests::zero_capacity_counts_everything_stores_nothing ... ok
+test tests::shrinking_keeps_the_rows ... ok
+test tests::window_clamps_to_bounds ... ok
+test tests::empty_rows_round_trip ... ok
+test byte_budget_tests::counts_the_uncompressed_text ... ok
+test block_tests::a_row_larger_than_a_block_is_a_block_of_its_own ... ok
+test block_tests::a_store_that_stays_under_the_threshold_creates_no_file ... ok
+test block_tests::compresses_repetitive_rows ... ok
+test block_tests::scattered_ids_come_back_in_the_order_asked ... ok
+test block_tests::rows_across_many_blocks_and_a_spill_read_back_unchanged ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running unittests src/lib.rs (target/debug/deps/tuplenest_ssh_core-4df94c68eaea24c5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/live_tunnel.rs (target/debug/deps/live_tunnel-5156080bff459a53)
+
+running 3 tests
+test tunnel_reaches_postgres_end_to_end ... ignored
+test unknown_host_key_fails_closed_via_known_hosts_policy ... ignored
+test wrong_host_fingerprint_fails_closed ... ignored
+
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/tuplenest_telemetry-5b15952903162af9)
+
+running 14 tests
+test redact_text_tests::handles_an_empty_message ... ok
+test redact_text_tests::redacts_a_password_in_a_connection_url ... ok
+test redact_text_tests::leaves_the_bare_word_alone ... ok
+test redact_text_tests::is_case_insensitive_about_the_key ... ok
+test redact_text_tests::redacts_colon_form_and_several_keys ... ok
+test tests::no_secret_survives_a_redacted_dump ... ok
+test redact_text_tests::a_quoted_value_is_redacted_past_its_spaces ... ok
+test tests::json_shaped_secrets_are_redacted ... ok
+test redact_text_tests::redacts_an_assigned_password ... ok
+test redact_text_tests::leaves_a_url_without_a_password_alone ... ok
+test redact_text_tests::keeps_the_rest_of_the_message_readable ... ok
+test tests::non_ascii_text_neither_panics_nor_skips_redaction ... ok
+test tests::redacts_sensitive_keys_case_insensitively ... ok
+test tests::background_panic_writes_crash_report_and_process_survives ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/tuplenest_workspace_store-78dc6ae4d11986f4)
+
+running 22 tests
+test tests::history_and_audit_hot_paths_use_indexes_without_sorting ... ok
+test tests::layout_roundtrip_and_validation ... ok
+test tests::migrates_fresh_store_to_current ... ok
+test tests::a_timeout_survives_a_round_trip ... ok
+test tests::connection_rejects_invalid_environment ... ok
+test tests::fresh_store_has_the_tables_its_version_claims ... ok
+test tests::on_disk_db_is_owner_only ... ok
+test tests::connection_crud_roundtrip ... ok
+test tests::history_roundtrip_search_and_favorite ... ok
+test tests::history_retention_prunes_oldest_but_spares_favorites ... ok
+test tests::connection_is_tuned_for_a_small_durable_store ... ok
+test tests::migrating_an_already_current_database_is_a_no_op ... ok
+test tests::refuses_future_schema ... ok
+test tests::settings_roundtrip_json ... ok
+test tests::tabs_replace_and_restore_ordered ... ok
+test tests::snippets_and_audit_roundtrip ... ok
+test tests::upgrades_a_v5_database_without_losing_profiles ... ok
+test tests::repair_leaves_a_healthy_v4_store_alone ... ok
+test tests::repairs_a_store_that_recorded_v4_without_v4s_tables ... ok
+test tests::upgrades_v1_store_to_v2_preserving_data ... ok
+test tests::upgrades_v2_store_to_v3 ... ok
+test tests::upgrades_v3_store_to_v4 ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+   Doc-tests tuplenest_connection_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tuplenest_credential_store
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tuplenest_driver_api
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tuplenest_driver_postgres
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tuplenest_metadata_cache
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tuplenest_result_stream
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tuplenest_ssh_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tuplenest_telemetry
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tuplenest_workspace_store
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+exit=0

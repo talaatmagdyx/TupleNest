@@ -1,0 +1,7 @@
+    Checking tuplenest-driver-api v0.1.1 (/Users/talaatmagdyx/work_talaat/TupleNest/crates/driver-api)
+    Checking tuplenest-credential-store v0.1.1 (/Users/talaatmagdyx/work_talaat/TupleNest/crates/credential-store)
+    Checking tuplenest-driver-postgres v0.1.1 (/Users/talaatmagdyx/work_talaat/TupleNest/crates/driver-postgres)
+    Checking tuplenest-connection-core v0.1.1 (/Users/talaatmagdyx/work_talaat/TupleNest/crates/connection-core)
+    Checking tuplenest-desktop v0.1.1 (/Users/talaatmagdyx/work_talaat/TupleNest/apps/desktop/src-tauri)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.00s
+exit=0

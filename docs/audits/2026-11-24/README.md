@@ -47,17 +47,17 @@ evidence with no reproduction. **Potential** means plausible and unvalidated.
 
 | Command | Result | Log |
 |---|---|---|
-| `cargo fmt --all -- --check` | pass | `evidence/audit-rust/logs/fmt.log` |
-| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | pass (local 1.96) | `evidence/audit-rust/logs/clippy.log` |
-| `cargo test --workspace` | pass: 181 run, 54 ignored (live PostgreSQL and SSH) | `evidence/audit-rust/logs/test.log` |
-| `cargo audit` | 0 vulnerabilities, 6 allowed warnings (unmaintained transitive crates) | `evidence/audit-rust/logs/audit.log`, `evidence/audit-sec/cargo-audit.txt` |
+| `cargo fmt --all -- --check` | pass | `evidence/audit-rust/tool-output/fmt.txt` |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | pass (local 1.96) | `evidence/audit-rust/tool-output/clippy.txt` |
+| `cargo test --workspace` | pass: 181 run, 54 ignored (live PostgreSQL and SSH) | `evidence/audit-rust/tool-output/test.txt` |
+| `cargo audit` | 0 vulnerabilities, 6 allowed warnings (unmaintained transitive crates) | `evidence/audit-rust/tool-output/audit.txt`, `evidence/audit-sec/cargo-audit.txt` |
 | `cargo deny check` | advisories, bans, licenses, sources ok; one stale ignore entry | reviewer 3 report |
 | `cargo test -p tuplenest-driver-postgres --test live_pg -- --ignored` | 49 passed against PostgreSQL 18 | reviewer 2 report |
-| `npx tsc --noEmit`, `npx eslint src` | pass | `evidence/audit-fe/tsc.log`, `eslint.log` |
-| `npx vitest run --coverage` | 76 files, 2,047 tests pass; statements 97.39%, branches 92.02%, functions 97.31%, lines 98.70% | `evidence/audit-fe/vitest.log` |
+| `npx tsc --noEmit`, `npx eslint src` | pass | `evidence/audit-fe/tsc.txt`, `eslint.txt` |
+| `npx vitest run --coverage` | 76 files, 2,047 tests pass; statements 97.39%, branches 92.02%, functions 97.31%, lines 98.70% | `evidence/audit-fe/vitest.txt` |
 | `npm audit` in `apps/desktop` | 0 | reviewer 3 report |
 | `npm audit` in `e2e` | 27 (test tooling only) | reviewer 3 report |
-| Wide-result benchmark, 3 runs | 19.2–19.9 MB peak | `evidence/audit-rust/logs/bench_*.log` |
+| Wide-result benchmark, 3 runs | 19.2–19.9 MB peak | `evidence/audit-rust/tool-output/bench_*.txt` |
 
 ## Evidence, by finding
 
