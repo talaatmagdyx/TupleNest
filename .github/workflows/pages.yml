@@ -9,31 +9,43 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # One deployment at a time; a newer push supersedes a queued one.
 concurrency:
   group: pages
   cancel-in-progress: true
 
+# Two jobs, as in GitHub's own Pages template. With upload and deploy in one
+# job, deploy-pages asked for the artifact about a second after it was
+# finalized, sometimes before GitHub listed it ("Found 0 artifact(s)"), and
+# failed without retrying. The gap between jobs gives the listing time to
+# catch up.
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: docs/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       # `enablement: true` switches the repo's Pages source to GitHub Actions
       # on first run, so there is no manual settings step to forget.
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
         with:
           enablement: true
-      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-        with:
-          path: docs/site
       - id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
