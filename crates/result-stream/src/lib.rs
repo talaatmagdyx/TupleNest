@@ -112,6 +112,11 @@ impl<T> RowStore<T> {
         self.total_seen > self.rows.len() as u64
     }
 
+    /// One stored row, if `i` is in range.
+    pub fn get(&self, i: usize) -> Option<&T> {
+        self.rows.get(i)
+    }
+
     /// A window of stored rows, clamped to bounds. Out-of-range offsets
     /// yield an empty slice rather than an error.
     pub fn window(&self, offset: usize, len: usize) -> &[T] {

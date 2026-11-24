@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cellText } from "../lib/text";
-import { compareNumeric, isNumericType } from "../lib/chart";
+import { isNumericType } from "../lib/chart";
 import { invoke } from "@tauri-apps/api/core";
-import { fetchAllRows } from "../lib/sql";
 import { coerceValue, rowKey, type CellEdit, type EditTarget } from "../lib/dml";
 
 /**
  * HUD result grid.
  * - Virtualized (fixed 24px rows, spacer divs, 200-row backend blocks).
- * - Click a header to sort: rows are pulled fully into memory (≤ 50k)
- *   and sorted client-side; a third click clears the sort.
+ * - Click a header to sort: the backend sorts its store and pages rows out
+ *   in that order, so the grid never holds more than the visible blocks;
+ *   a third click clears the sort.
  * - Click a cell to select it (⌘C copies); jsonb/json cells open the inspector.
  */
 
@@ -17,7 +17,6 @@ const ROW_H = 24;
 const HEAD_H = 29;
 const BLOCK = 200;
 const OVERSCAN = 12;
-const SORT_CAP = 50_000;
 /** Blocks kept on each side of the one just fetched. Scrolling through 100k
  *  rows used to keep every block it passed — the whole result, in the
  *  WebView, on top of the copy Rust holds. 10 each way is ~4,200 rows. */
@@ -74,12 +73,14 @@ export default function Grid(p: Props) {
   const [viewH, setViewH] = useState(360);
   const [sortCol, setSortCol] = useState<number | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc" | null>(null);
-  const [allRows, setAllRows] = useState<unknown[][] | null>(null);
   const [selCell, setSelCell] = useState<{ r: number; c: number } | null>(null);
   const [selRow, setSelRow] = useState<number>(-1);
   const [editing, setEditing] = useState<{ r: number; c: number } | null>(null);
   const [draft, setDraft] = useState("");
   const pending = useRef<Set<number>>(new Set());
+  /** Bumped by every sort change, so a block fetched in the old order and
+   *  arriving late is dropped instead of cached under the new one. */
+  const sortGen = useRef(0);
   const viewRef = useRef<HTMLDivElement | null>(null);
 
   /** "rowKey:column" → staged value, for O(1) lookup while rendering.
@@ -109,7 +110,6 @@ export default function Grid(p: Props) {
     setScrollTop(0);
     setSortCol(null);
     setSortDir(null);
-    setAllRows(null);
     setSelCell(null);
     setSelRow(-1);
     setEditing(null);
@@ -140,53 +140,33 @@ export default function Grid(p: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [first, last, p.storedRows]);
 
-  // Backend block fetch (only when not in memory mode)
+  // Backend block fetch, in the current sort order.
   useEffect(() => {
-    if (allRows || p.storedRows === 0 || last <= first) return;
+    if (p.storedRows === 0 || last <= first) return;
+    const sort = sortCol !== null && sortDir ? { column: sortCol, desc: sortDir === "desc" } : null;
+    const gen = sortGen.current;
     const b0 = Math.floor(first / BLOCK);
     const b1 = Math.floor((last - 1) / BLOCK);
     for (let b = b0; b <= b1; b++) {
       if (!(b in blocks) && !pending.current.has(b)) {
         pending.current.add(b);
-        invoke<unknown[][]>("pg_rows", { offset: b * BLOCK, limit: BLOCK })
-          .then((rows) => setBlocks((m) => keepNear({ ...m, [b]: rows }, b)))
+        invoke<unknown[][]>("pg_rows", { offset: b * BLOCK, limit: BLOCK, sort })
+          .then((rows) => {
+            if (gen === sortGen.current) setBlocks((m) => keepNear({ ...m, [b]: rows }, b));
+          })
           .catch(() => {})
           .finally(() => pending.current.delete(b));
       }
     }
-  }, [first, last, blocks, allRows, p.storedRows]);
+  }, [first, last, blocks, p.storedRows, sortCol, sortDir]);
 
-  const sorted = useMemo(() => {
-    if (!allRows) return null;
-    if (sortCol === null || !sortDir) return allRows;
-    const ci = sortCol;
-    const dir = sortDir === "asc" ? 1 : -1;
-    const numeric = isNumericType(p.columns[ci]?.dbType ?? "");
-    return [...allRows].sort((a, b) => {
-      const x = a[ci];
-      const y = b[ci];
-      if (x === null || x === undefined) return y === null || y === undefined ? 0 : 1;
-      if (y === null || y === undefined) return -1;
-      if (numeric) return compareNumeric(x, y) * dir;
-      if (typeof x === "number" && typeof y === "number") return (x - y) * dir;
-      return cellText(x).localeCompare(cellText(y)) * dir;
-    });
-  }, [allRows, sortCol, sortDir, p.columns]);
+  const rowAt = (i: number): unknown[] | null => blocks[Math.floor(i / BLOCK)]?.[i % BLOCK] ?? null;
 
-  const rowAt = (i: number): unknown[] | null =>
-    sorted ? sorted[i] ?? null : blocks[Math.floor(i / BLOCK)]?.[i % BLOCK] ?? null;
-
-  const sortBy = async (ci: number) => {
-    if (p.storedRows > SORT_CAP) {
-      p.onToast(`Sorting is available up to ${SORT_CAP.toLocaleString()} rows`);
-      return;
-    }
-    let rows = allRows;
-    if (!rows) {
-      p.onToast("Loading rows for sort…");
-      rows = await fetchAllRows(p.storedRows, SORT_CAP);
-      setAllRows(rows);
-    }
+  const sortBy = (ci: number) => {
+    // A new order: every cached block is in the old one.
+    sortGen.current++;
+    pending.current.clear();
+    setBlocks({});
     if (sortCol === ci) {
       if (sortDir === "asc") setSortDir("desc");
       else if (sortDir === "desc") {
@@ -337,7 +317,7 @@ export default function Grid(p: Props) {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
                 e.stopPropagation();
-                void sortBy(ci);
+                sortBy(ci);
               }
             }}
           >

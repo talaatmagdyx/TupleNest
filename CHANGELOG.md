@@ -48,6 +48,10 @@ trusting it.
   rows kept at 183 MB peak, where 37,334 rows took 447 MB before.
 - The grid keeps only the rows near what is on screen; scrolling a large
   result no longer copies all of it into the window.
+- Sorting runs in the backend over the stored result, off the main thread,
+  and the grid pages the sorted rows. It used to copy up to 50,000 rows into
+  the window to sort them there, and refused past that; now every stored row
+  sorts (100,000 wide rows: about 0.2 s the first time, then instant).
 - Query history is written off the async runtime, so a slow disk no longer
   delays the query's result.
 

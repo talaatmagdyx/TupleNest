@@ -795,6 +795,47 @@ pub struct StoredResult {
     /// size is the text's length, and `pg_rows` copies bytes instead of
     /// re-serializing every page.
     store: tuplenest_result_stream::RowStore<Box<serde_json::value::RawValue>>,
+    /// The last sort asked for — (column, descending) — and its row order.
+    /// Kept so paging a sorted grid sorts once, not once per page.
+    order: Option<(usize, bool, Vec<u32>)>,
+}
+
+/// How the grid wants its rows ordered.
+#[derive(serde::Deserialize)]
+pub struct SortSpec {
+    column: usize,
+    desc: bool,
+}
+
+impl StoredResult {
+    /// The row order for `sort`, computed on first use.
+    fn order_for(&mut self, sort: &SortSpec) -> &[u32] {
+        let fresh = matches!(&self.order, Some((c, d, _)) if *c == sort.column && *d == sort.desc);
+        if !fresh {
+            let numeric = self
+                .columns
+                .get(sort.column)
+                .is_some_and(|(_, t)| crate::sort::is_numeric_type(t));
+            // One cell per row, parsed out of the row's text. Transient: only
+            // the 4-byte indexes are kept.
+            let keys: Vec<crate::sort::Key> = (0..self.store.stored())
+                .map(|i| {
+                    let cell = self
+                        .store
+                        .get(i)
+                        .map(|row| crate::sort::cell_at(row.get(), sort.column))
+                        .unwrap_or(serde_json::Value::Null);
+                    crate::sort::Key::of(cell)
+                })
+                .collect();
+            let order = crate::sort::order(&keys, numeric, sort.desc);
+            self.order = Some((sort.column, sort.desc, order));
+        }
+        self.order
+            .as_ref()
+            .map(|(_, _, o)| o.as_slice())
+            .unwrap_or(&[])
+    }
 }
 
 /// Hard cap on rows kept for scrolling. Beyond this the stream is still
@@ -1087,6 +1128,7 @@ pub async fn pg_query(
                 RESULT_STORE_CAP,
                 RESULT_STORE_BYTES,
             ),
+            order: None,
         }),
     };
     // JSON param values from the WebView → typed ParamValue. Text is the
@@ -1186,19 +1228,44 @@ pub async fn pg_query(
     Ok(out)
 }
 
-/// Pages a window of rows out of the last query's backend store.
+/// Pages a window of rows out of the last query's backend store, in the
+/// server's order or sorted by one column.
+///
+/// Async so a first sort (a few hundred ms on 100,000 rows) runs off the
+/// main thread instead of freezing the window.
 #[tauri::command]
-pub fn pg_rows(
+pub async fn pg_rows(
     state: tauri::State<'_, PgState>,
     offset: usize,
     limit: usize,
+    sort: Option<SortSpec>,
 ) -> Result<Box<serde_json::value::RawValue>, String> {
-    let guard = state.result.lock().map_err(|_| "result lock poisoned")?;
-    let stored = guard.as_ref().ok_or("no result")?;
-    // Serialized straight from the store. `.to_vec()` deep-cloned every row
-    // of the window first, only to serialize the clone and drop it.
-    let window = stored.store.window(offset, limit.min(1_000));
-    serde_json::value::to_raw_value(window).map_err(|e| e.to_string())
+    let mut guard = state.result.lock().map_err(|_| "result lock poisoned")?;
+    let stored = guard.as_mut().ok_or("no result")?;
+    page(stored, offset, limit, sort.as_ref())
+}
+
+fn page(
+    stored: &mut StoredResult,
+    offset: usize,
+    limit: usize,
+    sort: Option<&SortSpec>,
+) -> Result<Box<serde_json::value::RawValue>, String> {
+    let limit = limit.min(1_000);
+    let Some(sort) = sort else {
+        // Serialized straight from the store: the rows are already JSON.
+        let window = stored.store.window(offset, limit);
+        return serde_json::value::to_raw_value(window).map_err(|e| e.to_string());
+    };
+    let order = stored.order_for(sort);
+    let start = offset.min(order.len());
+    let end = offset.saturating_add(limit).min(order.len());
+    let ids: Vec<u32> = order[start..end].to_vec();
+    let rows: Vec<&serde_json::value::RawValue> = ids
+        .iter()
+        .filter_map(|&i| stored.store.get(i as usize).map(|r| r.as_ref()))
+        .collect();
+    serde_json::value::to_raw_value(&rows).map_err(|e| e.to_string())
 }
 
 #[derive(serde::Serialize)]
@@ -1757,6 +1824,47 @@ mod tests {
     }
 
     #[test]
+    fn sorted_pages_read_through_the_order() {
+        let mut stored = StoredResult {
+            columns: vec![("n".into(), "numeric".into()), ("s".into(), "text".into())],
+            store: tuplenest_result_stream::RowStore::new(10),
+            order: None,
+        };
+        for row in [
+            serde_json::json!(["100.00", "b"]),
+            serde_json::json!([null, "a"]),
+            serde_json::json!(["9.5", "c"]),
+        ] {
+            stored
+                .store
+                .push(serde_json::value::to_raw_value(&row).unwrap());
+        }
+        let by = |column, desc| SortSpec { column, desc };
+        let p = page(&mut stored, 0, 10, Some(&by(0, false))).unwrap();
+        assert_eq!(p.get(), r#"[["9.5","c"],["100.00","b"],[null,"a"]]"#);
+        let p = page(&mut stored, 1, 1, Some(&by(0, true))).unwrap();
+        assert_eq!(
+            p.get(),
+            r#"[["9.5","c"]]"#,
+            "desc, NULL still last, offset applied"
+        );
+        let p = page(&mut stored, 0, 10, Some(&by(1, false))).unwrap();
+        assert_eq!(p.get(), r#"[[null,"a"],["100.00","b"],["9.5","c"]]"#);
+        let p = page(&mut stored, 0, 10, None).unwrap();
+        assert_eq!(
+            p.get(),
+            r#"[["100.00","b"],[null,"a"],["9.5","c"]]"#,
+            "unsorted is server order"
+        );
+        assert!(
+            page(&mut stored, 99, 10, Some(&by(1, false)))
+                .unwrap()
+                .get()
+                == "[]"
+        );
+    }
+
+    #[test]
     fn a_page_is_the_stored_rows_joined_unchanged() {
         let rows: Vec<Box<serde_json::value::RawValue>> = vec![
             serde_json::value::to_raw_value(&serde_json::json!([1, "a", null])).unwrap(),
@@ -1812,6 +1920,7 @@ mod wide_bench {
                     RESULT_STORE_CAP,
                     RESULT_STORE_BYTES,
                 ),
+                order: None,
             }),
         };
         let columns: Vec<tuplenest_driver_api::ColumnMeta> = (0..200)
@@ -1843,7 +1952,7 @@ mod wide_bench {
             };
             rt.block_on(sink.deliver(batch)).unwrap();
         }
-        let inner = sink.inner.lock().unwrap();
+        let mut inner = sink.inner.lock().unwrap();
         eprintln!(
             "BENCH stored={} seen={} budget_bytes={} ms={}",
             inner.store.stored(),
@@ -1851,5 +1960,23 @@ mod wide_bench {
             inner.store.bytes(),
             t.elapsed().as_millis()
         );
+        // A first sort, then a page from it (cached order).
+        for column in [0, 1] {
+            let t = std::time::Instant::now();
+            page(&mut inner, 0, 200, Some(&SortSpec { column, desc: true })).unwrap();
+            let first = t.elapsed().as_millis();
+            let t = std::time::Instant::now();
+            page(
+                &mut inner,
+                5_000,
+                200,
+                Some(&SortSpec { column, desc: true }),
+            )
+            .unwrap();
+            eprintln!(
+                "BENCH sort column={column} first_ms={first} next_page_us={}",
+                t.elapsed().as_micros()
+            );
+        }
     }
 }

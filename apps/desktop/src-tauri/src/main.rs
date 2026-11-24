@@ -12,6 +12,7 @@ use tuplenest_workspace_store::Store;
 
 mod connections;
 mod pg;
+mod sort;
 
 struct AppState {
     store: Mutex<Store>,

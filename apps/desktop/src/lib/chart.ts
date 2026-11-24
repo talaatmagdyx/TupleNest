@@ -28,53 +28,6 @@ export function isNumericType(dbType: string): boolean {
 }
 
 /**
- * Order two numeric cells exactly.
- *
- * Cells arrive as numbers, or as text where a number would lose precision:
- * `numeric` always, int8 past 2^53. Comparing those with `localeCompare`
- * sorted "100.00" before "20.00", and mixing numbers with strings made the
- * comparator inconsistent. This compares decimal strings digit by digit, so
- * nothing is rounded on the way, with NaN above +Infinity as PostgreSQL has it.
- */
-export function compareNumeric(x: unknown, y: unknown): number {
-  // Two plain numbers compare exactly as numbers (and floats like 1e+21,
-  // whose text form the digit comparison below does not read).
-  if (typeof x === "number" && typeof y === "number") return Math.sign(x - y);
-  const rank = (s: string) => (s === "NaN" ? 2 : s === "Infinity" ? 1 : s === "-Infinity" ? -1 : 0);
-  const a = String(x).trim();
-  const b = String(y).trim();
-  const ra = rank(a);
-  const rb = rank(b);
-  if (ra !== 0 || rb !== 0) return ra - rb;
-  const parse = (s: string) => {
-    const neg = s.startsWith("-");
-    const body = s.replace(/^[-+]/, "");
-    const [i = "0", f = ""] = body.split(".");
-    return { neg, int: i.replace(/^0+(?=\d)/, ""), frac: f.replace(/0+$/, "") };
-  };
-  const p = parse(a);
-  const q = parse(b);
-  const sign = (n: { neg: boolean; int: string; frac: string }) =>
-    /^0*$/.test(n.int) && n.frac === "" ? 0 : n.neg ? -1 : 1;
-  const sp = sign(p);
-  const sq = sign(q);
-  if (sp !== sq) return sp - sq;
-  if (sp === 0) return 0;
-  // Same sign: compare magnitudes — integer length, then digits, then the
-  // fraction padded to the same length.
-  let mag: number;
-  if (p.int.length !== q.int.length) mag = p.int.length - q.int.length;
-  else if (p.int !== q.int) mag = p.int < q.int ? -1 : 1;
-  else {
-    const len = Math.max(p.frac.length, q.frac.length);
-    const fa = p.frac.padEnd(len, "0");
-    const fb = q.frac.padEnd(len, "0");
-    mag = fa < fb ? -1 : fa > fb ? 1 : 0;
-  }
-  return sp * Math.sign(mag);
-}
-
-/**
  * Which columns to chart: first non-numeric to group by, first numeric to sum.
  *
  * Null when the result has no such pair — a chart of one against itself, or of

@@ -66,7 +66,7 @@ describe("Grid — rendering", () => {
 
   it("fetches the first block and shows the rows", async () => {
     render(<Grid {...base} />);
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("pg_rows", { offset: 0, limit: 200 }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("pg_rows", { offset: 0, limit: 200, sort: null }));
     expect(await screen.findByText("ada@x.com")).toBeInTheDocument();
   });
 
@@ -136,35 +136,40 @@ describe("Grid — selection", () => {
 });
 
 describe("Grid — sorting", () => {
-  it("refuses past the cap rather than pulling millions of rows into memory", async () => {
-    // Sorting reads every row into the page. On a result of this size that is
-    // a hang, not a sort — so it says no and explains the limit.
-    const onToast = vi.fn();
-    render(<Grid {...base} storedRows={50_001} onToast={onToast} />);
-    await screen.findByText("ada@x.com");
-    invokeMock.mockClear();
-    await userEvent.click(screen.getByText("email"));
-    expect(onToast).toHaveBeenCalledWith(expect.stringContaining("50,000"));
-    expect(invokeMock).not.toHaveBeenCalled();
-  });
-
-  it("sorts right up to the cap", async () => {
-    // Exactly at the limit is allowed — it fetches (and says so) rather than
-    // refusing.
-    const onToast = vi.fn();
-    render(<Grid {...base} storedRows={50_000} onToast={onToast} />);
-    await screen.findByText("ada@x.com");
-    invokeMock.mockClear();
-    await userEvent.click(screen.getByText("email"));
-    await waitFor(() => expect(invokeMock).toHaveBeenCalled());
-    expect(onToast).not.toHaveBeenCalledWith(expect.stringContaining("available up to"));
-  });
-
-  it("pulls the rows into memory to sort them", async () => {
+  it("asks the backend for rows in the clicked column's order", async () => {
     render(<Grid {...base} />);
     await screen.findByText("ada@x.com");
+    invokeMock.mockClear();
     await userEvent.click(screen.getByText("email"));
-    await waitFor(() => expect(invokeMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("pg_rows", {
+        offset: 0,
+        limit: 200,
+        sort: { column: 1, desc: false },
+      }),
+    );
+  });
+
+  it("never pulls more than a block into the page, however large the result", async () => {
+    // Sorting used to fetch every row (up to 50,000) to sort them here.
+    render(<Grid {...base} storedRows={100_000} />);
+    await screen.findByText("ada@x.com");
+    await userEvent.click(screen.getByText("email"));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("pg_rows", expect.objectContaining({ sort: { column: 1, desc: false } })));
+    for (const [, args] of invokeMock.mock.calls) expect((args as { limit: number }).limit).toBeLessThanOrEqual(200);
+  });
+
+  it("drops a block that arrives in the old order after the sort changed", async () => {
+    let release: (rows: unknown[][]) => void = () => {};
+    invokeMock.mockReset();
+    invokeMock.mockImplementationOnce(() => new Promise((r) => (release = r as typeof release)));
+    invokeMock.mockResolvedValue([[9, "zed@x.com", null, true]]);
+    render(<Grid {...base} />);
+    await userEvent.click(screen.getByText("email"));
+    await screen.findByText("zed@x.com");
+    release(rows); // the unsorted first fetch, late
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText("ada@x.com")).toBeNull();
   });
 
   it("cycles asc → desc → off", async () => {
