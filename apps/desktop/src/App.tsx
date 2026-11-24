@@ -41,7 +41,7 @@ import {
   rawExtension,
   type ExportablePlan,
 } from "./lib/explain";
-import { FILTERS, abortSave, baseName, beginSave, finishSave, saveText, writeChunk } from "./lib/save";
+import { FILTERS, abortSave, baseName, beginSave, finishSave, saveText } from "./lib/save";
 import { MAX_BARS, chartSubtitle, chartTitle, pickChartColumns } from "./lib/chart";
 import IntelModal, { type Pane as IntelPane } from "./overlays/IntelModal";
 import ImportModal from "./overlays/ImportModal";
@@ -76,9 +76,6 @@ import { ParamPrompt } from "./overlays/Overlays";
 import {
   coerceParam,
   EXPORT_CAPS,
-  exportChunk,
-  exportPrefix,
-  exportSuffix,
   formatSQL,
   rowCountNote,
   type ExportKind,
@@ -1124,9 +1121,10 @@ export default function App() {
       setExportRun({ written: 0, total });
       exportingRef.current = true;
       try {
-        await writeChunk(exportPrefix(kind, result.columns, mode));
-        // pg_rows serves at most 1000 per call, so that is the page size.
-        for (let off = 0; off < total; off += 1000) {
+        // The backend formats each page from its store and appends it to the
+        // file; rows never come into the page. One call even for an empty
+        // result, which still gets its header (and JSON its brackets).
+        for (let off = 0; off < Math.max(total, 1); off += 1000) {
           // Checked between pages rather than mid-write: stopping halfway
           // through a chunk would leave the file's last row torn in half, and
           // the whole point of aborting is to leave nothing behind.
@@ -1135,14 +1133,12 @@ export default function App() {
             showToast("Export cancelled — the partial file was removed");
             return;
           }
-          const page = await invoke<unknown[][]>("pg_rows", { offset: off, limit: 1000 });
-          if (page.length === 0) break;
-          const slice = page.length > total - off ? page.slice(0, total - off) : page;
-          await writeChunk(exportChunk(kind, result.columns, slice, written === 0, mode));
-          written += slice.length;
+          const limit = Math.min(1000, total - off);
+          const n = await invoke<number>("export_result_page", { kind, mode, offset: off, limit, total });
+          written += n;
           setExportRun({ written, total });
+          if (n < limit) break; // the result ended early
         }
-        await writeChunk(exportSuffix(kind, written > 0));
         await finishSave();
         showToast(`Saved ${baseName(path)} — ${rowCountNote(written, result)}`);
       } catch (e) {
@@ -1169,19 +1165,10 @@ export default function App() {
       const cap = Math.min(EXPORT_CAPS[kind] ?? COPY_ROW_CAP, COPY_ROW_CAP);
       const n = Math.min(result.storedRows, cap);
       const mode = csvSafe ? "spreadsheet-safe" : "raw";
-      // Formatted a page at a time, so only the text and one page of rows are
-      // held — not every row as objects and then the text built from them.
-      let text = exportPrefix(kind, result.columns, mode);
-      let written = 0;
-      for (let off = 0; off < n; off += 1000) {
-        const page = await invoke<unknown[][]>("pg_rows", { offset: off, limit: Math.min(1000, n - off) });
-        if (page.length === 0) break;
-        text += exportChunk(kind, result.columns, page, written === 0, mode);
-        written += page.length;
-      }
-      text += exportSuffix(kind, written > 0);
-      await navigator.clipboard.writeText(text);
-      showToast(`${kind.toUpperCase()} copied — ${rowCountNote(written, result)}`);
+      // Formatted by the backend: only the finished text comes into the page.
+      const out = await invoke<{ text: string; rows: number }>("copy_result_text", { kind, mode, limit: n });
+      await navigator.clipboard.writeText(out.text);
+      showToast(`${kind.toUpperCase()} copied — ${rowCountNote(out.rows, result)}`);
     },
     [result, showToast, csvSafe]
   );

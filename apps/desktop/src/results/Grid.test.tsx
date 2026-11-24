@@ -398,3 +398,17 @@ describe("Grid — block cache", () => {
     expect(kept[30]).toBe("block 30");
   });
 });
+
+describe("Grid — a page that fails to load", () => {
+  it("stays usable, and the next change that needs the block fetches it again", async () => {
+    // A failed fetch is not an unhandled rejection and not a stuck "pending"
+    // block: the grid keeps its header, and sorting asks for the rows anew.
+    invokeMock.mockReset();
+    invokeMock.mockRejectedValueOnce("no result").mockResolvedValue(rows);
+    render(<Grid {...base} />);
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("ada@x.com")).toBeNull();
+    await userEvent.click(screen.getByText("email"));
+    expect(await screen.findByText("ada@x.com")).toBeInTheDocument();
+  });
+});

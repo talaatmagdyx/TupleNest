@@ -30,6 +30,7 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 uuid = { workspace = true }
-# Accent-insensitive text sorting (already in the tree through url/idna).
-unicode-normalization = "0.1"
+# Text sorting by the Unicode Collation Algorithm, as the WebView's
+# localeCompare does. Shares its data crates with icu_normalizer (via url).
+icu_collator = "2"
 tauri-plugin-opener = "2.5.4"

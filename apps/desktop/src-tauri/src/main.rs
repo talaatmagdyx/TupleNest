@@ -11,6 +11,7 @@ use tauri::Manager;
 use tuplenest_workspace_store::Store;
 
 mod connections;
+mod export;
 mod pg;
 mod sort;
 
@@ -324,20 +325,53 @@ fn export_begin(
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
-/// Append one chunk to the open export.
-#[tauri::command]
-fn export_write(state: tauri::State<'_, ExportState>, chunk: String) -> Result<(), String> {
-    let mut slot = state.0.lock().map_err(|_| "export lock poisoned")?;
-    let sink = slot.as_mut().ok_or("no export in progress")?;
-    sink.write(&chunk).map_err(|e| e.to_string())
-}
-
 /// Flush and close. The file is only complete once this returns.
 #[tauri::command]
 fn export_finish(state: tauri::State<'_, ExportState>) -> Result<(), String> {
     let mut slot = state.0.lock().map_err(|_| "export lock poisoned")?;
     let sink = slot.take().ok_or("no export in progress")?;
     sink.finish().map_err(|e| e.to_string())
+}
+
+/// Format one page of the stored result and append it to the open export.
+///
+/// Rows go from the backend's store straight into the file; the WebView only
+/// drives the loop (progress, Cancel) and never holds them. Returns how many
+/// rows were written — fewer than `limit` means the result ended.
+#[tauri::command]
+async fn export_result_page(
+    export: tauri::State<'_, ExportState>,
+    pg: tauri::State<'_, pg::PgState>,
+    kind: export::Kind,
+    mode: export::Mode,
+    offset: usize,
+    limit: usize,
+    total: usize,
+) -> Result<usize, String> {
+    let (chunk, n) = pg::export_page(&pg, kind, mode, offset, limit.min(1_000), total)?;
+    let mut slot = export.0.lock().map_err(|_| "export lock poisoned")?;
+    let sink = slot.as_mut().ok_or("no export in progress")?;
+    sink.write(&chunk).map_err(|e| e.to_string())?;
+    Ok(n)
+}
+
+#[derive(serde::Serialize)]
+struct CopiedText {
+    text: String,
+    rows: usize,
+}
+
+/// The first `limit` rows as one document, for the clipboard — which takes a
+/// single string, so this is the one place the whole text exists at once.
+#[tauri::command]
+async fn copy_result_text(
+    pg: tauri::State<'_, pg::PgState>,
+    kind: export::Kind,
+    mode: export::Mode,
+    limit: usize,
+) -> Result<CopiedText, String> {
+    let (text, rows) = pg::export_document(&pg, kind, mode, limit)?;
+    Ok(CopiedText { text, rows })
 }
 
 /// Abandon an export and remove what was written.
@@ -500,7 +534,8 @@ fn main() {
             app_get_info,
             export_save,
             export_begin,
-            export_write,
+            export_result_page,
+            copy_result_text,
             export_finish,
             export_abort,
             settings_get,

@@ -1,5 +1,4 @@
 import React from "react";
-import { cellExport as cellText, mdCell, neutralizeFormula } from "./text";
 import { maskLiterals } from "./complete";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -59,7 +58,6 @@ export function tokenizeLines(sql: string): React.ReactNode[][] {
   return lines;
 }
 
-/** Pages the backend row store until `stored` rows are collected. */
 /**
  * How many rows an export or copy actually contains.
  *
@@ -78,6 +76,7 @@ export function rowCountNote(written: number, result: { totalRows: number; trunc
   return `${written.toLocaleString()} of ${result.totalRows.toLocaleString()} rows (truncated)`;
 }
 
+/** Pages the backend row store until `stored` rows are collected. */
 export async function fetchAllRows(stored: number, cap = 100_000): Promise<unknown[][]> {
   const n = Math.min(stored, cap);
   const out: unknown[][] = [];
@@ -94,19 +93,11 @@ export type CsvSafetyMode = "spreadsheet-safe" | "raw";
 
 /* ----------------------------------------------------------- export text
  *
- * Exports are written in pieces, not built as one string.
- *
- * The old shape — collect every row, format the whole document, then save —
- * blocked the main thread for the entire format pass, and a result can be
- * 100,000 rows. The document existed three times over at the peak: the row
- * arrays, the finished string, and the copy the IPC bridge escaped to carry
- * it. On a large result that is where the app stopped responding.
- *
- * So the three whole-document functions are defined in terms of the streaming
- * pieces rather than beside them. There is one set of escaping rules — which
- * matters, because they include the spreadsheet formula neutralization from
- * the security review, and a second copy of that would eventually drift from
- * this one.
+ * The formats themselves (CSV with formula neutralization, JSON, Markdown)
+ * live in the backend, src-tauri/src/export.rs: it formats straight from the
+ * stored rows and writes into the file, so rows never come into the page and
+ * there is one copy of the escaping rules. What stays here is what the UI
+ * decides: which kind, and how many rows.
  */
 
 export type ExportKind = "csv" | "json" | "md";
@@ -116,113 +107,6 @@ export type ExportKind = "csv" | "json" | "md";
  *  JSON have no cap of their own beyond the result store's. */
 export const EXPORT_CAPS: Partial<Record<ExportKind, number>> = { md: 1000 };
 
-/** RFC-4180 field, formula-neutralized first when asked.
- *
- *  Order matters: neutralize FIRST, then quote. Quoting first means a leading
- *  `'` lands inside the quoted field where the spreadsheet still sees it, and
- *  a `"=..."` slips through. The quote trigger includes \r so a CR-bearing
- *  value is always wrapped. */
-const csvField = (raw: string, mode: CsvSafetyMode) => {
-  const s = mode === "spreadsheet-safe" ? neutralizeFormula(raw) : raw;
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
-
-/** Everything before the first row: a header line, or an opening bracket. */
-export function exportPrefix(
-  kind: ExportKind,
-  cols: { name: string }[],
-  mode: CsvSafetyMode = "spreadsheet-safe"
-): string {
-  if (kind === "csv") return cols.map((c) => csvField(c.name, mode)).join(",");
-  if (kind === "json") return "[";
-  // mdCell on the header too: PostgreSQL allows `SELECT 1 AS "a|b"`, and a
-  // pipe in a column name breaks the table exactly like one in a value.
-  return `| ${cols.map((c) => mdCell(c.name)).join(" | ")} |\n| ${cols.map(() => "---").join(" | ")} |`;
-}
-
-/**
- * One batch of rows, ready to append.
- *
- * Every line carries its *leading* separator rather than a trailing one, so
- * chunks concatenate without the writer having to remember whether the last
- * one ended in a newline. `first` says whether this batch opens the document,
- * which is the only thing the separator depends on.
- */
-export function exportChunk(
-  kind: ExportKind,
-  cols: { name: string }[],
-  rows: unknown[][],
-  first: boolean,
-  mode: CsvSafetyMode = "spreadsheet-safe"
-): string {
-  if (kind === "csv") {
-    return rows.map((r) => "\n" + r.map((v) => csvField(cellText(v), mode)).join(",")).join("");
-  }
-  if (kind === "md") {
-    return rows.map((r) => "\n| " + r.map((v) => mdCell(cellText(v))).join(" | ") + " |").join("");
-  }
-  // Matches `JSON.stringify(array, null, 2)` exactly: each object is indented
-  // one level, which means re-indenting its own newlines too.
-  // A join can return two columns named `id`; as object keys the second
-  // silently replaced the first. Repeats get `_2`, `_3`, like CSV import.
-  const keys = uniqueKeys(cols.map((c) => c.name));
-  return rows
-    .map((r, i) => {
-      const obj = Object.fromEntries(keys.map((k, j) => [k, r[j] ?? null]));
-      const body = JSON.stringify(obj, null, 2).replace(/\n/g, "\n  ");
-      return `${first && i === 0 ? "\n  " : ",\n  "}${body}`;
-    })
-    .join("");
-}
-
-/** Column names made unique as object keys: `id`, `id_2`, … */
-export function uniqueKeys(names: string[]): string[] {
-  const seen = new Set<string>();
-  return names.map((n) => {
-    let k = n;
-    for (let i = 2; seen.has(k); i++) k = `${n}_${i}`;
-    seen.add(k);
-    return k;
-  });
-}
-
-/** Everything after the last row. `wroteAny` distinguishes `[]` from `[…]`. */
-export function exportSuffix(kind: ExportKind, wroteAny: boolean): string {
-  return kind === "json" ? (wroteAny ? "\n]" : "]") : "";
-}
-
-/** The whole document in one string — for the clipboard, which cannot take it
- *  in pieces. File exports stream instead; see the note above. */
-export function toExportText(
-  kind: ExportKind,
-  cols: { name: string }[],
-  rows: unknown[][],
-  mode: CsvSafetyMode = "spreadsheet-safe"
-): string {
-  const cap = EXPORT_CAPS[kind];
-  const capped = cap === undefined ? rows : rows.slice(0, cap);
-  return (
-    exportPrefix(kind, cols, mode) +
-    exportChunk(kind, cols, capped, true, mode) +
-    exportSuffix(kind, capped.length > 0)
-  );
-}
-
-export function toCSV(
-  cols: { name: string }[],
-  rows: unknown[][],
-  mode: CsvSafetyMode = "spreadsheet-safe"
-): string {
-  return toExportText("csv", cols, rows, mode);
-}
-
-export function toJSONExport(cols: { name: string }[], rows: unknown[][]): string {
-  return toExportText("json", cols, rows);
-}
-
-export function toMarkdown(cols: { name: string }[], rows: unknown[][]): string {
-  return toExportText("md", cols, rows);
-}
 
 /**
  * Why a statement is being guarded, or null if it is not.

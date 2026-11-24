@@ -1245,6 +1245,58 @@ pub async fn pg_rows(
     page(stored, offset, limit, sort.as_ref())
 }
 
+/// Rows `[offset, offset + limit)` of the stored result, in the server's
+/// order, formatted for an export file. The header comes with the first page
+/// and the closing bracket with the last (`offset + limit >= total`, or a
+/// short page). Returns the text and how many rows it holds.
+pub fn export_page(
+    state: &PgState,
+    kind: crate::export::Kind,
+    mode: crate::export::Mode,
+    offset: usize,
+    limit: usize,
+    total: usize,
+) -> Result<(String, usize), String> {
+    let guard = state.result.lock().map_err(|_| "result lock poisoned")?;
+    let stored = guard.as_ref().ok_or("no result")?;
+    let names: Vec<String> = stored.columns.iter().map(|(n, _)| n.clone()).collect();
+    // One page of rows parsed at a time; the rest stay as stored text.
+    let page: Vec<Vec<serde_json::Value>> = stored
+        .store
+        .window(offset, limit)
+        .iter()
+        .map(|r| serde_json::from_str(r.get()).unwrap_or_default())
+        .collect();
+    let n = page.len();
+    let mut out = if offset == 0 {
+        crate::export::prefix(kind, &names, mode)
+    } else {
+        String::new()
+    };
+    crate::export::rows(
+        &mut out,
+        kind,
+        &names,
+        page.iter().map(Vec::as_slice),
+        offset == 0,
+        mode,
+    );
+    if offset + limit >= total || n < limit {
+        out.push_str(crate::export::suffix(kind, offset + n > 0));
+    }
+    Ok((out, n))
+}
+
+/// The first `limit` rows as one document, for the clipboard.
+pub fn export_document(
+    state: &PgState,
+    kind: crate::export::Kind,
+    mode: crate::export::Mode,
+    limit: usize,
+) -> Result<(String, usize), String> {
+    export_page(state, kind, mode, 0, limit, limit)
+}
+
 /// One bar: a label and the sum of its values.
 #[derive(serde::Serialize, Debug, PartialEq)]
 pub struct ChartBar {

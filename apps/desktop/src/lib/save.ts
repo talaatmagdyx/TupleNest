@@ -49,10 +49,6 @@ export async function beginSave(defaultName: string, filter?: SaveFilter): Promi
   });
 }
 
-/** Append to the open export. */
-export async function writeChunk(chunk: string): Promise<void> {
-  await invoke("export_write", { chunk });
-}
 
 /** Flush and close. The file is only complete once this resolves. */
 export async function finishSave(): Promise<void> {

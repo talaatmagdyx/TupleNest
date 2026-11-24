@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cellExport, cellText, errText, mdCell } from "./text";
+import { cellText, errText, mdCell } from "./text";
 
 describe("cellText — a cell on screen", () => {
   it("shows a null rather than hiding it", () => {
@@ -20,23 +20,6 @@ describe("cellText — a cell on screen", () => {
     expect(cellText(42)).toBe("42");
     expect(cellText(false)).toBe("false");
     expect(cellText(0)).toBe("0");
-  });
-});
-
-describe("cellExport — a cell in a file", () => {
-  it("writes a null as an empty field", () => {
-    // The convention every spreadsheet expects; "null" would import as text.
-    expect(cellExport(null)).toBe("");
-    expect(cellExport(undefined)).toBe("");
-  });
-
-  it("renders json the same way the screen does", () => {
-    expect(cellExport({ a: 1 })).toBe('{"a":1}');
-  });
-
-  it("passes scalars through", () => {
-    expect(cellExport(42)).toBe("42");
-    expect(cellExport("ada")).toBe("ada");
   });
 });
 
@@ -74,7 +57,7 @@ describe("text — values Postgres does not produce", () => {
   });
 
   it("names a function", () => {
-    expect(cellExport(() => null)).toBe("[object Function]");
+    expect(cellText(() => null)).toBe("[object Function]");
   });
 
   it("names one thrown as an error, too", () => {

@@ -40,29 +40,35 @@ pub enum Key {
     Null,
     Number(f64),
     /// Exact text: `numeric` always arrives as a string, int8 past 2^53 too.
-    /// `base` and `accents` are the collation keys, see [`collate`].
+    /// `sort` is its Unicode collation key, see [`collation_key`].
     Text {
-        base: String,
-        accents: String,
+        sort: Vec<u8>,
         raw: String,
     },
 }
 
-/// Collation keys for one string, approximating the WebView's
-/// `localeCompare`: letters first compare without case or accents (`é` sorts
-/// with `e`, `Z` with `z`), then by accent (`e` before `é`), then lowercase
-/// before uppercase. Not a full Unicode collation — that needs ICU data
-/// several megabytes large — but right for Latin, Greek and Cyrillic text.
-fn collate(s: &str) -> (String, String) {
-    use unicode_normalization::{char::is_combining_mark, UnicodeNormalization};
-    let accents: String = s.nfd().flat_map(char::to_lowercase).collect();
-    let base = accents.chars().filter(|c| !is_combining_mark(*c)).collect();
-    (base, accents)
+/// The string's sort key under the Unicode Collation Algorithm (root
+/// locale, tertiary strength): what the WebView's `localeCompare` uses.
+/// Letters order by base letter first, then accent, then case, in every
+/// script ICU covers. Computed once per cell, so the sort itself compares
+/// bytes; calling the collator for every comparison was several times slower.
+fn collation_key(s: &str) -> Vec<u8> {
+    use icu_collator::{options::CollatorOptions, Collator, CollatorBorrowed};
+    static COLLATOR: std::sync::OnceLock<CollatorBorrowed<'static>> = std::sync::OnceLock::new();
+    let collator = COLLATOR.get_or_init(|| {
+        Collator::try_new(Default::default(), CollatorOptions::default())
+            .expect("the root collation is compiled in")
+    });
+    let mut key = Vec::with_capacity(s.len() * 2);
+    let Ok(()) = collator.write_sort_key_to(s, &mut key);
+    key
 }
 
 fn text_key(raw: String) -> Key {
-    let (base, accents) = collate(&raw);
-    Key::Text { base, accents, raw }
+    Key::Text {
+        sort: collation_key(&raw),
+        raw,
+    }
 }
 
 impl Key {
@@ -92,18 +98,11 @@ pub fn compare(x: &Key, y: &Key, numeric: bool, desc: bool) -> Ordering {
         (_, Key::Null) => return Ordering::Less,
         (Key::Number(a), Key::Number(b)) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
         _ if numeric => compare_decimal(&x.text(), &y.text()),
-        (
-            Key::Text {
-                base: a,
-                accents: aa,
-                raw: ra,
-            },
-            Key::Text {
-                base: b,
-                accents: ba,
-                raw: rb,
-            },
-        ) => a.cmp(b).then_with(|| aa.cmp(ba)).then_with(|| rb.cmp(ra)),
+        // Equal keys (the collation ignores some characters) fall back to
+        // the exact text, so the order never depends on input order alone.
+        (Key::Text { sort: a, raw: ra }, Key::Text { sort: b, raw: rb }) => {
+            a.cmp(b).then_with(|| ra.cmp(rb))
+        }
         _ => x.text().cmp(&y.text()),
     };
     if desc {
@@ -326,6 +325,28 @@ mod tests {
                 json!("eve"),
                 json!("zoe")
             ]
+        );
+    }
+
+    #[test]
+    fn other_scripts_sort_by_the_unicode_collation() {
+        // Greek: accented alpha sorts with alpha, before beta.
+        let xs = [json!("βήτα"), json!("άλφα"), json!("αλφα")];
+        assert_eq!(
+            sorted(&xs, false, false),
+            [json!("αλφα"), json!("άλφα"), json!("βήτα")]
+        );
+        // German ß sorts as ss, between s and t.
+        let xs = [json!("tag"), json!("straße"), json!("strasse"), json!("sz")];
+        assert_eq!(
+            sorted(&xs, false, false),
+            [json!("strasse"), json!("straße"), json!("sz"), json!("tag")]
+        );
+        // Latin before Greek before Cyrillic, as the UCA orders scripts.
+        let xs = [json!("я"), json!("ω"), json!("z")];
+        assert_eq!(
+            sorted(&xs, false, false),
+            [json!("z"), json!("ω"), json!("я")]
         );
     }
 
