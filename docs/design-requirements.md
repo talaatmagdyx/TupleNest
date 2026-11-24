@@ -42,7 +42,7 @@ Design principles:
 - **Result grid rows must be a fixed height** (currently 24px). The grid is
   virtualized; variable-height rows are not possible. Header and row-number
   column are sticky.
-- The grid may hold up to **100,000 rows**; scrolling must stay 60fps, so no
+- The grid may hold up to **50,000 rows** (or 128 MB of row text); scrolling must stay 60fps, so no
   per-cell shadows/gradients/blurs inside the grid body.
 - No browser storage APIs assumed; state persists via app settings (SQLite).
 - Styling is hand-written CSS with custom properties (design tokens). No
@@ -168,7 +168,7 @@ loading state ("loading…") and an empty state ("empty").
 - Disabled state when not connected (with hint).
 - Status line messages (single line, after run):
   - `1,204 row(s) in 132ms`
-  - `1,204 row(s) in 132ms (first 100,000 kept for scrolling)`
+  - `1,204 row(s) in 132ms (first 50,000 kept for scrolling)`
   - `3 row(s) affected in 8ms`
   - `Error: <normalized message>` — errors carry SQLSTATE and sometimes a
     query position [planned: inline error marker in editor].
@@ -199,7 +199,7 @@ loading state ("loading…") and an empty state ("empty").
 - Rows beyond the fetched window show a subtle "…" placeholder while a
   block loads (200-row blocks).
 - Truncation: when the server returned more than 100k rows, a persistent
-  notice: "showing first 100,000 of N".
+  notice: "showing first 50,000 of N".
 - Row hover + single row selection highlight. Cell selection/copy
   [planned].
 - Result meta line: `✓ 1,204 rows · 132 ms · streamed`.

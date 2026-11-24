@@ -14,6 +14,7 @@ mod connections;
 mod export;
 mod pg;
 mod sort;
+mod trim;
 
 struct AppState {
     store: Mutex<Store>,
