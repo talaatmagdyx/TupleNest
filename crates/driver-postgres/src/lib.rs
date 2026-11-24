@@ -403,6 +403,22 @@ impl PostgresSession {
     }
 
     /*
+     * Has a statement already failed in the open transaction?
+     *
+     * PostgreSQL answers `COMMIT` on such a transaction with success. The
+     * command tag says `ROLLBACK` instead of `COMMIT`, there is no error, and
+     * everything the transaction did is gone. tokio-postgres does not expose
+     * the tag, so the state is asked for beforehand: a failed transaction
+     * refuses every query with 25P02 until it is ended.
+     */
+    async fn transaction_failed(&self) -> bool {
+        matches!(
+            self.client.simple_query("SELECT 1").await,
+            Err(e) if e.code() == Some(&tokio_postgres::error::SqlState::IN_FAILED_SQL_TRANSACTION)
+        )
+    }
+
+    /*
      * COMMIT or ROLLBACK, keeping `in_transaction` true to the server.
      *
      * The flag used to be cleared before the statement was sent, so a COMMIT
@@ -426,15 +442,24 @@ impl PostgresSession {
                 );
             }
         };
+        // A commit of a failed transaction is a rollback that reports
+        // success. Send the rollback under its own name and say what happened:
+        // "COMMIT" on screen with the rows gone is the worst thing a database
+        // client can tell someone.
+        let failed = sql == "COMMIT" && self.transaction_failed().await;
         let result = self
             .client
-            .batch_execute(sql)
+            .batch_execute(if failed { "ROLLBACK" } else { sql })
             .await
             .map_err(normalize_error);
         if result.is_err() && self.server_in_transaction().await.unwrap_or(false) {
             self.in_transaction = Some(id);
         }
-        result
+        result?;
+        if failed {
+            return Err(commit_rolled_back().into());
+        }
+        Ok(())
     }
 
     async fn ensure_read_only(&self) -> Result<(), Box<DriverError>> {
@@ -610,6 +635,17 @@ impl DatabaseSession for PostgresSession {
     ) -> Result<ExecutionSummary, Box<DriverError>> {
         use futures_util::StreamExt;
         let started = Instant::now();
+
+        // The same trap for a COMMIT typed in the editor (see
+        // `transaction_failed`). The user's own statement is still what runs,
+        // so `COMMIT AND CHAIN` keeps its meaning; only the answer changes.
+        if commits(&request.sql) && self.transaction_failed().await {
+            self.client
+                .batch_execute(&request.sql)
+                .await
+                .map_err(normalize_error)?;
+            return Err(commit_rolled_back().into());
+        }
 
         if self.read_only {
             let words = leading_words(&request.sql, 2);
@@ -2496,6 +2532,27 @@ fn param_to_sql(p: &ParamValue) -> Box<dyn tokio_postgres::types::ToSql + Sync +
     }
 }
 
+/// `COMMIT` or `END`, in any of their spellings. Not `COMMIT PREPARED`, which
+/// finishes a different, already-prepared transaction.
+fn commits(sql: &str) -> bool {
+    let words = leading_words(sql, 2);
+    matches!(words.first().map(String::as_str), Some("commit" | "end"))
+        && words.get(1).map(String::as_str) != Some("prepared")
+}
+
+/// What a commit of a failed transaction really was.
+fn commit_rolled_back() -> DriverError {
+    DriverError::new(
+        ErrorCategory::DriverFailure,
+        "Nothing was committed: the transaction had failed and was rolled back",
+    )
+    .with_native_code("25P02")
+    .with_explanation(
+        "An earlier statement in this transaction failed, was cancelled or timed out. \
+         PostgreSQL discards such a transaction when it is committed, and reports no error.",
+    )
+}
+
 /// Does this statement only end the current transaction (`COMMIT`,
 /// `ROLLBACK`, `END`, `ABORT`)? Those must always get through on a read-only
 /// profile, or a read-write transaction it refused could never be closed —
@@ -2731,6 +2788,36 @@ mod begin_statement_tests {
             "",
         ] {
             assert!(!ends_transaction(sql), "{sql:?} must be checked");
+        }
+    }
+
+    // TN-001: which statements get the failed-transaction check before they
+    // are allowed to answer "committed".
+    #[test]
+    fn a_commit_is_recognised_in_every_spelling_and_nothing_else_is() {
+        for sql in [
+            "COMMIT",
+            "commit;",
+            "  End",
+            "END TRANSACTION",
+            "COMMIT WORK",
+            "commit and chain",
+            "-- done\nCOMMIT",
+        ] {
+            assert!(commits(sql), "{sql:?} commits");
+        }
+        for sql in [
+            "ROLLBACK",
+            "ABORT",
+            "COMMIT PREPARED 'gid'",
+            "commit   prepared 'gid'",
+            "committed",
+            "SELECT 'commit'",
+            "-- commit\nSELECT 1",
+            "BEGIN; COMMIT",
+            "",
+        ] {
+            assert!(!commits(sql), "{sql:?} does not commit");
         }
     }
 

@@ -441,6 +441,23 @@ describe("App — one session, many tabs: the transaction has an owner", () => {
     await waitFor(() => expect(be.sent("pg_commit")).toHaveLength(1));
   });
 
+  it("says nothing was committed when the server rolled the transaction back", async () => {
+    // TN-001. After a failed statement, COMMIT is answered with ROLLBACK and
+    // no error; the backend now reports that as a failure. The toast must not
+    // say COMMIT, and the transaction — which is over — must not stay on show.
+    const user = await connected();
+    await openTxInFirstTab(user);
+    be.on("pg_commit", () => {
+      throw new Error("Nothing was committed: the transaction had failed and was rolled back [SQLSTATE 25P02]");
+    });
+    await user.click(screen.getByRole("button", { name: "Commit" }));
+
+    expect(await screen.findByText(/Commit error: .*Nothing was committed/)).toBeInTheDocument();
+    expect(screen.queryByText("COMMIT")).not.toBeInTheDocument();
+    // The Begin button is back, which it only is with no transaction open.
+    expect(await screen.findByRole("button", { name: /Begin transaction/ })).toBeInTheDocument();
+  });
+
   it("lets the owning tab be returned to after a detour", async () => {
     const user = await connected();
     await openTxInFirstTab(user);
