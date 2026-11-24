@@ -1016,12 +1016,16 @@ export default function App() {
         sql: tabs[activeTab]?.sql ?? "",
         title,
         connected,
+        env: connectedEnv,
         override,
         // Lets the index advisor read column types, so it can tell an
         // indexable expression from one PostgreSQL would refuse to index.
         catalog,
         onStart: () => setOverlay("explain"),
       });
+      if (out.kind === "blocked" && out.reason === "guard") {
+        showToast("ANALYZE would run this for real — untick it, or run EXPLAIN ANALYZE from the editor to confirm");
+      }
       if (out.kind !== "ok") return;
       query.reset(); // EXPLAIN replaced the backend row store
       // Phase 3: keep the last few summaries so two runs can be compared.
@@ -1033,7 +1037,7 @@ export default function App() {
         );
       }
     },
-    [tabs, activeTab, connected, runExplainRaw, query, catalog, showToast],
+    [tabs, activeTab, connected, connectedEnv, runExplainRaw, query, catalog, showToast],
   );
 
   /** Everything the exporters need from the current plan. */

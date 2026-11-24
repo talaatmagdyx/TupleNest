@@ -1995,3 +1995,78 @@ async fn unknown_types_render_from_the_type_not_from_a_guess() {
         .await
         .unwrap();
 }
+
+/// TN-003: what the Explain button relies on. Planning a statement changes
+/// nothing; EXPLAIN ANALYZE executes it — including a write carried by a CTE,
+/// or a `SELECT … INTO`, both of which start like a query. The app decides
+/// whether to add ANALYZE from the statement text, so this pins the server
+/// behaviour that makes the decision matter.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn explain_analyze_executes_a_writing_cte_and_plain_explain_does_not() {
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    s.execute(
+        req("CREATE TEMP TABLE tn003 AS SELECT g AS id FROM generate_series(1, 3) g"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+
+    async fn count(s: &mut tuplenest_driver_postgres::PostgresSession, sql: &str) -> String {
+        let sink = CollectSink::default();
+        s.execute(req(sql), &sink).await.unwrap();
+        let rows = sink.rows.lock().unwrap();
+        text_of(&rows[0][0])
+    }
+    let cte = "WITH gone AS (DELETE FROM tn003 RETURNING id) SELECT count(*) FROM gone";
+
+    // What the app sends for this statement now: no ANALYZE.
+    s.execute(
+        req(format!("EXPLAIN (COSTS, BUFFERS, FORMAT JSON) {cte}")),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    assert_eq!(count(&mut s, "SELECT count(*) FROM tn003").await, "3");
+
+    // What it sent before, because the statement starts with WITH.
+    s.execute(
+        req(format!(
+            "EXPLAIN (ANALYZE, COSTS, BUFFERS, FORMAT JSON) {cte}"
+        )),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        count(&mut s, "SELECT count(*) FROM tn003").await,
+        "0",
+        "EXPLAIN ANALYZE runs the DELETE inside the CTE"
+    );
+
+    // SELECT … INTO is the same trap with a different first word.
+    s.execute(
+        req("EXPLAIN (FORMAT JSON) SELECT 1 AS a INTO TEMP tn003_copy"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        count(&mut s, "SELECT to_regclass('tn003_copy') IS NULL").await,
+        "true"
+    );
+    s.execute(
+        req("EXPLAIN (ANALYZE, FORMAT JSON) SELECT 1 AS a INTO TEMP tn003_copy"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        count(&mut s, "SELECT to_regclass('tn003_copy') IS NULL").await,
+        "false",
+        "EXPLAIN ANALYZE creates the table SELECT INTO names"
+    );
+}

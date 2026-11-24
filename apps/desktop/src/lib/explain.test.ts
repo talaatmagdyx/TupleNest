@@ -76,6 +76,27 @@ describe("isMutating", () => {
     ["with x as (select 1) select * from x", false],
   ])("%s → %s", (sql, expected) => expect(isMutating(sql)).toBe(expected));
 
+  // TN-003: a statement that starts like a query and writes anyway.
+  it.each([
+    ["with gone as (delete from users returning id) select count(*) from gone", true],
+    ["with m as (update t set a = 1 where id = 2 returning id) select * from m", true],
+    ["with a as (insert into log values (1) returning id) select * from a", true],
+    ["select * into copy_of_t from t", true],
+    ["select * from t for update", false],
+    ["select * from t for no key update skip locked", false],
+    ['select "delete" from t', false],
+    ["select deleted_at from t", false],
+  ])("%s → %s", (sql, expected) => expect(isMutating(sql)).toBe(expected));
+
+  it("warns that ANALYZE will execute a write hidden in a CTE", () => {
+    const sql = "with gone as (delete from users returning id) select count(*) from gone";
+    expect(optionIssues({ ...DEFAULT_EXPLAIN, analyze: true }, sql)).toContainEqual({
+      level: "warning",
+      message: expect.stringContaining("modifies data") as string,
+    });
+    expect(optionIssues({ ...DEFAULT_EXPLAIN, analyze: false }, sql)).toEqual([]);
+  });
+
   it("is not fooled by the word update inside a string", () => {
     expect(isMutating("select 'update me' from t")).toBe(false);
   });

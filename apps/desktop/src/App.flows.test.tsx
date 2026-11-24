@@ -183,6 +183,31 @@ describe("App — EXPLAIN", () => {
     expect(q[q.length - 1].sql).not.toContain("ANALYZE");
   });
 
+  it("leaves ANALYZE off for a query that writes, whatever its first word", async () => {
+    // TN-003. `select … into` creates a table; a WITH can carry a DELETE.
+    // Both start like a query, and ANALYZE would have executed them.
+    const user = await connected();
+    await type(user, "select * into copy_of_users from users");
+    await explain(user);
+    await waitFor(() => expect(be.sent("pg_query").length).toBeGreaterThan(0));
+    const q = be.sent("pg_query");
+    expect(q[q.length - 1].sql).not.toContain("ANALYZE");
+  });
+
+  it("will not run ANALYZE on production for a statement Run would stop", async () => {
+    const user = await connectedProd();
+    await type(user, "delete from users");
+    await explain(user);
+    await waitFor(() => expect(be.sent("pg_query")).toHaveLength(1));
+    expect(be.sent("pg_query")[0].sql).not.toContain("ANALYZE");
+
+    // Tick the box and ask again: the statement would now really run.
+    await user.click(await screen.findByRole("button", { name: /^ANALYZE/ }));
+    await user.click(screen.getByRole("button", { name: "Re-run" }));
+    expect(await screen.findByText(/ANALYZE would run this for real/)).toBeInTheDocument();
+    expect(be.sent("pg_query")).toHaveLength(1);
+  });
+
   it("shows the error rather than a blank plan", async () => {
     const user = await connected();
     await type(user, "select * from nope");
