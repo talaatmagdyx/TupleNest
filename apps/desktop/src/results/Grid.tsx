@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { cellText } from "../lib/text";
 import { isNumericType } from "../lib/chart";
 import { invoke } from "@tauri-apps/api/core";
@@ -75,6 +75,147 @@ function cellClass(c: GridColumn, v: unknown): string {
   return "";
 }
 
+type Handlers = {
+  pick: (ri: number) => void;
+  select: (ri: number, ci: number, col: GridColumn, v: unknown) => void;
+  beginEdit: (ri: number, ci: number, v: unknown) => void;
+  commitEdit: (ri: number, ci: number, original: unknown) => void;
+  setDraft: (text: string) => void;
+  cancelEdit: () => void;
+};
+
+type RowProps = {
+  i: number;
+  row: unknown[] | null;
+  columns: GridColumn[];
+  widths: number[];
+  offs: number[];
+  /** The drawn columns, `c0` up to but not including `c1`. */
+  c0: number;
+  c1: number;
+  selected: boolean;
+  /** The selected / edited column, on the one row that has it. */
+  selCol: number | null;
+  editCol: number | null;
+  draft: string;
+  target: EditTarget | null | undefined;
+  staged: Map<string, unknown>;
+  viewRef: RefObject<HTMLDivElement | null>;
+  h: Handlers;
+};
+
+/**
+ * One body row. Memoized, and every prop is a primitive or a reference that
+ * outlives a render, so moving the selection re-renders the row it left and
+ * the row it entered — not every row on screen.
+ */
+const Row = memo(function Row(p: RowProps) {
+  const { i, row, target, widths, offs, selCol, editCol, draft, staged, viewRef, h } = p;
+  const bodyW = offs[p.columns.length];
+  const totalW = NUM_W + bodyW;
+  const padL = offs[p.c0];
+  const padR = bodyW - offs[p.c1];
+  const colIdx: number[] = [];
+  for (let c = p.c0; c < p.c1; c++) colIdx.push(c);
+  // Identity by primary key, not row position — the grid may be
+  // sorted after an edit was staged. Once per row, not per cell.
+  const rk = row && target ? rowKey(target.pk.map((k) => row[k.index])) : "";
+  return (
+    <div
+      className={`g-row ${p.selected ? "sel" : ""}`}
+      role="row"
+      // 1-based, and the header is row 1 — this is the number a screen
+      // reader reads out, so it has to match what the eye sees.
+      aria-rowindex={i + 2}
+      style={{ minWidth: totalW }}
+      onClick={() => h.pick(i)}
+    >
+      <div className="g-rownum" role="rowheader" style={{ width: NUM_W }}>
+        {i + 1}
+      </div>
+      {row !== null && padL > 0 && <div aria-hidden="true" style={{ flex: "none", width: padL }} />}
+      {row === null ? (
+        <div className="g-cell loading" style={{ width: bodyW }}>
+          …
+        </div>
+      ) : (
+        colIdx.map((ci) => {
+          const c = p.columns[ci];
+          const original = row[ci];
+          const key = `${rk}:${c.name}`;
+          const isStaged = !!target && staged.size > 0 && staged.has(key);
+          const v = isStaged ? staged.get(key) : original;
+          const text = cellText(v);
+          // Boolean, not `selCell && …`: that yields null when nothing is
+          // selected, and `aria-selected` must be a real true/false.
+          const isSel = selCol === ci;
+          const isEditing = editCol === ci;
+          const canEdit = !!target?.writable[ci];
+
+          if (isEditing) {
+            return (
+              <div key={ci} className="g-cell editing" style={{ width: widths[ci] }}>
+                <input
+                  autoFocus
+                  className="g-edit"
+                  value={draft}
+                  onChange={(e) => h.setDraft(e.target.value)}
+                  onBlur={() => h.commitEdit(i, ci, original)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      h.commitEdit(i, ci, original);
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      h.cancelEdit();
+                    }
+                  }}
+                />
+              </div>
+            );
+          }
+          return (
+            <div
+              key={ci}
+              className={`g-cell ${cellClass(c, v)} ${isSel ? "selcell" : ""} ${
+                isStaged ? "staged" : ""
+              } ${canEdit ? "editable" : ""}`}
+              role="gridcell"
+              aria-colindex={ci + 2}
+              aria-selected={isSel}
+              aria-readonly={!canEdit}
+              // The roving stop: exactly one cell is tabbable, so Tab
+              // reaches the grid and the arrows move inside it.
+              tabIndex={isSel ? 0 : -1}
+              ref={
+                // Focus follows selection, but only once it is really the
+                // selected cell — otherwise every render steals focus.
+                // Only the selected cell gets a ref at all.
+                isSel
+                  ? (el) => {
+                      if (el && document.activeElement !== el && viewRef.current?.contains(document.activeElement)) {
+                        el.focus();
+                      }
+                    }
+                  : undefined
+              }
+              style={{ width: widths[ci] }}
+              title={
+                isStaged ? `${cellText(original)} → ${text} (pending)` : canEdit ? `${text} — double-click to edit` : text
+              }
+              onClick={() => h.select(i, ci, c, v)}
+              onDoubleClick={() => h.beginEdit(i, ci, original)}
+            >
+              {text}
+            </div>
+          );
+        })
+      )}
+      {row !== null && padR > 0 && <div aria-hidden="true" style={{ flex: "none", width: padR }} />}
+    </div>
+  );
+});
+
 export default function Grid(p: Props) {
   const [blocks, setBlocks] = useState<Record<number, unknown[][]>>({});
   const [scrollTop, setScrollTop] = useState(0);
@@ -126,6 +267,12 @@ export default function Grid(p: Props) {
     setEditing(null);
   }
 
+  /** The open editor, for a block that arrives after the render that asked for it. */
+  const editingRef = useRef(editing);
+  useEffect(() => {
+    editingRef.current = editing;
+  }, [editing]);
+
   useEffect(() => {
     sortGen.current++; // a page still in flight belongs to the previous result
     pending.current.clear();
@@ -171,7 +318,17 @@ export default function Grid(p: Props) {
         pending.current.add(b);
         invoke<unknown[][]>("pg_rows", { offset: b * BLOCK, limit: BLOCK, sort })
           .then((rows) => {
-            if (gen === sortGen.current) setBlocks((m) => keepNear({ ...m, [b]: rows }, b));
+            if (gen !== sortGen.current) return;
+            setBlocks((m) => {
+              const next = keepNear({ ...m, [b]: rows }, b);
+              // The row under an open editor stays cached however far the
+              // view has moved: its cell is still drawn, and committing the
+              // edit needs the row's key.
+              const e = editingRef.current;
+              const eb = e ? Math.floor(e.r / BLOCK) : -1;
+              if (m[eb] && !next[eb]) next[eb] = m[eb];
+              return next;
+            });
           })
           .catch(() => {})
           .finally(() => pending.current.delete(b));
@@ -251,8 +408,29 @@ export default function Grid(p: Props) {
     setEditing(null);
   };
 
+  /** The handlers the rows call, behind references that never change, so a
+   *  render of the grid does not re-render every row. */
+  const live = useRef({ select, beginEdit, commitEdit });
+  useEffect(() => {
+    live.current = { select, beginEdit, commitEdit };
+  });
+  const [h] = useState<Handlers>(() => ({
+    pick: setSelRow,
+    select: (...a) => live.current.select(...a),
+    beginEdit: (...a) => live.current.beginEdit(...a),
+    commitEdit: (...a) => live.current.commitEdit(...a),
+    setDraft,
+    cancelEdit: () => setEditing(null),
+  }));
+
+  // The rows in view — and the row being edited, wherever the view has gone:
+  // dropping it unmounts the editor, and with it the focus and the caret.
+  // It is drawn in place, one row between two spacers, rather than by
+  // stretching the window to reach it, which could be 100,000 rows.
   const indices: number[] = [];
+  if (editing && editing.r < first) indices.push(editing.r);
   for (let i = first; i < last; i++) indices.push(i);
+  if (editing && editing.r >= last) indices.push(editing.r);
 
   /** Column widths and their running left edges (`offs[n]` is the full width). */
   const layout = useMemo(() => {
@@ -275,10 +453,38 @@ export default function Grid(p: Props) {
   while (c1 < nCols && offs[c1] < scrollLeft + COL_STEP + viewW) c1++;
   c0 = Math.max(0, c0 - COL_OVERSCAN);
   c1 = Math.min(nCols, c1 + COL_OVERSCAN);
-  const colIdx: number[] = [];
-  for (let c = c0; c < c1; c++) colIdx.push(c);
-  const padL = offs[c0];
-  const padR = bodyW - offs[c1];
+
+  const body: ReactNode[] = [];
+  let next = 0;
+  for (const i of indices) {
+    if (i > next) body.push(<div key={`gap${next}`} style={{ height: (i - next) * ROW_H }} />);
+    const sel = selCell?.r === i ? selCell.c : null;
+    const ed = editing?.r === i ? editing.c : null;
+    body.push(
+      <Row
+        key={i}
+        i={i}
+        row={rowAt(i)}
+        columns={p.columns}
+        widths={widths}
+        offs={offs}
+        // The edited row's columns reach as far as its editor, for the same
+        // reason; one row of extra cells, not a screen of them.
+        c0={ed === null ? c0 : Math.min(c0, ed)}
+        c1={ed === null ? c1 : Math.max(c1, ed + 1)}
+        selected={i === selRow}
+        selCol={sel}
+        editCol={ed}
+        draft={ed === null ? "" : draft}
+        target={p.target}
+        staged={staged}
+        viewRef={viewRef}
+        h={h}
+      />,
+    );
+    next = i + 1;
+  }
+  if (next < p.storedRows) body.push(<div key={`gap${next}`} style={{ height: (p.storedRows - next) * ROW_H }} />);
 
   /*
    * Keyboard navigation.
@@ -384,109 +590,7 @@ export default function Grid(p: Props) {
           </div>
         ))}
       </div>
-      {first > 0 && <div style={{ height: first * ROW_H }} />}
-      {indices.map((i) => {
-        const row = rowAt(i);
-        // Identity by primary key, not row position — the grid may be
-        // sorted after an edit was staged. Once per row, not per cell.
-        const rk = row && p.target ? rowKey(p.target.pk.map((k) => row[k.index])) : "";
-        return (
-          <div
-            key={i}
-            className={`g-row ${i === selRow ? "sel" : ""}`}
-            role="row"
-            // 1-based, and the header is row 1 — this is the number a screen
-            // reader reads out, so it has to match what the eye sees.
-            aria-rowindex={i + 2}
-            style={{ minWidth: totalW }}
-            onClick={() => setSelRow(i)}
-          >
-            <div className="g-rownum" role="rowheader" style={{ width: NUM_W }}>
-              {i + 1}
-            </div>
-            {row !== null && padL > 0 && <div aria-hidden="true" style={{ flex: "none", width: padL }} />}
-            {row === null ? (
-              <div className="g-cell loading" style={{ width: bodyW }}>
-                …
-              </div>
-            ) : (
-              colIdx.map((ci) => {
-                const c = p.columns[ci];
-                const original = row[ci];
-                const key = `${rk}:${c.name}`;
-                const isStaged = !!p.target && staged.size > 0 && staged.has(key);
-                const v = isStaged ? staged.get(key) : original;
-                const text = cellText(v);
-                // Boolean, not `selCell && …`: that yields null when nothing is
-                // selected, and `aria-selected` must be a real true/false.
-                const isSel = !!selCell && selCell.r === i && selCell.c === ci;
-                const isEditing = editing && editing.r === i && editing.c === ci;
-                const canEdit = !!p.target?.writable[ci];
-
-                if (isEditing) {
-                  return (
-                    <div key={ci} className="g-cell editing" style={{ width: widths[ci] }}>
-                      <input
-                        autoFocus
-                        className="g-edit"
-                        value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
-                        onBlur={() => commitEdit(i, ci, original)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            commitEdit(i, ci, original);
-                          } else if (e.key === "Escape") {
-                            e.preventDefault();
-                            setEditing(null);
-                          }
-                        }}
-                      />
-                    </div>
-                  );
-                }
-                return (
-                  <div
-                    key={ci}
-                    className={`g-cell ${cellClass(c, v)} ${isSel ? "selcell" : ""} ${
-                      isStaged ? "staged" : ""
-                    } ${canEdit ? "editable" : ""}`}
-                    role="gridcell"
-                    aria-colindex={ci + 2}
-                    aria-selected={isSel}
-                    aria-readonly={!canEdit}
-                    // The roving stop: exactly one cell is tabbable, so Tab
-                    // reaches the grid and the arrows move inside it.
-                    tabIndex={isSel ? 0 : -1}
-                    ref={
-                      // Focus follows selection, but only once it is really the
-                      // selected cell — otherwise every render steals focus.
-                      // Only the selected cell gets a ref at all.
-                      isSel
-                        ? (el) => {
-                            if (el && document.activeElement !== el && viewRef.current?.contains(document.activeElement)) {
-                              el.focus();
-                            }
-                          }
-                        : undefined
-                    }
-                    style={{ width: widths[ci] }}
-                    title={
-                      isStaged ? `${cellText(original)} → ${text} (pending)` : canEdit ? `${text} — double-click to edit` : text
-                    }
-                    onClick={() => select(i, ci, c, v)}
-                    onDoubleClick={() => beginEdit(i, ci, original)}
-                  >
-                    {text}
-                  </div>
-                );
-              })
-            )}
-            {row !== null && padR > 0 && <div aria-hidden="true" style={{ flex: "none", width: padR }} />}
-          </div>
-        );
-      })}
-      {last < p.storedRows && <div style={{ height: (p.storedRows - last) * ROW_H }} />}
+      {body}
       <div style={{ height: HEAD_H }} />
     </div>
   );

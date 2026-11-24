@@ -153,7 +153,8 @@ const defaults = (): Record<string, (args: Record<string, unknown>) => unknown> 
   pg_rows: () => ROWS,
   // The backend formats and writes the page itself; it says how many rows.
   export_result_page: (a) => Math.max(0, Math.min(a.limit as number, (a.total as number) - (a.offset as number))),
-  copy_result_text: (a) => ({ text: `${a.kind as string} text`, rows: Math.min(a.limit as number, ROWS.length) }),
+  // The backend writes the clipboard itself and answers with the row count.
+  copy_result_text: (a) => Math.min(a.limit as number, ROWS.length),
   // ROWS summed the way pg.rs `chart` does: label column 0, value column 1.
   pg_chart: () => ({
     rows: ROWS.length,

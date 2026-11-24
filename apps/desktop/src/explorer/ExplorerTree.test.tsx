@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ExplorerTree from "./ExplorerTree";
 import type { DbColumn, DbIndex, DbObject, DbPartition } from "../ipc/types";
@@ -525,5 +525,229 @@ describe("ExplorerTree — constraints", () => {
   it("says loading before they arrive", () => {
     render(tree({}));
     expect(screen.getAllByText("loading…").length).toBeGreaterThan(0);
+  });
+});
+
+describe("ExplorerTree — windowing", () => {
+  // Rows are a fixed 24px; jsdom has no layout, so the viewport falls back to
+  // 600px: 25 rows on screen plus 10 of overscan each side.
+  const ROW = 24;
+  const name = (n: number) => `t_${String(n).padStart(4, "0")}`;
+  const many = (n: number) => Array.from({ length: n }, (_, i) => obj(name(i)));
+  const big = (n = 2000) => ({
+    ...base,
+    objects: { public: many(n) },
+    open: { "s:public": true, "g:public:table": true },
+  });
+  const tree = () => screen.getByRole("tree");
+  const scrollTo = (top: number) => {
+    tree().scrollTop = top;
+    fireEvent.scroll(tree());
+  };
+  const focusedText = () => (document.activeElement as HTMLElement).textContent;
+
+  it("renders a bounded number of rows for a schema with 2,000 tables", () => {
+    const { container } = render(<ExplorerTree {...big()} />);
+    // 2,002 rows exist; a screenful and its overscan are in the DOM.
+    expect(screen.getAllByRole("treeitem").length).toBeLessThanOrEqual(45);
+    expect(container.querySelectorAll(".tree *").length).toBeLessThan(400);
+    expect(screen.getByText(name(0))).toBeInTheDocument();
+    expect(screen.queryByText(name(1999))).not.toBeInTheDocument();
+    // The rest is one spacer, sized as if the rows were there.
+    const spacers = container.querySelectorAll('.tree > [role="presentation"]');
+    expect(spacers).toHaveLength(1);
+    expect(spacers[0]).toHaveStyle({ height: `${(2002 - 45) * ROW}px` });
+  });
+
+  it("adds no spacers to a tree that fits", () => {
+    const { container } = render(<ExplorerTree {...big(5)} />);
+    expect(container.querySelectorAll('.tree > [role="presentation"]')).toHaveLength(0);
+    expect(screen.getAllByRole("treeitem")).toHaveLength(7);
+  });
+
+  it("shows later rows once scrolled to them", () => {
+    const { container } = render(<ExplorerTree {...big()} />);
+    scrollTo(1000 * ROW);
+    // Row 1000 is the 999th table: the schema and group rows come first.
+    expect(screen.getByText(name(998))).toBeInTheDocument();
+    expect(screen.queryByText(name(0))).not.toBeInTheDocument();
+    expect(screen.getAllByRole("treeitem").length).toBeLessThanOrEqual(45);
+    expect(container.querySelectorAll('.tree > [role="presentation"]')).toHaveLength(2);
+    expect(screen.getByText(name(998)).closest('[role="treeitem"]')).toHaveAttribute("aria-level", "3");
+  });
+
+  it("does not re-window for a scroll within the same row", () => {
+    render(<ExplorerTree {...big()} />);
+    scrollTo(ROW * 20 + 5);
+    const before = screen.getAllByRole("treeitem")[0];
+    scrollTo(ROW * 20 + 9);
+    expect(screen.getAllByRole("treeitem")[0]).toBe(before);
+  });
+
+  it("walks past the edge of the window with the arrow keys", async () => {
+    render(<ExplorerTree {...big()} />);
+    tree().focus();
+    // 80 rows down: far beyond the 45 that were rendered to begin with.
+    await userEvent.keyboard("{ArrowDown>80/}");
+    expect(focusedText()).toContain(name(78));
+    expect(screen.queryByText(name(0))).not.toBeInTheDocument();
+    expect(tree().scrollTop).toBeGreaterThan(0);
+    await userEvent.keyboard("{ArrowUp>70/}");
+    expect(focusedText()).toContain(name(8));
+    expect(tree().scrollTop).toBeLessThanOrEqual(10 * ROW);
+  });
+
+  it("jumps to rows that are not rendered with End and Home", async () => {
+    render(<ExplorerTree {...big()} />);
+    tree().focus();
+    await userEvent.keyboard("{End}");
+    expect(focusedText()).toContain(name(1999));
+    await userEvent.keyboard("{Home}");
+    expect(focusedText()).toContain("public");
+    expect(tree().scrollTop).toBe(0);
+  });
+
+  it("keeps the keyboard working after the focused row is scrolled out of the window", async () => {
+    const onToggle = vi.fn();
+    render(<ExplorerTree {...big()} onToggle={onToggle} />);
+    const row = screen.getByText(name(3)).closest('[role="treeitem"]') as HTMLElement;
+    row.focus();
+    // Still inside the window: focus stays where it is.
+    scrollTo(5 * ROW);
+    expect(document.activeElement).toBe(row);
+    // Its node is dropped; focus is parked on the tree rather than lost.
+    scrollTo(1000 * ROW);
+    expect(document.activeElement).toBe(tree());
+    // ArrowRight on the closed table it was on opens it…
+    await userEvent.keyboard("{ArrowRight}");
+    expect(onToggle).toHaveBeenCalledWith(`t:public.${name(3)}`);
+    // …and the arrows carry on from it, scrolling it back in.
+    await userEvent.keyboard("{ArrowDown}");
+    expect(focusedText()).toContain(name(4));
+    // Steps out to the group from a parked row too.
+    scrollTo(1000 * ROW);
+    expect(document.activeElement).toBe(tree());
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(focusedText()).toContain("Tables");
+  });
+
+  it("ignores the keys when the row focus was parked on is gone", async () => {
+    const props = big();
+    const { rerender } = render(<ExplorerTree {...props} />);
+    (screen.getByText(name(3)).closest('[role="treeitem"]') as HTMLElement).focus();
+    scrollTo(1000 * ROW);
+    rerender(<ExplorerTree {...props} open={{ "s:public": true }} />);
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(tree());
+  });
+
+  it("shows the tail when the tree shrinks under a deep scroll", () => {
+    const props = big();
+    const { rerender } = render(<ExplorerTree {...props} />);
+    scrollTo(1900 * ROW);
+    rerender(<ExplorerTree {...props} objects={{ public: many(100) }} />);
+    expect(screen.getByText(name(99))).toBeInTheDocument();
+  });
+
+  it("skips rows that are not treeitems, and stays put at the ends", async () => {
+    render(
+      <ExplorerTree
+        {...base}
+        schemas={["public", "app"]}
+        objects={{ public: [obj("users")] }}
+        columns={{ "public.users": [col("id"), col("email")] }}
+        open={{ "s:public": true, "g:public:table": true, "t:public.users": true, "c:public.users": true }}
+      />,
+    );
+    const cols = screen.getByText("Columns").closest('[role="treeitem"]') as HTMLElement;
+    cols.focus();
+    // Over the two column leaves to the next header.
+    await userEvent.keyboard("{ArrowDown}");
+    expect(focusedText()).toContain("Indexes");
+    await userEvent.keyboard("{End}");
+    expect(focusedText()).toContain("app");
+    await userEvent.keyboard("{ArrowDown}");
+    expect(focusedText()).toContain("app");
+    // A row with nothing to open leaves ArrowRight alone; a top-level row has
+    // no parent to step out to.
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(focusedText()).toContain("app");
+  });
+
+  it("leaves ArrowRight alone on a row that does not expand", async () => {
+    const onDetails = vi.fn();
+    render(
+      <ExplorerTree
+        {...base}
+        objects={{ public: [obj("users_id_seq", { kind: "sequence" })] }}
+        open={{ "s:public": true, "g:public:sequence": true }}
+        onDetails={onDetails}
+      />,
+    );
+    const seq = screen.getByText("users_id_seq").closest('[role="treeitem"]') as HTMLElement;
+    seq.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(document.activeElement).toBe(seq);
+    await userEvent.keyboard("{Enter}");
+    expect(onDetails).toHaveBeenCalledWith("public", "users_id_seq", "sequence");
+  });
+
+  it("does not hijack keys pressed on a button inside a row", async () => {
+    render(<ExplorerTree {...withTable(obj("users"))} />);
+    const btn = screen.getByTitle(/Details —/);
+    btn.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(btn);
+  });
+
+  it("does nothing when an empty tree takes focus", () => {
+    render(<ExplorerTree {...base} schemas={[]} />);
+    tree().focus();
+    expect(document.activeElement).toBe(tree());
+  });
+
+  it("uses the measured height when there is one", () => {
+    const spy = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(240);
+    try {
+      render(<ExplorerTree {...big()} />);
+      // 10 rows on screen + 10 of overscan each side.
+      expect(screen.getAllByRole("treeitem")).toHaveLength(30);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("toggles a group from its header", async () => {
+    const onToggle = vi.fn();
+    render(<ExplorerTree {...big(3)} onToggle={onToggle} />);
+    await userEvent.click(screen.getByText("Tables"));
+    expect(onToggle).toHaveBeenCalledWith("g:public:table");
+  });
+
+  it("says loading under an open schema whose objects have not arrived, and before any schema has", () => {
+    const { rerender } = render(<ExplorerTree {...base} open={{ "s:public": true }} />);
+    expect(screen.getByText("loading…")).toBeInTheDocument();
+    rerender(<ExplorerTree {...base} schemas={null} />);
+    expect(screen.getByText("Loading schemas…")).toBeInTheDocument();
+  });
+
+  it("marks a unique index, and titles a constraint with its kind when it has no definition", () => {
+    render(
+      <ExplorerTree
+        {...base}
+        objects={{ public: [obj("users")] }}
+        indexes={{ "public.users": [idx("ux_email", { isUnique: true })] }}
+        constraints={{ "public.users": [{ name: "ck_a", kind: "CHECK", definition: null, isValid: true }] } as never}
+        open={{
+          "s:public": true,
+          "g:public:table": true,
+          "t:public.users": true,
+          "i:public.users": true,
+          "k:public.users": true,
+        }}
+      />,
+    );
+    expect(screen.getByText("UNIQUE")).toBeInTheDocument();
+    expect(screen.getByText("ck_a").closest(".tree-row")).toHaveAttribute("title", "CHECK");
   });
 });

@@ -1165,10 +1165,10 @@ export default function App() {
       const cap = Math.min(EXPORT_CAPS[kind] ?? COPY_ROW_CAP, COPY_ROW_CAP);
       const n = Math.min(result.storedRows, cap);
       const mode = csvSafe ? "spreadsheet-safe" : "raw";
-      // Formatted by the backend: only the finished text comes into the page.
-      const out = await invoke<{ text: string; rows: number }>("copy_result_text", { kind, mode, limit: n });
-      await navigator.clipboard.writeText(out.text);
-      showToast(`${kind.toUpperCase()} copied — ${rowCountNote(out.rows, result)}`);
+      // Formatted by the backend and put on the clipboard there: the text never
+      // enters the page, only the count of rows it held.
+      const rows = await invoke<number>("copy_result_text", { kind, mode, limit: n });
+      showToast(`${kind.toUpperCase()} copied — ${rowCountNote(rows, result)}`);
     },
     [result, showToast, csvSafe]
   );

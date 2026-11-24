@@ -32,6 +32,16 @@ CREATE INDEX IF NOT EXISTS idx_meta_search
   ON metadata_objects(connection_key, object_name);
 "#;
 
+/// Page cache ceiling in KiB (negative `cache_size` means KiB, not pages).
+/// SQLite's default is ~2 MB; the explorer reads one scope at a time.
+const CACHE_KIB: i64 = 512;
+
+/// Checkpoint after ~2 MiB of WAL and truncate the file back to that. A full
+/// refresh of a large schema writes several MB in one transaction, and without
+/// a limit the WAL keeps that high-water size on disk indefinitely.
+const WAL_AUTOCHECKPOINT_PAGES: i64 = 512;
+const WAL_SIZE_LIMIT_BYTES: i64 = 2 * 1024 * 1024;
+
 /// A cached entry: name plus the JSON payload stored for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CachedEntry {
@@ -83,6 +93,12 @@ impl MetadataCache {
 
     fn init(conn: Connection) -> Result<Self, CacheError> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        // WAL + NORMAL cannot corrupt the file; at worst a power cut drops the
+        // last refresh, which this cache is defined to survive.
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "cache_size", -CACHE_KIB)?;
+        conn.pragma_update(None, "wal_autocheckpoint", WAL_AUTOCHECKPOINT_PAGES)?;
+        conn.pragma_update(None, "journal_size_limit", WAL_SIZE_LIMIT_BYTES)?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self { conn })
     }
@@ -97,13 +113,13 @@ impl MetadataCache {
         entries: &[(String, String)],
     ) -> Result<(), CacheError> {
         let tx = self.conn.transaction()?;
-        tx.execute(
+        tx.prepare_cached(
             "DELETE FROM metadata_objects
              WHERE connection_key = ?1 AND object_type = ?2 AND schema_name = ?3",
-            params![connection_key, object_type, schema_name],
-        )?;
+        )?
+        .execute(params![connection_key, object_type, schema_name])?;
         {
-            let mut stmt = tx.prepare(
+            let mut stmt = tx.prepare_cached(
                 "INSERT INTO metadata_objects
                    (connection_key, object_type, schema_name, object_name,
                     payload_json, fetched_at)
@@ -132,21 +148,22 @@ impl MetadataCache {
         object_name: &str,
         payload_json: &str,
     ) -> Result<(), CacheError> {
-        self.conn.execute(
-            "INSERT INTO metadata_objects
-               (connection_key, object_type, schema_name, object_name,
-                payload_json, fetched_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, unixepoch())
-             ON CONFLICT(connection_key, object_type, schema_name, object_name)
-             DO UPDATE SET payload_json = ?5, fetched_at = unixepoch()",
-            params![
+        self.conn
+            .prepare_cached(
+                "INSERT INTO metadata_objects
+                   (connection_key, object_type, schema_name, object_name,
+                    payload_json, fetched_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, unixepoch())
+                 ON CONFLICT(connection_key, object_type, schema_name, object_name)
+                 DO UPDATE SET payload_json = ?5, fetched_at = unixepoch()",
+            )?
+            .execute(params![
                 connection_key,
                 object_type,
                 schema_name,
                 object_name,
                 payload_json
-            ],
-        )?;
+            ])?;
         Ok(())
     }
 
@@ -159,10 +176,12 @@ impl MetadataCache {
     ) -> Result<Option<CachedEntry>, CacheError> {
         let row = self
             .conn
-            .query_row(
+            .prepare_cached(
                 "SELECT object_name, payload_json, fetched_at FROM metadata_objects
                  WHERE connection_key = ?1 AND object_type = ?2
                    AND schema_name = ?3 AND object_name = ?4",
+            )?
+            .query_row(
                 params![connection_key, object_type, schema_name, object_name],
                 |r| {
                     Ok(CachedEntry {
@@ -182,7 +201,7 @@ impl MetadataCache {
         object_type: &str,
         schema_name: &str,
     ) -> Result<Vec<CachedEntry>, CacheError> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT object_name, payload_json, fetched_at FROM metadata_objects
              WHERE connection_key = ?1 AND object_type = ?2 AND schema_name = ?3
              ORDER BY object_name",
@@ -207,7 +226,7 @@ impl MetadataCache {
         limit: usize,
     ) -> Result<Vec<(String, String, String)>, CacheError> {
         let like = format!("%{}%", pattern.replace('%', "\\%").replace('_', "\\_"));
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT object_type, schema_name, object_name FROM metadata_objects
              WHERE connection_key = ?1 AND object_name LIKE ?2 ESCAPE '\\'
              ORDER BY object_name LIMIT ?3",
@@ -235,6 +254,29 @@ mod tests {
     use super::*;
 
     const KEY: &str = "talaat@localhost:5432/postgres";
+
+    /// Per-connection settings: if one stops being applied SQLite silently
+    /// returns to a 2 MB cache and an fsync per commit.
+    #[test]
+    fn connection_is_tuned_for_a_small_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = MetadataCache::open(&dir.path().join("tuned.db")).unwrap();
+        let pragma = |name: &str| -> i64 {
+            cache
+                .conn
+                .query_row(&format!("PRAGMA {name}"), [], |r| r.get(0))
+                .unwrap()
+        };
+        let mode: String = cache
+            .conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+        assert_eq!(pragma("synchronous"), 1, "NORMAL");
+        assert_eq!(pragma("cache_size"), -CACHE_KIB);
+        assert_eq!(pragma("wal_autocheckpoint"), WAL_AUTOCHECKPOINT_PAGES);
+        assert_eq!(pragma("journal_size_limit"), WAL_SIZE_LIMIT_BYTES);
+    }
 
     fn entries(names: &[&str]) -> Vec<(String, String)> {
         names

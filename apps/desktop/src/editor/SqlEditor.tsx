@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   autoPair,
   deletePair,
@@ -56,6 +56,45 @@ type PopupState = {
 const KIND_GLYPH: Record<string, string> = {
   column: "C", table: "T", view: "V", schema: "S", function: "ƒ", keyword: "K",
 };
+
+/** What `tokenizeLines` puts in a line: plain text, or one highlighted span. */
+type Tok = string | React.ReactElement<{ className: string; children: string }>;
+
+/** Whether two lines would render the same DOM. Keys are deliberately ignored:
+ *  the tokenizer numbers its spans across the whole text, so a token added on
+ *  line 1 renumbers every span below it without changing what they show. */
+function sameTokens(a: React.ReactNode[], b: React.ReactNode[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i] as Tok;
+    const y = b[i] as Tok;
+    if (x === y) continue;
+    if (typeof x === "string" || typeof y === "string") return false;
+    if (x.props.className !== y.props.className || x.props.children !== y.props.children) return false;
+  }
+  return true;
+}
+
+/** One line of the highlight layer.
+ *
+ *  The text is still tokenized whole on every edit — a string literal can span
+ *  lines, so a line's tokens depend on the lines above it and cannot be cached
+ *  by the line's own text. What is skipped is everything after that: a line
+ *  whose tokens came out the same is not re-rendered or reconciled, so a
+ *  keystroke in a script of thousands of lines touches the DOM of the lines it
+ *  actually changed. */
+const EditorLine = memo(
+  function EditorLine({ n, nodes }: { n: number; nodes: React.ReactNode[] }) {
+    return (
+      <div className="eline">
+        <span className="lnum">{n}</span>
+        {nodes}
+      </div>
+    );
+  },
+  (prev, next) => prev.n === next.n && sameTokens(prev.nodes, next.nodes),
+);
 
 /** Overlay editor from the HUD design: highlighted <pre> under a
  *  transparent <textarea> with an accent caret, plus a line gutter.
@@ -528,10 +567,7 @@ export default function SqlEditor(p: Props) {
         )}
         <pre className="editor-pre" ref={preRef} aria-hidden="true">
           {lines.map((nodes, i) => (
-            <div className="eline" key={i}>
-              <span className="lnum">{i + 1}</span>
-              {nodes}
-            </div>
+            <EditorLine key={i} n={i + 1} nodes={nodes} />
           ))}
         </pre>
         <textarea

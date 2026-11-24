@@ -15,6 +15,11 @@ tauri = { version = "2", features = [] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-dialog = "2"
+# Rust-side only: `copy_result_text` puts the text on the clipboard itself, so
+# it never crosses the IPC bridge. No JS package, no capability permission.
+# arboard directly, without its image support: the Tauri clipboard plugin
+# turns that on and brings the `image` and `tiff` crates with it.
+arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
 tuplenest-workspace-store = { path = "../../../crates/workspace-store" }

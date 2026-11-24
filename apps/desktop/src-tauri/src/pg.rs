@@ -743,6 +743,12 @@ fn json_to_param(v: serde_json::Value) -> tuplenest_driver_api::ParamValue {
 /// `Number.MAX_SAFE_INTEGER`: the largest integer a JavaScript number holds exactly.
 const JS_MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
+/// One cell as the JSON value the WebView receives, built as a tree.
+///
+/// This was the storing path (cell → `Value` → text). Rows are now written by
+/// [`write_cell`] without the tree; this stays as the definition of the format
+/// that one is tested against, byte for byte.
+#[cfg(test)]
 fn cell_to_json(cell: CellValue) -> serde_json::Value {
     match cell {
         CellValue::Null => serde_json::Value::Null,
@@ -767,21 +773,89 @@ fn cell_to_json(cell: CellValue) -> serde_json::Value {
             }),
         CellValue::Text(t) => t.into(),
         CellValue::Bytes(b) => format!("\\x{}", hex(&b)).into(),
-        CellValue::Json(v) => v,
+        CellValue::Json(v) => serde_json::from_str(v.get()).expect("a RawValue is valid JSON"),
         CellValue::Other { rendered, .. } => rendered.into(),
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
-    // One pre-sized buffer. `format!` per byte was one heap allocation per
-    // byte: a 5 MB bytea cost five million of them (measured 51× slower).
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        out.push(DIGITS[(b >> 4) as usize] as char);
-        out.push(DIGITS[(b & 0x0f) as usize] as char);
+/// Appends one cell to `out` as the JSON value the WebView receives.
+///
+/// The same bytes as serializing `cell_to_json(cell)`, without building the
+/// `Value`: that was a 32-byte node per cell and a fresh `String` for every
+/// text, bytea and big integer, all thrown away one line later.
+fn write_cell(out: &mut Vec<u8>, cell: &CellValue) {
+    match cell {
+        CellValue::Null => out.extend_from_slice(b"null"),
+        CellValue::Bool(true) => out.extend_from_slice(b"true"),
+        CellValue::Bool(false) => out.extend_from_slice(b"false"),
+        // JavaScript numbers are doubles: past 2^53 an int8 is silently
+        // rounded (9007199254740993 arrives as …992), in the grid, in exports
+        // and in the WHERE of a row edit. Send those as exact text. Digits and
+        // a sign need no escaping.
+        CellValue::Int(i) if i.unsigned_abs() > JS_MAX_SAFE_INTEGER => {
+            out.push(b'"');
+            write_json(out, i);
+            out.push(b'"');
+        }
+        CellValue::Int(i) => write_json(out, i),
+        // JSON has no NaN or Infinity. Mapping them to null showed (and
+        // exported) a real value as NULL; PostgreSQL's own spelling is exact.
+        CellValue::Float(f) if f.is_finite() => write_json(out, f),
+        CellValue::Float(f) => out.extend_from_slice(if f.is_nan() {
+            b"\"NaN\"".as_slice()
+        } else if *f > 0.0 {
+            b"\"Infinity\""
+        } else {
+            b"\"-Infinity\""
+        }),
+        // serde_json's own string writer, so escaping is its escaping.
+        CellValue::Text(t) => write_json(out, t.as_str()),
+        // `\x…` — the backslash escaped, hex digits as they are.
+        CellValue::Bytes(b) => {
+            out.reserve(b.len() * 2 + 5);
+            out.extend_from_slice(b"\"\\\\x");
+            push_hex(out, b);
+            out.push(b'"');
+        }
+        // Already the compact JSON text: copied, not parsed and re-written.
+        CellValue::Json(j) => out.extend_from_slice(j.get().as_bytes()),
+        CellValue::Other { rendered, .. } => write_json(out, rendered.as_str()),
     }
-    out
+}
+
+/// serde_json's compact form of one scalar, appended to `out`.
+fn write_json<T: serde::Serialize + ?Sized>(out: &mut Vec<u8>, value: &T) {
+    serde_json::to_writer(&mut *out, value).expect("numbers and strings always serialize");
+}
+
+/// Appends a row to `out` as a JSON array of its cells: `[1,"a",null]`.
+fn write_row(out: &mut Vec<u8>, row: &[CellValue]) {
+    out.push(b'[');
+    for (i, cell) in row.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        write_cell(out, cell);
+    }
+    out.push(b']');
+}
+
+/// Appends lowercase hex. No per-byte `format!`: that was one heap allocation
+/// per byte, and a 5 MB bytea cost five million of them (measured 51× slower).
+fn push_hex(out: &mut Vec<u8>, bytes: &[u8]) {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    out.reserve(bytes.len() * 2);
+    for b in bytes {
+        out.push(DIGITS[(b >> 4) as usize]);
+        out.push(DIGITS[(b & 0x0f) as usize]);
+    }
+}
+
+#[cfg(test)]
+fn hex(bytes: &[u8]) -> String {
+    let mut out = Vec::new();
+    push_hex(&mut out, bytes);
+    String::from_utf8(out).expect("hex digits are ASCII")
 }
 
 /// Backend-held result of the last query: the WebView pages windows out of
@@ -866,12 +940,31 @@ fn row_bytes(row: &serde_json::value::RawValue) -> usize {
 }
 
 /// Streams batches into a bounded RowStore.
-struct StoreSink {
+struct StoreSink<'a> {
     inner: StdMutex<StoredResult>,
+    /// The result the grid is paging now, which this one replaces — released
+    /// by the first batch that carries rows. See `pg_query`.
+    previous: Option<&'a StdMutex<Option<StoredResult>>>,
+}
+
+impl<'a> StoreSink<'a> {
+    fn new(previous: Option<&'a StdMutex<Option<StoredResult>>>) -> Self {
+        Self {
+            inner: StdMutex::new(StoredResult {
+                columns: Vec::new(),
+                store: tuplenest_result_stream::RowStore::with_budget(
+                    RESULT_STORE_CAP,
+                    RESULT_STORE_BYTES,
+                ),
+                order: None,
+            }),
+            previous,
+        }
+    }
 }
 
 #[async_trait]
-impl BatchSink for StoreSink {
+impl BatchSink for StoreSink<'_> {
     fn wants_rows(&self) -> bool {
         self.inner
             .lock()
@@ -881,16 +974,28 @@ impl BatchSink for StoreSink {
 
     async fn deliver(&self, batch: RowBatch) -> Result<(), Box<DriverError>> {
         let mut inner = self.inner.lock().expect("sink lock");
-        if inner.columns.is_empty() {
+        // The driver names the columns from the first row, so a batch with
+        // columns is a batch with rows: this statement returns a row set.
+        if inner.columns.is_empty() && !batch.columns.is_empty() {
             inner.columns = batch
                 .columns
                 .iter()
                 .map(|c| (c.name.clone(), c.db_type.clone()))
                 .collect();
         }
+        // That row set replaces the grid's, so the old one goes now, before a
+        // row of the new one is stored, not when the stream ends. Taken under
+        // its lock and freed after it. `try_lock`, because a first sort of
+        // the old result can hold that lock for a few hundred milliseconds
+        // and the stream should not stand still for it: the next batch asks
+        // again (and finds nothing to take every time after the first).
+        if !batch.columns.is_empty() {
+            let old = self
+                .previous
+                .and_then(|p| p.try_lock().ok().and_then(|mut slot| slot.take()));
+            drop(old);
+        }
         let mut buf = Vec::new();
-        // One Vec of cells reused for every row of the batch.
-        let mut json: Vec<serde_json::Value> = Vec::new();
         for row in batch.rows {
             // Past the cap the row is only counted. Converting it first was
             // all the work of storing it, for a row thrown away (a 1M-row
@@ -899,17 +1004,15 @@ impl BatchSink for StoreSink {
                 inner.store.skip();
                 continue;
             }
-            json.clear();
-            json.extend(row.into_iter().map(cell_to_json));
-            // The Values live only for this line; what is kept is the text.
-            // Written into one reused buffer, then copied out at its exact
-            // length: serializing straight into a fresh String grew it by
-            // doubling, and every row left a half-used allocation behind.
+            // Each cell is written straight into one reused buffer, then the
+            // row is copied out at its exact length: serializing into a fresh
+            // String grew it by doubling, and every row left a half-used
+            // allocation behind.
             buf.clear();
-            serde_json::to_writer(&mut buf, &json).expect("a serde_json::Value always serializes");
+            write_row(&mut buf, &row);
             let text = String::from_utf8(buf.clone()).expect("serde_json writes UTF-8");
             let raw = serde_json::value::RawValue::from_string(text)
-                .expect("serde_json wrote valid JSON");
+                .expect("a row of JSON values is a JSON array");
             let bytes = row_bytes(&raw);
             inner.store.push_sized(raw, bytes);
         }
@@ -1121,23 +1224,25 @@ pub async fn pg_query(
     // it up front freed memory a little sooner, but every statement — a row
     // edit's UPDATE, a SAVEPOINT, an import's INSERT, a failed EXPLAIN — then
     // emptied the store the grid was still paging, so its rows came back
-    // empty, sort blanked it and export wrote a header-only file. The cost:
-    // while a new query runs, the old result (at most the store budget) stays.
+    // empty, sort blanked it and export wrote a header-only file.
+    //
+    // "Replaces" is decided by the first row, not by the last. A statement
+    // that returns no rows, or fails before its first one, never touches the
+    // old result. One that has started returning rows is going to replace it
+    // (or fail, and the WebView then shows the error instead of a grid), so
+    // the sink releases the old result as its first rows arrive. Holding it
+    // until the stream ended meant two full store budgets alive at once for
+    // as long as the new query streamed.
+    //
+    // Between that first batch and the end there is no stored result:
+    // `pg_rows` answers "no result", as it does before the first query, and
+    // if the statement then fails it stays that way.
 
     let started_wall = std::time::Instant::now();
     let mut guard = state.session.lock().await;
     let session = guard.as_mut().ok_or("not connected")?;
 
-    let sink = StoreSink {
-        inner: StdMutex::new(StoredResult {
-            columns: Vec::new(),
-            store: tuplenest_result_stream::RowStore::with_budget(
-                RESULT_STORE_CAP,
-                RESULT_STORE_BYTES,
-            ),
-            order: None,
-        }),
-    };
+    let sink = StoreSink::new(Some(&state.result));
     // JSON param values from the WebView → typed ParamValue. Text is the
     // safe default; the server casts as needed for the placeholder's type.
     let bound: Vec<tuplenest_driver_api::ParamValue> = params
@@ -1920,6 +2025,190 @@ mod tests {
     }
 
     #[test]
+    fn a_row_written_cell_by_cell_is_the_bytes_the_value_tree_serialized_to() {
+        let json =
+            |v: serde_json::Value| CellValue::Json(serde_json::value::to_raw_value(&v).unwrap());
+        let other = |s: &str| CellValue::Other {
+            rendered: s.into(),
+            db_type: "interval".into(),
+        };
+        let safe = JS_MAX_SAFE_INTEGER as i64;
+        let cells = vec![
+            CellValue::Null,
+            CellValue::Bool(true),
+            CellValue::Bool(false),
+            // int2/int4/int8, and int8 either side of 2^53.
+            CellValue::Int(0),
+            CellValue::Int(-1),
+            CellValue::Int(42),
+            CellValue::Int(safe),
+            CellValue::Int(-safe),
+            CellValue::Int(safe + 1),
+            CellValue::Int(-safe - 1),
+            CellValue::Int(9_007_199_254_740_993),
+            CellValue::Int(i64::MAX),
+            CellValue::Int(i64::MIN),
+            // float4 (widened) and float8, finite and not.
+            CellValue::Float(0.0),
+            CellValue::Float(-0.0),
+            CellValue::Float(1.5),
+            CellValue::Float(-2.0),
+            CellValue::Float(0.1),
+            CellValue::Float(0.1_f32 as f64),
+            CellValue::Float(1e21),
+            CellValue::Float(1e-7),
+            CellValue::Float(123456789012345680.0),
+            CellValue::Float(f64::MAX),
+            CellValue::Float(f64::MIN_POSITIVE),
+            CellValue::Float(5e-324),
+            CellValue::Float(f64::NAN),
+            CellValue::Float(f64::INFINITY),
+            CellValue::Float(f64::NEG_INFINITY),
+            // Text, and what the driver renders as text: numeric, arrays.
+            CellValue::Text(String::new()),
+            CellValue::Text("plain".into()),
+            CellValue::Text("quote \" backslash \\ slash / tab \t nl \n cr \r".into()),
+            CellValue::Text((0u8..0x20).map(char::from).collect()),
+            CellValue::Text("\u{7f}\u{80}\u{2028}\u{2029}\u{feff} é ü 日本 🐘".into()),
+            CellValue::Text("</script><!-- &amp; '".into()),
+            CellValue::Text("12345678901234567890.123456789000".into()),
+            CellValue::Text("-0.00".into()),
+            CellValue::Text("NaN".into()),
+            CellValue::Text("{1,2,NULL}".into()),
+            CellValue::Text(r#"{a,"b c","d\"e",NULL,"\\x"}"#.into()),
+            CellValue::Text("null".into()),
+            // bytea.
+            CellValue::Bytes(Vec::new()),
+            CellValue::Bytes(vec![0]),
+            CellValue::Bytes((0..=255).collect()),
+            // json / jsonb, as the driver hands them over: compact text.
+            json(serde_json::json!(null)),
+            json(serde_json::json!(true)),
+            json(serde_json::json!(0)),
+            json(serde_json::json!(-7)),
+            json(serde_json::json!(2.5)),
+            json(serde_json::json!(18446744073709551615u64)),
+            json(serde_json::json!(1.2345678901234568e22)),
+            json(serde_json::json!("")),
+            json(serde_json::json!("q \" b \\ n \n u \u{1} é 🐘")),
+            json(serde_json::json!([])),
+            json(serde_json::json!({})),
+            json(serde_json::json!([1, "a", null, [2, [3]], {"k": []}])),
+            json(serde_json::json!({"b": 1, "a": {"z": [1.5, false], "y": "x,y]"}, "": null})),
+            // Everything else: the rendered form.
+            other("1 day 02:03:04"),
+            other("[1,10)"),
+            other("<jsonb of 2097152 bytes — too large to show in a cell>"),
+            other("with \"quotes\" and \\ and \n"),
+        ];
+        let old = |row: &[CellValue]| {
+            let values: Vec<serde_json::Value> = row.iter().cloned().map(cell_to_json).collect();
+            let mut out = Vec::new();
+            serde_json::to_writer(&mut out, &values).unwrap();
+            String::from_utf8(out).unwrap()
+        };
+        let new = |row: &[CellValue]| {
+            let mut out = Vec::new();
+            write_row(&mut out, row);
+            String::from_utf8(out).unwrap()
+        };
+        // Each cell alone, so a difference names its cell; then as one row,
+        // an empty row, and through a reused buffer as the sink does.
+        for cell in &cells {
+            let row = std::slice::from_ref(cell);
+            assert_eq!(new(row), old(row), "{cell:?}");
+        }
+        assert_eq!(new(&cells), old(&cells));
+        assert_eq!(new(&[]), "[]");
+        assert_eq!(old(&[]), "[]");
+        let mut buf = b"left over from the row before".to_vec();
+        buf.clear();
+        write_row(&mut buf, &cells);
+        assert_eq!(String::from_utf8(buf).unwrap(), old(&cells));
+        // And the reference is not vacuous: the shapes that matter, spelled out.
+        assert_eq!(
+            new(&[
+                CellValue::Null,
+                CellValue::Int(9_007_199_254_740_993),
+                CellValue::Float(f64::NAN),
+                CellValue::Float(1.0),
+                CellValue::Bytes(vec![0x00, 0xab, 0xff]),
+                CellValue::Text("a\"b\n".into()),
+                json(serde_json::json!({"b": [1, null], "a": "x"})),
+            ]),
+            r#"[null,"9007199254740993","NaN",1.0,"\\x00abff","a\"b\n",{"a":"x","b":[1,null]}]"#
+        );
+    }
+
+    #[tokio::test]
+    async fn the_old_result_goes_when_the_new_one_has_rows_and_only_then() {
+        let old_result = || {
+            let mut stored = StoredResult {
+                columns: vec![("n".into(), "int4".into())],
+                store: tuplenest_result_stream::RowStore::new(10),
+                order: None,
+            };
+            stored
+                .store
+                .push(serde_json::value::to_raw_value(&serde_json::json!([1])).unwrap());
+            StdMutex::new(Some(stored))
+        };
+        let batch = |sequence, rows: Vec<Vec<CellValue>>, is_last| RowBatch {
+            execution_id: ExecutionId::new(),
+            sequence,
+            // The driver names the columns from the first row it sees.
+            columns: if rows.is_empty() && sequence == 0 {
+                Vec::new()
+            } else {
+                vec![tuplenest_driver_api::ColumnMeta {
+                    name: "m".into(),
+                    db_type: "int4".into(),
+                    nullable: None,
+                }]
+            },
+            rows,
+            is_last,
+        };
+        let pageable = |slot: &StdMutex<Option<StoredResult>>| {
+            slot.lock()
+                .unwrap()
+                .as_mut()
+                .map(|s| page(s, 0, 10, None).unwrap().get().to_owned())
+        };
+
+        // A statement that fails before its first row delivers nothing, and
+        // one that returns no rows (UPDATE, SAVEPOINT, an INSERT) delivers
+        // one empty batch: the grid's rows stay where they are.
+        let slot = old_result();
+        let failed = StoreSink::new(Some(&slot));
+        drop(failed);
+        assert_eq!(pageable(&slot).as_deref(), Some("[[1]]"));
+        let rowless = StoreSink::new(Some(&slot));
+        rowless.deliver(batch(0, vec![], true)).await.unwrap();
+        assert!(rowless.inner.into_inner().unwrap().columns.is_empty());
+        assert_eq!(pageable(&slot).as_deref(), Some("[[1]]"));
+
+        // A row set is going to replace it: gone with the first batch, while
+        // the stream is still running, not once it has ended.
+        let query = StoreSink::new(Some(&slot));
+        query
+            .deliver(batch(0, vec![vec![CellValue::Int(7)]], false))
+            .await
+            .unwrap();
+        assert!(
+            slot.lock().unwrap().is_none(),
+            "the old result outlived the first rows of the new one"
+        );
+        query
+            .deliver(batch(1, vec![vec![CellValue::Int(8)]], true))
+            .await
+            .unwrap();
+        let mut new = query.inner.into_inner().unwrap();
+        assert_eq!(new.columns, vec![("m".to_string(), "int4".to_string())]);
+        assert_eq!(page(&mut new, 0, 10, None).unwrap().get(), "[[7],[8]]");
+    }
+
+    #[test]
     fn a_saved_profile_decides_its_environment_and_read_only() {
         // The WebView used to decide both: it could drop "prod" (no audit log,
         // query text in history) or read-only on a profile tagged otherwise.
@@ -2079,16 +2368,7 @@ mod wide_bench {
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
-        let sink = StoreSink {
-            inner: StdMutex::new(StoredResult {
-                columns: Vec::new(),
-                store: tuplenest_result_stream::RowStore::with_budget(
-                    RESULT_STORE_CAP,
-                    RESULT_STORE_BYTES,
-                ),
-                order: None,
-            }),
-        };
+        let sink = StoreSink::new(None);
         let columns: Vec<tuplenest_driver_api::ColumnMeta> = (0..200)
             .map(|i| tuplenest_driver_api::ColumnMeta {
                 name: format!("c{i}"),

@@ -48,12 +48,11 @@ const exportMenu = async (user: ReturnType<typeof userEvent.setup>) => {
 
 describe("App — copying the result", () => {
   /**
-   * These check the copy path runs and reports honestly — that it read every
-   * row and said how many. They do not assert the clipboard's contents:
-   * jsdom's `navigator.clipboard` could not be intercepted here (neither
-   * spyOn nor defineProperty is what the app ends up calling), so an
-   * assertion on it would be checking the stub rather than the app. The
-   * formatting itself is covered in the backend, src-tauri/src/export.rs.
+   * These check the copy path runs and reports honestly — that it asked for
+   * every row and said how many. There is no clipboard to assert on here:
+   * the backend formats the text and puts it on the system clipboard itself
+   * (`copy_result_text` in src-tauri/src/main.rs), and the page is told only
+   * the row count. The formatting is covered in src-tauri/src/export.rs.
    */
   it("reads every row before copying, not just the page on screen", async () => {
     // The grid holds a window. Copying what is on screen silently truncates,

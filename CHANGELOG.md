@@ -38,6 +38,19 @@ trusting it.
 - Secrets in JSON shapes are redacted; logs keep 14 days.
 
 ### Performance and reliability
+- The explorer tree draws only the rows on screen (2,000 tables: about 14,000
+  page nodes down to under 300). Rows are a uniform 24px.
+- The SQL editor re-renders only the lines an edit changed.
+- Copy puts the text on the clipboard from the backend; it no longer passes
+  through the window.
+- A new row-returning query frees the previous result at its first batch, not
+  when it finishes, so two full results are not held at once.
+- Rows are written to their stored text directly, and a JSON cell's parsed
+  tree is dropped as soon as it is read (wide-result ingest 379 → 291 ms).
+- Moving the selection re-renders only the rows that changed, and a cell being
+  edited survives scrolling away and back.
+- History and audit lists read through indexes; the history and metadata
+  databases use a smaller page cache and a bounded WAL file. Schema version 7.
 - Very wide results draw only the columns on screen (200 columns: about 12,000
   cell nodes down to about 1,500), and the grid keeps 1,000 rows near the
   viewport instead of 4,200.

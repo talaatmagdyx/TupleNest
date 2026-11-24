@@ -96,6 +96,17 @@ fn layout_load(
         .map_err(|e| e.to_string())
 }
 
+/// The most rows one `history_list` / `audit_list` call returns.
+///
+/// The limit comes from the WebView. Without a ceiling a single call could
+/// ask for the whole table — every statement ever run, each with its SQL
+/// text — and hold it in Rust, in the IPC payload and in the page at once.
+const LIST_LIMIT_MAX: usize = 1_000;
+
+fn list_limit(requested: Option<usize>, default: usize) -> usize {
+    requested.unwrap_or(default).min(LIST_LIMIT_MAX)
+}
+
 #[tauri::command]
 fn history_list(
     state: tauri::State<'_, AppState>,
@@ -108,7 +119,7 @@ fn history_list(
         .map_err(|_| "store lock poisoned".to_string())?
         .history_list(
             search.as_deref().filter(|s| !s.is_empty()),
-            limit.unwrap_or(50),
+            list_limit(limit, 50),
         )
         .map_err(|e| e.to_string())
 }
@@ -193,7 +204,7 @@ fn audit_list(
         .store
         .lock()
         .map_err(|_| "store lock poisoned".to_string())?
-        .audit_list(limit.unwrap_or(200))
+        .audit_list(list_limit(limit, 200))
         .map_err(|e| e.to_string())
 }
 
@@ -333,6 +344,26 @@ fn export_finish(state: tauri::State<'_, ExportState>) -> Result<(), String> {
     sink.finish().map_err(|e| e.to_string())
 }
 
+/// Rows one `export_result_page` call formats and writes.
+const EXPORT_PAGE_MAX: usize = 1_000;
+
+/// Rows a clipboard copy holds at most; the page asks for no more than this
+/// (`COPY_ROW_CAP` in App.tsx), and the ceiling is enforced here as well.
+const COPY_ROW_MAX: usize = 10_000;
+
+/// Run blocking work — formatting, a file write, a std lock — off the async
+/// workers. There are only two to four of those (`worker_threads`), and one
+/// stuck in a disk write is one fewer to carry a cancel.
+async fn off_runtime<T, F>(work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Format one page of the stored result and append it to the open export.
 ///
 /// Rows go from the backend's store straight into the file; the WebView only
@@ -340,38 +371,57 @@ fn export_finish(state: tauri::State<'_, ExportState>) -> Result<(), String> {
 /// rows were written — fewer than `limit` means the result ended.
 #[tauri::command]
 async fn export_result_page(
-    export: tauri::State<'_, ExportState>,
-    pg: tauri::State<'_, pg::PgState>,
+    app: tauri::AppHandle,
     kind: export::Kind,
     mode: export::Mode,
     offset: usize,
     limit: usize,
     total: usize,
 ) -> Result<usize, String> {
-    let (chunk, n) = pg::export_page(&pg, kind, mode, offset, limit.min(1_000), total)?;
-    let mut slot = export.0.lock().map_err(|_| "export lock poisoned")?;
-    let sink = slot.as_mut().ok_or("no export in progress")?;
-    sink.write(&chunk).map_err(|e| e.to_string())?;
-    Ok(n)
+    off_runtime(move || {
+        let pg = app.state::<pg::PgState>();
+        let export = app.state::<ExportState>();
+        let (chunk, n) =
+            pg::export_page(&pg, kind, mode, offset, limit.min(EXPORT_PAGE_MAX), total)?;
+        let mut slot = export.0.lock().map_err(|_| "export lock poisoned")?;
+        let sink = slot.as_mut().ok_or("no export in progress")?;
+        sink.write(&chunk).map_err(|e| e.to_string())?;
+        Ok(n)
+    })
+    .await
 }
 
-#[derive(serde::Serialize)]
-struct CopiedText {
-    text: String,
-    rows: usize,
-}
-
-/// The first `limit` rows as one document, for the clipboard — which takes a
-/// single string, so this is the one place the whole text exists at once.
+/// Put the first `limit` rows on the system clipboard as one document, and
+/// return how many rows that was.
+///
+/// The clipboard takes a single string, so this is the one place the whole
+/// text exists at once — and it exists once. It used to be returned to the
+/// page for `navigator.clipboard.writeText`, which made three copies of it:
+/// here, in the IPC payload, and in the WebView. Now the text goes from this
+/// process straight to the pasteboard and only the count crosses the bridge.
 #[tauri::command]
 async fn copy_result_text(
-    pg: tauri::State<'_, pg::PgState>,
+    app: tauri::AppHandle,
     kind: export::Kind,
     mode: export::Mode,
     limit: usize,
-) -> Result<CopiedText, String> {
-    let (text, rows) = pg::export_document(&pg, kind, mode, limit)?;
-    Ok(CopiedText { text, rows })
+) -> Result<usize, String> {
+    off_runtime(move || {
+        let pg = app.state::<pg::PgState>();
+        let (text, rows) = pg::export_document(&pg, kind, mode, limit.min(COPY_ROW_MAX))?;
+        // One clipboard for the life of the app: on X11 and Wayland the text
+        // is served by whoever set it, and is gone once that handle drops.
+        static CLIPBOARD: std::sync::Mutex<Option<arboard::Clipboard>> =
+            std::sync::Mutex::new(None);
+        let mut slot = CLIPBOARD.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.is_none() {
+            *slot = Some(arboard::Clipboard::new().map_err(|e| e.to_string())?);
+        }
+        let clipboard = slot.as_mut().expect("set just above");
+        clipboard.set_text(text).map_err(|e| e.to_string())?;
+        Ok(rows)
+    })
+    .await
 }
 
 /// Abandon an export and remove what was written.
@@ -621,6 +671,42 @@ fn main() {
         .expect("error while running TupleNest");
 }
 
+#[cfg(test)]
+mod limit_tests {
+    use super::{list_limit, off_runtime, LIST_LIMIT_MAX};
+
+    #[test]
+    fn a_missing_limit_takes_the_default() {
+        assert_eq!(list_limit(None, 50), 50);
+        assert_eq!(list_limit(Some(10), 50), 10);
+    }
+
+    #[test]
+    fn a_huge_limit_is_clamped() {
+        assert_eq!(list_limit(Some(usize::MAX), 50), LIST_LIMIT_MAX);
+        assert_eq!(list_limit(Some(LIST_LIMIT_MAX + 1), 200), LIST_LIMIT_MAX);
+    }
+
+    #[test]
+    fn blocking_work_reports_its_result_and_its_error() {
+        tauri::async_runtime::block_on(async {
+            assert_eq!(off_runtime(|| Ok(7)).await, Ok(7));
+            let failed: Result<(), String> = off_runtime(|| Err("no result".into())).await;
+            assert_eq!(failed, Err("no result".into()));
+        });
+    }
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    #[test]
+    fn worker_threads_stay_between_two_and_four() {
+        assert_eq!(super::worker_threads(1), 2);
+        assert_eq!(super::worker_threads(3), 3);
+        assert_eq!(super::worker_threads(16), 4);
+    }
+}
+
 /// The capability file must grant every window command the frontend calls.
 ///
 /// Written after the red X shipped broken in v0.1.0-beta.1. `App.tsx` calls
@@ -637,16 +723,6 @@ fn main() {
 /// at runtime; only launching the app does that. It catches the one piece that
 /// is mechanically checkable: a call the source really makes, with the
 /// matching permission silently absent.
-#[cfg(test)]
-mod runtime_tests {
-    #[test]
-    fn worker_threads_stay_between_two_and_four() {
-        assert_eq!(super::worker_threads(1), 2);
-        assert_eq!(super::worker_threads(3), 3);
-        assert_eq!(super::worker_threads(16), 4);
-    }
-}
-
 #[cfg(test)]
 mod capability_tests {
     use std::collections::BTreeSet;

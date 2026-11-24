@@ -2336,7 +2336,17 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
             v.to_string()
         )),
 
-        Type::JSON | Type::JSONB => take!(serde_json::Value, CellValue::Json),
+        // Decoded (json's wire form is the text, jsonb's a version byte and
+        // the text) and written straight back out compact, so the cell is
+        // exactly what a `Value` serialized to before — sorted keys, no
+        // whitespace — while the tree lives for this one cell instead of for
+        // every JSON cell of the batch.
+        Type::JSON | Type::JSONB => take!(serde_json::Value, |v: serde_json::Value| {
+            match serde_json::value::to_raw_value(&v) {
+                Ok(text) => CellValue::Json(text),
+                Err(_) => fallback(row, i, ty),
+            }
+        }),
         Type::BYTEA => take!(Vec<u8>, CellValue::Bytes),
         Type::UUID => take!(uuid::Uuid, |v: uuid::Uuid| CellValue::Text(v.to_string())),
         Type::INET | Type::CIDR => take!(std::net::IpAddr, |v: std::net::IpAddr| {
