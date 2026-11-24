@@ -38,6 +38,13 @@ trusting it.
 - Secrets in JSON shapes are redacted; logs keep 14 days.
 
 ### Performance and reliability
+- Stored rows are compressed in 8 KB blocks and, past 16 MB, kept in an
+  anonymous temporary file that the system deletes when the app closes or
+  crashes. 200 columns × 50,000 rows: peak 98 → 30 MB.
+- A result keeps at most 50,000 rows or 128 MB of row text (was 100,000 and
+  256 MB); rows past that are still counted.
+- Memory freed by dropping a result is handed back to the system (macOS and
+  Linux), and read batches are cut at 4 MB instead of 8 MB.
 - The explorer tree draws only the rows on screen (2,000 tables: about 14,000
   page nodes down to under 300). Rows are a uniform 24px.
 - The SQL editor re-renders only the lines an edit changed.

@@ -695,8 +695,16 @@ pub async fn pg_connect(
         .connected_env
         .lock()
         .map_err(|_| "env lock poisoned")? = params.environment.clone();
-    *state.result.lock().map_err(|_| "result lock poisoned")? = None;
+    let old = state
+        .result
+        .lock()
+        .map_err(|_| "result lock poisoned")?
+        .take();
     drop(slot);
+    if let Some(old) = old {
+        drop(old);
+        crate::trim::release_free_memory();
+    }
     tracing::info!(
         component = "pg",
         host = %params.host,
@@ -715,10 +723,18 @@ pub async fn pg_disconnect(state: tauri::State<'_, PgState>) -> Result<(), Strin
     // reconnect waiting on the lock can install its own cancel handle and
     // tunnel — and a late clear here would drop them.
     *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = None;
-    *state.result.lock().map_err(|_| "result lock poisoned")? = None;
+    let old = state
+        .result
+        .lock()
+        .map_err(|_| "result lock poisoned")?
+        .take();
     // Dropping the tunnel closes the SSH session.
     *state.tunnel.lock().map_err(|_| "tunnel lock poisoned")? = None;
     drop(slot);
+    if let Some(old) = old {
+        drop(old);
+        crate::trim::release_free_memory();
+    }
     tracing::info!(component = "pg", "session closed");
     Ok(())
 }
@@ -862,13 +878,13 @@ fn hex(bytes: &[u8]) -> String {
 /// this store (`pg_rows`) instead of receiving the full row set over IPC.
 pub struct StoredResult {
     columns: Vec<(String, String)>,
-    /// Each row kept as its finished JSON array (`[1,"a",null]`), one heap
-    /// allocation per row. A `Vec<serde_json::Value>` cost 32 bytes per cell
-    /// even for NULL, plus an allocation per string: a 200-column result held
-    /// ~6 KB a row before any data, and the budget had to guess at it. Now the
-    /// size is the text's length, and `pg_rows` copies bytes instead of
-    /// re-serializing every page.
-    store: tuplenest_result_stream::RowStore<Box<serde_json::value::RawValue>>,
+    /// Each row kept as its finished JSON array (`[1,"a",null]`), so a page
+    /// is the rows' bytes joined, not re-serialized. A `Vec<serde_json::Value>`
+    /// cost 32 bytes per cell even for NULL, plus an allocation per string.
+    /// The rows sit in deflated blocks of a few KB (the wide benchmark packs
+    /// ~7x), and past 16 MB of those in RAM the rest go to an anonymous temp
+    /// file — see `tuplenest_result_stream`.
+    store: tuplenest_result_stream::RowStore,
     /// The last sort asked for — (column, descending) — and its row order.
     /// Kept so paging a sorted grid sorts once, not once per page.
     order: Option<(usize, bool, Vec<u32>)>,
@@ -883,7 +899,15 @@ pub struct SortSpec {
 
 impl StoredResult {
     /// The row order for `sort`, computed on first use.
-    fn order_for(&mut self, sort: &SortSpec) -> &[u32] {
+    ///
+    /// The rows stay where they are, in server order; a sorted page reads its
+    /// 1,000 rows through this order, and the store groups them by block so
+    /// each block is decompressed once per page. Rewriting the blocks in
+    /// sorted order instead would make a sorted page as cheap as an unsorted
+    /// one, but costs a second compressed copy (or an external merge) on
+    /// every new sort — more memory and a slower first sort, to win
+    /// milliseconds on later pages that are already fast.
+    fn order_for(&mut self, sort: &SortSpec) -> Result<&[u32], String> {
         let fresh = matches!(&self.order, Some((c, d, _)) if *c == sort.column && *d == sort.desc);
         if !fresh {
             let numeric = self
@@ -895,30 +919,34 @@ impl StoredResult {
             self.order = None;
             // One cell per row, parsed out of the row's text. Transient: only
             // the 4-byte indexes are kept.
-            let keys: Vec<crate::sort::Key> = (0..self.store.stored())
-                .map(|i| {
-                    let cell = self
-                        .store
-                        .get(i)
-                        .map(|row| crate::sort::cell_at(row.get(), sort.column))
-                        .unwrap_or(serde_json::Value::Null);
-                    crate::sort::Key::of_column(cell, numeric)
+            let mut keys: Vec<crate::sort::Key> = Vec::with_capacity(self.store.stored());
+            self.store
+                .for_each(|_, row| {
+                    let cell = crate::sort::cell_at(row, sort.column);
+                    keys.push(crate::sort::Key::of_column(cell, numeric));
                 })
-                .collect();
+                .map_err(|e| e.to_string())?;
             let order = crate::sort::order(&keys, numeric, sort.desc);
+            // One key per row, text keys each their own allocation: megabytes
+            // on a full store, and nothing uses them after this.
             drop(keys);
+            crate::trim::release_free_memory();
             self.order = Some((sort.column, sort.desc, order));
         }
-        self.order
+        Ok(self
+            .order
             .as_ref()
             .map(|(_, _, o)| o.as_slice())
-            .unwrap_or(&[])
+            .unwrap_or(&[]))
     }
 }
 
 /// Hard cap on rows kept for scrolling. Beyond this the stream is still
 /// drained and counted, but rows are dropped and the result marked truncated.
-const RESULT_STORE_CAP: usize = 100_000;
+///
+/// 50,000: more than anyone scrolls through, and what a sort or a chart
+/// walks every time it runs.
+const RESULT_STORE_CAP: usize = 50_000;
 
 /// Hard cap on *memory* kept for scrolling, whichever comes first.
 ///
@@ -927,17 +955,10 @@ const RESULT_STORE_CAP: usize = 100_000;
 /// stopped it. Wide rows are exactly the case where a user has no intuition
 /// for how much they just asked for.
 ///
-/// 256 MB: comfortably more than any result someone reads, far less than
-/// enough to take the machine down with it.
-const RESULT_STORE_BYTES: usize = 256 * 1024 * 1024;
-
-/// What one stored row really costs: its JSON text, the allocation holding
-/// it, and its 16-byte slot in the store's Vec. Exact, not an estimate — the
-/// row is a single allocation.
-fn row_bytes(row: &serde_json::value::RawValue) -> usize {
-    const ALLOC: usize = 16; // allocator header and rounding
-    row.get().len() + ALLOC + std::mem::size_of::<Box<serde_json::value::RawValue>>()
-}
+/// 128 MB of row text — counted uncompressed, as the rows were asked for,
+/// not as they happen to pack: comfortably more than any result someone
+/// reads. Compressed, and spilled to disk past 16 MB, it costs far less RAM.
+const RESULT_STORE_BYTES: usize = 128 * 1024 * 1024;
 
 /// Streams batches into a bounded RowStore.
 struct StoreSink<'a> {
@@ -993,7 +1014,10 @@ impl BatchSink for StoreSink<'_> {
             let old = self
                 .previous
                 .and_then(|p| p.try_lock().ok().and_then(|mut slot| slot.take()));
-            drop(old);
+            if let Some(old) = old {
+                drop(old);
+                crate::trim::release_free_memory();
+            }
         }
         let mut buf = Vec::new();
         for row in batch.rows {
@@ -1004,17 +1028,12 @@ impl BatchSink for StoreSink<'_> {
                 inner.store.skip();
                 continue;
             }
-            // Each cell is written straight into one reused buffer, then the
-            // row is copied out at its exact length: serializing into a fresh
-            // String grew it by doubling, and every row left a half-used
-            // allocation behind.
+            // Each cell is written straight into one reused buffer, which the
+            // store copies into its open block.
             buf.clear();
             write_row(&mut buf, &row);
-            let text = String::from_utf8(buf.clone()).expect("serde_json writes UTF-8");
-            let raw = serde_json::value::RawValue::from_string(text)
-                .expect("a row of JSON values is a JSON array");
-            let bytes = row_bytes(&raw);
-            inner.store.push_sized(raw, bytes);
+            let text = std::str::from_utf8(&buf).expect("serde_json writes UTF-8");
+            inner.store.push(text);
         }
         Ok(())
     }
@@ -1260,6 +1279,11 @@ pub async fn pg_query(
     let summary = match session.execute(request, &sink).await {
         Ok(summary) => summary,
         Err(e) => {
+            // Rows stored before the failure are thrown away with the sink.
+            let partial = sink.inner.into_inner().map(|i| i.store.stored() > 0);
+            if partial.unwrap_or(true) {
+                crate::trim::release_free_memory();
+            }
             // E1.1: a network-category failure means the session is broken.
             // Mark it dead so nothing can silently re-run on a half-open
             // connection; the user must reconnect explicitly.
@@ -1301,8 +1325,11 @@ pub async fn pg_query(
         }
     };
     let mut stored = sink.inner.into_inner().map_err(|_| "sink lock poisoned")?;
-    // The result is complete: give back what the row index grew past.
+    // The result is complete: seal its last block, drop the compressor and
+    // give back what the indexes grew past — then hand those pages, and the
+    // batches' freed buffers, back to the OS.
     stored.store.shrink_to_fit();
+    crate::trim::release_free_memory();
     record_history(
         &app,
         &state,
@@ -1337,7 +1364,17 @@ pub async fn pg_query(
         elapsed_ms: summary.duration_ms,
     };
     if !stored.columns.is_empty() {
-        *state.result.lock().map_err(|_| "result lock poisoned")? = Some(stored);
+        // Normally empty: the sink took the old result with the first rows.
+        // Not if a long first sort held its lock through every batch.
+        let old = state
+            .result
+            .lock()
+            .map_err(|_| "result lock poisoned")?
+            .replace(stored);
+        if let Some(old) = old {
+            drop(old);
+            crate::trim::release_free_memory();
+        }
     }
     Ok(out)
 }
@@ -1345,7 +1382,7 @@ pub async fn pg_query(
 /// Pages a window of rows out of the last query's backend store, in the
 /// server's order or sorted by one column.
 ///
-/// Async so a first sort (a few hundred ms on 100,000 rows) runs off the
+/// Async so a first sort (~100-150 ms on a full store) runs off the
 /// main thread instead of freezing the window.
 #[tauri::command]
 pub async fn pg_rows(
@@ -1371,15 +1408,16 @@ pub fn export_page(
     limit: usize,
     total: usize,
 ) -> Result<(String, usize), String> {
-    let guard = state.result.lock().map_err(|_| "result lock poisoned")?;
-    let stored = guard.as_ref().ok_or("no result")?;
+    let mut guard = state.result.lock().map_err(|_| "result lock poisoned")?;
+    let stored = guard.as_mut().ok_or("no result")?;
     let names: Vec<String> = stored.columns.iter().map(|(n, _)| n.clone()).collect();
     // One page of rows parsed at a time; the rest stay as stored text.
     let page: Vec<Vec<serde_json::Value>> = stored
         .store
         .window(offset, limit)
+        .map_err(|e| e.to_string())?
         .iter()
-        .map(|r| serde_json::from_str(r.get()).unwrap_or_default())
+        .map(|r| serde_json::from_str(r).unwrap_or_default())
         .collect();
     let n = page.len();
     let mut out = if offset == 0 {
@@ -1439,37 +1477,42 @@ pub async fn pg_chart(
     value: usize,
     max_bars: usize,
 ) -> Result<ChartOut, String> {
-    let guard = state.result.lock().map_err(|_| "result lock poisoned")?;
-    let stored = guard.as_ref().ok_or("no result")?;
-    Ok(chart(stored, label, value, max_bars))
+    let mut guard = state.result.lock().map_err(|_| "result lock poisoned")?;
+    let stored = guard.as_mut().ok_or("no result")?;
+    chart(stored, label, value, max_bars)
 }
 
-fn chart(stored: &StoredResult, label: usize, value: usize, max_bars: usize) -> ChartOut {
+fn chart(
+    stored: &mut StoredResult,
+    label: usize,
+    value: usize,
+    max_bars: usize,
+) -> Result<ChartOut, String> {
     use std::collections::HashMap;
     let rows = stored.store.stored();
     // Each label is held once, as the map's key, with its first-seen position
     // and running sum. A second copy per bar doubled a high-cardinality chart.
     let mut at: HashMap<String, (usize, f64)> = HashMap::new();
-    for i in 0..rows {
-        let Some(row) = stored.store.get(i) else {
-            break;
-        };
-        let v = match crate::sort::cell_at(row.get(), value) {
-            serde_json::Value::Number(n) => n.as_f64(),
-            serde_json::Value::String(s) => s.trim().parse::<f64>().ok(),
-            _ => None,
-        };
-        let Some(v) = v.filter(|v| v.is_finite()) else {
-            continue;
-        };
-        let name = match crate::sort::cell_at(row.get(), label) {
-            serde_json::Value::Null => "null".to_owned(),
-            serde_json::Value::String(s) => s,
-            other => other.to_string(),
-        };
-        let next = at.len();
-        at.entry(name).or_insert((next, 0.0)).1 += v;
-    }
+    stored
+        .store
+        .for_each(|_, row| {
+            let v = match crate::sort::cell_at(row, value) {
+                serde_json::Value::Number(n) => n.as_f64(),
+                serde_json::Value::String(s) => s.trim().parse::<f64>().ok(),
+                _ => None,
+            };
+            let Some(v) = v.filter(|v| v.is_finite()) else {
+                return;
+            };
+            let name = match crate::sort::cell_at(row, label) {
+                serde_json::Value::Null => "null".to_owned(),
+                serde_json::Value::String(s) => s,
+                other => other.to_string(),
+            };
+            let next = at.len();
+            at.entry(name).or_insert((next, 0.0)).1 += v;
+        })
+        .map_err(|e| e.to_string())?;
     let mut seen: Vec<(usize, ChartBar)> = at
         .into_iter()
         .map(|(label, (i, v))| (i, ChartBar { label, v }))
@@ -1479,7 +1522,7 @@ fn chart(stored: &StoredResult, label: usize, value: usize, max_bars: usize) -> 
     // Stable: equal sums keep first-seen order, as the grid's Map did.
     bars.sort_by(|a, b| b.v.partial_cmp(&a.v).unwrap_or(std::cmp::Ordering::Equal));
     bars.truncate(max_bars);
-    ChartOut { rows, bars }
+    Ok(ChartOut { rows, bars })
 }
 
 fn page(
@@ -1489,20 +1532,30 @@ fn page(
     sort: Option<&SortSpec>,
 ) -> Result<Box<serde_json::value::RawValue>, String> {
     let limit = limit.min(1_000);
-    let Some(sort) = sort else {
-        // Serialized straight from the store: the rows are already JSON.
-        let window = stored.store.window(offset, limit);
-        return serde_json::value::to_raw_value(window).map_err(|e| e.to_string());
-    };
-    let order = stored.order_for(sort);
-    let start = offset.min(order.len());
-    let end = offset.saturating_add(limit).min(order.len());
-    let ids: Vec<u32> = order[start..end].to_vec();
-    let rows: Vec<&serde_json::value::RawValue> = ids
-        .iter()
-        .filter_map(|&i| stored.store.get(i as usize).map(|r| r.as_ref()))
-        .collect();
-    serde_json::value::to_raw_value(&rows).map_err(|e| e.to_string())
+    let rows = match sort {
+        None => stored.store.window(offset, limit),
+        Some(sort) => {
+            let order = stored.order_for(sort)?;
+            let start = offset.min(order.len());
+            let end = offset.saturating_add(limit).min(order.len());
+            let ids: Vec<usize> = order[start..end].iter().map(|&i| i as usize).collect();
+            stored.store.gather(&ids)
+        }
+    }
+    .map_err(|e| e.to_string())?;
+    // Joined straight from the store: the rows are already JSON. The same
+    // bytes serde_json wrote for a slice of the rows as `RawValue`s.
+    let mut out = String::with_capacity(rows.iter().map(|r| r.len() + 1).sum::<usize>() + 2);
+    out.push('[');
+    for (i, row) in rows.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(row);
+    }
+    out.push(']');
+    drop(rows);
+    serde_json::value::RawValue::from_string(out).map_err(|e| e.to_string())
 }
 
 #[derive(serde::Serialize)]
@@ -2148,9 +2201,7 @@ mod tests {
                 store: tuplenest_result_stream::RowStore::new(10),
                 order: None,
             };
-            stored
-                .store
-                .push(serde_json::value::to_raw_value(&serde_json::json!([1])).unwrap());
+            stored.store.push(&serde_json::json!([1]).to_string());
             StdMutex::new(Some(stored))
         };
         let batch = |sequence, rows: Vec<Vec<CellValue>>, is_last| RowBatch {
@@ -2236,12 +2287,135 @@ mod tests {
         assert_eq!(hex(&[]), "");
     }
 
+    #[tokio::test]
+    async fn a_stored_row_counts_its_text() {
+        // 200 NULL columns: 1,001 bytes of text, not 200 inline 32-byte
+        // Values — and not what it compresses to.
+        let sink = StoreSink::new(None);
+        sink.deliver(wide_batch(0, 1, 200, |_, _| CellValue::Null))
+            .await
+            .unwrap();
+        let inner = sink.inner.into_inner().unwrap();
+        assert_eq!(inner.store.bytes(), 200 * 4 + 199 + 2);
+    }
+
+    /// `rows` rows of `cols` cells, numbered from `first`.
+    fn wide_batch(
+        first: usize,
+        rows: usize,
+        cols: usize,
+        cell: impl Fn(usize, usize) -> CellValue,
+    ) -> RowBatch {
+        RowBatch {
+            execution_id: ExecutionId::new(),
+            sequence: first as u64,
+            columns: (0..cols)
+                .map(|i| tuplenest_driver_api::ColumnMeta {
+                    name: format!("c{i}"),
+                    db_type: if i == 0 { "int8" } else { "text" }.into(),
+                    nullable: Some(true),
+                })
+                .collect(),
+            rows: (first..first + rows)
+                .map(|r| (0..cols).map(|c| cell(r, c)).collect())
+                .collect(),
+            is_last: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn truncates_at_the_row_cap() {
+        let sink = StoreSink::new(None);
+        for b in 0..6 {
+            sink.deliver(wide_batch(b * 10_000, 10_000, 1, |r, _| {
+                CellValue::Int(r as i64)
+            }))
+            .await
+            .unwrap();
+        }
+        let mut inner = sink.inner.into_inner().unwrap();
+        inner.store.shrink_to_fit();
+        assert_eq!(inner.store.stored(), RESULT_STORE_CAP);
+        assert_eq!(inner.store.total_seen(), 60_000);
+        assert!(inner.store.truncated());
+        // The first N of M: the last kept row is row N - 1.
+        let last = page(&mut inner, RESULT_STORE_CAP - 1, 10, None).unwrap();
+        assert_eq!(last.get(), format!("[[{}]]", RESULT_STORE_CAP - 1));
+    }
+
+    #[tokio::test]
+    async fn truncates_at_the_byte_budget() {
+        // 1 MB rows of text: 128 fit in the 128 MB budget, the 129th is
+        // refused, and so is everything after it however small.
+        let sink = StoreSink::new(None);
+        let mb = "z".repeat(1024 * 1024 - 4);
+        for b in 0..13 {
+            sink.deliver(wide_batch(b * 10, 10, 1, |_, _| {
+                CellValue::Text(mb.clone())
+            }))
+            .await
+            .unwrap();
+        }
+        sink.deliver(wide_batch(130, 1, 1, |_, _| CellValue::Null))
+            .await
+            .unwrap();
+        let mut inner = sink.inner.into_inner().unwrap();
+        inner.store.shrink_to_fit();
+        assert_eq!(inner.store.stored(), 128);
+        assert_eq!(inner.store.bytes(), 128 * 1024 * 1024);
+        assert_eq!(inner.store.total_seen(), 131);
+        assert!(inner.store.truncated());
+        // Compressed, the 128 MB of text is a few hundred KB.
+        assert!(inner.store.ram_bytes() < 4 * 1024 * 1024);
+        assert!(!inner.store.spilled());
+        let p = page(&mut inner, 127, 10, None).unwrap();
+        assert_eq!(p.get(), format!("[[\"{mb}\"]]"));
+    }
+
     #[test]
-    fn a_stored_row_costs_its_text_and_one_allocation() {
-        // 200 NULL columns: 1,001 bytes of text, not 200 inline 32-byte Values.
-        let row = serde_json::value::to_raw_value(&vec![serde_json::Value::Null; 200]).unwrap();
-        assert_eq!(row.get().len(), 200 * 4 + 199 + 2);
-        assert_eq!(row_bytes(&row), 1_001 + 16 + 16);
+    fn a_sorted_page_across_blocks_and_a_spill_is_the_rows_reordered() {
+        // Small blocks and a small RAM threshold, so 3,000 rows span hundreds
+        // of blocks and most of them sit in the spill file.
+        let mut stored = StoredResult {
+            columns: vec![("n".into(), "int4".into()), ("s".into(), "text".into())],
+            store: tuplenest_result_stream::RowStore::new(10_000).with_layout(128, 2_048),
+            order: None,
+        };
+        let row = |i: usize| serde_json::json!([(i * 7_919) % 3_001, format!("r{i}")]);
+        for i in 0..3_000 {
+            stored.store.push(&row(i).to_string());
+        }
+        stored.store.shrink_to_fit();
+        assert!(stored.store.spilled());
+        assert!(stored.store.blocks() > 100);
+
+        let unsorted: Vec<serde_json::Value> = (0..3_000).map(row).collect();
+        let mut expected = unsorted.clone();
+        expected.sort_by_key(|r| std::cmp::Reverse(r[0].as_u64().unwrap()));
+        for (offset, limit) in [(0, 1_000), (1_000, 1_000), (2_500, 1_000), (17, 3)] {
+            let p = page(
+                &mut stored,
+                offset,
+                limit,
+                Some(&SortSpec {
+                    column: 0,
+                    desc: true,
+                }),
+            )
+            .unwrap();
+            let end = (offset + limit).min(3_000);
+            assert_eq!(
+                p.get(),
+                serde_json::Value::from(expected[offset..end].to_vec()).to_string()
+            );
+        }
+        // Unsorted pages, and the chart and the export, read the same rows.
+        let p = page(&mut stored, 1_234, 1_000, None).unwrap();
+        assert_eq!(
+            p.get(),
+            serde_json::Value::from(unsorted[1_234..2_234].to_vec()).to_string()
+        );
+        assert_eq!(chart(&mut stored, 1, 0, 5).unwrap().rows, 3_000);
     }
 
     #[test]
@@ -2262,11 +2436,9 @@ mod tests {
             serde_json::json!(["g", "Infinity"]),
             serde_json::json!(["e", 2]),
         ] {
-            stored
-                .store
-                .push(serde_json::value::to_raw_value(&row).unwrap());
+            stored.store.push(&row.to_string());
         }
-        let out = chart(&stored, 0, 1, 3);
+        let out = chart(&mut stored, 0, 1, 3).unwrap();
         assert_eq!(out.rows, 9);
         let bar = |l: &str, v: f64| ChartBar { label: l.into(), v };
         // c (only NULLs), d (NaN), f (not a number) and g (Infinity) have no
@@ -2290,9 +2462,7 @@ mod tests {
             serde_json::json!([null, "a"]),
             serde_json::json!(["9.5", "c"]),
         ] {
-            stored
-                .store
-                .push(serde_json::value::to_raw_value(&row).unwrap());
+            stored.store.push(&row.to_string());
         }
         let by = |column, desc| SortSpec { column, desc };
         let p = page(&mut stored, 0, 10, Some(&by(0, false))).unwrap();
@@ -2357,11 +2527,13 @@ mod tests {
 mod wide_bench {
     use super::*;
 
-    /// 200 columns × 100,000 rows: 150 NULLs, 25 ints, 25 short strings a row.
-    /// A benchmark, not a check. Peak memory:
+    /// 200 columns × 100,000 rows pushed: 150 NULLs, 25 ints, 25 short
+    /// strings a row. The store keeps the first 50,000 (the row cap), so this
+    /// also runs truncation. A benchmark, not a check. Peak memory:
     /// `/usr/bin/time -l <test binary> --ignored --exact pg::wide_bench::wide_result_memory --nocapture`
     /// (release build). Measured: 447 MB keeping 37,334 rows as `Vec<Value>`;
-    /// 183 MB keeping all 100,000 as JSON text.
+    /// 183 MB keeping all 100,000 as JSON text, one allocation a row; ~30 MB
+    /// keeping 50,000 in deflated 8 KB blocks (4.4 MB compressed).
     #[test]
     #[ignore]
     fn wide_result_memory() {
@@ -2398,31 +2570,56 @@ mod wide_bench {
             };
             rt.block_on(sink.deliver(batch)).unwrap();
         }
-        let mut inner = sink.inner.lock().unwrap();
+        let mut inner = sink.inner.into_inner().unwrap();
+        // As `pg_query` finishes a result.
+        inner.store.shrink_to_fit();
+        crate::trim::release_free_memory();
         eprintln!(
-            "BENCH stored={} seen={} budget_bytes={} ms={}",
+            "BENCH ingest_ms={} stored={} seen={} text_bytes={} ram_compressed_bytes={} \
+             spilled_bytes={} blocks={}",
+            t.elapsed().as_millis(),
             inner.store.stored(),
             inner.store.total_seen(),
             inner.store.bytes(),
-            t.elapsed().as_millis()
+            inner.store.ram_bytes(),
+            inner.store.file_bytes(),
+            inner.store.blocks(),
         );
-        // A first sort, then a page from it (cached order).
+        let t = std::time::Instant::now();
+        page(&mut inner, 0, 1_000, None).unwrap();
+        let first = t.elapsed().as_micros();
+        let t = std::time::Instant::now();
+        page(&mut inner, 1_000, 1_000, None).unwrap();
+        let next = t.elapsed().as_micros();
+        let t = std::time::Instant::now();
+        page(&mut inner, 30_000, 1_000, None).unwrap();
+        eprintln!(
+            "BENCH unsorted page_1000 first_us={first} next_us={next} jump_us={}",
+            t.elapsed().as_micros()
+        );
+        // A first sort, then pages from it (cached order): 1,000 rows each,
+        // scattered across every block.
         for column in [0, 1] {
+            let sort = SortSpec { column, desc: true };
             let t = std::time::Instant::now();
-            page(&mut inner, 0, 200, Some(&SortSpec { column, desc: true })).unwrap();
+            page(&mut inner, 0, 1_000, Some(&sort)).unwrap();
             let first = t.elapsed().as_millis();
-            let t = std::time::Instant::now();
-            page(
-                &mut inner,
-                5_000,
-                200,
-                Some(&SortSpec { column, desc: true }),
-            )
-            .unwrap();
+            let mut worst = 0;
+            for offset in [1_000, 5_000, 25_000, 49_000] {
+                let t = std::time::Instant::now();
+                page(&mut inner, offset, 1_000, Some(&sort)).unwrap();
+                worst = worst.max(t.elapsed().as_micros());
+            }
             eprintln!(
-                "BENCH sort column={column} first_ms={first} next_page_us={}",
-                t.elapsed().as_micros()
+                "BENCH sort column={column} first_ms={first} next_page_1000_worst_us={worst}"
             );
         }
+        let t = std::time::Instant::now();
+        let out = chart(&mut inner, 1, 0, 10).unwrap();
+        eprintln!(
+            "BENCH chart rows={} ms={}",
+            out.rows,
+            t.elapsed().as_millis()
+        );
     }
 }

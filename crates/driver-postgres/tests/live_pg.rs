@@ -1200,8 +1200,8 @@ async fn large_cells_are_bounded_before_they_are_decoded() {
     .unwrap();
     assert_eq!(sink.rows.load(Ordering::SeqCst), 40);
     assert!(
-        sink.max_batch_rows.load(Ordering::SeqCst) <= 9,
-        "an 8 MB batch holds at most 8 rows of 1 MB, got {}",
+        sink.max_batch_rows.load(Ordering::SeqCst) <= 5,
+        "a 4 MB batch holds at most 4 rows of 1 MB, got {}",
         sink.max_batch_rows.load(Ordering::SeqCst)
     );
 

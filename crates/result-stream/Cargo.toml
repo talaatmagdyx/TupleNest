@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Bounded in-memory row store backing the virtualized result grid"
+description = "Bounded, compressed row store backing the virtualized result grid"
 
 [dependencies]
+# Both were already in Cargo.lock (png and russh use flate2, the updater uses
+# tempfile), so depending on them adds no crate to the build. flate2 on its
+# pure-Rust miniz_oxide backend: no C zlib to link.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+tempfile = "3"

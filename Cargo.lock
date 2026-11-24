@@ -6511,6 +6511,10 @@ dependencies = [
 [[package]]
 name = "tuplenest-result-stream"
 version = "0.1.1"
+dependencies = [
+ "flate2",
+ "tempfile",
+]
 
 [[package]]
 name = "tuplenest-ssh-core"

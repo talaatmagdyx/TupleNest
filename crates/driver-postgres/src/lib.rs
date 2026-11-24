@@ -122,8 +122,9 @@ pub const BATCH_SIZE: usize = 1_000;
 /// A batch is also cut at this many bytes of wire data. Rows alone are not a
 /// size: 1,000 rows of 1 MB bytea is a gigabyte decoded before the sink can
 /// apply its budget (measured: 600 such rows peaked at 882 MB under a 256 MB
-/// store budget).
-pub const BATCH_BYTES: usize = 8 * 1024 * 1024;
+/// store budget). 4 MB, not 8: a batch is several times its wire size once
+/// decoded, and it is the largest thing alive while a query streams.
+pub const BATCH_BYTES: usize = 4 * 1024 * 1024;
 
 /// Oldest PostgreSQL this build serves.
 ///
