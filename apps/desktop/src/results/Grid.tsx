@@ -18,6 +18,18 @@ const HEAD_H = 29;
 const BLOCK = 200;
 const OVERSCAN = 12;
 const SORT_CAP = 50_000;
+/** Blocks kept on each side of the one just fetched. Scrolling through 100k
+ *  rows used to keep every block it passed — the whole result, in the
+ *  WebView, on top of the copy Rust holds. 10 each way is ~4,200 rows. */
+const KEEP_BLOCKS = 10;
+
+/** The cache with only the blocks near `center`; far ones are fetched again
+ *  if scrolled back to. */
+export function keepNear<T>(m: Record<number, T>, center: number, keep = KEEP_BLOCKS): Record<number, T> {
+  const out: Record<number, T> = {};
+  for (const k in m) if (Math.abs(Number(k) - center) <= keep) out[k] = m[k];
+  return out;
+}
 
 export type GridColumn = { name: string; dbType: string };
 
@@ -137,7 +149,7 @@ export default function Grid(p: Props) {
       if (!(b in blocks) && !pending.current.has(b)) {
         pending.current.add(b);
         invoke<unknown[][]>("pg_rows", { offset: b * BLOCK, limit: BLOCK })
-          .then((rows) => setBlocks((m) => ({ ...m, [b]: rows })))
+          .then((rows) => setBlocks((m) => keepNear({ ...m, [b]: rows }, b)))
           .catch(() => {})
           .finally(() => pending.current.delete(b));
       }

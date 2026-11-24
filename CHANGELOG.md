@@ -43,6 +43,13 @@ trusting it.
   882 → 296 MB). Rows past the cap are counted, not decoded.
 - Disconnect cancels and gives up after three tries instead of waiting forever;
   connections use TCP keepalives and a connect timeout.
+- Results are kept as compact JSON text, one allocation per row, and the
+  memory budget counts what they really use. 200 columns × 100,000 rows: all
+  rows kept at 183 MB peak, where 37,334 rows took 447 MB before.
+- The grid keeps only the rows near what is on screen; scrolling a large
+  result no longer copies all of it into the window.
+- Query history is written off the async runtime, so a slow disk no longer
+  delays the query's result.
 
 ### Accessibility
 - The schema tree is one tab stop with arrow-key navigation; toasts are

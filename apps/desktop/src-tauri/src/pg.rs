@@ -788,7 +788,13 @@ fn hex(bytes: &[u8]) -> String {
 /// this store (`pg_rows`) instead of receiving the full row set over IPC.
 pub struct StoredResult {
     columns: Vec<(String, String)>,
-    store: tuplenest_result_stream::RowStore<Vec<serde_json::Value>>,
+    /// Each row kept as its finished JSON array (`[1,"a",null]`), one heap
+    /// allocation per row. A `Vec<serde_json::Value>` cost 32 bytes per cell
+    /// even for NULL, plus an allocation per string: a 200-column result held
+    /// ~6 KB a row before any data, and the budget had to guess at it. Now the
+    /// size is the text's length, and `pg_rows` copies bytes instead of
+    /// re-serializing every page.
+    store: tuplenest_result_stream::RowStore<Box<serde_json::value::RawValue>>,
 }
 
 /// Hard cap on rows kept for scrolling. Beyond this the stream is still
@@ -806,40 +812,12 @@ const RESULT_STORE_CAP: usize = 100_000;
 /// enough to take the machine down with it.
 const RESULT_STORE_BYTES: usize = 256 * 1024 * 1024;
 
-/// Rough in-memory size of one row, for the byte budget.
-///
-/// An estimate, not a measurement: what matters is that a 10 MB document
-/// counts as far more than a small integer, not that the number is exact.
-/// `serde_json::to_string` on every row would be a real cost on the hot path
-/// to buy precision nobody needs.
-fn approx_bytes(row: &[serde_json::Value]) -> usize {
-    /*
-     * What a row really costs. Every cell is a `serde_json::Value` held inline
-     * in the row's Vec — 32 bytes, even for NULL — and every heap allocation
-     * carries allocator overhead. Counting a NULL as 8 bytes let a 200-column,
-     * mostly-NULL result of 100k rows reach 1.1 GB while the estimate said it
-     * was under the 256 MB budget (measured).
-     */
-    const VALUE: usize = std::mem::size_of::<serde_json::Value>();
-    const ALLOC: usize = 16; // per heap allocation: header and rounding
-    fn heap(v: &serde_json::Value) -> usize {
-        match v {
-            serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
-                0
-            }
-            serde_json::Value::String(s) => ALLOC + s.capacity(),
-            serde_json::Value::Array(a) => {
-                ALLOC + a.len() * VALUE + a.iter().map(heap).sum::<usize>()
-            }
-            serde_json::Value::Object(o) => o
-                .iter()
-                // key String + value + a map node
-                .map(|(k, v)| ALLOC + k.len() + VALUE + 48 + heap(v))
-                .sum::<usize>(),
-        }
-    }
-    // The row's own Vec header in the store, its buffer, and every cell.
-    24 + ALLOC + row.len() * VALUE + row.iter().map(heap).sum::<usize>()
+/// What one stored row really costs: its JSON text, the allocation holding
+/// it, and its 16-byte slot in the store's Vec. Exact, not an estimate — the
+/// row is a single allocation.
+fn row_bytes(row: &serde_json::value::RawValue) -> usize {
+    const ALLOC: usize = 16; // allocator header and rounding
+    row.get().len() + ALLOC + std::mem::size_of::<Box<serde_json::value::RawValue>>()
 }
 
 /// Streams batches into a bounded RowStore.
@@ -865,6 +843,7 @@ impl BatchSink for StoreSink {
                 .map(|c| (c.name.clone(), c.db_type.clone()))
                 .collect();
         }
+        let mut buf = Vec::new();
         for row in batch.rows {
             // Past the cap the row is only counted. Converting it first was
             // all the work of storing it, for a row thrown away (a 1M-row
@@ -874,8 +853,17 @@ impl BatchSink for StoreSink {
                 continue;
             }
             let json: Vec<serde_json::Value> = row.into_iter().map(cell_to_json).collect();
-            let bytes = approx_bytes(&json);
-            inner.store.push_sized(json, bytes);
+            // The Values live only for this line; what is kept is the text.
+            // Written into one reused buffer, then copied out at its exact
+            // length: serializing straight into a fresh String grew it by
+            // doubling, and every row left a half-used allocation behind.
+            buf.clear();
+            serde_json::to_writer(&mut buf, &json).expect("a serde_json::Value always serializes");
+            let text = String::from_utf8(buf.clone()).expect("serde_json writes UTF-8");
+            let raw = serde_json::value::RawValue::from_string(text)
+                .expect("serde_json wrote valid JSON");
+            let bytes = row_bytes(&raw);
+            inner.store.push_sized(raw, bytes);
         }
         Ok(())
     }
@@ -997,7 +985,7 @@ mod redact_sql_tests {
 /// store no SQL text. History failures never fail the query itself.
 #[allow(clippy::too_many_arguments)]
 fn record_history(
-    app: &crate::AppState,
+    app: &tauri::AppHandle,
     state: &PgState,
     sql: &str,
     status: &str,
@@ -1042,7 +1030,18 @@ fn record_history(
         duration_ms,
         favorite: false,
     };
-    if let Ok(store) = app.store.lock() {
+    let audit_sql = is_prod.then(|| redact_sql(sql));
+    let app = app.clone();
+    // SQLite writes are blocking disk I/O (a sync per commit), and the store
+    // lock is shared with every other command. Run on the async runtime they
+    // held a worker thread — and the query's reply — until the disk answered.
+    // On the blocking pool the reply goes out at once.
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app.state::<crate::AppState>();
+        let Ok(store) = state.store.lock() else {
+            return;
+        };
         // The no-history directive suppresses only the history row (timing,
         // counts, status) that carries no value without its SQL. It records
         // nothing rather than a contentless row.
@@ -1055,17 +1054,17 @@ fn record_history(
         // an accountability record, not user history, and must not be
         // silenceable by a comment. SQL is redacted of secret literals but
         // otherwise kept in full.
-        if is_prod {
-            let _ = store.audit_add(&entry.connection_key, Some("prod"), &redact_sql(sql));
+        if let Some(audit_sql) = audit_sql {
+            let _ = store.audit_add(&entry.connection_key, Some("prod"), &audit_sql);
         }
-    }
+    });
 }
 
 /// Runs SQL on the active session. Rows stream into the backend store;
 /// the WebView pages them with `pg_rows`.
 #[tauri::command]
 pub async fn pg_query(
-    app: tauri::State<'_, crate::AppState>,
+    app: tauri::AppHandle,
     state: tauri::State<'_, PgState>,
     sql: String,
     params: Option<Vec<serde_json::Value>>,
@@ -1750,11 +1749,21 @@ mod tests {
     }
 
     #[test]
-    fn a_null_cell_costs_what_a_value_costs() {
-        // 200 NULL columns: the old estimate said 1,624 bytes; the row really
-        // holds 200 inline Values of 32 bytes each.
-        let row = vec![serde_json::Value::Null; 200];
-        assert!(approx_bytes(&row) >= 200 * std::mem::size_of::<serde_json::Value>());
+    fn a_stored_row_costs_its_text_and_one_allocation() {
+        // 200 NULL columns: 1,001 bytes of text, not 200 inline 32-byte Values.
+        let row = serde_json::value::to_raw_value(&vec![serde_json::Value::Null; 200]).unwrap();
+        assert_eq!(row.get().len(), 200 * 4 + 199 + 2);
+        assert_eq!(row_bytes(&row), 1_001 + 16 + 16);
+    }
+
+    #[test]
+    fn a_page_is_the_stored_rows_joined_unchanged() {
+        let rows: Vec<Box<serde_json::value::RawValue>> = vec![
+            serde_json::value::to_raw_value(&serde_json::json!([1, "a", null])).unwrap(),
+            serde_json::value::to_raw_value(&serde_json::json!(["9007199254740993", 2.5])).unwrap(),
+        ];
+        let page = serde_json::value::to_raw_value(&rows[..]).unwrap();
+        assert_eq!(page.get(), r#"[[1,"a",null],["9007199254740993",2.5]]"#);
     }
 
     #[test]
@@ -1778,5 +1787,69 @@ mod tests {
             serde_json::json!(9_007_199_254_740_991_i64)
         );
         assert_eq!(cell_to_json(CellValue::Int(42)), serde_json::json!(42));
+    }
+}
+
+#[cfg(test)]
+mod wide_bench {
+    use super::*;
+
+    /// 200 columns × 100,000 rows: 150 NULLs, 25 ints, 25 short strings a row.
+    /// A benchmark, not a check. Peak memory:
+    /// `/usr/bin/time -l <test binary> --ignored --exact pg::wide_bench::wide_result_memory --nocapture`
+    /// (release build). Measured: 447 MB keeping 37,334 rows as `Vec<Value>`;
+    /// 183 MB keeping all 100,000 as JSON text.
+    #[test]
+    #[ignore]
+    fn wide_result_memory() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let sink = StoreSink {
+            inner: StdMutex::new(StoredResult {
+                columns: Vec::new(),
+                store: tuplenest_result_stream::RowStore::with_budget(
+                    RESULT_STORE_CAP,
+                    RESULT_STORE_BYTES,
+                ),
+            }),
+        };
+        let columns: Vec<tuplenest_driver_api::ColumnMeta> = (0..200)
+            .map(|i| tuplenest_driver_api::ColumnMeta {
+                name: format!("c{i}"),
+                db_type: "text".into(),
+                nullable: Some(true),
+            })
+            .collect();
+        let t = std::time::Instant::now();
+        for b in 0..100u64 {
+            let rows = (0..1000)
+                .map(|r| {
+                    (0..200)
+                        .map(|c| match c % 8 {
+                            0 => CellValue::Int((b * 1000 + r) as i64),
+                            1 => CellValue::Text(format!("value-{c}-{r}")),
+                            _ => CellValue::Null,
+                        })
+                        .collect()
+                })
+                .collect();
+            let batch = tuplenest_driver_api::RowBatch {
+                execution_id: ExecutionId::new(),
+                sequence: b,
+                columns: columns.clone(),
+                rows,
+                is_last: b == 99,
+            };
+            rt.block_on(sink.deliver(batch)).unwrap();
+        }
+        let inner = sink.inner.lock().unwrap();
+        eprintln!(
+            "BENCH stored={} seen={} budget_bytes={} ms={}",
+            inner.store.stored(),
+            inner.store.total_seen(),
+            inner.store.bytes(),
+            t.elapsed().as_millis()
+        );
     }
 }

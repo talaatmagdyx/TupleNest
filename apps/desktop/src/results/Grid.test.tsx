@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
-import Grid, { type GridColumn } from "./Grid";
+import Grid, { keepNear, type GridColumn } from "./Grid";
 import type { CellEdit, EditTarget } from "../lib/dml";
 
 const invokeMock = vi.mocked(invoke);
@@ -381,5 +381,15 @@ describe("Grid — keyboard and screen readers", () => {
     await userEvent.dblClick(screen.getAllByRole("gridcell")[1]);
     await userEvent.keyboard("{ArrowRight}");
     expect(screen.getByDisplayValue("ada@x.com")).toBeInTheDocument();
+  });
+});
+
+describe("Grid — block cache", () => {
+  it("keeps only the blocks near the one just fetched", () => {
+    const m: Record<number, string> = {};
+    for (let b = 0; b < 50; b++) m[b] = `block ${b}`;
+    const kept = keepNear(m, 30, 10);
+    expect(Object.keys(kept).map(Number)).toEqual([...Array(21)].map((_, i) => 20 + i));
+    expect(kept[30]).toBe("block 30");
   });
 });
