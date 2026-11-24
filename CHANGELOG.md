@@ -38,6 +38,15 @@ trusting it.
 - Secrets in JSON shapes are redacted; logs keep 14 days.
 
 ### Performance and reliability
+- A result keeps at most 20,000 rows (was 50,000). With result cells now 24
+  bytes instead of 48, peak memory for a 200-column result is 19 MB (was 30),
+  and a first sort or chart is about 2.5 times faster.
+- Rarely used screens (EXPLAIN, plans, import, health, monitor, search and
+  others) load when first opened: the main script is 379 KB (was 470), and the
+  separate italic font is gone.
+- The production-connection glow pulses three times and then holds, instead
+  of repainting the whole window every frame.
+- Numeric and array cells are read with fewer temporary strings.
 - Stored rows are compressed in 8 KB blocks and, past 16 MB, kept in an
   anonymous temporary file that the system deletes when the app closes or
   crashes. 200 columns × 50,000 rows: peak 98 → 30 MB.

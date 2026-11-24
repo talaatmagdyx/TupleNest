@@ -13,8 +13,7 @@ detection.
 
 ## JetBrains Mono
 
-- **Files:** `apps/desktop/src/assets/fonts/JetBrainsMono-var.woff2`,
-  `apps/desktop/src/assets/fonts/JetBrainsMono-Italic-var.woff2`
+- **Files:** `apps/desktop/src/assets/fonts/JetBrainsMono-var.woff2`
 - **Copyright:** 2020 The JetBrains Mono Project Authors
 - **Licence:** SIL Open Font License 1.1 — full text at
   [`apps/desktop/src/assets/fonts/OFL.txt`](apps/desktop/src/assets/fonts/OFL.txt),

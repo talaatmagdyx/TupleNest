@@ -32,20 +32,13 @@ import {
 } from "./overlays/Overlays";
 import { BrandMark } from "./lib/icons";
 import type { Catalog, CatalogTable } from "./lib/complete";
-import { summarizePlan, type PlanSummary } from "./lib/intel";
-import {
-  planFilename,
-  planToJson,
-  planToMarkdown,
-  planToText,
-  rawExtension,
-  type ExportablePlan,
-} from "./lib/explain";
+import type { PlanSummary } from "./lib/intel";
+import type { ExportablePlan } from "./lib/explain";
+import { loadedExplain } from "./lib/explain-load";
 import { FILTERS, abortSave, baseName, beginSave, finishSave, saveText } from "./lib/save";
 import { MAX_BARS, chartSubtitle, chartTitle, pickChartColumns } from "./lib/chart";
-import IntelModal, { type Pane as IntelPane } from "./overlays/IntelModal";
-import ImportModal from "./overlays/ImportModal";
-import DetailsModal, { type ObjectDetails } from "./overlays/DetailsModal";
+import type { Pane as IntelPane } from "./overlays/IntelModal";
+import type { ObjectDetails } from "./overlays/DetailsModal";
 import { useQueryTabs } from "./hooks/useQueryTabs";
 import { useSearch } from "./hooks/useSearch";
 import { useHealth } from "./hooks/useHealth";
@@ -60,17 +53,24 @@ import { useHistory } from "./hooks/useHistory";
 import { useExplorerTree } from "./hooks/useExplorerTree";
 import { useConnection } from "./hooks/useConnection";
 import { suggestName, useSnippets } from "./hooks/useSnippets";
-import HealthModal, { type HealthTab } from "./overlays/HealthModal";
-import SearchModal from "./overlays/SearchModal";
-import PartitionsModal from "./overlays/PartitionsModal";
+import type { HealthTab } from "./overlays/HealthModal";
 import { analyzeEditability, qualifiedName } from "./lib/dml";
-import EditReviewModal from "./overlays/EditReviewModal";
-import SchemaModal, { type SchemaExtra } from "./overlays/SchemaModal";
-import MonitorModal from "./overlays/MonitorModal";
-import DiagramModal from "./overlays/DiagramModal";
-import AuditModal from "./overlays/AuditModal";
-import ExplainModal from "./overlays/ExplainModal";
-import PastePlanModal from "./overlays/PastePlanModal";
+import type { SchemaExtra } from "./overlays/SchemaModal";
+import {
+  AuditModal,
+  DetailsModal,
+  DiagramModal,
+  EditReviewModal,
+  ExplainModal,
+  HealthModal,
+  ImportModal,
+  IntelModal,
+  MonitorModal,
+  PartitionsModal,
+  PastePlanModal,
+  SchemaModal,
+  SearchModal,
+} from "./overlays/lazy";
 import { UpdateToast } from "./overlays/Overlays";
 import { ParamPrompt } from "./overlays/Overlays";
 import {
@@ -1026,6 +1026,7 @@ export default function App() {
       query.reset(); // EXPLAIN replaced the backend row store
       // Phase 3: keep the last few summaries so two runs can be compared.
       if (out.root) {
+        const { summarizePlan } = await import("./lib/intel");
         const summary = summarizePlan(out.root);
         setPlans((ps) =>
           [...ps, { label: `${title} · ${new Date().toLocaleTimeString()}`, summary, root: out.root! }].slice(-6),
@@ -1048,8 +1049,12 @@ export default function App() {
     };
   }, [explain, explainOpts]);
 
-  const renderPlan = (kind: "json" | "txt" | "md", p: ExportablePlan) =>
-    kind === "json" ? planToJson(p) : kind === "txt" ? planToText(p) : planToMarkdown(p);
+  // A plan on screen means `useExplain` has already loaded the exporters, so
+  // they are reached synchronously here (see lib/explain-load).
+  const renderPlan = (kind: "json" | "txt" | "md", p: ExportablePlan) => {
+    const { planToJson, planToMarkdown, planToText } = loadedExplain()!;
+    return kind === "json" ? planToJson(p) : kind === "txt" ? planToText(p) : planToMarkdown(p);
+  };
 
   const exportPlan = useCallback(
     async (kind: "json" | "txt" | "md") => {
@@ -1057,6 +1062,7 @@ export default function App() {
       if (!p) return;
       // A raw TEXT/YAML/XML payload isn't JSON, whatever menu item was clicked —
       // don't hand it a .json extension.
+      const { planFilename, rawExtension } = loadedExplain()!;
       const ext = kind === "json" ? rawExtension(p.options) : kind;
       try {
         const path = await saveText(planFilename(explain?.title ?? "query", ext), renderPlan(kind, p), FILTERS[ext]);

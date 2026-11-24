@@ -1,6 +1,6 @@
 //! Sorting the stored result, so the grid never has to hold it.
 //!
-//! Sorting used to pull every row (up to 50,000) into the WebView and sort
+//! Sorting used to pull every row (up to the row cap) into the WebView and sort
 //! there: the whole result twice over, once here and once as JS objects. Now
 //! the grid asks for a sorted page and this computes an order of row indexes
 //! (4 bytes a row) that `pg_rows` reads through. The rules are the grid's old

@@ -790,7 +790,7 @@ fn cell_to_json(cell: CellValue) -> serde_json::Value {
         CellValue::Text(t) => t.into(),
         CellValue::Bytes(b) => format!("\\x{}", hex(&b)).into(),
         CellValue::Json(v) => serde_json::from_str(v.get()).expect("a RawValue is valid JSON"),
-        CellValue::Other { rendered, .. } => rendered.into(),
+        CellValue::Other(o) => o.rendered.into(),
     }
 }
 
@@ -835,7 +835,7 @@ fn write_cell(out: &mut Vec<u8>, cell: &CellValue) {
         }
         // Already the compact JSON text: copied, not parsed and re-written.
         CellValue::Json(j) => out.extend_from_slice(j.get().as_bytes()),
-        CellValue::Other { rendered, .. } => write_json(out, rendered.as_str()),
+        CellValue::Other(o) => write_json(out, o.rendered.as_str()),
     }
 }
 
@@ -944,9 +944,10 @@ impl StoredResult {
 /// Hard cap on rows kept for scrolling. Beyond this the stream is still
 /// drained and counted, but rows are dropped and the result marked truncated.
 ///
-/// 50,000: more than anyone scrolls through, and what a sort or a chart
-/// walks every time it runs.
-const RESULT_STORE_CAP: usize = 50_000;
+/// 20,000: more than anyone scrolls through, and what a sort or a chart
+/// walks every time it runs. It was 50,000; every row kept is decoded,
+/// written, deflated and held, and a first sort holds a key per row besides.
+const RESULT_STORE_CAP: usize = 20_000;
 
 /// Hard cap on *memory* kept for scrolling, whichever comes first.
 ///
@@ -1468,7 +1469,7 @@ pub struct ChartOut {
 ///
 /// The chart used to copy up to 50,000 rows into the WebView to add them up
 /// there; this reads one cell of each, and only the bars cross the bridge —
-/// over every stored row, not a 50,000-row sample. The rules are the old
+/// over every stored row, not a sample. The rules are the old
 /// ones: NULL values skipped as SQL's SUM does, NULL labels kept as "null".
 #[tauri::command]
 pub async fn pg_chart(
@@ -2081,10 +2082,7 @@ mod tests {
     fn a_row_written_cell_by_cell_is_the_bytes_the_value_tree_serialized_to() {
         let json =
             |v: serde_json::Value| CellValue::Json(serde_json::value::to_raw_value(&v).unwrap());
-        let other = |s: &str| CellValue::Other {
-            rendered: s.into(),
-            db_type: "interval".into(),
-        };
+        let other = |s: &str| CellValue::other(s.into(), "interval".into());
         let safe = JS_MAX_SAFE_INTEGER as i64;
         let cells = vec![
             CellValue::Null,
@@ -2131,8 +2129,8 @@ mod tests {
             CellValue::Text(r#"{a,"b c","d\"e",NULL,"\\x"}"#.into()),
             CellValue::Text("null".into()),
             // bytea.
-            CellValue::Bytes(Vec::new()),
-            CellValue::Bytes(vec![0]),
+            CellValue::Bytes(Box::default()),
+            CellValue::Bytes(vec![0].into()),
             CellValue::Bytes((0..=255).collect()),
             // json / jsonb, as the driver hands them over: compact text.
             json(serde_json::json!(null)),
@@ -2185,7 +2183,7 @@ mod tests {
                 CellValue::Int(9_007_199_254_740_993),
                 CellValue::Float(f64::NAN),
                 CellValue::Float(1.0),
-                CellValue::Bytes(vec![0x00, 0xab, 0xff]),
+                CellValue::Bytes(vec![0x00, 0xab, 0xff].into()),
                 CellValue::Text("a\"b\n".into()),
                 json(serde_json::json!({"b": [1, null], "a": "x"})),
             ]),
@@ -2528,12 +2526,13 @@ mod wide_bench {
     use super::*;
 
     /// 200 columns × 100,000 rows pushed: 150 NULLs, 25 ints, 25 short
-    /// strings a row. The store keeps the first 50,000 (the row cap), so this
+    /// strings a row. The store keeps the first 20,000 (the row cap), so this
     /// also runs truncation. A benchmark, not a check. Peak memory:
     /// `/usr/bin/time -l <test binary> --ignored --exact pg::wide_bench::wide_result_memory --nocapture`
     /// (release build). Measured: 447 MB keeping 37,334 rows as `Vec<Value>`;
     /// 183 MB keeping all 100,000 as JSON text, one allocation a row; ~30 MB
-    /// keeping 50,000 in deflated 8 KB blocks (4.4 MB compressed).
+    /// keeping 50,000 in deflated 8 KB blocks (4.4 MB compressed); ~2 MB of
+    /// those for the 20,000 kept now.
     #[test]
     #[ignore]
     fn wide_result_memory() {
@@ -2592,7 +2591,7 @@ mod wide_bench {
         page(&mut inner, 1_000, 1_000, None).unwrap();
         let next = t.elapsed().as_micros();
         let t = std::time::Instant::now();
-        page(&mut inner, 30_000, 1_000, None).unwrap();
+        page(&mut inner, 15_000, 1_000, None).unwrap();
         eprintln!(
             "BENCH unsorted page_1000 first_us={first} next_us={next} jump_us={}",
             t.elapsed().as_micros()
@@ -2605,7 +2604,8 @@ mod wide_bench {
             page(&mut inner, 0, 1_000, Some(&sort)).unwrap();
             let first = t.elapsed().as_millis();
             let mut worst = 0;
-            for offset in [1_000, 5_000, 25_000, 49_000] {
+            // Up to the last page of the 20,000 kept.
+            for offset in [1_000, 5_000, 10_000, 19_000] {
                 let t = std::time::Instant::now();
                 page(&mut inner, offset, 1_000, Some(&sort)).unwrap();
                 worst = worst.max(t.elapsed().as_micros());

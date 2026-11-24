@@ -78,15 +78,12 @@
      milliseconds. `swap` would trade that for a visible flash of Courier. */
   font-display: block;
 }
-@font-face {
-  font-family: "JetBrains Mono";
-  src: url("./assets/fonts/JetBrainsMono-Italic-var.woff2") format("woff2");
-  font-weight: 100 800;
-  /* Real italics, not a synthetic slant: SQL comments, null cells and redacted
-     history rows are all italic mono, and this font redraws letters for it. */
-  font-style: italic;
-  font-display: block;
-}
+/* No italic face. Italic mono appears in three muted places — SQL comments,
+   null cells, redacted history rows — and with no italic face declared the
+   engine slants the upright one (`font-synthesis: style` is the default).
+   The slanted glyphs keep the upright advance, so columns and the editor's
+   caret overlay stay aligned. The real italic was a second 122 KB file to
+   decode and hold for text that is grey and small by design. */
 
 :root {
   --tn-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo,
@@ -143,11 +140,6 @@ a { color: var(--tn-accent); text-decoration: none; }
 }
 .titlebar button, .titlebar .conn-switch { -webkit-app-region: no-drag; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 12.5px; letter-spacing: .02em; }
-.brand-glyph {
-  width: 18px; height: 18px; border-radius: 5px; position: relative;
-  background: linear-gradient(135deg, var(--tn-accent), var(--tn-purple));
-  box-shadow: 0 0 12px var(--tn-as);
-}
 .icon-btn {
   width: 27px; height: 27px; display: grid; place-items: center; border-radius: 7px;
   border: none; background: transparent; color: var(--tn-tm); cursor: pointer; font-size: 13px;
@@ -1019,15 +1011,6 @@ body {
 }
 .sidebar { box-shadow: inset -1px 0 0 rgba(255, 255, 255, .03); }
 
-/* — Refined brand mark — */
-.brand-glyph {
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, .12) inset,
-              0 2px 10px var(--tn-as);
-}
-.brand-glyph::after {
-  content: "◆"; position: absolute; inset: 0; display: grid; place-items: center;
-  font-size: 8px; color: rgba(255, 255, 255, .92);
-}
 
 /* — Primary button: subtle lift & gradient — */
 .btn.primary {
@@ -1063,7 +1046,7 @@ body {
 .statusbar { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035); }
 
 /* — Inputs: calmer default, clear focus — */
-.field input, .field select, .filter-box, .pal-input input, .search-box {
+.field input, .field select, .filter-box, .pal-input input {
   transition: border-color .13s ease, box-shadow .13s ease, background-color .13s ease;
 }
 .filter-box:focus-within { border-color: var(--tn-accent); box-shadow: 0 0 0 3px var(--tn-as); }
@@ -1156,12 +1139,11 @@ body { background: var(--tn-desk); background-image: none; }
 .splitter { background: var(--tn-s1); border-top: 1px solid var(--tn-bh); border-bottom: 1px solid var(--tn-bh); }
 
 /* — Tighter radii (IDE = crisp, minimal rounding) — */
-.btn, .field input, .field select, .filter-box, .search-box, .pal-input input,
+.btn, .field input, .field select, .filter-box, .pal-input input,
 .conn-card, .pg-avatar, .env-pill, .kbd, .tree-row, .conn-menu .row,
 .drop-menu button, .pal-item, .seg, .seg button { border-radius: 4px; }
 .modal, .conn-menu, .drop-menu, .toast, .update-toast, .test-panel, .meta-cell,
 .mon-table, .plan-node, .tip-card, .error-box { border-radius: 6px; }
-.brand-glyph { border-radius: 4px; }
 
 /* — Denser toolbar & rows — */
 .toolbar { padding: 6px 10px; gap: 6px; }
@@ -1194,7 +1176,7 @@ body { background: var(--tn-desk); background-image: none; }
 .g-row.sel { background: var(--tn-as); box-shadow: inset 2px 0 0 var(--tn-accent); }
 
 /* — Inputs: solid, inset feel — */
-.field input, .field select, .filter-box, .search-box, .pal-input input {
+.field input, .field select, .filter-box, .pal-input input {
   background: var(--tn-bg); border: 1px solid var(--tn-bh);
 }
 
@@ -1206,10 +1188,6 @@ body { background: var(--tn-desk); background-image: none; }
 
 /* — Overlay backdrop: plain dim, no heavy blur (native modal) — */
 .overlay { background: rgba(0, 0, 0, .48); backdrop-filter: blur(1.5px); -webkit-backdrop-filter: blur(1.5px); }
-
-/* — Brand monogram tweak for flat look — */
-.brand-glyph { box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); }
-.brand-glyph::after { color: #fff; }
 
 /* — Titlebar: compact toolbar height like a native app — */
 .titlebar { height: 40px; }
@@ -1266,7 +1244,6 @@ body { background: var(--tn-desk); background-image: none; }
 .sidebar > .side-head:first-child { padding-top: 12px; }
 
 /* — Refined tree hover with accent affordance — */
-.tree-row:hover .tree-label { color: var(--tn-tp); }
 
 /* — Editor active-line gutter accent (subtle) — */
 
@@ -1325,8 +1302,10 @@ body { background: var(--tn-desk); background-image: none; }
 .env-frame.env-staging { --env-line: rgba(224,161,58,.50);  --env-wash: rgba(224,161,58,.20); }
 .env-frame.env-prod    { --env-line: rgba(239,95,107,.75);  --env-wash: rgba(239,95,107,.30); }
 
-/* Prod breathes — a slow, calm pulse that draws the eye without nagging */
-.env-frame.env-prod .env-glow { animation: envpulse 3.4s ease-in-out infinite; }
+/* Prod breathes a few times on connect, then holds its red frame. Not
+   `infinite`: an animated box-shadow repaints the whole window every frame
+   for as long as a prod session is open, which kept the CPU busy at idle. */
+.env-frame.env-prod .env-glow { animation: envpulse 3.4s ease-in-out 3; }
 @keyframes envpulse {
   0%, 100% { box-shadow: inset 0 0 0 1px rgba(239,95,107,.55), inset 0 0 30px -8px rgba(239,95,107,.22); }
   50%      { box-shadow: inset 0 0 0 1.5px rgba(239,95,107,.9), inset 0 0 46px -4px rgba(239,95,107,.42); }
@@ -1341,15 +1320,6 @@ body { background: var(--tn-desk); background-image: none; }
 .env-frame.env-prod    .statusbar .item:first-child { background: #ef5f6b; }
 .env-frame.env-test    .statusbar .item:first-child { background: #6a7482; }
 
-/* ---- Signature brand mark: nested cells (a "tuple nest") ---- */
-.brand-glyph::after {
-  content: ""; position: absolute; inset: 4px; border-radius: 2px;
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.55);
-}
-.brand-glyph::before {
-  content: ""; position: absolute; inset: 6.5px; border-radius: 1px;
-  background: rgba(255,255,255,.9);
-}
 
 /* ============================================================
    EXPLORER TREE — grouped objects, nested partitions

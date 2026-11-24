@@ -116,7 +116,7 @@ fn text_of(c: &CellValue) -> String {
         CellValue::Json(j) => j.to_string(),
         CellValue::Null => "NULL".into(),
         CellValue::Bytes(b) => format!("\\x{}", hex::encode(b)),
-        CellValue::Other { rendered, .. } => rendered.clone(),
+        CellValue::Other(o) => o.rendered.clone(),
     }
 }
 
@@ -1987,7 +1987,7 @@ async fn unknown_types_render_from_the_type_not_from_a_guess() {
     s.execute(req("SELECT 1.00::money"), &sink).await.unwrap();
     let cell = sink.rows.lock().unwrap()[0][0].clone();
     assert!(
-        matches!(cell, CellValue::Other { .. }),
+        matches!(cell, CellValue::Other(_)),
         "money must not be rendered as text, got {cell:?}"
     );
 
