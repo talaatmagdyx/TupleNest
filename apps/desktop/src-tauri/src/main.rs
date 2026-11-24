@@ -11,7 +11,9 @@ use tauri::Manager;
 use tuplenest_workspace_store::Store;
 
 mod connections;
+mod export;
 mod pg;
+mod sort;
 
 struct AppState {
     store: Mutex<Store>,
@@ -94,6 +96,17 @@ fn layout_load(
         .map_err(|e| e.to_string())
 }
 
+/// The most rows one `history_list` / `audit_list` call returns.
+///
+/// The limit comes from the WebView. Without a ceiling a single call could
+/// ask for the whole table — every statement ever run, each with its SQL
+/// text — and hold it in Rust, in the IPC payload and in the page at once.
+const LIST_LIMIT_MAX: usize = 1_000;
+
+fn list_limit(requested: Option<usize>, default: usize) -> usize {
+    requested.unwrap_or(default).min(LIST_LIMIT_MAX)
+}
+
 #[tauri::command]
 fn history_list(
     state: tauri::State<'_, AppState>,
@@ -106,7 +119,7 @@ fn history_list(
         .map_err(|_| "store lock poisoned".to_string())?
         .history_list(
             search.as_deref().filter(|s| !s.is_empty()),
-            limit.unwrap_or(50),
+            list_limit(limit, 50),
         )
         .map_err(|e| e.to_string())
 }
@@ -191,7 +204,7 @@ fn audit_list(
         .store
         .lock()
         .map_err(|_| "store lock poisoned".to_string())?
-        .audit_list(limit.unwrap_or(200))
+        .audit_list(list_limit(limit, 200))
         .map_err(|e| e.to_string())
 }
 
@@ -323,20 +336,92 @@ fn export_begin(
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
-/// Append one chunk to the open export.
-#[tauri::command]
-fn export_write(state: tauri::State<'_, ExportState>, chunk: String) -> Result<(), String> {
-    let mut slot = state.0.lock().map_err(|_| "export lock poisoned")?;
-    let sink = slot.as_mut().ok_or("no export in progress")?;
-    sink.write(&chunk).map_err(|e| e.to_string())
-}
-
 /// Flush and close. The file is only complete once this returns.
 #[tauri::command]
 fn export_finish(state: tauri::State<'_, ExportState>) -> Result<(), String> {
     let mut slot = state.0.lock().map_err(|_| "export lock poisoned")?;
     let sink = slot.take().ok_or("no export in progress")?;
     sink.finish().map_err(|e| e.to_string())
+}
+
+/// Rows one `export_result_page` call formats and writes.
+const EXPORT_PAGE_MAX: usize = 1_000;
+
+/// Rows a clipboard copy holds at most; the page asks for no more than this
+/// (`COPY_ROW_CAP` in App.tsx), and the ceiling is enforced here as well.
+const COPY_ROW_MAX: usize = 10_000;
+
+/// Run blocking work — formatting, a file write, a std lock — off the async
+/// workers. There are only two to four of those (`worker_threads`), and one
+/// stuck in a disk write is one fewer to carry a cancel.
+async fn off_runtime<T, F>(work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Format one page of the stored result and append it to the open export.
+///
+/// Rows go from the backend's store straight into the file; the WebView only
+/// drives the loop (progress, Cancel) and never holds them. Returns how many
+/// rows were written — fewer than `limit` means the result ended.
+#[tauri::command]
+async fn export_result_page(
+    app: tauri::AppHandle,
+    kind: export::Kind,
+    mode: export::Mode,
+    offset: usize,
+    limit: usize,
+    total: usize,
+) -> Result<usize, String> {
+    off_runtime(move || {
+        let pg = app.state::<pg::PgState>();
+        let export = app.state::<ExportState>();
+        let (chunk, n) =
+            pg::export_page(&pg, kind, mode, offset, limit.min(EXPORT_PAGE_MAX), total)?;
+        let mut slot = export.0.lock().map_err(|_| "export lock poisoned")?;
+        let sink = slot.as_mut().ok_or("no export in progress")?;
+        sink.write(&chunk).map_err(|e| e.to_string())?;
+        Ok(n)
+    })
+    .await
+}
+
+/// Put the first `limit` rows on the system clipboard as one document, and
+/// return how many rows that was.
+///
+/// The clipboard takes a single string, so this is the one place the whole
+/// text exists at once — and it exists once. It used to be returned to the
+/// page for `navigator.clipboard.writeText`, which made three copies of it:
+/// here, in the IPC payload, and in the WebView. Now the text goes from this
+/// process straight to the pasteboard and only the count crosses the bridge.
+#[tauri::command]
+async fn copy_result_text(
+    app: tauri::AppHandle,
+    kind: export::Kind,
+    mode: export::Mode,
+    limit: usize,
+) -> Result<usize, String> {
+    off_runtime(move || {
+        let pg = app.state::<pg::PgState>();
+        let (text, rows) = pg::export_document(&pg, kind, mode, limit.min(COPY_ROW_MAX))?;
+        // One clipboard for the life of the app: on X11 and Wayland the text
+        // is served by whoever set it, and is gone once that handle drops.
+        static CLIPBOARD: std::sync::Mutex<Option<arboard::Clipboard>> =
+            std::sync::Mutex::new(None);
+        let mut slot = CLIPBOARD.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.is_none() {
+            *slot = Some(arboard::Clipboard::new().map_err(|e| e.to_string())?);
+        }
+        let clipboard = slot.as_mut().expect("set just above");
+        clipboard.set_text(text).map_err(|e| e.to_string())?;
+        Ok(rows)
+    })
+    .await
 }
 
 /// Abandon an export and remove what was written.
@@ -428,7 +513,33 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<tau
     Ok(menu)
 }
 
+/// How many threads run async work.
+///
+/// Tauri's default runtime starts one worker per core. This app's async work
+/// is a handful of sockets and the commands the one window sends, so on a
+/// 12-core laptop that was a dozen threads — each with a stack and an
+/// allocator cache — with almost nothing to do. Two is the floor rather than
+/// one because some commands format or sort on the worker they run on, and a
+/// second lets a cancel through meanwhile.
+fn worker_threads(cores: usize) -> usize {
+    cores.clamp(2, 4)
+}
+
 fn main() {
+    // Must be handed over before anything touches `tauri::async_runtime`, and
+    // must outlive `run` — hence a binding that lives to the end of `main`.
+    let cores = std::thread::available_parallelism().map_or(2, |n| n.get());
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads(cores))
+        // spawn_blocking threads are created on demand; 512 is tokio's cap
+        // for servers. Idle ones exit after the keep-alive.
+        .max_blocking_threads(16)
+        .thread_keep_alive(std::time::Duration::from_secs(5))
+        .enable_all()
+        .build()
+        .expect("the async runtime starts");
+    tauri::async_runtime::set(runtime.handle().clone());
+
     tauri::Builder::default()
         .menu(build_menu)
         .on_menu_event(|app, event| {
@@ -499,7 +610,8 @@ fn main() {
             app_get_info,
             export_save,
             export_begin,
-            export_write,
+            export_result_page,
+            copy_result_text,
             export_finish,
             export_abort,
             settings_get,
@@ -522,6 +634,7 @@ fn main() {
             pg::pg_disconnect,
             pg::pg_query,
             pg::pg_rows,
+            pg::pg_chart,
             pg::pg_metadata,
             pg::pg_metadata_cached,
             pg::pg_activity,
@@ -556,6 +669,42 @@ fn main() {
         // would have looked load-bearing to the next reader.
         .run(tauri::generate_context!())
         .expect("error while running TupleNest");
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::{list_limit, off_runtime, LIST_LIMIT_MAX};
+
+    #[test]
+    fn a_missing_limit_takes_the_default() {
+        assert_eq!(list_limit(None, 50), 50);
+        assert_eq!(list_limit(Some(10), 50), 10);
+    }
+
+    #[test]
+    fn a_huge_limit_is_clamped() {
+        assert_eq!(list_limit(Some(usize::MAX), 50), LIST_LIMIT_MAX);
+        assert_eq!(list_limit(Some(LIST_LIMIT_MAX + 1), 200), LIST_LIMIT_MAX);
+    }
+
+    #[test]
+    fn blocking_work_reports_its_result_and_its_error() {
+        tauri::async_runtime::block_on(async {
+            assert_eq!(off_runtime(|| Ok(7)).await, Ok(7));
+            let failed: Result<(), String> = off_runtime(|| Err("no result".into())).await;
+            assert_eq!(failed, Err("no result".into()));
+        });
+    }
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    #[test]
+    fn worker_threads_stay_between_two_and_four() {
+        assert_eq!(super::worker_threads(1), 2);
+        assert_eq!(super::worker_threads(3), 3);
+        assert_eq!(super::worker_threads(16), 4);
+    }
 }
 
 /// The capability file must grant every window command the frontend calls.

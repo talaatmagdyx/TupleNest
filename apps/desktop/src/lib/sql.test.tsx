@@ -6,22 +6,13 @@ import {
   ENV_COLORS,
   rowCountNote,
   envMeta,
-  fetchAllRows,
   formatSQL,
   looksLikeSelect,
   needsGuard,
   guardReason,
   firstKeyword,
   paramCount,
-  toCSV,
-  toJSONExport,
-  toMarkdown,
   tokenizeLines,
-  toExportText,
-  exportPrefix,
-  exportChunk,
-  uniqueKeys,
-  exportSuffix,
   toggleLineComment,
   indentSelection,
   newlineIndent,
@@ -34,8 +25,6 @@ import {
 
 const invokeMock = vi.mocked(invoke);
 beforeEach(() => invokeMock.mockReset());
-
-const cols = [{ name: "id" }, { name: "name" }];
 
 describe("tokenizeLines", () => {
   /** Every highlighted span across every line, in order. */
@@ -222,135 +211,6 @@ describe("deletePair", () => {
     expect(deletePair("abc", 3, 3)).toBeNull();
     expect(deletePair("abc", 0, 0)).toBeNull();
     expect(deletePair("()", 0, 2)).toBeNull();
-  });
-});
-
-describe("fetchAllRows", () => {
-  it("returns nothing when there are no rows", async () => {
-    expect(await fetchAllRows(0)).toEqual([]);
-    expect(invokeMock).not.toHaveBeenCalled();
-  });
-
-  it("pages in 1000-row windows", async () => {
-    invokeMock.mockResolvedValueOnce([[1]]).mockResolvedValueOnce([[2]]);
-    await fetchAllRows(2000);
-    expect(invokeMock).toHaveBeenNthCalledWith(1, "pg_rows", { offset: 0, limit: 1000 });
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "pg_rows", { offset: 1000, limit: 1000 });
-  });
-
-  it("concatenates the pages in order", async () => {
-    invokeMock.mockResolvedValueOnce([[1], [2]]).mockResolvedValueOnce([[3]]);
-    expect(await fetchAllRows(2000)).toEqual([[1], [2], [3]]);
-  });
-
-  it("stops early on a short page rather than looping to the stated total", async () => {
-    invokeMock.mockResolvedValueOnce([]);
-    expect(await fetchAllRows(50_000)).toEqual([]);
-    expect(invokeMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("honours the cap so a huge result cannot exhaust memory", async () => {
-    invokeMock.mockResolvedValue([[1]]);
-    await fetchAllRows(10_000_000, 2000);
-    expect(invokeMock).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe("toCSV", () => {
-  it("writes a header and rows", () => {
-    expect(toCSV(cols, [[1, "a"]])).toBe("id,name\n1,a");
-  });
-
-  it("quotes commas, quotes and newlines", () => {
-    expect(toCSV([{ name: "a" }], [["x,y"]])).toContain('"x,y"');
-    expect(toCSV([{ name: "a" }], [['say "hi"']])).toContain('"say ""hi"""');
-    expect(toCSV([{ name: "a" }], [["l1\nl2"]])).toContain('"l1\nl2"');
-  });
-
-  it("quotes a header that needs it", () => {
-    expect(toCSV([{ name: "a,b" }], [])).toBe('"a,b"');
-  });
-
-  describe("spreadsheet formula injection (FILE-01)", () => {
-    const payloads = [
-      '=HYPERLINK("http://evil","x")',
-      "=cmd|'/c calc'!A1",
-      "+SUM(1)",
-      "-2+3",
-      "@SUM(A1)",
-      "\ttabbed",
-      "\rcarriage",
-    ];
-
-    it("neutralizes every formula-leading value by default", () => {
-      for (const p of payloads) {
-        const out = toCSV([{ name: "c" }], [[p]]);
-        const cell = out.split("\n")[1];
-        // The value is prefixed with ' so a spreadsheet reads it as text. It may
-        // then also be RFC-4180 quoted (e.g. the comma/tab cases).
-        expect(cell.startsWith("'") || cell.startsWith('"\'')).toBe(true);
-      }
-    });
-
-    it("neutralizes formula-leading COLUMN NAMES too", () => {
-      expect(toCSV([{ name: "=danger" }], [])).toBe("'=danger");
-    });
-
-    it("leaves ordinary values, incl. negative numbers written as numbers, unquoted", () => {
-      // A bare number cannot carry a formula: no operator, no reference, no
-      // function. Prefixing "-5" made every negative value text in Excel for
-      // no safety gain. Anything beyond a bare number still is neutralised.
-      expect(toCSV([{ name: "c" }], [["hello"]]).split("\n")[1]).toBe("hello");
-      expect(toCSV([{ name: "c" }], [[-5]]).split("\n")[1]).toBe("-5");
-      expect(toCSV([{ name: "c" }], [["-2+3"]]).split("\n")[1]).toBe("'-2+3");
-    });
-
-    it("raw mode preserves the exact bytes (opt-out)", () => {
-      expect(toCSV([{ name: "c" }], [["=BAD()"]], "raw").split("\n")[1]).toBe("=BAD()");
-    });
-
-    it("neutralizes THEN quotes, so a comma-bearing formula is both safe and valid", () => {
-      // =A1,B1 : leading = must be neutralized AND the comma must be quoted.
-      const cell = toCSV([{ name: "c" }], [["=A1,B1"]]).split("\n")[1];
-      expect(cell).toBe("\"'=A1,B1\"");
-    });
-  });
-
-  it("renders null and undefined as empty, not as the word null", () => {
-    expect(toCSV(cols, [[null, undefined]])).toBe("id,name\n,");
-  });
-
-  it("serialises objects as JSON", () => {
-    expect(toCSV([{ name: "j" }], [[{ a: 1 }]])).toBe('j\n"{""a"":1}"');
-  });
-});
-
-describe("toJSONExport", () => {
-  it("maps columns onto keys", () => {
-    expect(JSON.parse(toJSONExport(cols, [[1, "a"]]))).toEqual([{ id: 1, name: "a" }]);
-  });
-
-  it("uses null for a missing cell", () => {
-    expect(JSON.parse(toJSONExport(cols, [[1]]))).toEqual([{ id: 1, name: null }]);
-  });
-
-  it("emits an empty array for no rows", () => {
-    expect(toJSONExport(cols, [])).toBe("[]");
-  });
-});
-
-describe("toMarkdown", () => {
-  it("writes a header and separator", () => {
-    expect(toMarkdown(cols, [[1, "a"]])).toBe("| id | name |\n| --- | --- |\n| 1 | a |");
-  });
-
-  it("escapes pipes so one cell cannot forge a column", () => {
-    expect(toMarkdown([{ name: "a" }], [["x|y"]])).toContain("x\\|y");
-  });
-
-  it("truncates at 1000 rows", () => {
-    const rows = Array.from({ length: 1200 }, (_, i) => [i]);
-    expect(toMarkdown([{ name: "n" }], rows).split("\n")).toHaveLength(1002);
   });
 });
 
@@ -618,68 +478,6 @@ describe("rowCountNote", () => {
   });
 });
 
-describe("streamed export", () => {
-  const cols = [{ name: "id" }, { name: "name" }];
-  const rows: unknown[][] = [
-    [1, "ada"],
-    [2, 'a "quoted", comma'],
-    [3, null],
-  ];
-
-  /** Write in batches of `size`, exactly as doExport does. */
-  const streamed = (kind: "csv" | "json" | "md", src: unknown[][], size: number) => {
-    let out = exportPrefix(kind, cols);
-    let written = 0;
-    for (let off = 0; off < src.length; off += size) {
-      const slice = src.slice(off, off + size);
-      out += exportChunk(kind, cols, slice, written === 0);
-      written += slice.length;
-    }
-    return out + exportSuffix(kind, written > 0);
-  };
-
-  for (const kind of ["csv", "json", "md"] as const) {
-    it(`${kind}: streaming in pieces gives byte-for-byte the same document`, () => {
-      // The whole-document function is what the existing tests pin, so this is
-      // what stops the streamed path from quietly diverging from it — a stray
-      // newline at a chunk boundary would be invisible until someone opened
-      // the file.
-      const whole = toExportText(kind, cols, rows);
-      expect(streamed(kind, rows, 1)).toBe(whole);
-      expect(streamed(kind, rows, 2)).toBe(whole); // boundary mid-document
-      expect(streamed(kind, rows, 99)).toBe(whole);
-    });
-  }
-
-  it("writes a well-formed empty document when there are no rows", () => {
-    expect(streamed("json", [], 1)).toBe("[]");
-    expect(JSON.parse(streamed("json", [], 1))).toEqual([]);
-    expect(streamed("csv", [], 1)).toBe("id,name");
-  });
-
-  it("round-trips through JSON.parse whatever the batch size", () => {
-    expect(JSON.parse(streamed("json", rows, 2))).toEqual([
-      { id: 1, name: "ada" },
-      { id: 2, name: 'a "quoted", comma' },
-      { id: 3, name: null },
-    ]);
-  });
-
-  it("keeps the formula neutralization on the streamed path", () => {
-    // The reason there is one set of escaping rules rather than two: this is
-    // a security fix, and a second copy of it would be the one that rots.
-    const danger: unknown[][] = [["=cmd|' /c calc'!A1", "ok"]];
-    expect(streamed("csv", danger, 1)).toContain("'=cmd");
-    expect(exportChunk("csv", cols, danger, true, "raw")).not.toContain("'=cmd");
-  });
-
-  it("caps Markdown but not CSV or JSON", () => {
-    const many = Array.from({ length: 1200 }, (_, i) => [i, "x"]);
-    expect(toExportText("md", cols, many).split("\n")).toHaveLength(1002); // head + sep + 1000
-    expect(toExportText("csv", cols, many).split("\n")).toHaveLength(1201); // head + 1200
-  });
-});
-
 describe("toggleLineComment", () => {
   /** Render the result with the selection marked, so a test failure shows
    *  where the caret ended up rather than only what the text became. */
@@ -814,19 +612,3 @@ describe("replaceMatch / replaceAllMatches", () => {
   });
 });
 
-describe("exports keep every value", () => {
-  it("JSON export keeps both of two same-named columns", () => {
-    const cols = [{ name: "id", dbType: "int4" }, { name: "id", dbType: "int4" }];
-    const out = exportChunk("json", cols, [[1, 2]], true);
-    expect(JSON.parse(`[${out}]`)).toEqual([{ id: 1, id_2: 2 }]);
-    expect(uniqueKeys(["a", "a", "a_2", "a"])).toEqual(["a", "a_2", "a_2_2", "a_3"]);
-  });
-  it("spreadsheet-safe CSV leaves a negative number a number, and still neutralises formulas", () => {
-    const cols = [{ name: "n", dbType: "numeric" }];
-    const out = exportChunk("csv", cols, [["-5"], ["-2.5e3"], ["-2+3"], ["=cmd"]], true, "spreadsheet-safe");
-    expect(out).toContain("\n-5");
-    expect(out).toContain("-2.5e3");
-    expect(out).toContain("'-2+3");
-    expect(out).toContain("'=cmd");
-  });
-});

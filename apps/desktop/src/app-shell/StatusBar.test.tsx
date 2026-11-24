@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import StatusBar from "./StatusBar";
 
 const base = {
@@ -11,7 +11,6 @@ const base = {
   rowsInfo: "200 rows · 12 ms",
   txOpenSince: null,
   // No transaction open in the base case, so the clock is never consulted.
-  now: 0,
   serverVersion: "18.0",
   osLabel: "macos",
 };
@@ -110,24 +109,30 @@ describe("StatusBar — open transaction warning", () => {
   });
 
   it("counts seconds under a minute", () => {
-    render(<StatusBar {...base} txOpenSince={at(42)} now={Date.now()} />);
+    render(<StatusBar {...base} txOpenSince={at(42)} />);
     expect(screen.getByText("⚠ tx open 42s")).toBeInTheDocument();
+  });
+
+  it("ticks by itself while the transaction stays open", () => {
+    render(<StatusBar {...base} txOpenSince={at(42)} />);
+    act(() => void vi.advanceTimersByTime(1000));
+    expect(screen.getByText("⚠ tx open 43s")).toBeInTheDocument();
   });
 
   it("switches to minutes and pads the seconds", () => {
     // "1m 5s" not "1m 5s" — zero-padding keeps the bar from jittering as the
     // number of glyphs changes.
-    render(<StatusBar {...base} txOpenSince={at(65)} now={Date.now()} />);
+    render(<StatusBar {...base} txOpenSince={at(65)} />);
     expect(screen.getByText("⚠ tx open 1m 05s")).toBeInTheDocument();
   });
 
   it("shows a long-running transaction in minutes", () => {
-    render(<StatusBar {...base} txOpenSince={at(3600)} now={Date.now()} />);
+    render(<StatusBar {...base} txOpenSince={at(3600)} />);
     expect(screen.getByText("⚠ tx open 60m 00s")).toBeInTheDocument();
   });
 
   it("handles the exact minute boundary", () => {
-    render(<StatusBar {...base} txOpenSince={at(60)} now={Date.now()} />);
+    render(<StatusBar {...base} txOpenSince={at(60)} />);
     expect(screen.getByText("⚠ tx open 1m 00s")).toBeInTheDocument();
   });
 });

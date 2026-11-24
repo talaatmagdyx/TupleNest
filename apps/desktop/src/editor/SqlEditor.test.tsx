@@ -29,6 +29,62 @@ const base = {
 
 const ta = () => screen.getByRole("textbox") as HTMLTextAreaElement;
 
+describe("SqlEditor — highlight layer re-renders only what changed", () => {
+  const elines = (c: HTMLElement) => [...c.querySelectorAll(".editor-pre .eline")];
+  const kids = (el: Element) => [...el.childNodes];
+
+  it("leaves the DOM of untouched lines alone when another line is edited", () => {
+    const { container, rerender } = render(<SqlEditor {...base} sql={"a\nselect 1 from t"} />);
+    const before = kids(elines(container)[1]);
+    // A keyword on line 1 renumbers every span key below it. Unmemoised, React
+    // would shuffle line 2's spans to follow the keys; here it must not look.
+    rerender(<SqlEditor {...base} sql={"select\nselect 1 from t"} />);
+    const [first, second] = elines(container);
+    expect(first).toHaveTextContent("1select");
+    expect(first.querySelector(".tok-k")).toHaveTextContent("select");
+    const after = kids(second);
+    expect(after).toHaveLength(before.length);
+    after.forEach((node, i) => expect(node).toBe(before[i]));
+    // And a render that changes no text at all keeps everything too.
+    rerender(<SqlEditor {...base} sql={"select\nselect 1 from t"} height={400} />);
+    kids(elines(container)[1]).forEach((node, i) => expect(node).toBe(before[i]));
+  });
+
+  it("re-renders a line for each way its tokens can differ", () => {
+    const { container, rerender } = render(<SqlEditor {...base} sql={"x\nselect"} />);
+    const second = () => elines(container)[1];
+    const show = (line: string) => rerender(<SqlEditor {...base} sql={`x\n${line}`} />);
+    show("from"); // same class, different text
+    expect(second().querySelector(".tok-k")).toHaveTextContent("from");
+    show("42"); // different class
+    expect(second().querySelector(".tok-n")).toHaveTextContent("42");
+    show("zz"); // span becomes plain text
+    expect(second().querySelector("span:not(.lnum)")).toBeNull();
+    expect(second()).toHaveTextContent("2zz");
+    show("yy"); // plain text changes
+    expect(second()).toHaveTextContent("2yy");
+    show("yy 7"); // token count changes
+    expect(second().querySelector(".tok-n")).toHaveTextContent("7");
+  });
+
+  it("re-highlights later lines when a multi-line string is opened above them", () => {
+    const { container, rerender } = render(<SqlEditor {...base} sql={"x\nselect 1\nfrom t'"} />);
+    expect(elines(container)[1].querySelector(".tok-k")).toHaveTextContent("select");
+    // Line 2's own text is unchanged; the quote opened on line 1 swallows it.
+    rerender(<SqlEditor {...base} sql={"x '\nselect 1\nfrom t'"} />);
+    const second = elines(container)[1];
+    expect(second.querySelector(".tok-k")).toBeNull();
+    expect(second.querySelector(".tok-s")).toHaveTextContent("select 1");
+    expect(elines(container)[2].querySelector(".tok-s")).toHaveTextContent("from t'");
+  });
+
+  it("renumbers nothing but keeps line numbers right when a line is inserted", () => {
+    const { container, rerender } = render(<SqlEditor {...base} sql={"a\nb"} />);
+    rerender(<SqlEditor {...base} sql={"a\nc\nb"} />);
+    expect(elines(container).map((l) => l.textContent)).toEqual(["1a", "2c", "3b"]);
+  });
+});
+
 describe("SqlEditor — editing", () => {
   it("shows the SQL", () => {
     render(<SqlEditor {...base} />);

@@ -205,19 +205,19 @@ describe("App — the chart", () => {
 });
 
 describe("App — exporting", () => {
-  it("hands the rows to the backend in chunks (contents, never a path)", async () => {
+  it("has the backend write every page, and never names a path", async () => {
     const user = await connected();
     await run(user, "select kind, n from t");
     await user.click(screen.getByRole("button", { name: /^Export/ }));
     const menu = document.querySelector(".drop-menu") as HTMLElement;
     await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
     await waitFor(() => expect(be.sent("export_finish")).toHaveLength(1));
-    const written = be.sent("export_write").map((a) => (a as { chunk: string }).chunk).join("");
-    expect(written).toContain("kind,n");
-    expect(written).toContain("13109");
-    // The WebView supplies contents + a suggested name, never a path — the
-    // TAURI-01 invariant, which streaming must not quietly reintroduce.
-    for (const args of [...be.sent("export_begin"), ...be.sent("export_write")]) {
+    expect(be.sent("export_result_page")).toEqual([
+      { kind: "csv", mode: "spreadsheet-safe", offset: 0, limit: 2, total: 2 },
+    ]);
+    // The WebView supplies a suggested name, never a path — the TAURI-01
+    // invariant, which streaming must not quietly reintroduce.
+    for (const args of [...be.sent("export_begin"), ...be.sent("export_result_page")]) {
       expect(args).not.toHaveProperty("path");
     }
   });
@@ -229,16 +229,15 @@ describe("App — exporting", () => {
     const user = await connected();
     await run(user, "select kind, n from t");
     let release!: () => void;
-    be.on("export_write", () => new Promise<void>((r) => (release = r)));
+    be.on("export_result_page", () => new Promise<number>((r) => (release = () => r(2))));
     await user.click(screen.getByRole("button", { name: /^Export/ }));
     const menu = document.querySelector(".drop-menu") as HTMLElement;
     await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
-    await waitFor(() => expect(be.sent("export_write").length).toBeGreaterThan(0));
+    await waitFor(() => expect(be.sent("export_result_page").length).toBeGreaterThan(0));
     const before = be.sent("pg_query").length;
     await user.click(screen.getByRole("button", { name: /^Run/ }));
     expect(await screen.findByText(/wait for the export to finish/i)).toBeInTheDocument();
     expect(be.sent("pg_query")).toHaveLength(before);
-    be.on("export_write", () => undefined);
     release();
     await waitFor(() => expect(be.sent("export_finish")).toHaveLength(1));
   });

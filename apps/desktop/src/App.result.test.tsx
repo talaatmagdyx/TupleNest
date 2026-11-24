@@ -48,12 +48,11 @@ const exportMenu = async (user: ReturnType<typeof userEvent.setup>) => {
 
 describe("App — copying the result", () => {
   /**
-   * These check the copy path runs and reports honestly — that it read every
-   * row and said how many. They do not assert the clipboard's contents:
-   * jsdom's `navigator.clipboard` could not be intercepted here (neither
-   * spyOn nor defineProperty is what the app ends up calling), so an
-   * assertion on it would be checking the stub rather than the app. The
-   * formatting itself is covered against `toCSV`/`toMarkdown` in lib/csv.
+   * These check the copy path runs and reports honestly — that it asked for
+   * every row and said how many. There is no clipboard to assert on here:
+   * the backend formats the text and puts it on the system clipboard itself
+   * (`copy_result_text` in src-tauri/src/main.rs), and the page is told only
+   * the row count. The formatting is covered in src-tauri/src/export.rs.
    */
   it("reads every row before copying, not just the page on screen", async () => {
     // The grid holds a window. Copying what is on screen silently truncates,
@@ -66,7 +65,7 @@ describe("App — copying the result", () => {
     const csv = within(menu).getAllByRole("button", { name: /^CSV/ });
     await user.click(csv[csv.length - 1]);
     expect(await screen.findByText("CSV copied — 2 rows")).toBeInTheDocument();
-    expect(be.sent("pg_rows")[0]).toMatchObject({ offset: 0 });
+    expect(be.sent("copy_result_text")).toEqual([{ kind: "csv", mode: "spreadsheet-safe", limit: 2 }]);
   });
 
   it("copies as markdown too", async () => {
@@ -76,6 +75,7 @@ describe("App — copying the result", () => {
     const md = within(menu).getAllByRole("button", { name: /^Markdown/ });
     await user.click(md[md.length - 1]);
     expect(await screen.findByText(/MD copied/)).toBeInTheDocument();
+    expect(be.sent("copy_result_text")[0]).toMatchObject({ kind: "md" });
   });
 });
 
@@ -113,7 +113,7 @@ describe("App — exporting the result", () => {
   });
 
   it("says why a write failed rather than claiming it saved", async () => {
-    be.on("export_write", () => {
+    be.on("export_result_page", () => {
       throw new Error("disk full");
     });
     const user = await connected();
@@ -126,7 +126,7 @@ describe("App — exporting the result", () => {
   it("deletes the partial file when a write fails", async () => {
     // A half-written CSV opens, parses, and is missing rows with nothing on
     // its face to say so — worse than no file at all.
-    be.on("export_write", () => {
+    be.on("export_result_page", () => {
       throw new Error("disk full");
     });
     const user = await connected();
@@ -145,8 +145,7 @@ describe("App — exporting the result", () => {
     await waitFor(() => expect(be.sent("export_finish")).toHaveLength(1));
     const begun = be.sent("export_begin")[0] as { extensions: string[] };
     expect(begun.extensions).toEqual(["md"]);
-    const written = be.sent("export_write").map((a) => (a as { chunk: string }).chunk).join("");
-    expect(written).toContain("|");
+    expect(be.sent("export_result_page")[0]).toMatchObject({ kind: "md", offset: 0 });
   });
 
   it("opens the save panel before formatting anything", async () => {
@@ -160,7 +159,7 @@ describe("App — exporting the result", () => {
     const before = be.calls().length;
     await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
     await waitFor(() => expect(be.sent("export_finish")).toHaveLength(1));
-    const order = be.calls().slice(before).filter((c) => c.startsWith("export_") || c === "pg_rows");
+    const order = be.calls().slice(before).filter((c) => c.startsWith("export_"));
     expect(order[0]).toBe("export_begin");
   });
 
@@ -176,8 +175,7 @@ describe("App — exporting the result", () => {
       truncated: false,
       rowsAffected: null,
     }));
-    const page = Array.from({ length: 1000 }, (_, i) => [i]);
-    be.on("pg_rows", () => new Promise((resolve) => setTimeout(() => resolve(page), 20)));
+    be.on("export_result_page", (a) => new Promise((resolve) => setTimeout(() => resolve(a.limit), 20)));
   };
 
   it("stops on Cancel and removes what it had written", async () => {
@@ -229,7 +227,7 @@ describe("App — exporting the result", () => {
     const menu = await exportMenu(user);
     await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
     await waitFor(() => expect(be.sent("export_begin")).toHaveLength(1));
-    expect(be.sent("export_write")).toHaveLength(0);
+    expect(be.sent("export_result_page")).toHaveLength(0);
     expect(be.sent("export_finish")).toHaveLength(0);
   });
 });

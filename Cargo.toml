@@ -49,3 +49,16 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 rusqlite = { version = "0.43", features = ["bundled"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Release builds had no profile at all, so they got cargo's defaults: sixteen
+# codegen units and no cross-crate inlining. One unit plus thin LTO makes a
+# smaller, faster binary (fewer pages mapped, less CPU per row formatted) for
+# a longer release build, which only CI pays.
+#
+# `panic` is deliberately left at "unwind": a panic inside a command or a
+# spawned task is contained to that task today, and "abort" would turn each
+# one into the whole app closing. Symbols are kept too — the crash reports the
+# panic hook writes are only readable with them.
+[profile.release]
+lto = "thin"
+codegen-units = 1

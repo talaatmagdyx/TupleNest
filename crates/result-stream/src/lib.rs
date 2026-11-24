@@ -92,6 +92,12 @@ impl<T> RowStore<T> {
         self.full = true;
     }
 
+    /// Gives back the spare capacity the row index grew by doubling. Call it
+    /// once the stream has ended; the store stays usable afterwards.
+    pub fn shrink_to_fit(&mut self) {
+        self.rows.shrink_to_fit();
+    }
+
     /// Bytes attributed to the stored rows, as measured by the caller.
     pub fn bytes(&self) -> usize {
         self.bytes
@@ -110,6 +116,11 @@ impl<T> RowStore<T> {
     /// True when at least one row was counted but not stored.
     pub fn truncated(&self) -> bool {
         self.total_seen > self.rows.len() as u64
+    }
+
+    /// One stored row, if `i` is in range.
+    pub fn get(&self, i: usize) -> Option<&T> {
+        self.rows.get(i)
     }
 
     /// A window of stored rows, clamped to bounds. Out-of-range offsets
@@ -138,6 +149,18 @@ mod tests {
         assert_eq!(store.window(0, 10), &[1]);
         assert!(store.is_full());
         assert_eq!(store.total_seen(), 3);
+    }
+
+    #[test]
+    fn shrinking_keeps_the_rows() {
+        let mut store = RowStore::new(100);
+        for i in 0..5 {
+            store.push(i);
+        }
+        store.shrink_to_fit();
+        assert_eq!(store.rows.capacity(), 5);
+        assert_eq!(store.window(0, 10), &[0, 1, 2, 3, 4]);
+        assert!(store.push(5));
     }
 
     #[test]

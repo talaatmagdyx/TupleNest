@@ -120,6 +120,51 @@ fn text_of(c: &CellValue) -> String {
     }
 }
 
+/// json and jsonb cells are carried as text, not as a `serde_json::Value`
+/// tree. The text must be what that tree serialized to — compact, keys sorted,
+/// the last of a duplicated key — for both types, whatever spelling and key
+/// order the server sent.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn json_cells_are_the_compact_text_a_value_tree_serialized_to() {
+    let docs = [
+        r#"{"bb": 1,  "a": [1, 2.50, null, true], "a": {"z": "é\n\u0041", "y": 1e2}}"#,
+        r#"{"b": {"dd": 1, "c": 2}, "aa": [], "": {}, "n": -0.0, "big": 12345678901234567890123}"#,
+        r#"[ ]"#,
+        r#" "just a string with \"quotes\" and \\ " "#,
+        "null",
+        "42",
+    ];
+    for doc in docs {
+        let sql_doc = doc.replace('\'', "''");
+        for ty in ["json", "jsonb"] {
+            let row = first_row(&format!(
+                "SELECT '{sql_doc}'::{ty}, ('{sql_doc}'::{ty})::text"
+            ))
+            .await;
+            let (CellValue::Json(cell), CellValue::Text(server_text)) = (&row[0], &row[1]) else {
+                panic!("{ty} {doc}: expected a JSON cell and its text, got {row:?}");
+            };
+            let tree: serde_json::Value = serde_json::from_str(server_text).unwrap();
+            assert_eq!(
+                cell.get(),
+                serde_json::to_string(&tree).unwrap(),
+                "{ty} {doc}"
+            );
+        }
+    }
+    // Spelled out once, so the comparison above is not all there is: keys
+    // sorted, the duplicate's last value kept, numbers as serde_json writes them.
+    let row = first_row(&format!(
+        "SELECT '{}'::json, '{}'::jsonb, NULL::jsonb",
+        docs[0], docs[0]
+    ))
+    .await;
+    assert_eq!(text_of(&row[0]), r#"{"a":{"y":100.0,"z":"é\nA"},"bb":1}"#);
+    assert_eq!(text_of(&row[1]), r#"{"a":{"y":100,"z":"é\nA"},"bb":1}"#);
+    assert_eq!(row[2], CellValue::Null);
+}
+
 // Regression: these types all rendered as "<unsupported in PoC>", which made
 // real tables unreadable — 7 of 22 columns on the reporter's table.
 #[tokio::test]

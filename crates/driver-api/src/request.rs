@@ -31,7 +31,7 @@ pub struct QueryRequest {
 }
 
 /// A cell value received from the database, normalized for transport.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum CellValue {
     Null,
@@ -40,13 +40,46 @@ pub enum CellValue {
     Float(f64),
     Text(String),
     Bytes(Vec<u8>),
-    Json(serde_json::Value),
+    /// A `json`/`jsonb` value as its JSON text: one allocation the size of the
+    /// text. A `serde_json::Value` tree here was several times that, for every
+    /// cell of a batch, only to be written back out as text by whoever stored
+    /// the row. `RawValue` rather than a plain string so the text is known to
+    /// be one valid JSON document and can be spliced into a row unchecked.
+    Json(Box<serde_json::value::RawValue>),
     /// Rendered form of a type without a lossless native mapping,
     /// plus the database type name (e.g. `interval`, `numrange`).
     Other {
         rendered: String,
         db_type: String,
     },
+}
+
+/// Derived until `Json` became a `RawValue`, which has no `PartialEq`. JSON
+/// cells compare by their text, everything else exactly as the derive did
+/// (so `Float(NaN) != Float(NaN)` still).
+impl PartialEq for CellValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Null, Self::Null) => true,
+            (Self::Bool(a), Self::Bool(b)) => a == b,
+            (Self::Int(a), Self::Int(b)) => a == b,
+            (Self::Float(a), Self::Float(b)) => a == b,
+            (Self::Text(a), Self::Text(b)) => a == b,
+            (Self::Bytes(a), Self::Bytes(b)) => a == b,
+            (Self::Json(a), Self::Json(b)) => a.get() == b.get(),
+            (
+                Self::Other {
+                    rendered: a,
+                    db_type: at,
+                },
+                Self::Other {
+                    rendered: b,
+                    db_type: bt,
+                },
+            ) => a == b && at == bt,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

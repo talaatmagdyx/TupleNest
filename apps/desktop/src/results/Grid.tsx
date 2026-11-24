@@ -1,15 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { cellText } from "../lib/text";
-import { compareNumeric, isNumericType } from "../lib/chart";
+import { isNumericType } from "../lib/chart";
 import { invoke } from "@tauri-apps/api/core";
-import { fetchAllRows } from "../lib/sql";
 import { coerceValue, rowKey, type CellEdit, type EditTarget } from "../lib/dml";
 
 /**
  * HUD result grid.
  * - Virtualized (fixed 24px rows, spacer divs, 200-row backend blocks).
- * - Click a header to sort: rows are pulled fully into memory (≤ 50k)
- *   and sorted client-side; a third click clears the sort.
+ * - Click a header to sort: the backend sorts its store and pages rows out
+ *   in that order, so the grid never holds more than the visible blocks;
+ *   a third click clears the sort.
  * - Click a cell to select it (⌘C copies); jsonb/json cells open the inspector.
  */
 
@@ -17,7 +17,26 @@ const ROW_H = 24;
 const HEAD_H = 29;
 const BLOCK = 200;
 const OVERSCAN = 12;
-const SORT_CAP = 50_000;
+/** Blocks kept on each side of the one just fetched. Scrolling through 100k
+ *  rows used to keep every block it passed — the whole result, in the
+ *  WebView, on top of the copy Rust holds. 2 each way is 1,000 rows — forty
+ *  screens of scroll-back before anything is fetched again, and on a
+ *  200-column result a fifth of the cells 10 each way held. */
+const KEEP_BLOCKS = 2;
+/** Columns drawn either side of the visible ones. */
+const COL_OVERSCAN = 3;
+/** Horizontal scroll is tracked in steps this wide, so a sideways drag
+ *  re-renders once per step rather than once per pixel. */
+const COL_STEP = 64;
+const NUM_W = 56;
+
+/** The cache with only the blocks near `center`; far ones are fetched again
+ *  if scrolled back to. */
+export function keepNear<T>(m: Record<number, T>, center: number, keep = KEEP_BLOCKS): Record<number, T> {
+  const out: Record<number, T> = {};
+  for (const k in m) if (Math.abs(Number(k) - center) <= keep) out[k] = m[k];
+  return out;
+}
 
 export type GridColumn = { name: string; dbType: string };
 
@@ -56,18 +75,163 @@ function cellClass(c: GridColumn, v: unknown): string {
   return "";
 }
 
+type Handlers = {
+  pick: (ri: number) => void;
+  select: (ri: number, ci: number, col: GridColumn, v: unknown) => void;
+  beginEdit: (ri: number, ci: number, v: unknown) => void;
+  commitEdit: (ri: number, ci: number, original: unknown) => void;
+  setDraft: (text: string) => void;
+  cancelEdit: () => void;
+};
+
+type RowProps = {
+  i: number;
+  row: unknown[] | null;
+  columns: GridColumn[];
+  widths: number[];
+  offs: number[];
+  /** The drawn columns, `c0` up to but not including `c1`. */
+  c0: number;
+  c1: number;
+  selected: boolean;
+  /** The selected / edited column, on the one row that has it. */
+  selCol: number | null;
+  editCol: number | null;
+  draft: string;
+  target: EditTarget | null | undefined;
+  staged: Map<string, unknown>;
+  viewRef: RefObject<HTMLDivElement | null>;
+  h: Handlers;
+};
+
+/**
+ * One body row. Memoized, and every prop is a primitive or a reference that
+ * outlives a render, so moving the selection re-renders the row it left and
+ * the row it entered — not every row on screen.
+ */
+const Row = memo(function Row(p: RowProps) {
+  const { i, row, target, widths, offs, selCol, editCol, draft, staged, viewRef, h } = p;
+  const bodyW = offs[p.columns.length];
+  const totalW = NUM_W + bodyW;
+  const padL = offs[p.c0];
+  const padR = bodyW - offs[p.c1];
+  const colIdx: number[] = [];
+  for (let c = p.c0; c < p.c1; c++) colIdx.push(c);
+  // Identity by primary key, not row position — the grid may be
+  // sorted after an edit was staged. Once per row, not per cell.
+  const rk = row && target ? rowKey(target.pk.map((k) => row[k.index])) : "";
+  return (
+    <div
+      className={`g-row ${p.selected ? "sel" : ""}`}
+      role="row"
+      // 1-based, and the header is row 1 — this is the number a screen
+      // reader reads out, so it has to match what the eye sees.
+      aria-rowindex={i + 2}
+      style={{ minWidth: totalW }}
+      onClick={() => h.pick(i)}
+    >
+      <div className="g-rownum" role="rowheader" style={{ width: NUM_W }}>
+        {i + 1}
+      </div>
+      {row !== null && padL > 0 && <div aria-hidden="true" style={{ flex: "none", width: padL }} />}
+      {row === null ? (
+        <div className="g-cell loading" style={{ width: bodyW }}>
+          …
+        </div>
+      ) : (
+        colIdx.map((ci) => {
+          const c = p.columns[ci];
+          const original = row[ci];
+          const key = `${rk}:${c.name}`;
+          const isStaged = !!target && staged.size > 0 && staged.has(key);
+          const v = isStaged ? staged.get(key) : original;
+          const text = cellText(v);
+          // Boolean, not `selCell && …`: that yields null when nothing is
+          // selected, and `aria-selected` must be a real true/false.
+          const isSel = selCol === ci;
+          const isEditing = editCol === ci;
+          const canEdit = !!target?.writable[ci];
+
+          if (isEditing) {
+            return (
+              <div key={ci} className="g-cell editing" style={{ width: widths[ci] }}>
+                <input
+                  autoFocus
+                  className="g-edit"
+                  value={draft}
+                  onChange={(e) => h.setDraft(e.target.value)}
+                  onBlur={() => h.commitEdit(i, ci, original)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      h.commitEdit(i, ci, original);
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      h.cancelEdit();
+                    }
+                  }}
+                />
+              </div>
+            );
+          }
+          return (
+            <div
+              key={ci}
+              className={`g-cell ${cellClass(c, v)} ${isSel ? "selcell" : ""} ${
+                isStaged ? "staged" : ""
+              } ${canEdit ? "editable" : ""}`}
+              role="gridcell"
+              aria-colindex={ci + 2}
+              aria-selected={isSel}
+              aria-readonly={!canEdit}
+              // The roving stop: exactly one cell is tabbable, so Tab
+              // reaches the grid and the arrows move inside it.
+              tabIndex={isSel ? 0 : -1}
+              ref={
+                // Focus follows selection, but only once it is really the
+                // selected cell — otherwise every render steals focus.
+                // Only the selected cell gets a ref at all.
+                isSel
+                  ? (el) => {
+                      if (el && document.activeElement !== el && viewRef.current?.contains(document.activeElement)) {
+                        el.focus();
+                      }
+                    }
+                  : undefined
+              }
+              style={{ width: widths[ci] }}
+              title={
+                isStaged ? `${cellText(original)} → ${text} (pending)` : canEdit ? `${text} — double-click to edit` : text
+              }
+              onClick={() => h.select(i, ci, c, v)}
+              onDoubleClick={() => h.beginEdit(i, ci, original)}
+            >
+              {text}
+            </div>
+          );
+        })
+      )}
+      {row !== null && padR > 0 && <div aria-hidden="true" style={{ flex: "none", width: padR }} />}
+    </div>
+  );
+});
+
 export default function Grid(p: Props) {
   const [blocks, setBlocks] = useState<Record<number, unknown[][]>>({});
   const [scrollTop, setScrollTop] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
   const [viewH, setViewH] = useState(360);
+  const [viewW, setViewW] = useState(0);
   const [sortCol, setSortCol] = useState<number | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc" | null>(null);
-  const [allRows, setAllRows] = useState<unknown[][] | null>(null);
   const [selCell, setSelCell] = useState<{ r: number; c: number } | null>(null);
   const [selRow, setSelRow] = useState<number>(-1);
   const [editing, setEditing] = useState<{ r: number; c: number } | null>(null);
   const [draft, setDraft] = useState("");
   const pending = useRef<Set<number>>(new Set());
+  /** Bumped by every sort change, so a block fetched in the old order and
+   *  arriving late is dropped instead of cached under the new one. */
+  const sortGen = useRef(0);
   const viewRef = useRef<HTMLDivElement | null>(null);
 
   /** "rowKey:column" → staged value, for O(1) lookup while rendering.
@@ -95,27 +259,41 @@ export default function Grid(p: Props) {
     setPrevEpoch(p.epoch);
     setBlocks({});
     setScrollTop(0);
+    setScrollLeft(0);
     setSortCol(null);
     setSortDir(null);
-    setAllRows(null);
     setSelCell(null);
     setSelRow(-1);
     setEditing(null);
   }
 
+  /** The open editor, for a block that arrives after the render that asked for it. */
+  const editingRef = useRef(editing);
   useEffect(() => {
+    editingRef.current = editing;
+  }, [editing]);
+
+  useEffect(() => {
+    sortGen.current++; // a page still in flight belongs to the previous result
     pending.current.clear();
     p.onCopyable(null);
-    if (viewRef.current) viewRef.current.scrollTop = 0;
+    if (viewRef.current) {
+      viewRef.current.scrollTop = 0;
+      viewRef.current.scrollLeft = 0;
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.epoch]);
 
   useEffect(() => {
     const el = viewRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setViewH(el.clientHeight));
+    const measure = () => {
+      setViewH(el.clientHeight);
+      setViewW(el.clientWidth);
+    };
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    setViewH(el.clientHeight);
+    measure();
     return () => ro.disconnect();
   }, []);
 
@@ -128,53 +306,43 @@ export default function Grid(p: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [first, last, p.storedRows]);
 
-  // Backend block fetch (only when not in memory mode)
+  // Backend block fetch, in the current sort order.
   useEffect(() => {
-    if (allRows || p.storedRows === 0 || last <= first) return;
+    if (p.storedRows === 0 || last <= first) return;
+    const sort = sortCol !== null && sortDir ? { column: sortCol, desc: sortDir === "desc" } : null;
+    const gen = sortGen.current;
     const b0 = Math.floor(first / BLOCK);
     const b1 = Math.floor((last - 1) / BLOCK);
     for (let b = b0; b <= b1; b++) {
       if (!(b in blocks) && !pending.current.has(b)) {
         pending.current.add(b);
-        invoke<unknown[][]>("pg_rows", { offset: b * BLOCK, limit: BLOCK })
-          .then((rows) => setBlocks((m) => ({ ...m, [b]: rows })))
+        invoke<unknown[][]>("pg_rows", { offset: b * BLOCK, limit: BLOCK, sort })
+          .then((rows) => {
+            if (gen !== sortGen.current) return;
+            setBlocks((m) => {
+              const next = keepNear({ ...m, [b]: rows }, b);
+              // The row under an open editor stays cached however far the
+              // view has moved: its cell is still drawn, and committing the
+              // edit needs the row's key.
+              const e = editingRef.current;
+              const eb = e ? Math.floor(e.r / BLOCK) : -1;
+              if (m[eb] && !next[eb]) next[eb] = m[eb];
+              return next;
+            });
+          })
           .catch(() => {})
           .finally(() => pending.current.delete(b));
       }
     }
-  }, [first, last, blocks, allRows, p.storedRows]);
+  }, [first, last, blocks, p.storedRows, sortCol, sortDir]);
 
-  const sorted = useMemo(() => {
-    if (!allRows) return null;
-    if (sortCol === null || !sortDir) return allRows;
-    const ci = sortCol;
-    const dir = sortDir === "asc" ? 1 : -1;
-    const numeric = isNumericType(p.columns[ci]?.dbType ?? "");
-    return [...allRows].sort((a, b) => {
-      const x = a[ci];
-      const y = b[ci];
-      if (x === null || x === undefined) return y === null || y === undefined ? 0 : 1;
-      if (y === null || y === undefined) return -1;
-      if (numeric) return compareNumeric(x, y) * dir;
-      if (typeof x === "number" && typeof y === "number") return (x - y) * dir;
-      return cellText(x).localeCompare(cellText(y)) * dir;
-    });
-  }, [allRows, sortCol, sortDir, p.columns]);
+  const rowAt = (i: number): unknown[] | null => blocks[Math.floor(i / BLOCK)]?.[i % BLOCK] ?? null;
 
-  const rowAt = (i: number): unknown[] | null =>
-    sorted ? sorted[i] ?? null : blocks[Math.floor(i / BLOCK)]?.[i % BLOCK] ?? null;
-
-  const sortBy = async (ci: number) => {
-    if (p.storedRows > SORT_CAP) {
-      p.onToast(`Sorting is available up to ${SORT_CAP.toLocaleString()} rows`);
-      return;
-    }
-    let rows = allRows;
-    if (!rows) {
-      p.onToast("Loading rows for sort…");
-      rows = await fetchAllRows(p.storedRows, SORT_CAP);
-      setAllRows(rows);
-    }
+  const sortBy = (ci: number) => {
+    // A new order: every cached block is in the old one.
+    sortGen.current++;
+    pending.current.clear();
+    setBlocks({});
     if (sortCol === ci) {
       if (sortDir === "asc") setSortDir("desc");
       else if (sortDir === "desc") {
@@ -240,9 +408,83 @@ export default function Grid(p: Props) {
     setEditing(null);
   };
 
+  /** The handlers the rows call, behind references that never change, so a
+   *  render of the grid does not re-render every row. */
+  const live = useRef({ select, beginEdit, commitEdit });
+  useEffect(() => {
+    live.current = { select, beginEdit, commitEdit };
+  });
+  const [h] = useState<Handlers>(() => ({
+    pick: setSelRow,
+    select: (...a) => live.current.select(...a),
+    beginEdit: (...a) => live.current.beginEdit(...a),
+    commitEdit: (...a) => live.current.commitEdit(...a),
+    setDraft,
+    cancelEdit: () => setEditing(null),
+  }));
+
+  // The rows in view — and the row being edited, wherever the view has gone:
+  // dropping it unmounts the editor, and with it the focus and the caret.
+  // It is drawn in place, one row between two spacers, rather than by
+  // stretching the window to reach it, which could be 100,000 rows.
   const indices: number[] = [];
+  if (editing && editing.r < first) indices.push(editing.r);
   for (let i = first; i < last; i++) indices.push(i);
-  const totalW = 56 + p.columns.reduce((a, c) => a + colWidth(c), 0);
+  if (editing && editing.r >= last) indices.push(editing.r);
+
+  /** Column widths and their running left edges (`offs[n]` is the full width). */
+  const layout = useMemo(() => {
+    const widths = p.columns.map(colWidth);
+    const offs = [0];
+    for (const w of widths) offs.push(offs[offs.length - 1] + w);
+    return { widths, offs };
+  }, [p.columns]);
+  const { widths, offs } = layout;
+  const nCols = p.columns.length;
+  const bodyW = offs[nCols];
+  const totalW = NUM_W + bodyW;
+
+  // The columns in view. A 200-column result used to draw every cell of every
+  // visible row — some 12,000 nodes — where a screen shows a dozen columns.
+  // Cells outside the window are replaced by one spacer each side.
+  let c0 = 0;
+  while (c0 < nCols && offs[c0 + 1] <= scrollLeft) c0++;
+  let c1 = c0;
+  while (c1 < nCols && offs[c1] < scrollLeft + COL_STEP + viewW) c1++;
+  c0 = Math.max(0, c0 - COL_OVERSCAN);
+  c1 = Math.min(nCols, c1 + COL_OVERSCAN);
+
+  const body: ReactNode[] = [];
+  let next = 0;
+  for (const i of indices) {
+    if (i > next) body.push(<div key={`gap${next}`} style={{ height: (i - next) * ROW_H }} />);
+    const sel = selCell?.r === i ? selCell.c : null;
+    const ed = editing?.r === i ? editing.c : null;
+    body.push(
+      <Row
+        key={i}
+        i={i}
+        row={rowAt(i)}
+        columns={p.columns}
+        widths={widths}
+        offs={offs}
+        // The edited row's columns reach as far as its editor, for the same
+        // reason; one row of extra cells, not a screen of them.
+        c0={ed === null ? c0 : Math.min(c0, ed)}
+        c1={ed === null ? c1 : Math.max(c1, ed + 1)}
+        selected={i === selRow}
+        selCol={sel}
+        editCol={ed}
+        draft={ed === null ? "" : draft}
+        target={p.target}
+        staged={staged}
+        viewRef={viewRef}
+        h={h}
+      />,
+    );
+    next = i + 1;
+  }
+  if (next < p.storedRows) body.push(<div key={`gap${next}`} style={{ height: (p.storedRows - next) * ROW_H }} />);
 
   /*
    * Keyboard navigation.
@@ -273,6 +515,13 @@ export default function Grid(p: Props) {
       if (top < view.scrollTop) view.scrollTop = top;
       else if (bottom > view.scrollTop + view.clientHeight) {
         view.scrollTop = bottom - view.clientHeight;
+      }
+      // Sideways too: a column outside the drawn window has no cell to focus,
+      // so the browser cannot bring it into view for us.
+      if (dc !== 0) {
+        const room = view.clientWidth - NUM_W;
+        if (offs[c] < view.scrollLeft) view.scrollLeft = offs[c];
+        else if (room > 0 && offs[c + 1] > view.scrollLeft + room) view.scrollLeft = offs[c + 1] - room;
       }
     }
   };
@@ -306,17 +555,23 @@ export default function Grid(p: Props) {
       aria-colcount={p.columns.length}
       aria-label="Query results"
       onKeyDown={onGridKey}
-      onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+      onScroll={(e) => {
+        // Snapped to a row / a column step: the same value is no state change,
+        // so a scroll re-renders when the window moves, not on every pixel.
+        const el = e.currentTarget;
+        setScrollTop(Math.floor(el.scrollTop / ROW_H) * ROW_H);
+        setScrollLeft(Math.floor(el.scrollLeft / COL_STEP) * COL_STEP);
+      }}
     >
       <div className="g-head" role="row" style={{ minWidth: totalW }}>
-        <div className="g-rownum" role="columnheader" aria-label="Row number" style={{ width: 56 }} />
+        <div className="g-rownum" role="columnheader" aria-label="Row number" style={{ width: NUM_W }} />
         {p.columns.map((c, ci) => (
           <div
             key={ci}
             className="g-hcell"
             role="columnheader"
             aria-sort={sortCol === ci && sortDir ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
-            style={{ width: colWidth(c) }}
+            style={{ width: widths[ci] }}
             tabIndex={0}
             onClick={() => sortBy(ci)}
             onKeyDown={(e) => {
@@ -325,7 +580,7 @@ export default function Grid(p: Props) {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
                 e.stopPropagation();
-                void sortBy(ci);
+                sortBy(ci);
               }
             }}
           >
@@ -335,104 +590,7 @@ export default function Grid(p: Props) {
           </div>
         ))}
       </div>
-      {first > 0 && <div style={{ height: first * ROW_H }} />}
-      {indices.map((i) => {
-        const row = rowAt(i);
-        return (
-          <div
-            key={i}
-            className={`g-row ${i === selRow ? "sel" : ""}`}
-            role="row"
-            // 1-based, and the header is row 1 — this is the number a screen
-            // reader reads out, so it has to match what the eye sees.
-            aria-rowindex={i + 2}
-            style={{ minWidth: totalW }}
-            onClick={() => setSelRow(i)}
-          >
-            <div className="g-rownum" role="rowheader" style={{ width: 56 }}>
-              {i + 1}
-            </div>
-            {row === null ? (
-              <div className="g-cell loading" style={{ width: totalW - 56 }}>
-                …
-              </div>
-            ) : (
-              p.columns.map((c, ci) => {
-                const original = row[ci];
-                // Identity by primary key, not row position — the grid may be
-                // sorted after an edit was staged.
-                const rk = p.target ? rowKey(p.target.pk.map((k) => row[k.index])) : "";
-                const key = `${rk}:${c.name}`;
-                const isStaged = !!p.target && staged.has(key);
-                const v = isStaged ? staged.get(key) : original;
-                // Boolean, not `selCell && …`: that yields null when nothing is
-                // selected, and `aria-selected` must be a real true/false.
-                const isSel = !!selCell && selCell.r === i && selCell.c === ci;
-                const isEditing = editing && editing.r === i && editing.c === ci;
-                const canEdit = !!p.target?.writable[ci];
-
-                if (isEditing) {
-                  return (
-                    <div key={ci} className="g-cell editing" style={{ width: colWidth(c) }}>
-                      <input
-                        autoFocus
-                        className="g-edit"
-                        value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
-                        onBlur={() => commitEdit(i, ci, original)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            commitEdit(i, ci, original);
-                          } else if (e.key === "Escape") {
-                            e.preventDefault();
-                            setEditing(null);
-                          }
-                        }}
-                      />
-                    </div>
-                  );
-                }
-                return (
-                  <div
-                    key={ci}
-                    className={`g-cell ${cellClass(c, v)} ${isSel ? "selcell" : ""} ${
-                      isStaged ? "staged" : ""
-                    } ${canEdit ? "editable" : ""}`}
-                    role="gridcell"
-                    aria-colindex={ci + 2}
-                    aria-selected={isSel}
-                    aria-readonly={!canEdit}
-                    // The roving stop: exactly one cell is tabbable, so Tab
-                    // reaches the grid and the arrows move inside it.
-                    tabIndex={isSel ? 0 : -1}
-                    ref={(el) => {
-                      // Focus follows selection, but only once it is really the
-                      // selected cell — otherwise every render steals focus.
-                      if (isSel && el && document.activeElement !== el && viewRef.current?.contains(document.activeElement)) {
-                        el.focus();
-                      }
-                    }}
-                    style={{ width: colWidth(c) }}
-                    title={
-                      isStaged
-                        ? `${cellText(original)} → ${cellText(v)} (pending)`
-                        : canEdit
-                          ? `${cellText(v)} — double-click to edit`
-                          : cellText(v)
-                    }
-                    onClick={() => select(i, ci, c, v)}
-                    onDoubleClick={() => beginEdit(i, ci, original)}
-                  >
-                    {cellText(v)}
-                  </div>
-                );
-              })
-            )}
-          </div>
-        );
-      })}
-      {last < p.storedRows && <div style={{ height: (p.storedRows - last) * ROW_H }} />}
+      {body}
       <div style={{ height: HEAD_H }} />
     </div>
   );

@@ -38,11 +38,52 @@ trusting it.
 - Secrets in JSON shapes are redacted; logs keep 14 days.
 
 ### Performance and reliability
+- The explorer tree draws only the rows on screen (2,000 tables: about 14,000
+  page nodes down to under 300). Rows are a uniform 24px.
+- The SQL editor re-renders only the lines an edit changed.
+- Copy puts the text on the clipboard from the backend; it no longer passes
+  through the window.
+- A new row-returning query frees the previous result at its first batch, not
+  when it finishes, so two full results are not held at once.
+- Rows are written to their stored text directly, and a JSON cell's parsed
+  tree is dropped as soon as it is read (wide-result ingest 379 → 291 ms).
+- Moving the selection re-renders only the rows that changed, and a cell being
+  edited survives scrolling away and back.
+- History and audit lists read through indexes; the history and metadata
+  databases use a smaller page cache and a bounded WAL file. Schema version 7.
+- Very wide results draw only the columns on screen (200 columns: about 12,000
+  cell nodes down to about 1,500), and the grid keeps 1,000 rows near the
+  viewport instead of 4,200.
+- An open transaction no longer re-renders the whole window once a second; the
+  status bar keeps its own clock.
+- Less copying per cell while reading, sorting and exporting rows; numeric
+  sorts skip collation. The async runtime uses 2 to 4 threads, not one per core.
+- Release builds use thin LTO and one codegen unit.
 - One query can no longer exceed the result budget many times over: batches are
   cut by size, and bytea/json cells over 1 MB are not decoded (600 × 1 MB bytea:
   882 → 296 MB). Rows past the cap are counted, not decoded.
 - Disconnect cancels and gives up after three tries instead of waiting forever;
   connections use TCP keepalives and a connect timeout.
+- Results are kept as compact JSON text, one allocation per row, and the
+  memory budget counts what they really use. 200 columns × 100,000 rows: all
+  rows kept at 183 MB peak, where 37,334 rows took 447 MB before.
+- The grid keeps only the rows near what is on screen; scrolling a large
+  result no longer copies all of it into the window.
+- Sorting runs in the backend over the stored result, off the main thread,
+  and the grid pages the sorted rows. It used to copy up to 50,000 rows into
+  the window to sort them there, and refused past that; now every stored row
+  sorts (100,000 wide rows: about 0.2 s the first time, then instant).
+  Text sorts by the Unicode Collation Algorithm, as the window's own sort
+  did: `émile` beside `emile` rather than after `z`, `straße` beside
+  `strasse`, and every script in its proper order.
+- The chart is summed in the backend over every stored row; only the bars
+  reach the window. It used to copy up to 50,000 rows in, and chart only those.
+- Export and Copy are formatted in the backend, which writes each page straight
+  into the file; rows no longer pass through the window at all. The output is
+  byte-for-byte what it was, formula neutralization included — and those rules
+  now exist in one place.
+- Query history is written off the async runtime, so a slow disk no longer
+  delays the query's result.
 
 ### Accessibility
 - The schema tree is one tab stop with arrow-key navigation; toasts are

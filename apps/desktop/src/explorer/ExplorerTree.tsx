@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   DbColumn,
   DbConstraint,
@@ -18,6 +18,11 @@ import { groupId, schemaId, tableKey } from "../lib/nodes";
  * than beside it. On a real schema here that is the difference between 4,196
  * top-level rows — 4,170 of them `_y2024q1`-style partitions — and 48.
  * Partitioning is multi-level (channel, then quarter), so partitions recurse.
+ *
+ * Windowed: the visible tree is flattened into one array of row descriptors
+ * and only the rows near the viewport are in the DOM, between two spacers.
+ * An open group of thousands of tables costs a screenful of nodes, not
+ * thousands — and a toggle re-renders that screenful, not the schema.
  */
 
 export type NodeKey = string;
@@ -67,7 +72,167 @@ const fmtBytes = (n: number): string => {
   return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${u[i]}`;
 };
 
+/** Every row is exactly this tall, so a row's offset is its index times this. */
+const ROW_H = 24;
+/** Rows kept rendered beyond each edge of the viewport. */
+const OVERSCAN = 10;
+/** Viewport height assumed until the tree has been measured (and under
+ *  jsdom, which reports 0). */
+const FALLBACK_H = 600;
+
+/** One visible row. `depth` is the indent; `nav` rows are the focusable
+ *  treeitems the arrow keys move between; rows that expand carry `open` and
+ *  the `nodeKey` that toggles them. */
+type FlatRow = { id: string; depth: number; nav: boolean } & (
+  | { t: "schema"; open: boolean; nodeKey: NodeKey; schema: string; count?: number }
+  | { t: "group"; open: boolean; nodeKey: NodeKey; label: string; badge?: string | number }
+  | { t: "table"; open: boolean; nodeKey: NodeKey; schema: string; o: DbObject }
+  | { t: "seq"; schema: string; o: DbObject }
+  | { t: "note"; text: string }
+  | { t: "col"; c: DbColumn }
+  | { t: "idx"; schema: string; ix: DbIndex }
+  | { t: "con"; cn: DbConstraint }
+  | { t: "type"; ty: DbType }
+  | { t: "routine"; r: DbRoutine }
+);
+
+type TreeData = Pick<
+  Props,
+  "schemas" | "objects" | "columns" | "indexes" | "constraints" | "partitions" | "types" | "routines"
+>;
+
+/** The tree as the eye sees it: one entry per visible row, top to bottom. */
+function flatten(d: TreeData, open: Record<NodeKey, boolean>, f: string): FlatRow[] {
+  const out: FlatRow[] = [];
+  const match = (name: string) => !f || name.toLowerCase().includes(f);
+  const note = (id: string, depth: number, text: string) =>
+    out.push({ t: "note", id, depth, nav: false, text });
+  /** Pushes an expandable header and says whether it is open. */
+  const group = (id: string, nodeKey: NodeKey, depth: number, label: string, badge?: string | number) => {
+    const isOpen = !!open[nodeKey];
+    out.push({ t: "group", id, depth, nav: true, open: isOpen, nodeKey, label, badge });
+    return isOpen;
+  };
+
+  /** A table — or a partition, which is also a table — and its children. */
+  const table = (schema: string, o: DbObject, depth: number, path: string) => {
+    const key = tableKey(schema, o.name);
+    const id = `${path}/t:${key}`;
+    /* A sequence has no columns, no indexes and no constraints — giving it the
+       expandable table shape would only promise three empty groups. It has
+       exactly one interesting thing to say, so clicking it says it. */
+    if (o.kind === "sequence") {
+      out.push({ t: "seq", id, depth, nav: true, schema, o });
+      return;
+    }
+    const nodeKey = `t:${key}`;
+    const isOpen = !!open[nodeKey];
+    out.push({ t: "table", id, depth, nav: true, open: isOpen, nodeKey, schema, o });
+    if (!isOpen) return;
+
+    const cols = d.columns[key];
+    if (group(`${id}/c`, `c:${key}`, depth + 1, "Columns", cols?.length)) {
+      if (cols === undefined) note(`${id}/c/…`, depth + 2, "loading…");
+      else for (const c of cols) out.push({ t: "col", id: `${id}/c/${c.name}`, depth: depth + 2, nav: false, c });
+    }
+
+    const idx = d.indexes[key];
+    if (group(`${id}/i`, `i:${key}`, depth + 1, "Indexes", idx?.length)) {
+      if (idx === undefined) note(`${id}/i/…`, depth + 2, "loading…");
+      else if (idx.length === 0)
+        /* "none" on a partitioned table reads like a bug. It isn't: this
+           database creates indexes on the leaves rather than on the parent,
+           so the parent really has none. Say which. */
+        note(`${id}/i/…`, depth + 2, o.isPartitioned ? "none on this level — defined on the partitions" : "none");
+      else
+        for (const ix of idx) out.push({ t: "idx", id: `${id}/i/${ix.name}`, depth: depth + 2, nav: false, schema, ix });
+    }
+
+    const cons = d.constraints[key];
+    if (group(`${id}/k`, `k:${key}`, depth + 1, "Constraints", cons?.length)) {
+      if (cons === undefined) note(`${id}/k/…`, depth + 2, "loading…");
+      else if (cons.length === 0) note(`${id}/k/…`, depth + 2, "none");
+      else for (const cn of cons) out.push({ t: "con", id: `${id}/k/${cn.name}`, depth: depth + 2, nav: false, cn });
+    }
+
+    if (o.isPartitioned && group(`${id}/p`, `p:${key}`, depth + 1, "Partitions", o.partitionCount)) {
+      const parts = d.partitions[key];
+      if (parts === undefined) note(`${id}/p/…`, depth + 2, "loading…");
+      else
+        for (const pt of parts)
+          if (match(pt.name))
+            table(
+              schema,
+              {
+                name: pt.name,
+                kind: "table",
+                comment: pt.bounds,
+                // Straight from the server. Deriving this from already-loaded
+                // partitions was circular: the node only appeared once opened,
+                // so it never appeared.
+                isPartitioned: pt.isPartitioned,
+                partitionCount: pt.partitionCount,
+              },
+              depth + 2,
+              `${id}/p`
+            );
+    }
+  };
+
+  for (const schema of d.schemas ?? []) {
+    const sid = schemaId(schema);
+    const objs = d.objects[schema];
+    const isOpen = !!open[sid];
+    out.push({ t: "schema", id: sid, depth: 0, nav: true, open: isOpen, nodeKey: sid, schema, count: objs?.length });
+    if (!isOpen) continue;
+
+    if (objs === undefined) note(`${sid}/…`, 1, "loading…");
+    else
+      for (const { kind, label } of KINDS) {
+        const all = objs.filter((o) => o.kind === kind);
+        if (all.length === 0) continue;
+        const items = all.filter((o) => match(o.name));
+        const gk = groupId(schema, kind);
+        if (!group(gk, gk, 1, label, f ? `${items.length}/${all.length}` : all.length)) continue;
+        if (items.length === 0) note(`${gk}/…`, 2, "no match");
+        else for (const o of items) table(schema, o, 2, gk);
+      }
+
+    /* Enums live here. They were invisible before, despite being on the table
+       you look at most. */
+    const types = d.types[schema];
+    if (types !== undefined && types.length > 0) {
+      const gk = groupId(schema, "types");
+      if (group(gk, gk, 1, "Types & enums", types.length))
+        for (const ty of types)
+          if (match(ty.name)) out.push({ t: "type", id: `${gk}/${ty.name}`, depth: 2, nav: false, ty });
+    }
+
+    const routines = d.routines[schema];
+    if (routines !== undefined && routines.length > 0) {
+      const gk = groupId(schema, "routines");
+      if (group(gk, gk, 1, "Functions", routines.length))
+        for (const r of routines)
+          if (match(r.name))
+            out.push({ t: "routine", id: `${gk}/${r.name}(${r.args ?? ""})`, depth: 2, nav: false, r });
+    }
+  }
+  return out;
+}
+
+/** The slice of `total` rows to render for a scroll offset and viewport. */
+const windowOf = (scrollTop: number, viewH: number, total: number): [number, number] => {
+  const count = Math.ceil(viewH / ROW_H) + OVERSCAN * 2;
+  // Clamped so a tree that just shrank under a deep scroll shows its tail
+  // rather than nothing, until the browser pulls the scroll offset back.
+  const first = Math.max(0, Math.min(Math.floor(scrollTop / ROW_H) - OVERSCAN, total - count));
+  return [first, Math.min(total, first + count)];
+};
+
+const pad = (depth: number) => 8 + depth * 13;
+
 function Row(p: {
+  idx: number;
   depth: number;
   open?: boolean;
   arrow?: boolean;
@@ -83,8 +248,11 @@ function Row(p: {
   return (
     <div
       className={`tree-row ${p.className ?? ""}`}
-      style={{ paddingLeft: 8 + p.depth * 13 }}
+      style={{ paddingLeft: pad(p.depth), height: ROW_H }}
       title={p.title}
+      // Where this row sits in the flattened tree: how the keyboard handler
+      // finds its place without walking the DOM.
+      data-i={p.idx}
       // Keyboard and screen readers: each row is a focusable treeitem. Space
       // is the click (expand, select); Enter is the double-click (open,
       // insert), falling back to the click where a row has only that.
@@ -125,56 +293,122 @@ const Chip = ({ ch, color }: { ch: string; color: string }) => (
   </span>
 );
 
+const NOTE_STYLE: React.CSSProperties = {
+  height: ROW_H,
+  lineHeight: `${ROW_H - 6}px`,
+  overflow: "hidden",
+  whiteSpace: "nowrap",
+  textOverflow: "ellipsis",
+};
+
 export default function ExplorerTree(p: Props) {
   const [filter, setFilter] = useState("");
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewH, setViewH] = useState(FALLBACK_H);
   const treeRef = useRef<HTMLDivElement | null>(null);
-  const lastRow = useRef<HTMLElement | null>(null);
-  const treeRows = () =>
-    [...(treeRef.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [])];
+  /** Id of the row that last had focus: where Tab lands, and where the arrow
+   *  keys resume from once that row has scrolled out of the window. */
+  const lastId = useRef<string | null>(null);
+  /** Row index to focus once it has been rendered. */
+  const pending = useRef<number | null>(null);
+  /** Focus is parked on the tree itself because its row left the window. */
+  const parked = useRef(false);
+
+  const f = filter.trim().toLowerCase();
+  const rows = useMemo(
+    () =>
+      flatten(
+        {
+          schemas: p.schemas,
+          objects: p.objects,
+          columns: p.columns,
+          indexes: p.indexes,
+          constraints: p.constraints,
+          partitions: p.partitions,
+          types: p.types,
+          routines: p.routines,
+        },
+        p.open,
+        f
+      ),
+    [p.schemas, p.objects, p.columns, p.indexes, p.constraints, p.partitions, p.types, p.routines, p.open, f]
+  );
+  const [first, last] = windowOf(scrollTop, viewH, rows.length);
+
+  useEffect(() => {
+    const el = treeRef.current as HTMLDivElement;
+    const measure = () => setViewH(el.clientHeight || FALLBACK_H);
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    measure();
+    return () => ro.disconnect();
+  }, []);
+
+  // A row that was outside the window when it was asked to take focus.
+  useLayoutEffect(() => {
+    if (pending.current === null) return;
+    treeRef.current?.querySelector<HTMLElement>(`[data-i="${pending.current}"]`)?.focus();
+    pending.current = null;
+  });
+
+  /** Focus row `i`, scrolling it into the window first if it is not there. */
+  const focusRow = (el: HTMLElement, i: number) => {
+    const top = i * ROW_H;
+    const h = el.clientHeight || FALLBACK_H;
+    if (top < el.scrollTop) el.scrollTop = top;
+    else if (top + ROW_H > el.scrollTop + h) el.scrollTop = top + ROW_H - h;
+    setScrollTop(Math.floor(el.scrollTop / ROW_H) * ROW_H);
+    const node = el.querySelector<HTMLElement>(`[data-i="${i}"]`);
+    if (node) node.focus();
+    else pending.current = i;
+  };
 
   /** The WAI-ARIA tree keys: Up/Down move, Right opens (or steps in), Left
    *  closes (or steps out to the parent), Home/End jump to the ends. */
-  const onTreeKey = (e: React.KeyboardEvent) => {
-    const rows = treeRows();
-    const current = document.activeElement as HTMLElement | null;
-    const i = current ? rows.indexOf(current) : -1;
+  const onTreeKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    const target = e.target as HTMLElement;
+    // On the tree itself, focus is parked: carry on from the row last used.
+    const i =
+      target === el
+        ? rows.findIndex((r) => r.id === lastId.current)
+        : target.dataset.i === undefined
+          ? -1 // a button inside a row
+          : Number(target.dataset.i);
     if (i === -1) return;
-    const go = (j: number) => {
-      const row = rows[Math.max(0, Math.min(rows.length - 1, j))];
-      if (row) {
-        lastRow.current = row;
-        row.focus();
-      }
+    const cur = rows[i];
+    /** The nearest focusable row from `from`, exclusive, going `dir`. */
+    const step = (from: number, dir: 1 | -1) => {
+      for (let j = from + dir; j >= 0 && j < rows.length; j += dir) if (rows[j].nav) return j;
+      return i;
     };
-    const expanded = current?.getAttribute("aria-expanded");
-    const level = Number(current?.getAttribute("aria-level") ?? 1);
     switch (e.key) {
       case "ArrowDown":
-        go(i + 1);
+        focusRow(el, step(i, 1));
         break;
       case "ArrowUp":
-        go(i - 1);
+        focusRow(el, step(i, -1));
         break;
       case "Home":
-        go(0);
+        focusRow(el, step(-1, 1));
         break;
       case "End":
-        go(rows.length - 1);
+        focusRow(el, step(rows.length, -1));
         break;
       case "ArrowRight":
-        if (expanded === "false") current?.click();
-        else if (expanded === "true") go(i + 1);
+        if ("open" in cur && !cur.open) p.onToggle(cur.nodeKey);
+        else if ("open" in cur) focusRow(el, step(i, 1));
         else return;
         break;
       case "ArrowLeft": {
-        if (expanded === "true") {
-          current?.click();
+        if ("open" in cur && cur.open) {
+          p.onToggle(cur.nodeKey);
           break;
         }
         // Step out: the nearest row above with a lower level is the parent.
         for (let j = i - 1; j >= 0; j--) {
-          if (Number(rows[j].getAttribute("aria-level") ?? 1) < level) {
-            go(j);
+          if (rows[j].nav && rows[j].depth < cur.depth) {
+            focusRow(el, j);
             break;
           }
         }
@@ -185,328 +419,171 @@ export default function ExplorerTree(p: Props) {
     }
     e.preventDefault();
   };
-  const f = filter.trim().toLowerCase();
-  const match = (name: string) => !f || name.toLowerCase().includes(f);
-  const isOpen = (k: NodeKey) => !!p.open[k];
 
-  /** A table — or a partition, which is also a table — and its children. */
-  const renderTable = (schema: string, o: DbObject, depth: number) => {
-    const key = tableKey(schema, o.name);
-    const meta = KINDS.find((k) => k.kind === o.kind) ?? KINDS[0];
-    const cols = p.columns[key];
-    const idx = p.indexes[key];
-    const cons = p.constraints[key];
-    const parts = p.partitions[key];
-
-    /* A sequence has no columns, no indexes and no constraints — giving it the
-       expandable table shape would only promise three empty groups. It has
-       exactly one interesting thing to say, so clicking it says it. */
-    if (o.kind === "sequence") {
-      return (
-        <Row
-          key={`t:${key}`}
-          depth={depth}
-          icon={<Chip ch="S" color="var(--tn-success)" />}
-          label={o.name}
-          title={`${o.comment ?? o.name}\n\nClick for last value, range, increment and owning column.`}
-          className="clickable"
-          onClick={() => p.onDetails(schema, o.name, "sequence")}
-        />
-      );
-    }
-
-    return (
-      <div key={`t:${key}`}>
-        <Row
-          depth={depth}
-          arrow
-          open={isOpen(`t:${key}`)}
-          icon={<Chip ch={meta.ch} color={meta.color} />}
-          label={o.name}
-          title={o.comment ?? o.name}
-          badge={
-            o.isPartitioned ? (
-              <button
-                type="button"
-                className="part-badge act"
-                title={`${o.partitionCount} direct partitions — click for bounds, sizes and gaps`}
-                aria-label={`${o.partitionCount} partitions of ${o.name}: bounds, sizes and gaps`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  p.onPartitions(schema, o.name);
-                }}
-              >
-                {o.partitionCount}
-              </button>
-            ) : undefined
-          }
-          act={
-            <span className="hover-act">
-              <button
-                type="button"
-                className="det-btn"
-                title="Details — size, rows, partitioning, owner"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  p.onDetails(schema, o.name, o.kind);
-                }}
-              >
-                ⓘ
-              </button>
-            </span>
-          }
-          onClick={() => p.onToggle(`t:${key}`)}
-          onDoubleClick={() => p.onInsertSelect(schema, o.name)}
-        />
-        {isOpen(`t:${key}`) && (
-          <>
-            <Row
-              depth={depth + 1}
-              arrow
-              open={isOpen(`c:${key}`)}
-              label={<span className="grp">Columns</span>}
-              badge={cols ? <span className="count">{cols.length}</span> : undefined}
-              onClick={() => p.onToggle(`c:${key}`)}
-            />
-            {isOpen(`c:${key}`) &&
-              (cols === undefined ? (
-                <div className="note" style={{ paddingLeft: 8 + (depth + 2) * 13 }}>
-                  loading…
-                </div>
-              ) : (
-                cols.map((c) => (
-                  <div key={c.name} className="tree-row leaf" style={{ paddingLeft: 8 + (depth + 2) * 13 }}>
-                    <span className="cn">{c.name}</span>
-                    <span className="ct">{c.dbType}</span>
-                    {c.primaryKey && <span className="pk">PK</span>}
-                  </div>
-                ))
-              ))}
-
-            <Row
-              depth={depth + 1}
-              arrow
-              open={isOpen(`i:${key}`)}
-              label={<span className="grp">Indexes</span>}
-              badge={idx ? <span className="count">{idx.length}</span> : undefined}
-              onClick={() => p.onToggle(`i:${key}`)}
-            />
-            {isOpen(`i:${key}`) &&
-              (idx === undefined ? (
-                <div className="note" style={{ paddingLeft: 8 + (depth + 2) * 13 }}>
-                  loading…
-                </div>
-              ) : idx.length === 0 ? (
-                <div className="note" style={{ paddingLeft: 8 + (depth + 2) * 13 }}>
-                  {/* "none" on a partitioned table reads like a bug. It isn't:
-                      this database creates indexes on the leaves rather than on
-                      the parent, so the parent really has none. Say which. */}
-                  {o.isPartitioned
-                    ? "none on this level — defined on the partitions"
-                    : "none"}
-                </div>
-              ) : (
-                idx.map((ix) => (
-                  <div
-                    key={ix.name}
-                    className="tree-row leaf clickable"
-                    style={{ paddingLeft: 8 + (depth + 2) * 13 }}
-                    title={`${ix.definition}\n\nClick for size, scans and tuples read.`}
-                    onClick={() => p.onDetails(schema, ix.name, "index")}
-                  >
-                    <span className="cn">{ix.name}</span>
-                    {ix.isPrimary && <span className="pk">PK</span>}
-                    {ix.isUnique && !ix.isPrimary && <span className="uq">UNIQUE</span>}
-                    {!ix.isValid && <span className="dead">INVALID</span>}
-                    {/* The number that matters on a schema with 8,885 indexes. */}
-                    {ix.scans === 0 && ix.isValid && !ix.isPrimary && (
-                      <span className="dead" title="Never scanned since the stats were last reset">
-                        UNUSED
-                      </span>
-                    )}
-                    <span className="ct">{fmtBytes(ix.bytes)}</span>
-                  </div>
-                ))
-              ))}
-
-            <Row
-              depth={depth + 1}
-              arrow
-              open={isOpen(`k:${key}`)}
-              label={<span className="grp">Constraints</span>}
-              badge={cons ? <span className="count">{cons.length}</span> : undefined}
-              onClick={() => p.onToggle(`k:${key}`)}
-            />
-            {isOpen(`k:${key}`) &&
-              (cons === undefined ? (
-                <div className="note" style={{ paddingLeft: 8 + (depth + 2) * 13 }}>
-                  loading…
-                </div>
-              ) : cons.length === 0 ? (
-                <div className="note" style={{ paddingLeft: 8 + (depth + 2) * 13 }}>
-                  none
-                </div>
-              ) : (
-                cons.map((cn) => (
-                  <div
-                    key={cn.name}
-                    className="tree-row leaf"
-                    style={{ paddingLeft: 8 + (depth + 2) * 13 }}
-                    title={cn.definition ?? cn.kind}
-                  >
-                    <span className="cn">{cn.name}</span>
-                    {!cn.isValid && <span className="dead">NOT VALID</span>}
-                    <span className="ct">{cn.kind}</span>
-                  </div>
-                ))
-              ))}
-
-            {o.isPartitioned && (
-              <>
-                <Row
-                  depth={depth + 1}
-                  arrow
-                  open={isOpen(`p:${key}`)}
-                  label={<span className="grp">Partitions</span>}
-                  badge={<span className="count">{o.partitionCount}</span>}
-                  onClick={() => p.onToggle(`p:${key}`)}
-                />
-                {isOpen(`p:${key}`) &&
-                  (parts === undefined ? (
-                    <div className="note" style={{ paddingLeft: 8 + (depth + 2) * 13 }}>
-                      loading…
-                    </div>
-                  ) : (
-                    parts
-                      .filter((pt) => match(pt.name))
-                      .map((pt) =>
-                        renderTable(
-                          schema,
-                          {
-                            name: pt.name,
-                            kind: "table",
-                            comment: pt.bounds,
-                            // Straight from the server. Deriving this from
-                            // already-loaded partitions was circular: the node
-                            // only appeared once opened, so it never appeared.
-                            isPartitioned: pt.isPartitioned,
-                            partitionCount: pt.partitionCount,
-                          },
-                          depth + 2
-                        )
-                      )
-                  ))}
-              </>
+  const renderRow = (r: FlatRow, i: number) => {
+    const leaf = { paddingLeft: pad(r.depth), height: ROW_H };
+    switch (r.t) {
+      case "schema":
+        return (
+          <Row
+            key={r.id}
+            idx={i}
+            depth={0}
+            arrow
+            open={r.open}
+            icon={
+              <span style={{ color: "var(--tn-ts)", display: "inline-flex" }}>
+                <DbIcon />
+              </span>
+            }
+            label={<span style={{ fontWeight: 600, color: "var(--tn-tp)" }}>{r.schema}</span>}
+            badge={r.count !== undefined ? <span className="count">{r.count}</span> : undefined}
+            onClick={() => p.onToggle(r.nodeKey)}
+          />
+        );
+      case "group":
+        return (
+          <Row
+            key={r.id}
+            idx={i}
+            depth={r.depth}
+            arrow
+            open={r.open}
+            label={<span className="grp">{r.label}</span>}
+            badge={r.badge !== undefined ? <span className="count">{r.badge}</span> : undefined}
+            onClick={() => p.onToggle(r.nodeKey)}
+          />
+        );
+      case "seq":
+        return (
+          <Row
+            key={r.id}
+            idx={i}
+            depth={r.depth}
+            icon={<Chip ch="S" color="var(--tn-success)" />}
+            label={r.o.name}
+            title={`${r.o.comment ?? r.o.name}\n\nClick for last value, range, increment and owning column.`}
+            className="clickable"
+            onClick={() => p.onDetails(r.schema, r.o.name, "sequence")}
+          />
+        );
+      case "table": {
+        const { o, schema } = r;
+        const meta = KINDS.find((k) => k.kind === o.kind) ?? KINDS[0];
+        return (
+          <Row
+            key={r.id}
+            idx={i}
+            depth={r.depth}
+            arrow
+            open={r.open}
+            icon={<Chip ch={meta.ch} color={meta.color} />}
+            label={o.name}
+            title={o.comment ?? o.name}
+            badge={
+              o.isPartitioned ? (
+                <button
+                  type="button"
+                  className="part-badge act"
+                  title={`${o.partitionCount} direct partitions — click for bounds, sizes and gaps`}
+                  aria-label={`${o.partitionCount} partitions of ${o.name}: bounds, sizes and gaps`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    p.onPartitions(schema, o.name);
+                  }}
+                >
+                  {o.partitionCount}
+                </button>
+              ) : undefined
+            }
+            act={
+              <span className="hover-act">
+                <button
+                  type="button"
+                  className="det-btn"
+                  title="Details — size, rows, partitioning, owner"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    p.onDetails(schema, o.name, o.kind);
+                  }}
+                >
+                  ⓘ
+                </button>
+              </span>
+            }
+            onClick={() => p.onToggle(r.nodeKey)}
+            onDoubleClick={() => p.onInsertSelect(schema, o.name)}
+          />
+        );
+      }
+      case "note":
+        return (
+          <div key={r.id} className="note" style={{ ...NOTE_STYLE, paddingLeft: pad(r.depth) }}>
+            {r.text}
+          </div>
+        );
+      case "col":
+        return (
+          <div key={r.id} className="tree-row leaf" style={leaf}>
+            <span className="cn">{r.c.name}</span>
+            <span className="ct">{r.c.dbType}</span>
+            {r.c.primaryKey && <span className="pk">PK</span>}
+          </div>
+        );
+      case "idx": {
+        const { ix } = r;
+        return (
+          <div
+            key={r.id}
+            className="tree-row leaf clickable"
+            style={leaf}
+            title={`${ix.definition}\n\nClick for size, scans and tuples read.`}
+            onClick={() => p.onDetails(r.schema, ix.name, "index")}
+          >
+            <span className="cn">{ix.name}</span>
+            {ix.isPrimary && <span className="pk">PK</span>}
+            {ix.isUnique && !ix.isPrimary && <span className="uq">UNIQUE</span>}
+            {!ix.isValid && <span className="dead">INVALID</span>}
+            {/* The number that matters on a schema with 8,885 indexes. */}
+            {ix.scans === 0 && ix.isValid && !ix.isPrimary && (
+              <span className="dead" title="Never scanned since the stats were last reset">
+                UNUSED
+              </span>
             )}
-          </>
-        )}
-      </div>
-    );
-  };
-
-  const renderSchema = (schema: string) => {
-    const objs = p.objects[schema];
-    const types = p.types[schema];
-    const routines = p.routines[schema];
-    const open = isOpen(schemaId(schema));
-
-    return (
-      <div key={schema}>
-        <Row
-          depth={0}
-          arrow
-          open={open}
-          icon={
-            <span style={{ color: "var(--tn-ts)", display: "inline-flex" }}>
-              <DbIcon />
-            </span>
-          }
-          label={<span style={{ fontWeight: 600, color: "var(--tn-tp)" }}>{schema}</span>}
-          badge={objs ? <span className="count">{objs.length}</span> : undefined}
-          onClick={() => p.onToggle(schemaId(schema))}
-        />
-        {open && objs === undefined && <div className="note" style={{ paddingLeft: 21 }}>loading…</div>}
-        {open &&
-          objs !== undefined &&
-          KINDS.map(({ kind, label }) => {
-            const all = objs.filter((o) => o.kind === kind);
-            if (all.length === 0) return null;
-            const items = all.filter((o) => match(o.name));
-            const gk = groupId(schema, kind);
-            return (
-              <div key={kind}>
-                <Row
-                  depth={1}
-                  arrow
-                  open={isOpen(gk)}
-                  label={<span className="grp">{label}</span>}
-                  badge={<span className="count">{f ? `${items.length}/${all.length}` : all.length}</span>}
-                  onClick={() => p.onToggle(gk)}
-                />
-                {isOpen(gk) &&
-                  (items.length === 0 ? (
-                    <div className="note" style={{ paddingLeft: 34 }}>no match</div>
-                  ) : (
-                    items.map((o) => renderTable(schema, o, 2))
-                  ))}
-              </div>
-            );
-          })}
-
-        {/* Enums live here. They were invisible before, despite being on the
-            table you look at most. */}
-        {open && types !== undefined && types.length > 0 && (
-          <>
-            <Row
-              depth={1}
-              arrow
-              open={isOpen(groupId(schema, "types"))}
-              label={<span className="grp">Types &amp; enums</span>}
-              badge={<span className="count">{types.length}</span>}
-              onClick={() => p.onToggle(groupId(schema, "types"))}
-            />
-            {isOpen(groupId(schema, "types")) &&
-              types
-                .filter((t) => match(t.name))
-                .map((t) => (
-                  <div key={t.name} className="tree-row leaf" style={{ paddingLeft: 34 }} title={t.labels ?? t.kind}>
-                    <Chip ch="E" color="var(--tn-brand-a, #FFC24B)" />
-                    <span className="cn">{t.name}</span>
-                    <span className="ct">{t.labels ?? t.kind}</span>
-                  </div>
-                ))}
-          </>
-        )}
-
-        {open && routines !== undefined && routines.length > 0 && (
-          <>
-            <Row
-              depth={1}
-              arrow
-              open={isOpen(groupId(schema, "routines"))}
-              label={<span className="grp">Functions</span>}
-              badge={<span className="count">{routines.length}</span>}
-              onClick={() => p.onToggle(groupId(schema, "routines"))}
-            />
-            {isOpen(groupId(schema, "routines")) &&
-              routines
-                .filter((r) => match(r.name))
-                .map((r) => (
-                  <div
-                    key={`${r.name}(${r.args ?? ""})`}
-                    className="tree-row leaf"
-                    style={{ paddingLeft: 34 }}
-                    title={`${r.name}(${r.args ?? ""}) → ${r.returns ?? "void"} · ${r.language}`}
-                  >
-                    <Chip ch="ƒ" color="var(--tn-success)" />
-                    <span className="cn">{r.name}</span>
-                    <span className="ct">{r.returns ?? r.kind}</span>
-                  </div>
-                ))}
-          </>
-        )}
-      </div>
-    );
+            <span className="ct">{fmtBytes(ix.bytes)}</span>
+          </div>
+        );
+      }
+      case "con":
+        return (
+          <div key={r.id} className="tree-row leaf" style={leaf} title={r.cn.definition ?? r.cn.kind}>
+            <span className="cn">{r.cn.name}</span>
+            {!r.cn.isValid && <span className="dead">NOT VALID</span>}
+            <span className="ct">{r.cn.kind}</span>
+          </div>
+        );
+      case "type":
+        return (
+          <div key={r.id} className="tree-row leaf" style={leaf} title={r.ty.labels ?? r.ty.kind}>
+            <Chip ch="E" color="var(--tn-brand-a, #FFC24B)" />
+            <span className="cn">{r.ty.name}</span>
+            <span className="ct">{r.ty.labels ?? r.ty.kind}</span>
+          </div>
+        );
+      case "routine":
+        return (
+          <div
+            key={r.id}
+            className="tree-row leaf"
+            style={leaf}
+            title={`${r.r.name}(${r.r.args ?? ""}) → ${r.r.returns ?? "void"} · ${r.r.language}`}
+          >
+            <Chip ch="ƒ" color="var(--tn-success)" />
+            <span className="cn">{r.r.name}</span>
+            <span className="ct">{r.r.returns ?? r.r.kind}</span>
+          </div>
+        );
+    }
   };
 
   return (
@@ -543,12 +620,40 @@ export default function ExplorerTree(p: Props) {
         ref={treeRef}
         tabIndex={0}
         onFocus={(e) => {
+          const el = e.currentTarget;
+          const target = e.target as HTMLElement;
+          if (target !== el) {
+            // A row took focus (keys or a click): remember it.
+            if (target.dataset.i !== undefined) lastId.current = rows[Number(target.dataset.i)].id;
+            return;
+          }
+          if (parked.current) {
+            parked.current = false;
+            return;
+          }
           // Tabbing into the tree lands on the row last used, or the first.
-          if (e.target !== e.currentTarget) return;
-          const rows = treeRows();
-          (rows.find((r) => r === lastRow.current) ?? rows[0])?.focus();
+          if (rows.length > 0) focusRow(el, Math.max(0, rows.findIndex((r) => r.id === lastId.current)));
         }}
         onKeyDown={onTreeKey}
+        onScroll={(e) => {
+          // Snapped to a row: the same value is no state change, so a scroll
+          // re-renders when the window moves, not on every pixel.
+          const el = e.currentTarget;
+          const top = Math.floor(el.scrollTop / ROW_H) * ROW_H;
+          // The focused row is about to leave the window, and focus would be
+          // dropped with its node. Park it on the tree, where the arrow keys
+          // still arrive and resume from that row.
+          const focused = el.querySelector<HTMLElement>("[data-i]:focus");
+          if (focused) {
+            const [nf, nl] = windowOf(top, viewH, rows.length);
+            const i = Number(focused.dataset.i);
+            if (i < nf || i >= nl) {
+              parked.current = true;
+              el.focus({ preventScroll: true });
+            }
+          }
+          setScrollTop(top);
+        }}
       >
         {p.schemas === null && p.connected && <div className="note">Loading schemas…</div>}
         {p.schemas === null && !p.connected && (
@@ -561,7 +666,9 @@ export default function ExplorerTree(p: Props) {
             )}
           </div>
         )}
-        {(p.schemas ?? []).map(renderSchema)}
+        {first > 0 && <div role="presentation" style={{ height: first * ROW_H }} />}
+        {rows.slice(first, last).map((r, k) => renderRow(r, first + k))}
+        {last < rows.length && <div role="presentation" style={{ height: (rows.length - last) * ROW_H }} />}
       </div>
     </>
   );

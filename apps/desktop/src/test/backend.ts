@@ -119,11 +119,9 @@ const defaults = (): Record<string, (args: Record<string, unknown>) => unknown> 
   // Default to a written path; tests that assert a cancel override these to
   // return null.
   export_save: () => "/tmp/out.csv",
-  // Result exports stream: dialog first, then a chunk per page of rows, then
-  // a close. `export_write` is where the document actually shows up, so tests
-  // that check what was written read the chunks off the call log.
+  // Result exports stream: dialog first, then `export_result_page` per page
+  // (the backend formats and writes it), then a close.
   export_begin: () => "/tmp/out.csv",
-  export_write: () => undefined,
   export_finish: () => undefined,
   export_abort: () => undefined,
   pg_connect: () => undefined,
@@ -153,6 +151,15 @@ const defaults = (): Record<string, (args: Record<string, unknown>) => unknown> 
   audit_list: () => [],
   pg_query: () => RESULT,
   pg_rows: () => ROWS,
+  // The backend formats and writes the page itself; it says how many rows.
+  export_result_page: (a) => Math.max(0, Math.min(a.limit as number, (a.total as number) - (a.offset as number))),
+  // The backend writes the clipboard itself and answers with the row count.
+  copy_result_text: (a) => Math.min(a.limit as number, ROWS.length),
+  // ROWS summed the way pg.rs `chart` does: label column 0, value column 1.
+  pg_chart: () => ({
+    rows: ROWS.length,
+    bars: ROWS.map(([label, v]) => ({ label, v })).sort((a, b) => (b.v as number) - (a.v as number)),
+  }),
   pg_test: () => ({
     stages: [{ name: "dns", passed: true, ms: 1, detail: "" }],
     serverVersion: "18.0",

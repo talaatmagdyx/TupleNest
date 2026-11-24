@@ -74,23 +74,22 @@ describe("App — the chart tab", () => {
     const user = await connected();
     await run(user, "select kind, n from t where false");
     await user.click(await screen.findByRole("button", { name: /^Chart$/i }));
-    expect(be.sent("pg_rows")).toHaveLength(0);
+    expect(be.sent("pg_chart")).toHaveLength(0);
   });
 
   it("builds the chart once and keeps it while you switch tabs", async () => {
-    // Re-fetching up to 100k rows because someone clicked back from the grid
-    // would be a long pause for no new information.
+    // Re-summing every stored row because someone clicked back from the grid
+    // would be a pause for no new information.
     const user = await connected();
     await run(user, "select kind, n from t");
     await user.click(await screen.findByRole("button", { name: /^Chart$/i }));
     await waitFor(() => expect(document.querySelectorAll(".chart-row")).toHaveLength(2));
-    // The chart reads in bulk; the grid reads a 200-row window. Only the bulk
-    // read is the expensive one, and only it must not happen twice.
-    const bulk = () => be.sent("pg_rows").filter((a) => (a.limit as number) > 200);
-    expect(bulk()).toHaveLength(1);
+    expect(be.sent("pg_chart")).toEqual([{ label: 0, value: 1, maxBars: 12 }]);
+    // The bars come from the backend; no rows are pulled into the page for it.
+    expect(be.sent("pg_rows").filter((a) => (a.limit as number) > 200)).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: /^Results$/i }));
     await user.click(screen.getByRole("button", { name: /^Chart$/i }));
-    expect(bulk()).toHaveLength(1);
+    expect(be.sent("pg_chart")).toHaveLength(1);
   });
 });
 

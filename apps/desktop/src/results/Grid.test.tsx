@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
-import Grid, { type GridColumn } from "./Grid";
+import Grid, { keepNear, type GridColumn } from "./Grid";
 import type { CellEdit, EditTarget } from "../lib/dml";
 
 const invokeMock = vi.mocked(invoke);
@@ -66,7 +66,7 @@ describe("Grid — rendering", () => {
 
   it("fetches the first block and shows the rows", async () => {
     render(<Grid {...base} />);
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("pg_rows", { offset: 0, limit: 200 }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("pg_rows", { offset: 0, limit: 200, sort: null }));
     expect(await screen.findByText("ada@x.com")).toBeInTheDocument();
   });
 
@@ -136,35 +136,40 @@ describe("Grid — selection", () => {
 });
 
 describe("Grid — sorting", () => {
-  it("refuses past the cap rather than pulling millions of rows into memory", async () => {
-    // Sorting reads every row into the page. On a result of this size that is
-    // a hang, not a sort — so it says no and explains the limit.
-    const onToast = vi.fn();
-    render(<Grid {...base} storedRows={50_001} onToast={onToast} />);
-    await screen.findByText("ada@x.com");
-    invokeMock.mockClear();
-    await userEvent.click(screen.getByText("email"));
-    expect(onToast).toHaveBeenCalledWith(expect.stringContaining("50,000"));
-    expect(invokeMock).not.toHaveBeenCalled();
-  });
-
-  it("sorts right up to the cap", async () => {
-    // Exactly at the limit is allowed — it fetches (and says so) rather than
-    // refusing.
-    const onToast = vi.fn();
-    render(<Grid {...base} storedRows={50_000} onToast={onToast} />);
-    await screen.findByText("ada@x.com");
-    invokeMock.mockClear();
-    await userEvent.click(screen.getByText("email"));
-    await waitFor(() => expect(invokeMock).toHaveBeenCalled());
-    expect(onToast).not.toHaveBeenCalledWith(expect.stringContaining("available up to"));
-  });
-
-  it("pulls the rows into memory to sort them", async () => {
+  it("asks the backend for rows in the clicked column's order", async () => {
     render(<Grid {...base} />);
     await screen.findByText("ada@x.com");
+    invokeMock.mockClear();
     await userEvent.click(screen.getByText("email"));
-    await waitFor(() => expect(invokeMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenCalledWith("pg_rows", {
+        offset: 0,
+        limit: 200,
+        sort: { column: 1, desc: false },
+      }),
+    );
+  });
+
+  it("never pulls more than a block into the page, however large the result", async () => {
+    // Sorting used to fetch every row (up to 50,000) to sort them here.
+    render(<Grid {...base} storedRows={100_000} />);
+    await screen.findByText("ada@x.com");
+    await userEvent.click(screen.getByText("email"));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("pg_rows", expect.objectContaining({ sort: { column: 1, desc: false } })));
+    for (const [, args] of invokeMock.mock.calls) expect((args as { limit: number }).limit).toBeLessThanOrEqual(200);
+  });
+
+  it("drops a block that arrives in the old order after the sort changed", async () => {
+    let release: (rows: unknown[][]) => void = () => {};
+    invokeMock.mockReset();
+    invokeMock.mockImplementationOnce(() => new Promise((r) => (release = r as typeof release)));
+    invokeMock.mockResolvedValue([[9, "zed@x.com", null, true]]);
+    render(<Grid {...base} />);
+    await userEvent.click(screen.getByText("email"));
+    await screen.findByText("zed@x.com");
+    release(rows); // the unsorted first fetch, late
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText("ada@x.com")).toBeNull();
   });
 
   it("cycles asc → desc → off", async () => {
@@ -239,6 +244,16 @@ describe("Grid — editing", () => {
     await waitFor(() =>
       expect(onStage).toHaveBeenCalledWith(expect.objectContaining({ column: "email", value: "z@x.com" })),
     );
+  });
+
+  it("stages the edit when the editor loses focus", async () => {
+    const onStage = vi.fn();
+    render(<Grid {...base} target={target} edits={[]} onStage={onStage} />);
+    await userEvent.dblClick(await screen.findByText("ada@x.com"));
+    await userEvent.type(await screen.findByRole("textbox"), "m");
+    await userEvent.click(screen.getByText("alan@x.com"));
+    expect(onStage).toHaveBeenCalledWith(expect.objectContaining({ column: "email", value: "ada@x.comm" }));
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
   it("abandons an edit on Escape", async () => {
@@ -381,5 +396,174 @@ describe("Grid — keyboard and screen readers", () => {
     await userEvent.dblClick(screen.getAllByRole("gridcell")[1]);
     await userEvent.keyboard("{ArrowRight}");
     expect(screen.getByDisplayValue("ada@x.com")).toBeInTheDocument();
+  });
+});
+
+describe("Grid — block cache", () => {
+  it("keeps only the blocks near the one just fetched", () => {
+    const m: Record<number, string> = {};
+    for (let b = 0; b < 50; b++) m[b] = `block ${b}`;
+    const kept = keepNear(m, 30, 10);
+    expect(Object.keys(kept).map(Number)).toEqual([...Array(21)].map((_, i) => 20 + i));
+    expect(kept[30]).toBe("block 30");
+  });
+});
+
+describe("Grid — wide results", () => {
+  it("draws only the columns near the viewport, and follows the selection sideways", async () => {
+    const wide: GridColumn[] = [...Array(60)].map((_, i) => ({ name: `c${i}`, dbType: "text" }));
+    invokeMock.mockResolvedValue([wide.map((_, i) => `v${i}`)]);
+    const { container } = render(<Grid {...base} columns={wide} storedRows={1} />);
+    await screen.findByText("v0");
+    // Every header, but a window of cells and one spacer for the rest.
+    expect(screen.getAllByRole("columnheader")).toHaveLength(61);
+    expect(screen.getAllByRole("gridcell").length).toBeLessThan(10);
+    expect(screen.queryByText("v59")).toBeNull();
+    expect(container.querySelectorAll(".g-row > div[aria-hidden]")).toHaveLength(1);
+
+    const view = container.querySelector(".vgrid") as HTMLElement;
+    view.scrollLeft = 150 * 50;
+    fireEvent.scroll(view);
+    expect(await screen.findByText("v50")).toBeInTheDocument();
+    expect(screen.queryByText("v0")).toBeNull();
+    expect(container.querySelectorAll(".g-row > div[aria-hidden]")).toHaveLength(2);
+
+    // Arrowing left of the drawn window scrolls the view to the column.
+    await userEvent.click(screen.getByText("v50"));
+    view.scrollLeft = 150 * 52;
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(view.scrollLeft).toBe(150 * 49);
+  });
+});
+
+describe("Grid — wide results, right edge", () => {
+  it("scrolls right to a column past the right edge", async () => {
+    const wide: GridColumn[] = [...Array(60)].map((_, i) => ({ name: `c${i}`, dbType: "text" }));
+    invokeMock.mockResolvedValue([wide.map((_, i) => `v${i}`)]);
+    const { container } = render(<Grid {...base} columns={wide} storedRows={1} />);
+    const view = container.querySelector(".vgrid") as HTMLElement;
+    // jsdom lays nothing out: without a width there is no right edge to pass.
+    Object.defineProperty(view, "clientWidth", { configurable: true, value: 56 + 300 });
+    await userEvent.click(await screen.findByText("v0"));
+    await userEvent.keyboard("{End}");
+    // The last column's right edge (60 × 150) sits on the viewport's.
+    expect(view.scrollLeft).toBe(150 * 60 - 300);
+    // One column right is already in view: nothing to scroll.
+    view.scrollLeft = 0;
+    await userEvent.keyboard("{Home}{ArrowRight}");
+    expect(view.scrollLeft).toBe(0);
+  });
+});
+
+describe("Grid — an open editor survives scrolling", () => {
+  const scrollTo = (view: HTMLElement, top: number, left = 0) => {
+    view.scrollTop = top;
+    view.scrollLeft = left;
+    fireEvent.scroll(view);
+  };
+
+  it("keeps the edited cell mounted when its column leaves the window", async () => {
+    const wide: GridColumn[] = [...Array(60)].map((_, i) => ({ name: `c${i}`, dbType: "text" }));
+    const wideTarget: EditTarget = { ...target, writable: wide.map((_, i) => i > 0) };
+    invokeMock.mockResolvedValue([wide.map((_, i) => `v${i}`), wide.map((_, i) => `w${i}`)]);
+    const user = userEvent.setup();
+    const { container } = render(
+      <Grid {...base} columns={wide} storedRows={2} target={wideTarget} onStage={vi.fn()} />,
+    );
+    await user.dblClick(await screen.findByText("v1"));
+    const input = screen.getByRole("textbox");
+    await user.type(input, "!");
+
+    const view = container.querySelector(".vgrid") as HTMLElement;
+    scrollTo(view, 0, 150 * 50);
+    await screen.findByText("v50");
+    // The same element, not a new one: the draft, the focus and the caret.
+    expect(screen.getByRole("textbox")).toBe(input);
+    expect(input).toHaveValue("v1!");
+    expect(document.activeElement).toBe(input);
+    // Only the edited row reaches back for it; the other keeps its window.
+    expect(screen.queryByText("w2")).toBeNull();
+    const cells = Array.from(container.querySelectorAll(".g-row")).map((r) => r.querySelectorAll(".g-cell").length);
+    expect(cells[0]).toBeGreaterThan(cells[1]);
+
+    // And the other way: an editor right of the window.
+    await user.keyboard("{Escape}");
+    await user.dblClick(screen.getByText("v50"));
+    const right = screen.getByRole("textbox");
+    scrollTo(view, 0, 0);
+    await screen.findByText("w0");
+    expect(screen.getByRole("textbox")).toBe(right);
+    expect(document.activeElement).toBe(right);
+  });
+
+  it("keeps the edited row mounted, and its block cached, when the view scrolls far away", async () => {
+    invokeMock.mockImplementation((_cmd, args) => {
+      const { offset } = args as { offset: number };
+      return Promise.resolve([...Array(200)].map((_, i) => [offset + i, `u${offset + i}@x.com`, null, true]));
+    });
+    const onStage = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(<Grid {...base} storedRows={2000} target={target} onStage={onStage} />);
+    const view = container.querySelector(".vgrid") as HTMLElement;
+    scrollTo(view, 24 * 300);
+    await user.dblClick(await screen.findByText("u300@x.com"));
+    const input = screen.getByRole("textbox");
+    await user.clear(input);
+    await user.type(input, "z@x.com");
+
+    // Above the window: far enough that block 1 would have been dropped.
+    scrollTo(view, 24 * 1500);
+    await screen.findByText("u1500@x.com");
+    expect(screen.getByRole("textbox")).toBe(input);
+    expect(document.activeElement).toBe(input);
+    // In place: 300 rows of space above it, then the gap down to the window.
+    const kids = Array.from(view.children) as HTMLElement[];
+    const at = kids.indexOf(input.closest(".g-row") as HTMLElement);
+    expect(kids[at - 1].style.height).toBe(`${24 * 300}px`);
+    expect(kids[at + 1].style.height).toBe(`${24 * (1500 - 12 - 301)}px`);
+
+    // Below the window.
+    scrollTo(view, 0);
+    await screen.findByText("u0@x.com");
+    expect(screen.getByRole("textbox")).toBe(input);
+    expect(document.activeElement).toBe(input);
+
+    // Still committable: the row's key is still to hand.
+    await user.keyboard("{Enter}");
+    expect(onStage).toHaveBeenCalledWith(
+      expect.objectContaining({ pkValues: [300], column: "email", value: "z@x.com", oldValue: "u300@x.com" }),
+    );
+  });
+});
+
+describe("Grid — row memoization", () => {
+  it("re-renders only the rows the selection left and entered", async () => {
+    // A getter on a row's data counts how often that row is rendered.
+    const data = [...Array(20)].map((_, i) => [i, `u${i}@x.com`, null, true]);
+    const reads = { near: 0, far: 0 };
+    Object.defineProperty(data[1], 3, { get: () => (reads.near++, true) });
+    Object.defineProperty(data[10], 3, { get: () => (reads.far++, true) });
+    invokeMock.mockResolvedValue(data);
+    render(<Grid {...base} storedRows={20} />);
+    await userEvent.click(await screen.findByText("u0@x.com"));
+    reads.near = reads.far = 0;
+    await userEvent.keyboard("{ArrowDown}");
+    expect(screen.getAllByRole("row")[2]).toHaveClass("sel");
+    expect(reads.near).toBeGreaterThan(0);
+    expect(reads.far).toBe(0);
+  });
+});
+
+describe("Grid — a page that fails to load", () => {
+  it("stays usable, and the next change that needs the block fetches it again", async () => {
+    // A failed fetch is not an unhandled rejection and not a stuck "pending"
+    // block: the grid keeps its header, and sorting asks for the rows anew.
+    invokeMock.mockReset();
+    invokeMock.mockRejectedValueOnce("no result").mockResolvedValue(rows);
+    render(<Grid {...base} />);
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("ada@x.com")).toBeNull();
+    await userEvent.click(screen.getByText("email"));
+    expect(await screen.findByText("ada@x.com")).toBeInTheDocument();
   });
 });

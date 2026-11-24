@@ -17,7 +17,7 @@ pub enum StoreError {
     Json(#[from] serde_json::Error),
 }
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 const MIGRATION_V1: &str = r#"
 CREATE TABLE meta        (key TEXT PRIMARY KEY, value TEXT);
@@ -113,6 +113,38 @@ CREATE INDEX IF NOT EXISTS idx_audit_conn ON audit_log(connection_key, at DESC);
 /// about the schema, and a migration should survive that claim being wrong.
 const MIGRATION_V6_COLUMN: &str = "statement_timeout_ms";
 
+/// Indexes for the two things that run on every executed statement: the
+/// history prune and the audit prune. Without them each one read and sorted
+/// its whole table, SQL text and all, to find the rows past the cap.
+///
+/// - `idx_history_started` lets the history panel walk newest-first and stop
+///   at its `LIMIT` (plain ascending: scanned backwards it yields
+///   `started_at DESC, rowid DESC`, which is exactly the list's order).
+/// - `idx_history_prune` is partial, so it holds only what the prune may
+///   delete and answers it without touching the table.
+/// - `idx_audit_at` does both jobs for the audit log, which has no filter.
+///
+/// `IF NOT EXISTS`, per the note above V5.
+const MIGRATION_V7: &str = r#"
+CREATE INDEX IF NOT EXISTS idx_history_started ON query_history(started_at);
+CREATE INDEX IF NOT EXISTS idx_history_prune ON query_history(started_at) WHERE favorite = 0;
+CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at);
+"#;
+
+/// Audit entries kept; older ones are pruned on insert.
+const AUDIT_RETENTION: i64 = 5000;
+
+/// Page cache ceiling in KiB. SQLite's default is ~2 MB per connection, which
+/// this store never needs: it holds a few small tables and is read in short
+/// bursts. Negative means "KiB" rather than "pages" to `PRAGMA cache_size`.
+const CACHE_KIB: i64 = 256;
+
+/// Checkpoint after this many WAL pages (~1 MiB at the 4 KiB page size) and
+/// truncate the WAL file back to the same size, so it cannot sit at a
+/// high-water mark on disk for the life of the install.
+const WAL_AUTOCHECKPOINT_PAGES: i64 = 256;
+const WAL_SIZE_LIMIT_BYTES: i64 = 1024 * 1024;
+
 pub struct Store {
     conn: Connection,
 }
@@ -159,6 +191,13 @@ impl Store {
 
     fn init(conn: Connection) -> Result<Self, StoreError> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        // FULL, not NORMAL: this file holds the production audit log, and a
+        // power cut must not drop the last entries. One fsync per statement
+        // run is a price worth paying for that.
+        conn.pragma_update(None, "synchronous", "FULL")?;
+        conn.pragma_update(None, "cache_size", -CACHE_KIB)?;
+        conn.pragma_update(None, "wal_autocheckpoint", WAL_AUTOCHECKPOINT_PAGES)?;
+        conn.pragma_update(None, "journal_size_limit", WAL_SIZE_LIMIT_BYTES)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         let store = Self { conn };
         store.migrate()?;
@@ -231,6 +270,9 @@ impl Store {
                 "ALTER TABLE connections ADD COLUMN statement_timeout_ms INTEGER NOT NULL DEFAULT 0",
             )?;
         }
+        if current < 7 {
+            self.conn.execute_batch(MIGRATION_V7)?;
+        }
         if current < SCHEMA_VERSION {
             self.conn.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
@@ -244,12 +286,13 @@ impl Store {
 
     pub fn setting_set<T: serde::Serialize>(&self, key: &str, value: &T) -> Result<(), StoreError> {
         let json = serde_json::to_string(value)?;
-        self.conn.execute(
-            "INSERT INTO settings (key, value_json, updated_at)
-             VALUES (?1, ?2, unixepoch())
-             ON CONFLICT(key) DO UPDATE SET value_json=?2, updated_at=unixepoch()",
-            params![key, json],
-        )?;
+        self.conn
+            .prepare_cached(
+                "INSERT INTO settings (key, value_json, updated_at)
+                 VALUES (?1, ?2, unixepoch())
+                 ON CONFLICT(key) DO UPDATE SET value_json=?2, updated_at=unixepoch()",
+            )?
+            .execute(params![key, json])?;
         Ok(())
     }
 
@@ -259,11 +302,8 @@ impl Store {
     ) -> Result<Option<T>, StoreError> {
         let json: Option<String> = self
             .conn
-            .query_row(
-                "SELECT value_json FROM settings WHERE key=?1",
-                params![key],
-                |r| r.get(0),
-            )
+            .prepare_cached("SELECT value_json FROM settings WHERE key=?1")?
+            .query_row(params![key], |r| r.get(0))
             .optional()?;
         Ok(match json {
             Some(j) => Some(serde_json::from_str(&j)?),
@@ -286,12 +326,13 @@ impl Store {
     pub fn layout_save(&self, workspace_id: &str, layout_json: &str) -> Result<(), StoreError> {
         // Validate it is JSON before persisting.
         let _: serde_json::Value = serde_json::from_str(layout_json)?;
-        self.conn.execute(
-            "INSERT INTO layouts (workspace_id, layout_json, updated_at)
-             VALUES (?1, ?2, unixepoch())
-             ON CONFLICT(workspace_id) DO UPDATE SET layout_json=?2, updated_at=unixepoch()",
-            params![workspace_id, layout_json],
-        )?;
+        self.conn
+            .prepare_cached(
+                "INSERT INTO layouts (workspace_id, layout_json, updated_at)
+                 VALUES (?1, ?2, unixepoch())
+                 ON CONFLICT(workspace_id) DO UPDATE SET layout_json=?2, updated_at=unixepoch()",
+            )?
+            .execute(params![workspace_id, layout_json])?;
         Ok(())
     }
 
@@ -318,11 +359,14 @@ impl Store {
             "DELETE FROM tabs WHERE workspace_id=?1",
             params![workspace_id],
         )?;
-        for t in tabs {
-            tx.execute(
+        {
+            // Prepared once for the whole batch, not once per tab.
+            let mut insert = tx.prepare_cached(
                 "INSERT INTO tabs (id, workspace_id, kind, title, position, pinned, state_json)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
+            )?;
+            for t in tabs {
+                insert.execute(params![
                     t.id,
                     workspace_id,
                     t.kind,
@@ -330,15 +374,15 @@ impl Store {
                     t.position,
                     t.pinned as i64,
                     t.state_json
-                ],
-            )?;
+                ])?;
+            }
         }
         tx.commit()?;
         Ok(())
     }
 
     pub fn tabs_list(&self, workspace_id: &str) -> Result<Vec<TabRecord>, StoreError> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT id, kind, title, position, pinned, state_json
              FROM tabs WHERE workspace_id=?1 ORDER BY position",
         )?;
@@ -440,32 +484,32 @@ impl Store {
     /// Records one execution. Retention: keeps the newest `retention`
     /// non-favorite entries; favorites are never pruned.
     pub fn history_add(&self, entry: &HistoryEntry, retention: usize) -> Result<(), StoreError> {
-        self.conn.execute(
+        // This runs after every statement the user executes, so: one
+        // transaction (one commit instead of two), cached statements, and a
+        // prune that reads only `idx_history_prune` past the cap instead of
+        // scanning and sorting the whole table.
+        let tx = self.conn.unchecked_transaction()?;
+        tx.prepare_cached(
             "INSERT INTO query_history
                (id, connection_key, sql_text, status, error_text,
                 rows_returned, rows_affected, started_at, duration_ms, favorite)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-            params![
-                entry.id,
-                entry.connection_key,
-                entry.sql_text,
-                entry.status,
-                entry.error_text,
-                entry.rows_returned as i64,
-                entry.rows_affected.map(|v| v as i64),
-                entry.started_at,
-                entry.duration_ms as i64,
-                entry.favorite as i64,
-            ],
-        )?;
-        self.conn.execute(
-            "DELETE FROM query_history
-             WHERE favorite = 0 AND id NOT IN (
-               SELECT id FROM query_history WHERE favorite = 0
-               ORDER BY started_at DESC LIMIT ?1
-             )",
-            params![retention as i64],
-        )?;
+        )?
+        .execute(params![
+            entry.id,
+            entry.connection_key,
+            entry.sql_text,
+            entry.status,
+            entry.error_text,
+            entry.rows_returned as i64,
+            entry.rows_affected.map(|v| v as i64),
+            entry.started_at,
+            entry.duration_ms as i64,
+            entry.favorite as i64,
+        ])?;
+        tx.prepare_cached(HISTORY_PRUNE_SQL)?
+            .execute(params![retention as i64])?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -477,12 +521,7 @@ impl Store {
         limit: usize,
     ) -> Result<Vec<HistoryEntry>, StoreError> {
         let like = search.map(|s| format!("%{s}%"));
-        let sql = "SELECT id, connection_key, sql_text, status, error_text,
-                          rows_returned, rows_affected, started_at, duration_ms, favorite
-                   FROM query_history
-                   WHERE (?1 IS NULL OR sql_text LIKE ?1)
-                   ORDER BY started_at DESC, rowid DESC LIMIT ?2";
-        let mut stmt = self.conn.prepare(sql)?;
+        let mut stmt = self.conn.prepare_cached(HISTORY_LIST_SQL)?;
         let rows = stmt
             .query_map(params![like, limit as i64], Self::row_to_history)?
             .collect::<Result<Vec<_>, _>>()?;
@@ -553,29 +592,27 @@ impl Store {
         environment: Option<&str>,
         sql_text: &str,
     ) -> Result<(), StoreError> {
-        self.conn.execute(
+        // Same shape as `history_add`: one commit, and a prune that walks
+        // `idx_audit_at` rather than sorting every retained row.
+        let tx = self.conn.unchecked_transaction()?;
+        tx.prepare_cached(
             "INSERT INTO audit_log (id, connection_key, environment, sql_text, at)
              VALUES (?1, ?2, ?3, ?4, unixepoch())",
-            params![
-                uuid::Uuid::new_v4().to_string(),
-                connection_key,
-                environment,
-                sql_text
-            ],
-        )?;
-        self.conn.execute(
-            "DELETE FROM audit_log WHERE id NOT IN (
-               SELECT id FROM audit_log ORDER BY at DESC LIMIT 5000)",
-            [],
-        )?;
+        )?
+        .execute(params![
+            uuid::Uuid::new_v4().to_string(),
+            connection_key,
+            environment,
+            sql_text
+        ])?;
+        tx.prepare_cached(AUDIT_PRUNE_SQL)?
+            .execute(params![AUDIT_RETENTION])?;
+        tx.commit()?;
         Ok(())
     }
 
     pub fn audit_list(&self, limit: usize) -> Result<Vec<AuditEntry>, StoreError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT connection_key, environment, sql_text, at FROM audit_log
-             ORDER BY at DESC LIMIT ?1",
-        )?;
+        let mut stmt = self.conn.prepare_cached(AUDIT_LIST_SQL)?;
         let rows = stmt
             .query_map(params![limit as i64], |r| {
                 Ok(AuditEntry {
@@ -625,6 +662,24 @@ impl Store {
         })
     }
 }
+
+const HISTORY_LIST_SQL: &str = "SELECT id, connection_key, sql_text, status, error_text,
+               rows_returned, rows_affected, started_at, duration_ms, favorite
+        FROM query_history
+        WHERE (?1 IS NULL OR sql_text LIKE ?1)
+        ORDER BY started_at DESC, rowid DESC LIMIT ?2";
+
+/// Deletes every non-favorite past the newest `?1`. `LIMIT -1 OFFSET n` is
+/// SQLite's spelling of "everything after the first n".
+const HISTORY_PRUNE_SQL: &str = "DELETE FROM query_history WHERE rowid IN (
+          SELECT rowid FROM query_history WHERE favorite = 0
+          ORDER BY started_at DESC LIMIT -1 OFFSET ?1)";
+
+const AUDIT_PRUNE_SQL: &str = "DELETE FROM audit_log WHERE rowid IN (
+          SELECT rowid FROM audit_log ORDER BY at DESC LIMIT -1 OFFSET ?1)";
+
+const AUDIT_LIST_SQL: &str = "SELECT connection_key, environment, sql_text, at FROM audit_log
+        ORDER BY at DESC LIMIT ?1";
 
 const CONNECTION_SELECT: &str = "SELECT id, name, driver, environment, color, read_only,
         host, port, database, username, secret_ref,
@@ -707,6 +762,64 @@ pub struct TabRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn plan(store: &Store, sql: &str) -> String {
+        let mut stmt = store
+            .conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap();
+        // The plan does not depend on the values, only on there being some.
+        let nulls = vec![rusqlite::types::Null; stmt.parameter_count()];
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(nulls), |r| r.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        rows.join(" | ")
+    }
+
+    /// The connection is set up small and durable, and stays that way. These
+    /// are per-connection settings, so a regression here is silent: SQLite
+    /// just goes back to a 2 MB cache and an fsync per commit.
+    #[test]
+    fn connection_is_tuned_for_a_small_durable_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("tuned.db")).unwrap();
+        let pragma = |name: &str| -> i64 {
+            store
+                .conn
+                .query_row(&format!("PRAGMA {name}"), [], |r| r.get(0))
+                .unwrap()
+        };
+        let mode: String = store
+            .conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+        assert_eq!(pragma("synchronous"), 2, "FULL");
+        assert_eq!(pragma("cache_size"), -CACHE_KIB);
+        assert_eq!(pragma("wal_autocheckpoint"), WAL_AUTOCHECKPOINT_PAGES);
+        assert_eq!(pragma("journal_size_limit"), WAL_SIZE_LIMIT_BYTES);
+        assert_eq!(pragma("foreign_keys"), 1);
+    }
+
+    /// The per-statement prunes and the newest-first lists must be answered
+    /// from an index, with no sort step. If a query or index is reworded so
+    /// the planner falls back to scanning and sorting, this fails.
+    #[test]
+    fn history_and_audit_hot_paths_use_indexes_without_sorting() {
+        let store = Store::open_in_memory().unwrap();
+        for (sql, index) in [
+            (HISTORY_LIST_SQL, "idx_history_started"),
+            (HISTORY_PRUNE_SQL, "idx_history_prune"),
+            (AUDIT_LIST_SQL, "idx_audit_at"),
+            (AUDIT_PRUNE_SQL, "idx_audit_at"),
+        ] {
+            let plan = plan(&store, sql);
+            assert!(plan.contains(index), "{sql}\n  plan: {plan}");
+            assert!(!plan.contains("TEMP B-TREE"), "{sql}\n  plan: {plan}");
+        }
+    }
 
     #[test]
     fn migrates_fresh_store_to_current() {

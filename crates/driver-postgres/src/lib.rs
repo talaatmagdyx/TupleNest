@@ -2097,8 +2097,10 @@ impl<'a> FromSql<'a> for PgNumeric {
 /// without the driver knowing anything about them. Types whose binary form is
 /// genuinely not text fall back to a hex dump, which is at least honest and
 /// copyable, rather than a shrug.
+#[cfg(test)]
 struct RawValue(Vec<u8>);
 
+#[cfg(test)]
 impl<'a> FromSql<'a> for RawValue {
     fn from_sql(_: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
         Ok(RawValue(raw.to_vec()))
@@ -2147,9 +2149,27 @@ fn binary_is_text(ty: &Type) -> bool {
 /// `\x0000000000000064` for a value, whereas everyone would trust `12345678`.
 /// A wrong answer that looks right is worse than an unfriendly one that looks
 /// unfriendly.
+#[cfg(test)]
 fn render_raw(v: RawValue, ty: &Type) -> CellValue {
+    render_raw_bytes(&v.0, ty)
+}
+
+/// A value's wire bytes, borrowed from the row: the fallback path renders
+/// straight from the row buffer instead of copying the value out first.
+struct RawRef<'a>(&'a [u8]);
+
+impl<'a> FromSql<'a> for RawRef<'a> {
+    fn from_sql(_: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        Ok(RawRef(raw))
+    }
+    fn accepts(_: &Type) -> bool {
+        true
+    }
+}
+
+fn render_raw_bytes(v: &[u8], ty: &Type) -> CellValue {
     if binary_is_text(ty) {
-        if let Ok(s) = std::str::from_utf8(&v.0) {
+        if let Ok(s) = std::str::from_utf8(v) {
             return CellValue::Text(s.to_owned());
         }
     }
@@ -2158,18 +2178,18 @@ fn render_raw(v: RawValue, ty: &Type) -> CellValue {
     // chars, then note the rest. cap_cell would catch the length anyway; this
     // avoids the transient allocation on the way there. (RUST-02.)
     let cap = MAX_RENDERED_CELL_BYTES / 2;
-    if v.0.len() > cap {
-        let dropped = v.0.len() - cap;
+    if v.len() > cap {
+        let dropped = v.len() - cap;
         return CellValue::Other {
             rendered: format!(
                 "\\x{}… <truncated {dropped} more bytes>",
-                hex::encode(&v.0[..cap])
+                hex::encode(&v[..cap])
             ),
             db_type: ty.name().to_string(),
         };
     }
     CellValue::Other {
-        rendered: format!("\\x{}", hex::encode(&v.0)),
+        rendered: format!("\\x{}", hex::encode(v)),
         db_type: ty.name().to_string(),
     }
 }
@@ -2188,6 +2208,15 @@ const MAX_RENDERED_CELL_BYTES: usize = 1024 * 1024;
 fn cap_rendered(s: String) -> String {
     if s.len() <= MAX_RENDERED_CELL_BYTES {
         return s;
+    }
+    cap_str(&s)
+}
+
+/// `cap_rendered` for a borrowed value: one allocation of at most the cap,
+/// rather than an owned copy of the whole value that is then cut down.
+fn cap_str(s: &str) -> String {
+    if s.len() <= MAX_RENDERED_CELL_BYTES {
+        return s.to_owned();
     }
     let mut end = MAX_RENDERED_CELL_BYTES;
     while end > 0 && !s.is_char_boundary(end) {
@@ -2210,15 +2239,27 @@ fn cap_cell(c: CellValue) -> CellValue {
 }
 
 fn convert_cell(row: &Row, i: usize) -> CellValue {
+    // Text is the common case and the one that can be huge: borrow it from the
+    // row and cap while copying, so an over-long value is never held whole as
+    // an owned String (and then copied again to truncate it).
+    if matches!(
+        *row.columns()[i].type_(),
+        Type::TEXT | Type::VARCHAR | Type::BPCHAR | Type::NAME | Type::UNKNOWN
+    ) {
+        if let Ok(v) = row.try_get::<_, Option<&str>>(i) {
+            return v.map_or(CellValue::Null, |s| CellValue::Text(cap_str(s)));
+        }
+    }
     cap_cell(convert_cell_inner(row, i))
 }
 
 fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
-    let ty = row.columns()[i].type_().clone();
+    // Borrowed, not cloned: this runs once per cell.
+    let ty = row.columns()[i].type_();
     // Text is capped after rendering; bytea and json used to be decoded whole
     // first (a full copy, and a full serde tree), with no cap at all. Decide
     // from the wire length before paying for either.
-    if matches!(ty, Type::BYTEA | Type::JSON | Type::JSONB) {
+    if matches!(*ty, Type::BYTEA | Type::JSON | Type::JSONB) {
         let len = raw_len(row, i);
         if len > MAX_RENDERED_CELL_BYTES {
             return CellValue::Other {
@@ -2235,7 +2276,7 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
             match row.try_get::<_, Option<$t>>(i) {
                 Ok(Some(v)) => $wrap(v),
                 Ok(None) => CellValue::Null,
-                Err(_) => fallback(row, i, &ty),
+                Err(_) => fallback(row, i, ty),
             }
         };
     }
@@ -2254,12 +2295,12 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
                         .join(",")
                 )),
                 Ok(None) => CellValue::Null,
-                Err(_) => fallback(row, i, &ty),
+                Err(_) => fallback(row, i, ty),
             }
         };
     }
 
-    match ty {
+    match *ty {
         Type::BOOL => take!(bool, CellValue::Bool),
         Type::INT2 => take!(i16, |v: i16| CellValue::Int(v as i64)),
         Type::INT4 => take!(i32, |v: i32| CellValue::Int(v as i64)),
@@ -2295,7 +2336,17 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
             v.to_string()
         )),
 
-        Type::JSON | Type::JSONB => take!(serde_json::Value, CellValue::Json),
+        // Decoded (json's wire form is the text, jsonb's a version byte and
+        // the text) and written straight back out compact, so the cell is
+        // exactly what a `Value` serialized to before — sorted keys, no
+        // whitespace — while the tree lives for this one cell instead of for
+        // every JSON cell of the batch.
+        Type::JSON | Type::JSONB => take!(serde_json::Value, |v: serde_json::Value| {
+            match serde_json::value::to_raw_value(&v) {
+                Ok(text) => CellValue::Json(text),
+                Err(_) => fallback(row, i, ty),
+            }
+        }),
         Type::BYTEA => take!(Vec<u8>, CellValue::Bytes),
         Type::UUID => take!(uuid::Uuid, |v: uuid::Uuid| CellValue::Text(v.to_string())),
         Type::INET | Type::CIDR => take!(std::net::IpAddr, |v: std::net::IpAddr| {
@@ -2314,7 +2365,7 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
 
         // Enums, domains, ranges, geometry, intervals, money, xml, and anything
         // else the server may have: decoded from the wire rather than refused.
-        _ => fallback(row, i, &ty),
+        _ => fallback(row, i, ty),
     }
 }
 
@@ -2322,8 +2373,8 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
 /// "unsupported" — a database client that cannot show you your own data is
 /// not doing its job.
 fn fallback(row: &Row, i: usize, ty: &Type) -> CellValue {
-    match row.try_get::<_, Option<RawValue>>(i) {
-        Ok(Some(v)) => render_raw(v, ty),
+    match row.try_get::<_, Option<RawRef<'_>>>(i) {
+        Ok(Some(v)) => render_raw_bytes(v.0, ty),
         Ok(None) => CellValue::Null,
         Err(e) => CellValue::Other {
             rendered: format!("<decode error: {e}>"),
@@ -2835,6 +2886,16 @@ mod decoder_fuzz_tests {
 #[cfg(test)]
 mod cell_cap_tests {
     use super::*;
+
+    #[test]
+    fn capping_a_borrowed_value_matches_capping_an_owned_one() {
+        for s in ["", "abc", &"é".repeat(MAX_RENDERED_CELL_BYTES)] {
+            assert_eq!(cap_str(s), cap_rendered(s.to_string()));
+        }
+        let big = "é".repeat(MAX_RENDERED_CELL_BYTES / 2 + 10);
+        let capped = cap_str(&big);
+        assert!(capped.ends_with("… <truncated 20 more bytes>"));
+    }
 
     #[test]
     fn short_values_are_untouched() {

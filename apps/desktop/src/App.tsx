@@ -41,8 +41,8 @@ import {
   rawExtension,
   type ExportablePlan,
 } from "./lib/explain";
-import { FILTERS, abortSave, baseName, beginSave, finishSave, saveText, writeChunk } from "./lib/save";
-import { MAX_CHART_ROWS, aggregateChart, chartSubtitle, chartTitle, pickChartColumns } from "./lib/chart";
+import { FILTERS, abortSave, baseName, beginSave, finishSave, saveText } from "./lib/save";
+import { MAX_BARS, chartSubtitle, chartTitle, pickChartColumns } from "./lib/chart";
 import IntelModal, { type Pane as IntelPane } from "./overlays/IntelModal";
 import ImportModal from "./overlays/ImportModal";
 import DetailsModal, { type ObjectDetails } from "./overlays/DetailsModal";
@@ -76,13 +76,8 @@ import { ParamPrompt } from "./overlays/Overlays";
 import {
   coerceParam,
   EXPORT_CAPS,
-  exportChunk,
-  exportPrefix,
-  exportSuffix,
-  fetchAllRows,
   formatSQL,
   rowCountNote,
-  toExportText,
   type ExportKind,
 } from "./lib/sql";
 import type {
@@ -173,7 +168,6 @@ export default function App() {
   const txOpenSince = tx.openSince;
   /** Now, refreshed once a second while a transaction is open. The status
    *  bar reads the clock from here so that it stays a pure function of props. */
-  const [now, setNow] = useState(() => Date.now());
 
   // Workspace / UI
   // Tabs live in a hook so their invariants (valid active index, dirty means
@@ -328,12 +322,6 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!txOpenSince) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [txOpenSince]);
-
   const applyTheme = useCallback(async (t: "dark" | "light") => {
     setTheme(t);
     await invoke("settings_set", { key: "theme", value: t }).catch(() => {});
@@ -414,6 +402,13 @@ export default function App() {
     tx.forget(); // the session is gone; the transaction went with it
     setOverlay(null);
     resetExplorer();
+    // Nothing below can be shown without a session, and each is refetched on
+    // open — holding the last payloads only pins them in memory until then.
+    setChart(null);
+    setDetails(null);
+    setParts(null);
+    setSchemaCols(null);
+    setSchemaExtra(null);
   }, [session, resetExplorer, query, tx]);
 
   const doDisconnect = useCallback(async () => {
@@ -1126,9 +1121,10 @@ export default function App() {
       setExportRun({ written: 0, total });
       exportingRef.current = true;
       try {
-        await writeChunk(exportPrefix(kind, result.columns, mode));
-        // pg_rows serves at most 1000 per call, so that is the page size.
-        for (let off = 0; off < total; off += 1000) {
+        // The backend formats each page from its store and appends it to the
+        // file; rows never come into the page. One call even for an empty
+        // result, which still gets its header (and JSON its brackets).
+        for (let off = 0; off < Math.max(total, 1); off += 1000) {
           // Checked between pages rather than mid-write: stopping halfway
           // through a chunk would leave the file's last row torn in half, and
           // the whole point of aborting is to leave nothing behind.
@@ -1137,14 +1133,12 @@ export default function App() {
             showToast("Export cancelled — the partial file was removed");
             return;
           }
-          const page = await invoke<unknown[][]>("pg_rows", { offset: off, limit: 1000 });
-          if (page.length === 0) break;
-          const slice = page.length > total - off ? page.slice(0, total - off) : page;
-          await writeChunk(exportChunk(kind, result.columns, slice, written === 0, mode));
-          written += slice.length;
+          const limit = Math.min(1000, total - off);
+          const n = await invoke<number>("export_result_page", { kind, mode, offset: off, limit, total });
+          written += n;
           setExportRun({ written, total });
+          if (n < limit) break; // the result ended early
         }
-        await writeChunk(exportSuffix(kind, written > 0));
         await finishSave();
         showToast(`Saved ${baseName(path)} — ${rowCountNote(written, result)}`);
       } catch (e) {
@@ -1169,10 +1163,12 @@ export default function App() {
       // something is not a thing anyone does on purpose, and building the
       // string to find out costs the same freeze the file export just lost.
       const cap = Math.min(EXPORT_CAPS[kind] ?? COPY_ROW_CAP, COPY_ROW_CAP);
-      const rows = await fetchAllRows(Math.min(result.storedRows, cap));
+      const n = Math.min(result.storedRows, cap);
       const mode = csvSafe ? "spreadsheet-safe" : "raw";
-      await navigator.clipboard.writeText(toExportText(kind, result.columns, rows, mode));
-      showToast(`${kind.toUpperCase()} copied — ${rowCountNote(rows.length, result)}`);
+      // Formatted by the backend and put on the clipboard there: the text never
+      // enters the page, only the count of rows it held.
+      const rows = await invoke<number>("copy_result_text", { kind, mode, limit: n });
+      showToast(`${kind.toUpperCase()} copied — ${rowCountNote(rows, result)}`);
     },
     [result, showToast, csvSafe]
   );
@@ -1183,11 +1179,16 @@ export default function App() {
       setChart(null);
       return;
     }
-    const rows = await fetchAllRows(Math.min(result.storedRows, MAX_CHART_ROWS));
+    // Summed in the backend over every stored row; only the bars come back.
+    const out = await invoke<{ rows: number; bars: ChartDatum[] }>("pg_chart", {
+      label: pick.label,
+      value: pick.value,
+      maxBars: MAX_BARS,
+    });
     setChart({
       title: chartTitle(result.columns, pick),
-      sub: chartSubtitle(rows.length, result.totalRows),
-      data: aggregateChart(rows, pick.label, pick.value),
+      sub: chartSubtitle(out.rows, result.totalRows),
+      data: out.bars,
     });
   }, [result]);
 
@@ -1706,7 +1707,6 @@ export default function App() {
         explorerSource={explorerSource}
         rowsInfo={result && result.columns.length > 0 ? rowsInfo : ""}
         txOpenSince={txOpenSince}
-        now={now}
         serverVersion={serverVersion}
         osLabel={info?.os ?? ""}
         buildLabel={buildLabel()}

