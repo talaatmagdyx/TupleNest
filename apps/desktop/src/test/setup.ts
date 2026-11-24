@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
+import { preloadOverlays } from "../overlays/lazy";
 
 afterEach(() => {
   cleanup();
@@ -111,3 +112,9 @@ if (!File.prototype.text) {
     });
   };
 }
+
+/* The rarely-opened modals are split into their own chunks (overlays/lazy).
+   Loading them all here means App renders them on the same tick it opens
+   them, exactly as before the split, so tests can query a modal right after
+   the click that opens it. The on-demand path is covered in lazy.test.tsx. */
+await preloadOverlays();

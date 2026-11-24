@@ -2,17 +2,10 @@ import { useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { QueryResult } from "../ipc/types";
 import { looksLikeSelect } from "../lib/sql";
-import {
-  DEFAULT_EXPLAIN,
-  buildExplain,
-  optionIssues,
-  parsePlan,
-  readPlanPayload,
-  type ExplainOptions,
-  type Insight,
-  type ParsedPlanNode,
-} from "../lib/explain";
-import { catalogTypeLookup, type IndexSuggestion } from "../lib/index-advisor";
+import { DEFAULT_EXPLAIN, type ExplainOptions } from "../lib/explain-options";
+import type { Insight, ParsedPlanNode } from "../lib/explain";
+import { loadExplain } from "../lib/explain-load";
+import type { IndexSuggestion } from "../lib/index-advisor";
 import type { Catalog } from "../lib/complete";
 
 /** The plan currently on screen, and the statement that produced it. */
@@ -92,6 +85,12 @@ export function useExplain(serverMajor?: number): Explain {
       const valid = override && typeof (override as ExplainOptions).format === "string";
       const o = valid ? (override as ExplainOptions) : { ...opts, analyze: looksLikeSelect(sql) };
       setOpts(o);
+      // The plan parser and index advisor are a chunk of their own, read from
+      // disk the first time a plan is asked for rather than at startup.
+      const [{ buildExplain, optionIssues, parsePlan, readPlanPayload }, { catalogTypeLookup }] = await Promise.all([
+        loadExplain(),
+        import("../lib/index-advisor"),
+      ]);
       if (optionIssues(o, sql, serverMajor).some((i) => i.level === "error")) {
         return { kind: "blocked", reason: "options" };
       }

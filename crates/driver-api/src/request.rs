@@ -39,7 +39,9 @@ pub enum CellValue {
     Int(i64),
     Float(f64),
     Text(String),
-    Bytes(Vec<u8>),
+    /// A boxed slice, not a `Vec`: no spare capacity to carry, and it keeps
+    /// the cell at 24 bytes (see `Other`).
+    Bytes(Box<[u8]>),
     /// A `json`/`jsonb` value as its JSON text: one allocation the size of the
     /// text. A `serde_json::Value` tree here was several times that, for every
     /// cell of a batch, only to be written back out as text by whoever stored
@@ -48,10 +50,26 @@ pub enum CellValue {
     Json(Box<serde_json::value::RawValue>),
     /// Rendered form of a type without a lossless native mapping,
     /// plus the database type name (e.g. `interval`, `numrange`).
-    Other {
-        rendered: String,
-        db_type: String,
-    },
+    ///
+    /// Boxed: two inline `String`s made every cell 48 bytes, NULLs included,
+    /// and a batch is 1,000 rows of them (200 columns: 9.6 MB of cells before
+    /// any text). Boxed, the largest variant is `Text` and a cell is 24 bytes.
+    /// Serialized exactly as the struct variant it was.
+    Other(Box<OtherValue>),
+}
+
+/// The payload of [`CellValue::Other`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OtherValue {
+    pub rendered: String,
+    pub db_type: String,
+}
+
+impl CellValue {
+    /// A [`CellValue::Other`] cell.
+    pub fn other(rendered: String, db_type: String) -> Self {
+        Self::Other(Box::new(OtherValue { rendered, db_type }))
+    }
 }
 
 /// Derived until `Json` became a `RawValue`, which has no `PartialEq`. JSON
@@ -67,16 +85,7 @@ impl PartialEq for CellValue {
             (Self::Text(a), Self::Text(b)) => a == b,
             (Self::Bytes(a), Self::Bytes(b)) => a == b,
             (Self::Json(a), Self::Json(b)) => a.get() == b.get(),
-            (
-                Self::Other {
-                    rendered: a,
-                    db_type: at,
-                },
-                Self::Other {
-                    rendered: b,
-                    db_type: bt,
-                },
-            ) => a == b && at == bt,
+            (Self::Other(a), Self::Other(b)) => a == b,
             _ => false,
         }
     }
@@ -229,4 +238,35 @@ pub struct MetadataResponse {
     pub payload: serde_json::Value,
     /// Driver-specific annotations (e.g. server version quirks).
     pub annotations: BTreeMap<String, String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn a_cell_is_24_bytes() {
+        // A batch holds 1,000 rows of these, NULLs included.
+        assert_eq!(std::mem::size_of::<CellValue>(), 24);
+    }
+
+    #[test]
+    fn other_and_bytes_serialize_as_before() {
+        let other = CellValue::other("1 day".into(), "interval".into());
+        assert_eq!(
+            serde_json::to_string(&other).unwrap(),
+            r#"{"type":"other","value":{"rendered":"1 day","db_type":"interval"}}"#
+        );
+        let back: CellValue = serde_json::from_str(
+            r#"{"type":"other","value":{"rendered":"1 day","db_type":"interval"}}"#,
+        )
+        .unwrap();
+        assert_eq!(back, other);
+        let bytes = CellValue::Bytes(vec![1, 2].into());
+        assert_eq!(
+            serde_json::to_string(&bytes).unwrap(),
+            r#"{"type":"bytes","value":[1,2]}"#
+        );
+    }
 }

@@ -15,37 +15,11 @@ import { maskLiterals } from "./complete";
 import { suggestIndexes, type ColumnTypeLookup, type IndexSuggestion } from "./index-advisor";
 import { cellText, mdCell } from "./text";
 
-export type ExplainFormat = "json" | "text" | "yaml" | "xml";
-
-export type ExplainOptions = {
-  analyze: boolean;
-  verbose: boolean;
-  costs: boolean;
-  buffers: boolean;
-  settings: boolean;
-  wal: boolean;
-  timing: boolean;
-  summary: boolean;
-  memory: boolean;
-  serialize: boolean;
-  genericPlan: boolean;
-  format: ExplainFormat;
-};
-
-export const DEFAULT_EXPLAIN: ExplainOptions = {
-  analyze: false,
-  verbose: false,
-  costs: true, // Postgres defaults COSTS on; the plan tree is useless without it
-  buffers: true,
-  settings: false,
-  wal: false,
-  timing: false,
-  summary: false,
-  memory: false,
-  serialize: false,
-  genericPlan: false,
-  format: "json", // the UI parses JSON to draw the tree
-};
+// The options and their defaults live apart from the parser so the main
+// bundle can hold the defaults without pulling in everything below, which is
+// loaded only once a plan is actually requested.
+import { DEFAULT_EXPLAIN, type ExplainFormat, type ExplainOptions } from "./explain-options";
+export { DEFAULT_EXPLAIN, type ExplainFormat, type ExplainOptions };
 
 /** Options that the server refuses unless ANALYZE is also set. */
 export const NEEDS_ANALYZE = ["timing", "wal", "serialize"] as const;

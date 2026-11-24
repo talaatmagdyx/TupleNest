@@ -18,7 +18,7 @@ pub use error::{DriverError, ErrorCategory, Retryability};
 pub use ids::{ConnectionId, ExecutionId, SecretRef, SessionId, TransactionId};
 pub use request::{
     CellValue, ColumnMeta, ExecutionStatus, ExecutionSummary, IsolationLevel, MetadataRequest,
-    MetadataResponse, ParamValue, QueryRequest, RowBatch, TransactionOptions,
+    MetadataResponse, OtherValue, ParamValue, QueryRequest, RowBatch, TransactionOptions,
 };
 
 use async_trait::async_trait;

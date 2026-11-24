@@ -86,15 +86,24 @@ fn begin_statement(o: &TransactionOptions) -> String {
 ///
 /// For numbers, bools and uuids none of this can trigger, so it costs nothing
 /// where it is not needed.
+#[cfg(test)]
 fn quote_array_element(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    push_array_element(&mut out, s);
+    out
+}
+
+/// [`quote_array_element`], appended to `out`.
+fn push_array_element(out: &mut String, s: &str) {
     let needs = s.is_empty()
         || s.eq_ignore_ascii_case("NULL")
         || s.chars()
             .any(|c| matches!(c, '{' | '}' | ',' | '"' | '\\') || c.is_whitespace());
     if !needs {
-        return s.to_string();
+        out.push_str(s);
+        return;
     }
-    let mut out = String::with_capacity(s.len() + 2);
+    out.reserve(s.len() + 2);
     out.push('"');
     for c in s.chars() {
         if c == '"' || c == '\\' {
@@ -103,7 +112,6 @@ fn quote_array_element(s: &str) -> String {
         out.push(c);
     }
     out.push('"');
-    out
 }
 
 /// Cancels via the wire-protocol cancel key, matching the session's TLS posture.
@@ -2040,18 +2048,20 @@ impl<'a> FromSql<'a> for PgNumeric {
         if estimated > MAX_NUMERIC_RENDER_BYTES {
             return Err("numeric: value too large to render safely".into());
         }
-        let digits: Vec<i16> = (0..ndigits)
-            .map(|k| i16::from_be_bytes([raw[8 + k * 2], raw[9 + k * 2]]))
-            .collect();
+        // Digit `k`, read from the wire in place (no `Vec` of them per cell);
+        // groups past either end are zero.
         let at = |k: i32| -> i16 {
-            if k < 0 {
-                0
-            } else {
-                digits.get(k as usize).copied().unwrap_or(0)
-            }
+            usize::try_from(k)
+                .ok()
+                .filter(|&k| k < ndigits)
+                .map_or(0, |k| i16::from_be_bytes([raw[8 + k * 2], raw[9 + k * 2]]))
         };
 
-        let mut s = String::new();
+        // Written straight into the one string the cell keeps: this was a
+        // `to_string`/`format!` allocation per digit group, plus a second
+        // string for the fraction.
+        use std::fmt::Write as _;
+        let mut s = String::with_capacity(estimated);
         if sign == 0x4000 {
             s.push('-');
         }
@@ -2062,9 +2072,9 @@ impl<'a> FromSql<'a> for PgNumeric {
         } else {
             for k in 0..=weight {
                 if k == 0 {
-                    s.push_str(&at(k).to_string());
+                    let _ = write!(s, "{}", at(k));
                 } else {
-                    s.push_str(&format!("{:04}", at(k)));
+                    let _ = write!(s, "{:04}", at(k));
                 }
             }
         }
@@ -2072,15 +2082,16 @@ impl<'a> FromSql<'a> for PgNumeric {
         // Fraction: groups after the point, padded then cut to the display scale
         // so a stored 125000.50 keeps its trailing zero.
         if dscale > 0 {
-            let mut frac = String::new();
+            s.push('.');
+            let end = s.len() + dscale;
             let mut k = weight + 1;
-            while frac.len() < dscale {
-                frac.push_str(&format!("{:04}", at(k)));
+            while s.len() < end {
+                let _ = write!(s, "{:04}", at(k));
                 k += 1;
             }
-            frac.truncate(dscale);
-            s.push('.');
-            s.push_str(&frac);
+            // Only ASCII (digits, or a sign from a crafted group) past the
+            // point, so any length is a char boundary.
+            s.truncate(end);
         }
         Ok(PgNumeric(s))
     }
@@ -2181,18 +2192,15 @@ fn render_raw_bytes(v: &[u8], ty: &Type) -> CellValue {
     let cap = MAX_RENDERED_CELL_BYTES / 2;
     if v.len() > cap {
         let dropped = v.len() - cap;
-        return CellValue::Other {
-            rendered: format!(
+        return CellValue::other(
+            format!(
                 "\\x{}… <truncated {dropped} more bytes>",
                 hex::encode(&v[..cap])
             ),
-            db_type: ty.name().to_string(),
-        };
+            ty.name().to_string(),
+        );
     }
-    CellValue::Other {
-        rendered: format!("\\x{}", hex::encode(v)),
-        db_type: ty.name().to_string(),
-    }
+    CellValue::other(format!("\\x{}", hex::encode(v)), ty.name().to_string())
 }
 
 /// The largest rendered cell string TupleNest keeps. A PostgreSQL field can be
@@ -2231,10 +2239,10 @@ fn cap_str(s: &str) -> String {
 fn cap_cell(c: CellValue) -> CellValue {
     match c {
         CellValue::Text(s) => CellValue::Text(cap_rendered(s)),
-        CellValue::Other { rendered, db_type } => CellValue::Other {
-            rendered: cap_rendered(rendered),
-            db_type,
-        },
+        CellValue::Other(mut o) => {
+            o.rendered = cap_rendered(std::mem::take(&mut o.rendered));
+            CellValue::Other(o)
+        }
         other => other,
     }
 }
@@ -2263,13 +2271,13 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
     if matches!(*ty, Type::BYTEA | Type::JSON | Type::JSONB) {
         let len = raw_len(row, i);
         if len > MAX_RENDERED_CELL_BYTES {
-            return CellValue::Other {
-                rendered: format!(
+            return CellValue::other(
+                format!(
                     "<{} of {len} bytes — too large to show in a cell>",
                     ty.name()
                 ),
-                db_type: ty.name().to_string(),
-            };
+                ty.name().to_string(),
+            );
         }
     }
     macro_rules! take {
@@ -2285,16 +2293,28 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
     macro_rules! take_array {
         ($t:ty) => {
             match row.try_get::<_, Option<Vec<Option<$t>>>>(i) {
-                Ok(Some(v)) => CellValue::Text(format!(
-                    "{{{}}}",
-                    v.iter()
-                        .map(|e| e
-                            .as_ref()
-                            .map(|x| quote_array_element(&x.to_string()))
-                            .unwrap_or_else(|| "NULL".into()))
-                        .collect::<Vec<_>>()
-                        .join(",")
-                )),
+                // Written into one string: this was a `String` per element
+                // (twice for quoted ones), a `Vec` of them, then the join.
+                Ok(Some(v)) => {
+                    use std::fmt::Write as _;
+                    let mut out = String::from("{");
+                    let mut text = String::new();
+                    for (k, e) in v.iter().enumerate() {
+                        if k > 0 {
+                            out.push(',');
+                        }
+                        match e {
+                            Some(x) => {
+                                text.clear();
+                                let _ = write!(text, "{x}");
+                                push_array_element(&mut out, &text);
+                            }
+                            None => out.push_str("NULL"),
+                        }
+                    }
+                    out.push('}');
+                    CellValue::Text(out)
+                }
                 Ok(None) => CellValue::Null,
                 Err(_) => fallback(row, i, ty),
             }
@@ -2348,7 +2368,7 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
                 Err(_) => fallback(row, i, ty),
             }
         }),
-        Type::BYTEA => take!(Vec<u8>, CellValue::Bytes),
+        Type::BYTEA => take!(Vec<u8>, |v: Vec<u8>| CellValue::Bytes(v.into_boxed_slice())),
         Type::UUID => take!(uuid::Uuid, |v: uuid::Uuid| CellValue::Text(v.to_string())),
         Type::INET | Type::CIDR => take!(std::net::IpAddr, |v: std::net::IpAddr| {
             CellValue::Text(v.to_string())
@@ -2377,10 +2397,7 @@ fn fallback(row: &Row, i: usize, ty: &Type) -> CellValue {
     match row.try_get::<_, Option<RawRef<'_>>>(i) {
         Ok(Some(v)) => render_raw_bytes(v.0, ty),
         Ok(None) => CellValue::Null,
-        Err(e) => CellValue::Other {
-            rendered: format!("<decode error: {e}>"),
-            db_type: ty.name().to_string(),
-        },
+        Err(e) => CellValue::other(format!("<decode error: {e}>"), ty.name().to_string()),
     }
 }
 
@@ -2818,6 +2835,74 @@ mod decoder_fuzz_tests {
         }
     }
 
+    /// The decoder as it was before it wrote into one string: what the
+    /// current one must match, character for character.
+    fn numeric_reference(digits: &[i16], weight: i32, negative: bool, dscale: usize) -> String {
+        let at = |k: i32| -> i16 {
+            if k < 0 {
+                0
+            } else {
+                digits.get(k as usize).copied().unwrap_or(0)
+            }
+        };
+        let mut s = String::new();
+        if negative {
+            s.push('-');
+        }
+        if weight < 0 {
+            s.push('0');
+        } else {
+            for k in 0..=weight {
+                if k == 0 {
+                    s.push_str(&at(k).to_string());
+                } else {
+                    s.push_str(&format!("{:04}", at(k)));
+                }
+            }
+        }
+        if dscale > 0 {
+            let mut frac = String::new();
+            let mut k = weight + 1;
+            while frac.len() < dscale {
+                frac.push_str(&format!("{:04}", at(k)));
+                k += 1;
+            }
+            frac.truncate(dscale);
+            s.push('.');
+            s.push_str(&frac);
+        }
+        s
+    }
+
+    #[test]
+    fn numeric_decoder_matches_the_reference_on_valid_headers() {
+        let mut rng = XorShift(0xDEAD_BEEF_0BAD_F00D);
+        for _ in 0..100_000 {
+            let ndigits = (rng.next() % 7) as usize;
+            let weight = (rng.next() % 12) as i16 - 5;
+            let negative = rng.next() % 2 == 0;
+            let dscale = (rng.next() % 24) as u16;
+            // Mostly real base-10000 groups, sometimes what no server sends.
+            let digits: Vec<i16> = (0..ndigits)
+                .map(|_| match rng.next() % 10 {
+                    0 => rng.next() as i16,
+                    _ => (rng.next() % 10_000) as i16,
+                })
+                .collect();
+            let mut raw = Vec::new();
+            raw.extend_from_slice(&(ndigits as u16).to_be_bytes());
+            raw.extend_from_slice(&weight.to_be_bytes());
+            raw.extend_from_slice(&(if negative { 0x4000u16 } else { 0 }).to_be_bytes());
+            raw.extend_from_slice(&dscale.to_be_bytes());
+            for d in &digits {
+                raw.extend_from_slice(&d.to_be_bytes());
+            }
+            let got = PgNumeric::from_sql(&Type::NUMERIC, &raw).unwrap().0;
+            let want = numeric_reference(&digits, weight as i32, negative, dscale as usize);
+            assert_eq!(got, want, "{digits:?} weight={weight} dscale={dscale}");
+        }
+    }
+
     #[test]
     fn numeric_decoder_never_panics_or_over_allocates_on_random_bytes() {
         let mut rng = XorShift(0x9E37_79B9_7F4A_7C15);
@@ -2850,7 +2935,7 @@ mod decoder_fuzz_tests {
             let cell = render_raw(RawValue(raw), ty);
             let len = match &cell {
                 CellValue::Text(s) => s.len(),
-                CellValue::Other { rendered, .. } => rendered.len(),
+                CellValue::Other(o) => o.rendered.len(),
                 _ => 0,
             };
             // render_raw caps its own output; cap_cell would enforce it again.
@@ -3051,13 +3136,13 @@ mod render_raw_tests {
         // fails against that implementation, which is the point of it.
         let v = render_raw(RawValue(b"12345678".to_vec()), &Type::MONEY);
         assert!(
-            matches!(v, CellValue::Other { .. }),
+            matches!(v, CellValue::Other(_)),
             "money must never be rendered as text, got {v:?}"
         );
         match v {
-            CellValue::Other { rendered, db_type } => {
-                assert_eq!(rendered, "\\x3132333435363738");
-                assert_eq!(db_type, "money");
+            CellValue::Other(o) => {
+                assert_eq!(o.rendered, "\\x3132333435363738");
+                assert_eq!(o.db_type, "money");
             }
             _ => unreachable!(),
         }
@@ -3068,7 +3153,7 @@ mod render_raw_tests {
         // Same trap, different type — 16 bytes that happen to be readable.
         assert!(matches!(
             render_raw(RawValue(b"0123456789abcdef".to_vec()), &Type::INTERVAL),
-            CellValue::Other { .. }
+            CellValue::Other(_)
         ));
     }
 
@@ -3090,7 +3175,7 @@ mod render_raw_tests {
         // ...and a domain over money is still money, printable bytes or not.
         assert!(matches!(
             render_raw(RawValue(b"12345678".to_vec()), &domain_over(Type::MONEY)),
-            CellValue::Other { .. }
+            CellValue::Other(_)
         ));
     }
 
@@ -3106,7 +3191,7 @@ mod render_raw_tests {
     fn invalid_utf8_in_a_text_type_falls_back_to_hex_rather_than_panicking() {
         assert!(matches!(
             render_raw(RawValue(vec![0xff, 0xfe]), &Type::TEXT),
-            CellValue::Other { .. }
+            CellValue::Other(_)
         ));
     }
 
