@@ -51,7 +51,7 @@ Acceptance tests
 - Contrast ratios meet WCAG AA in all three themes.
 - Storybook (or Ladle) renders all base components with keyboard navigation.
 
-Frontend: `packages/ui`.
+Frontend: `packages/ui` (never populated; removed in 0.1.1).
 
 ### E0.3 — Tauri application shell & capability model (Weeks 2–4)
 

@@ -55,6 +55,26 @@ jobs:
         with:
           persist-credentials: false
 
+      # The updater compares the app version, not the tag. Eleven betas shipped
+      # as 0.1.0 because nothing checked that the two agree; now the build does.
+      - name: Tag matches the app version
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          want="${TAG#v}"; want="${want%%-*}"   # v0.1.2-beta.13 -> 0.1.2
+          conf=$(grep -m1 '"version"' apps/desktop/src-tauri/tauri.conf.json | sed -E 's/.*"([0-9][^"]*)".*/\1/')
+          pkg=$(grep -m1 '"version"' apps/desktop/package.json | sed -E 's/.*"([0-9][^"]*)".*/\1/')
+          cargo=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]*)".*/\1/')
+          for v in "$conf" "$pkg" "$cargo"; do
+            if [ "$v" != "$want" ]; then
+              echo "::error::tag $TAG wants app version $want, but tauri.conf=$conf package.json=$pkg Cargo.toml=$cargo"
+              exit 1
+            fi
+          done
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
@@ -301,7 +321,10 @@ jobs:
       - name: SBOM
         run: |
           set -euo pipefail
-          cargo install --locked cargo-cyclonedx || true
+          # Pinned: this job holds contents:write and id-token:write, so an
+          # unpinned install would run whatever was published most recently.
+          # 0.5.10 is what produced the 0.1.1-beta.12 SBOMs.
+          cargo install --locked cargo-cyclonedx --version 0.5.10 || true
           command -v cargo-cyclonedx >/dev/null || { echo "cargo-cyclonedx did not install"; exit 1; }
           # One .cdx.json per crate, written next to each Cargo.toml.
           cargo cyclonedx --format json --all

@@ -64,6 +64,8 @@ export type Query = {
   /** The SQL that produced `result` — editability is judged on this, not on
    *  whatever has since been typed into the editor. */
   ranSql: string;
+  /** The values bound to `ranSql`'s placeholders, so it can be re-run as-is. */
+  ranParams: unknown[] | undefined;
   /** Bumped per result, so the grid knows to drop its state. */
   epoch: number;
   status: RunStatus | null;
@@ -77,6 +79,7 @@ export function useQuery(): Query {
   const [result, setResult] = useState<QueryResult | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [ranSql, setRanSql] = useState("");
+  const [ranParams, setRanParams] = useState<unknown[] | undefined>(undefined);
   const [epoch, setEpoch] = useState(0);
   const [status, setStatus] = useState<RunStatus | null>(null);
 
@@ -96,6 +99,7 @@ export function useQuery(): Query {
     setLastError(null);
     setStatus(null);
     setRanSql("");
+    setRanParams(undefined);
   }, []);
 
   const run = useCallback(async (sql: string, opts: RunOptions): Promise<RunOutcome> => {
@@ -122,6 +126,7 @@ export function useQuery(): Query {
       if (mine !== token.current) return { kind: "blocked", reason: "stale" };
       setResult(r);
       setRanSql(sql);
+      setRanParams(opts.params);
       setLastError(null);
       setEpoch((n) => n + 1);
       setStatus({ icon: "✓", text: statusText(r), color: "var(--tn-success)" });
@@ -150,5 +155,5 @@ export function useQuery(): Query {
     await invoke("pg_cancel").catch(() => {});
   }, []);
 
-  return { running, result, lastError, ranSql, epoch, status, run, cancel, reset };
+  return { running, result, lastError, ranSql, ranParams, epoch, status, run, cancel, reset };
 }

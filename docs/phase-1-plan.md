@@ -103,7 +103,7 @@ Acceptance tests
 - Alias resolution: `SELECT o.| FROM orders o` completes `orders` columns.
 - Statement splitter handles `$$` bodies, comments, and strings (fuzz-tested).
 
-Crates: `sql-parser` (statement splitting + light parsing), `sql-language-service`. Frontend: `editor`, `packages/editor`.
+Crates: `sql-parser` (statement splitting + light parsing), `sql-language-service`. Frontend: `editor`, `packages/editor` (never populated; removed).
 
 ### E1.5 — Query execution, streaming grid, cancellation (Weeks 5–10)
 
@@ -122,7 +122,7 @@ Acceptance tests
 - Cancellation stress: 100 consecutive cancels of a long query — 100 clean terminations.
 - Reconnect safety: mid-`UPDATE` drop → error + broken-session state; re-run requires explicit user action.
 
-Crates: `query-engine`, `result-stream`, `transaction-core`. Frontend: `results`, `packages/grid`.
+Crates: `query-engine`, `result-stream`, `transaction-core`. Frontend: `results`, `packages/grid` (never populated; removed).
 
 ### E1.6 — Table browsing & safe editing (Weeks 8–12)
 

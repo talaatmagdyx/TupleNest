@@ -21,11 +21,12 @@ export default function EditReviewModal(p: Props) {
   const isProd = p.env === "prod";
 
   return (
-    <Overlay center label="Review changes" onClose={p.onClose}>
+    // While the write is in flight, closing would hide it, not stop it.
+    <Overlay center label="Review changes" onClose={p.applying ? () => {} : p.onClose}>
       <div className="modal edit-review" onClick={(e) => e.stopPropagation()}>
         {/* Was a hand-rolled copy of ModalHead, which meant it missed the
             accessible label on the close button. Use the real one. */}
-        <ModalHead title="Review changes" onClose={p.onClose} />
+        <ModalHead title="Review changes" onClose={p.applying ? () => {} : p.onClose} />
 
         <div className="er-sum">
           <span className="er-count">{p.edits.length}</span>

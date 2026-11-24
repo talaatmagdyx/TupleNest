@@ -119,6 +119,12 @@ use tuplenest_driver_api::*;
 /// between `deliver` calls.
 pub const BATCH_SIZE: usize = 1_000;
 
+/// A batch is also cut at this many bytes of wire data. Rows alone are not a
+/// size: 1,000 rows of 1 MB bytea is a gigabyte decoded before the sink can
+/// apply its budget (measured: 600 such rows peaked at 882 MB under a 256 MB
+/// store budget).
+pub const BATCH_BYTES: usize = 8 * 1024 * 1024;
+
 /// Oldest PostgreSQL this build serves.
 ///
 /// The binding constraint is `pg_partition_tree` / `pg_partition_root`, which
@@ -165,6 +171,13 @@ impl PostgresDriver {
             TlsMode::VerifyCa | TlsMode::VerifyFull => tokio_postgres::config::SslMode::Require,
         };
         c.ssl_mode(ssl_mode);
+        // A half-open socket (laptop sleep, a dropped VPN, a dead NAT entry)
+        // used to block until the OS gave up on TCP — many minutes — and with
+        // it Disconnect, which waits for the running query. Keepalives notice
+        // in about a minute; a server that never answers the dial fails fast.
+        c.connect_timeout(std::time::Duration::from_secs(15));
+        c.keepalives(true);
+        c.keepalives_idle(std::time::Duration::from_secs(30));
         c
     }
 
@@ -342,8 +355,10 @@ impl PostgresSession {
      * restore the read-only default and to say whether the transaction this
      * statement will run in is read-only. Outside a transaction that is always
      * yes. Inside one opened `READ WRITE`, it is no, and the statement is
-     * refused — whatever it is. One statement cannot both flip the mode and
-     * write: PostgreSQL fixes a transaction's mode before its first query.
+     * refused — whatever it is. An ordinary statement cannot both flip the
+     * mode and write: PostgreSQL fixes a transaction's mode before its first
+     * query. `DO` and `CALL` can, by committing partway through, so `execute`
+     * refuses those on a read-only profile before this check ever runs.
      */
     /*
      * Is a transaction open on the server right now?
@@ -390,8 +405,17 @@ impl PostgresSession {
      * failure the server is asked rather than either side guessing.
      */
     async fn end_transaction(&mut self, sql: &str) -> Result<(), Box<DriverError>> {
-        let Some(id) = self.in_transaction.take() else {
-            return Err(DriverError::new(ErrorCategory::Internal, "No open transaction").into());
+        // The flag knows only about `begin()`. A transaction the user opened by
+        // typing BEGIN is just as real, and Commit/Rollback (and the prompt on
+        // closing the window) must be able to end it — so ask the server.
+        let id = match self.in_transaction.take() {
+            Some(id) => id,
+            None if self.server_in_transaction().await.unwrap_or(false) => TransactionId::new(),
+            None => {
+                return Err(
+                    DriverError::new(ErrorCategory::Internal, "No open transaction").into(),
+                );
+            }
         };
         let result = self
             .client
@@ -405,12 +429,16 @@ impl PostgresSession {
     }
 
     async fn ensure_read_only(&self) -> Result<(), Box<DriverError>> {
+        // Two round trips, not one: sent together they run in one implicit
+        // transaction, which began under the old default, so the statement
+        // right after a mode flip was refused even with no transaction open.
+        self.client
+            .batch_execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
+            .await
+            .map_err(normalize_error)?;
         let msgs = self
             .client
-            .simple_query(
-                "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY; \
-                 SELECT current_setting('transaction_read_only')",
-            )
+            .simple_query("SELECT current_setting('transaction_read_only')")
             .await
             .map_err(normalize_error)?;
         let read_only = msgs.iter().any(|m| match m {
@@ -574,8 +602,29 @@ impl DatabaseSession for PostgresSession {
         use futures_util::StreamExt;
         let started = Instant::now();
 
-        if self.read_only && !ends_transaction(&request.sql) {
-            self.ensure_read_only().await?;
+        if self.read_only {
+            let words = leading_words(&request.sql, 2);
+            let first = words.first().map(String::as_str).unwrap_or("");
+            // DO and CALL may COMMIT partway through, and the transaction after
+            // that takes whatever default the block just set: one statement can
+            // both flip the mode and write. Nothing can be checked between the
+            // two, so they are refused outright on a read-only profile.
+            if first == "do" || first == "call" {
+                return Err(DriverError::new(
+                    ErrorCategory::Authorization,
+                    "DO blocks and CALL are refused on a read-only connection: they can \
+                     commit and change the transaction mode from inside. Nothing was run.",
+                )
+                .into());
+            }
+            // Ending a transaction must always work, and SET TRANSACTION has to
+            // be the first statement of one, so the check's own query would
+            // break it. Both are safe unchecked: the statement after is checked.
+            let set_transaction =
+                first == "set" && words.get(1).is_some_and(|w| w == "transaction");
+            if !ends_transaction(&request.sql) && !set_transaction {
+                self.ensure_read_only().await?;
+            }
         }
 
         // Bind typed parameters ($1..$n). Passed as owned boxed ToSql so the
@@ -596,6 +645,8 @@ impl DatabaseSession for PostgresSession {
         let mut buffer: Vec<Vec<CellValue>> = Vec::with_capacity(BATCH_SIZE);
         let mut sequence = 0u64;
         let mut rows_returned = 0u64;
+        let mut batch_bytes = 0usize;
+        let mut counting_only = false;
 
         while let Some(item) = stream.next().await {
             let row = item.map_err(normalize_error)?;
@@ -610,9 +661,15 @@ impl DatabaseSession for PostgresSession {
                     })
                     .collect();
             }
-            buffer.push(convert_row(&row));
             rows_returned += 1;
-            if buffer.len() >= BATCH_SIZE {
+            // The sink is full: count the rest, decode none of it.
+            if counting_only {
+                continue;
+            }
+            batch_bytes += row_wire_bytes(&row);
+            buffer.push(convert_row(&row));
+            if buffer.len() >= BATCH_SIZE || batch_bytes >= BATCH_BYTES {
+                batch_bytes = 0;
                 sink.deliver(RowBatch {
                     execution_id: request.execution_id,
                     sequence,
@@ -623,6 +680,7 @@ impl DatabaseSession for PostgresSession {
                 .await?;
                 sequence += 1;
                 buffer.reserve(BATCH_SIZE);
+                counting_only = !sink.wants_rows();
             }
         }
 
@@ -1165,10 +1223,16 @@ impl DatabaseSession for PostgresSession {
         &mut self,
         options: TransactionOptions,
     ) -> Result<TransactionId, Box<DriverError>> {
+        // The flag goes stale when the user ends the transaction by typing
+        // COMMIT or ROLLBACK; the server is the authority on whether one is
+        // still open.
         if self.in_transaction.is_some() {
-            return Err(
-                DriverError::new(ErrorCategory::Internal, "Transaction already open").into(),
-            );
+            if self.server_in_transaction().await.unwrap_or(true) {
+                return Err(
+                    DriverError::new(ErrorCategory::Internal, "Transaction already open").into(),
+                );
+            }
+            self.in_transaction = None;
         }
         /*
          * The options were discarded — the parameter was literally `_options` —
@@ -1884,6 +1948,30 @@ async fn object_details(
     Ok(serde_json::json!({ "title": name, "kind": kind, "sections": sections }))
 }
 
+/// The length of a value's wire bytes, without copying them.
+struct RawLen(usize);
+
+impl<'a> FromSql<'a> for RawLen {
+    fn from_sql(_: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        Ok(RawLen(raw.len()))
+    }
+    fn accepts(_: &Type) -> bool {
+        true
+    }
+}
+
+fn raw_len(row: &Row, i: usize) -> usize {
+    row.try_get::<_, Option<RawLen>>(i)
+        .ok()
+        .flatten()
+        .map_or(0, |r| r.0)
+}
+
+/// Wire size of a row: what decoding it will cost, roughly.
+fn row_wire_bytes(row: &Row) -> usize {
+    (0..row.len()).map(|i| raw_len(row, i)).sum()
+}
+
 fn convert_row(row: &Row) -> Vec<CellValue> {
     (0..row.len()).map(|i| convert_cell(row, i)).collect()
 }
@@ -2127,6 +2215,21 @@ fn convert_cell(row: &Row, i: usize) -> CellValue {
 
 fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
     let ty = row.columns()[i].type_().clone();
+    // Text is capped after rendering; bytea and json used to be decoded whole
+    // first (a full copy, and a full serde tree), with no cap at all. Decide
+    // from the wire length before paying for either.
+    if matches!(ty, Type::BYTEA | Type::JSON | Type::JSONB) {
+        let len = raw_len(row, i);
+        if len > MAX_RENDERED_CELL_BYTES {
+            return CellValue::Other {
+                rendered: format!(
+                    "<{} of {len} bytes — too large to show in a cell>",
+                    ty.name()
+                ),
+                db_type: ty.name().to_string(),
+            };
+        }
+    }
     macro_rules! take {
         ($t:ty, $wrap:expr) => {
             match row.try_get::<_, Option<$t>>(i) {
@@ -2329,8 +2432,16 @@ fn param_to_sql(p: &ParamValue) -> Box<dyn tokio_postgres::types::ToSql + Sync +
 /// profile, or a read-write transaction it refused could never be closed —
 /// and they cannot write anything themselves.
 fn ends_transaction(sql: &str) -> bool {
+    matches!(
+        leading_words(sql, 1).first().map(String::as_str),
+        Some("commit" | "rollback" | "end" | "abort")
+    )
+}
+
+/// The first `n` words of a statement, lowercased, skipping leading comments
+/// the way the server would.
+fn leading_words(sql: &str, n: usize) -> Vec<String> {
     let mut s = sql.trim_start();
-    // Skip leading comments, the way the server would.
     loop {
         if let Some(rest) = s.strip_prefix("--") {
             s = rest.split_once('\n').map_or("", |(_, r)| r).trim_start();
@@ -2340,12 +2451,11 @@ fn ends_transaction(sql: &str) -> bool {
             break;
         }
     }
-    let word: String = s
-        .chars()
-        .take_while(|c| c.is_ascii_alphabetic())
-        .collect::<String>()
-        .to_ascii_lowercase();
-    matches!(word.as_str(), "commit" | "rollback" | "end" | "abort")
+    s.split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|w| !w.is_empty())
+        .take(n)
+        .map(str::to_ascii_lowercase)
+        .collect()
 }
 
 /// Map a tokio-postgres error into the normalized taxonomy (spec §54).

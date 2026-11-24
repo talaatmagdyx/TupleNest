@@ -45,9 +45,22 @@ npm run tauri dev      # run the app in development
 ```
 
 Tests that need a real PostgreSQL or sshd are `#[ignore]`d, so the default
-`cargo test --workspace` and `npm test` need neither. Run them with
-`-- --include-ignored` against a local server named by the
-`TUPLENEST_TEST_PG_*` environment variables (host, port, db, user, password).
+`cargo test --workspace` and `npm test` need neither. To run them, point them at
+a disposable server and add `-- --include-ignored`:
+
+```bash
+docker run --rm -d -p 5432:5432 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17-alpine
+TUPLENEST_TEST_PG_HOST=localhost TUPLENEST_TEST_PG_USER=postgres \
+  cargo test -p tuplenest-driver-postgres -- --include-ignored
+```
+
+| Variable | Needed for |
+| --- | --- |
+| `TUPLENEST_TEST_PG_HOST`, `_PORT`, `_DB`, `_USER` | every live PostgreSQL test (use a server that trusts local connections) |
+| `TUPLENEST_TEST_PG_SSL_CA` | the TLS tests: a server with `ssl=on` whose certificate (SAN `localhost`) this CA signed. Unset, they skip. `ci.yml` shows how CI makes one. |
+| `TUPLENEST_TEST_PG_PLAINTEXT`, `_PLAINTEXT_PORT` | the "refuses a plaintext server" tests, against an `ssl=off` server |
+
+| `TUPLENEST_TEST_SSHD_DIR` | the SSH tunnel tests: a real sshd, set up as in [`docs/dev-sshd.md`](docs/dev-sshd.md) (the `live-ssh` job in `ci.yml` is the reference) |
 
 One exception on Linux: `live_os_keychain_contract` (credential-store) talks
 to the real Secret Service, so without a running keyring daemon it fails

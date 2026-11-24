@@ -45,7 +45,7 @@ pub struct PgParams {
 
 /// SSH tunnel parameters (E1.2). Key-file auth; passphrase-less keys or
 /// agent-managed keys for now. No secrets are stored here.
-#[derive(serde::Deserialize, serde::Serialize, Clone)]
+#[derive(serde::Deserialize, serde::Serialize, Clone, PartialEq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct SshParams {
     pub host: String,
@@ -142,9 +142,6 @@ pub struct PgState {
 }
 
 impl PgState {
-    /// Drops cached metadata for a database nothing points at any more.
-    /// `invalidate` existed and was never called, so the cache kept every
-    /// schema of every profile ever deleted.
     /// Was this secret ref written by `pg_secret_save` in this app session?
     pub fn is_fresh_secret(&self, key: &str) -> bool {
         self.fresh_secrets
@@ -153,6 +150,17 @@ impl PgState {
             .unwrap_or(false)
     }
 
+    /// The ref now belongs to a saved profile: from here on it is bound to
+    /// that profile's connection, not usable anywhere.
+    pub fn bind_secret(&self, key: &str) {
+        if let Ok(mut s) = self.fresh_secrets.lock() {
+            s.remove(key);
+        }
+    }
+
+    /// Drops cached metadata for a database nothing points at any more.
+    /// `invalidate` existed and was never called, so the cache kept every
+    /// schema of every profile ever deleted.
     pub fn forget_cached_metadata(&self, key: &str) {
         if let Ok(cache) = self.cache.lock() {
             let _ = cache.invalidate(key);
@@ -219,18 +227,69 @@ fn authorize_secret(
         .map_err(|_| "store lock poisoned")?
         .connection_list()
         .map_err(|e| e.to_string())?;
-    let owned = profiles.iter().any(|r| {
-        r.secret_ref.as_deref() == Some(key)
-            && r.host == params.host
-            && r.port == params.port
-            && r.database == params.database
-            && r.username == params.username
-    });
+    let owned = profiles
+        .iter()
+        .any(|r| r.secret_ref.as_deref() == Some(key) && profile_matches(r, params));
     if owned {
         Ok(())
     } else {
         Err("The saved password belongs to a different server or user. Enter the password again to use it here.".into())
     }
+}
+
+/*
+ * Does `params` describe exactly this saved profile's connection?
+ *
+ * Not just where (host, port, database, user) but how: the TLS mode, the CA
+ * file and the SSH hop. Matching only the address let a compromised WebView
+ * keep a profile's host and send its password with `tlsMode: "disabled"`, or
+ * through an SSH bastion of its own choosing, to a server that asks for
+ * cleartext auth.
+ */
+pub fn profile_matches(r: &tuplenest_workspace_store::ConnectionRecord, p: &PgParams) -> bool {
+    let tls = |m: Option<&str>| {
+        m.filter(|m| !m.is_empty())
+            .unwrap_or("verify-full")
+            .to_string()
+    };
+    let ca = |c: Option<&str>| c.filter(|c| !c.trim().is_empty()).map(str::to_string);
+    let saved_ssh: Option<SshParams> = r
+        .ssh_json
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .and_then(|s| serde_json::from_str(s).ok());
+    r.host == p.host
+        && r.port == p.port
+        && r.database == p.database
+        && r.username == p.username
+        && tls(Some(&r.tls_mode)) == tls(p.tls_mode.as_deref())
+        && ca(r.tls_ca_path.as_deref()) == ca(p.tls_ca_path.as_deref())
+        && saved_ssh == p.ssh
+}
+
+/*
+ * A saved profile's environment and read-only flag win over the WebView's.
+ *
+ * Both came from the WebView alone, and they decide what is protected: prod
+ * suppresses query text in history and writes the audit log; read-only is the
+ * server-enforced seatbelt. When the connection is exactly a saved profile's,
+ * the profile's tag is used, and read-only holds if either side asks for it.
+ * An unsaved connection (the form being tested) keeps what it was given.
+ */
+fn with_profile_policy(app: &crate::AppState, mut params: PgParams) -> PgParams {
+    let Ok(store) = app.store.lock() else {
+        return params;
+    };
+    let Ok(profiles) = store.connection_list() else {
+        return params;
+    };
+    if let Some(p) = profiles.iter().find(|r| profile_matches(r, &params)) {
+        if p.environment.is_some() {
+            params.environment = p.environment.clone();
+        }
+        params.read_only = Some(params.read_only.unwrap_or(false) || p.read_only);
+    }
+    params
 }
 
 fn resolve_password(secret_ref: &Option<String>) -> Result<Option<Secret>, String> {
@@ -255,6 +314,30 @@ fn resolve_password(secret_ref: &Option<String>) -> Result<Option<Secret>, Strin
 /// in the frontend matches a prefix of the first line, and the status bar
 /// shows only the first line; everything below it is the full report for the
 /// error box. All fields are sanitized upstream by design (no credentials).
+/// A network-category failure means the session is gone. Close it (with its
+/// cancel handle and tunnel, before the slot is released) and say "Connection
+/// lost:", which the WebView recognises — it used to notice only on Run, so
+/// a failed Commit or Begin left it showing a live session and an open
+/// transaction that no longer existed.
+fn lost_or_error(state: &PgState, slot: &mut Option<PostgresSession>, e: &DriverError) -> String {
+    let msg = err_to_string(e);
+    if !matches!(e.category, tuplenest_driver_api::ErrorCategory::Network) {
+        return msg;
+    }
+    *slot = None;
+    if let Ok(mut c) = state.cancel.lock() {
+        *c = None;
+    }
+    if let Ok(mut t) = state.tunnel.lock() {
+        *t = None;
+    }
+    tracing::warn!(
+        component = "pg",
+        "session marked broken after network error"
+    );
+    format!("Connection lost: {msg} — the session was closed. Reconnect to continue; nothing was re-run.")
+}
+
 fn err_to_string(e: &DriverError) -> String {
     let mut out = e.title.clone();
     if let Some(code) = &e.native_code {
@@ -399,35 +482,25 @@ mod err_to_string_tests {
 /// This is the ONLY command that ever sees a secret, and it does not log it.
 #[tauri::command]
 pub fn pg_secret_save(
-    app: tauri::State<'_, crate::AppState>,
     state: tauri::State<'_, PgState>,
     password: String,
     reuse_ref: Option<String>,
 ) -> Result<String, String> {
-    // Overwriting is limited to refs this app wrote: one minted this session,
-    // or a saved profile's own. Any other key in the service was a free
-    // overwrite for whatever could call this command.
-    if let Some(k) = reuse_ref.as_deref().filter(|k| !k.is_empty()) {
-        let fresh = state
-            .fresh_secrets
-            .lock()
-            .map_err(|_| "secret lock poisoned")?
-            .contains(k);
-        let saved = || -> Result<bool, String> {
-            Ok(app
-                .store
+    // Only a ref written this session may be overwritten. A saved profile's
+    // ref is never touched here: the password goes into a new entry, and
+    // `connection_save` swaps it in (deleting the old one) when the profile
+    // is saved. That keeps saved passwords out of reach of anything that can
+    // call this command, and keeps the new password unbound — fresh — only
+    // until its profile is saved.
+    let reuse = reuse_ref.filter(|k| {
+        !k.is_empty()
+            && state
+                .fresh_secrets
                 .lock()
-                .map_err(|_| "store lock poisoned")?
-                .connection_list()
-                .map_err(|e| e.to_string())?
-                .iter()
-                .any(|r| r.secret_ref.as_deref() == Some(k)))
-        };
-        if !fresh && !saved()? {
-            return Err("Unknown secret reference".into());
-        }
-    }
-    let key = save_secret(password, reuse_ref)?;
+                .map(|s| s.contains(k))
+                .unwrap_or(false)
+    });
+    let key = save_secret(password, reuse)?;
     state
         .fresh_secrets
         .lock()
@@ -579,6 +652,7 @@ pub async fn pg_connect(
     params: PgParams,
 ) -> Result<(), String> {
     authorize_secret(&app, &state, &params)?;
+    let params = with_profile_policy(&app, params);
     // The keychain can block — on a permission prompt, for as long as the
     // user takes — so it runs off the async workers.
     let secret_ref = params.secret_ref.clone();
@@ -609,15 +683,20 @@ pub async fn pg_connect(
     // session's query was still running (and still holding the lock).
     let mut slot = lock_session(&state).await?;
     *slot = Some(session);
+    // All of it published before the slot is released: a metadata request
+    // queued behind this connect must see the new cache key, not file the
+    // new database's schema under the old profile's. The previous result
+    // belongs to the old database; paging it now would show its rows.
     *state.cancel.lock().map_err(|_| "cancel lock poisoned")? =
         slot.as_ref().map(|s| s.cancel_handle());
-    drop(slot);
     *state.tunnel.lock().map_err(|_| "tunnel lock poisoned")? = tunnel;
     *state.cache_key.lock().map_err(|_| "key lock poisoned")? = Some(cache_key_of(&params));
     *state
         .connected_env
         .lock()
         .map_err(|_| "env lock poisoned")? = params.environment.clone();
+    *state.result.lock().map_err(|_| "result lock poisoned")? = None;
+    drop(slot);
     tracing::info!(
         component = "pg",
         host = %params.host,
@@ -630,11 +709,16 @@ pub async fn pg_connect(
 
 #[tauri::command]
 pub async fn pg_disconnect(state: tauri::State<'_, PgState>) -> Result<(), String> {
-    *lock_session(&state).await? = None;
+    let mut slot = lock_session(&state).await?;
+    *slot = None;
+    // Cleared while the session slot is still held. After it is released, a
+    // reconnect waiting on the lock can install its own cancel handle and
+    // tunnel — and a late clear here would drop them.
     *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = None;
     *state.result.lock().map_err(|_| "result lock poisoned")? = None;
     // Dropping the tunnel closes the SSH session.
     *state.tunnel.lock().map_err(|_| "tunnel lock poisoned")? = None;
+    drop(slot);
     tracing::info!(component = "pg", "session closed");
     Ok(())
 }
@@ -668,9 +752,19 @@ fn cell_to_json(cell: CellValue) -> serde_json::Value {
         // and in the WHERE of a row edit. Send those as exact text.
         CellValue::Int(i) if i.unsigned_abs() > JS_MAX_SAFE_INTEGER => i.to_string().into(),
         CellValue::Int(i) => i.into(),
+        // JSON has no NaN or Infinity. Mapping them to null showed (and
+        // exported) a real value as NULL; PostgreSQL's own spelling is exact.
         CellValue::Float(f) => serde_json::Number::from_f64(f)
             .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
+            .unwrap_or_else(|| {
+                if f.is_nan() {
+                    "NaN".into()
+                } else if f > 0.0 {
+                    "Infinity".into()
+                } else {
+                    "-Infinity".into()
+                }
+            }),
         CellValue::Text(t) => t.into(),
         CellValue::Bytes(b) => format!("\\x{}", hex(&b)).into(),
         CellValue::Json(v) => v,
@@ -755,6 +849,13 @@ struct StoreSink {
 
 #[async_trait]
 impl BatchSink for StoreSink {
+    fn wants_rows(&self) -> bool {
+        self.inner
+            .lock()
+            .map(|i| !i.store.is_full())
+            .unwrap_or(false)
+    }
+
     async fn deliver(&self, batch: RowBatch) -> Result<(), Box<DriverError>> {
         let mut inner = self.inner.lock().expect("sink lock");
         if inner.columns.is_empty() {
@@ -969,8 +1070,12 @@ pub async fn pg_query(
     sql: String,
     params: Option<Vec<serde_json::Value>>,
 ) -> Result<QueryResultOut, String> {
-    // Drop the previous result before running (frees memory immediately).
-    *state.result.lock().map_err(|_| "result lock poisoned")? = None;
+    // The previous result is kept until a new row set replaces it. Clearing
+    // it up front freed memory a little sooner, but every statement — a row
+    // edit's UPDATE, a SAVEPOINT, an import's INSERT, a failed EXPLAIN — then
+    // emptied the store the grid was still paging, so its rows came back
+    // empty, sort blanked it and export wrote a header-only file. The cost:
+    // while a new query runs, the old result (at most the store budget) stays.
 
     let started_wall = std::time::Instant::now();
     let mut guard = state.session.lock().await;
@@ -1027,9 +1132,10 @@ pub async fn pg_query(
             );
             if broken {
                 *guard = None; // session
-                drop(guard);
+                               // Before releasing the slot, for the same reason as Disconnect.
                 *state.cancel.lock().map_err(|_| "cancel lock poisoned")? = None;
                 *state.tunnel.lock().map_err(|_| "tunnel lock poisoned")? = None;
+                drop(guard);
                 tracing::warn!(
                     component = "pg",
                     "session marked broken after network error"
@@ -1048,13 +1154,13 @@ pub async fn pg_query(
         &sql,
         "success",
         None,
-        stored.store.total_seen(),
+        summary.rows_returned.max(stored.store.total_seen()),
         summary.rows_affected,
         summary.duration_ms,
     );
     tracing::info!(
         component = "pg",
-        rows = stored.store.total_seen(),
+        rows = summary.rows_returned.max(stored.store.total_seen()),
         duration_ms = summary.duration_ms,
         "query finished" // NOTE: query text is deliberately not logged
     );
@@ -1067,13 +1173,17 @@ pub async fn pg_query(
                 db_type: db_type.clone(),
             })
             .collect(),
-        total_rows: stored.store.total_seen(),
+        // The driver stops handing rows over once the store is full, so the
+        // store has not seen them all; the driver has counted them.
+        total_rows: summary.rows_returned.max(stored.store.total_seen()),
         stored_rows: stored.store.stored(),
-        truncated: stored.store.truncated(),
+        truncated: stored.store.truncated() || summary.rows_returned > stored.store.stored() as u64,
         rows_affected: summary.rows_affected,
         elapsed_ms: summary.duration_ms,
     };
-    *state.result.lock().map_err(|_| "result lock poisoned")? = Some(stored);
+    if !stored.columns.is_empty() {
+        *state.result.lock().map_err(|_| "result lock poisoned")? = Some(stored);
+    }
     Ok(out)
 }
 
@@ -1246,12 +1356,14 @@ pub async fn pg_metadata(
     state: tauri::State<'_, PgState>,
     request: MetadataRequest,
 ) -> Result<MetadataOut, String> {
+    let guard = state.session.lock().await;
+    // Read under the session lock: taken before it, a request queued behind
+    // a reconnect cached the new database's schema under the old key.
     let key = state
         .cache_key
         .lock()
         .map_err(|_| "key lock poisoned")?
         .clone();
-    let guard = state.session.lock().await;
     let session = guard.as_ref().ok_or("not connected")?;
     match session.metadata(request.clone()).await {
         Ok(response) => {
@@ -1285,13 +1397,12 @@ pub async fn pg_metadata(
 /// Live server activity for the monitoring panel (Phase 6). Not cached.
 #[tauri::command]
 pub async fn pg_activity(state: tauri::State<'_, PgState>) -> Result<serde_json::Value, String> {
-    let guard = state.session.lock().await;
+    let mut guard = state.session.lock().await;
     let session = guard.as_ref().ok_or("not connected")?;
-    session
-        .metadata(MetadataRequest::ServerActivity)
-        .await
-        .map(|r| r.payload)
-        .map_err(|e| err_to_string(&e))
+    match session.metadata(MetadataRequest::ServerActivity).await {
+        Ok(r) => Ok(r.payload),
+        Err(e) => Err(lost_or_error(&state, &mut guard, &e)),
+    }
 }
 
 /// Foreign-key relationships for the ER view (Phase 2).
@@ -1341,37 +1452,45 @@ pub fn pg_metadata_cached(
 pub async fn pg_begin(state: tauri::State<'_, PgState>) -> Result<(), String> {
     let mut guard = state.session.lock().await;
     let session = guard.as_mut().ok_or("not connected")?;
-    session
+    match session
         .begin(tuplenest_driver_api::TransactionOptions::default())
         .await
-        .map(|_| ())
-        .map_err(|e| err_to_string(&e))
+    {
+        Ok(_) => Ok(()),
+        Err(e) => Err(lost_or_error(&state, &mut guard, &e)),
+    }
 }
 
 /// Whether the server has a transaction open on this session — including one
 /// the user began by typing `BEGIN`, which `pg_begin` never saw.
 #[tauri::command]
 pub async fn pg_in_transaction(state: tauri::State<'_, PgState>) -> Result<bool, String> {
-    let guard = state.session.lock().await;
+    let mut guard = state.session.lock().await;
     let session = guard.as_ref().ok_or("not connected")?;
-    session
-        .server_in_transaction()
-        .await
-        .map_err(|e| err_to_string(&e))
+    match session.server_in_transaction().await {
+        Ok(v) => Ok(v),
+        Err(e) => Err(lost_or_error(&state, &mut guard, &e)),
+    }
 }
 
 #[tauri::command]
 pub async fn pg_commit(state: tauri::State<'_, PgState>) -> Result<(), String> {
     let mut guard = state.session.lock().await;
     let session = guard.as_mut().ok_or("not connected")?;
-    session.commit().await.map_err(|e| err_to_string(&e))
+    match session.commit().await {
+        Ok(()) => Ok(()),
+        Err(e) => Err(lost_or_error(&state, &mut guard, &e)),
+    }
 }
 
 #[tauri::command]
 pub async fn pg_rollback(state: tauri::State<'_, PgState>) -> Result<(), String> {
     let mut guard = state.session.lock().await;
     let session = guard.as_mut().ok_or("not connected")?;
-    session.rollback().await.map_err(|e| err_to_string(&e))
+    match session.rollback().await {
+        Ok(()) => Ok(()),
+        Err(e) => Err(lost_or_error(&state, &mut guard, &e)),
+    }
 }
 
 /*
@@ -1389,15 +1508,26 @@ async fn lock_session<'a>(
     if let Ok(guard) = state.session.try_lock() {
         return Ok(guard);
     }
-    let handle = state
-        .cancel
-        .lock()
-        .map_err(|_| "cancel lock poisoned")?
-        .clone();
-    if let Some(h) = handle {
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), h.cancel()).await;
+    // Cancel, then wait a bounded time — and again: tokio's mutex is FIFO, so
+    // a query queued behind the running one gets the lock first and must be
+    // cancelled too; and a cancel that lands before the statement reaches the
+    // server does nothing. Three rounds, then say so rather than hang (a
+    // half-open socket used to block here until the OS gave up on TCP).
+    let step = std::time::Duration::from_secs(5);
+    for _ in 0..3 {
+        let handle = state
+            .cancel
+            .lock()
+            .map_err(|_| "cancel lock poisoned")?
+            .clone();
+        if let Some(h) = handle {
+            let _ = tokio::time::timeout(step, h.cancel()).await;
+        }
+        if let Ok(guard) = tokio::time::timeout(step, state.session.lock()).await {
+            return Ok(guard);
+        }
     }
-    Ok(state.session.lock().await)
+    Err("The running query did not stop after three cancel requests. Try again, or restart the app if the server is unreachable.".into())
 }
 
 /// Cancels the in-flight query via the wire-protocol cancel key. Does not
@@ -1449,37 +1579,48 @@ mod tests {
         *state.cancel.lock().unwrap() = Some(session.cancel_handle());
         *state.session.lock().await = Some(session);
 
-        let held = state.clone();
-        let query = tokio::spawn(async move {
-            let mut g = held.session.lock().await;
-            let req = QueryRequest {
-                execution_id: ExecutionId::new(),
-                sql: "SELECT pg_sleep(30)".into(),
-                params: vec![],
-                row_limit: 0,
-                timeout_ms: 0,
-            };
-            struct NullSink;
-            #[async_trait]
-            impl BatchSink for NullSink {
-                async fn deliver(&self, _: RowBatch) -> Result<(), Box<DriverError>> {
-                    Ok(())
+        // One query running, and a second one queued behind it on the lock —
+        // tokio's mutex is FIFO, so the queued one gets the lock next and has
+        // to be cancelled as well.
+        let sleep = |st: std::sync::Arc<PgState>| {
+            tokio::spawn(async move {
+                let mut g = st.session.lock().await;
+                let req = QueryRequest {
+                    execution_id: ExecutionId::new(),
+                    sql: "SELECT pg_sleep(30)".into(),
+                    params: vec![],
+                    row_limit: 0,
+                    timeout_ms: 0,
+                };
+                struct NullSink;
+                #[async_trait]
+                impl BatchSink for NullSink {
+                    async fn deliver(&self, _: RowBatch) -> Result<(), Box<DriverError>> {
+                        Ok(())
+                    }
                 }
-            }
-            g.as_mut().unwrap().execute(req, &NullSink).await
-        });
+                g.as_mut().unwrap().execute(req, &NullSink).await
+            })
+        };
+        let running = sleep(state.clone());
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let queued = sleep(state.clone());
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let started = std::time::Instant::now();
         let slot = lock_session(&state).await.unwrap();
         assert!(
-            started.elapsed() < std::time::Duration::from_secs(6),
-            "waited for the query"
+            started.elapsed() < std::time::Duration::from_secs(16),
+            "waited for the queries instead of cancelling them"
         );
         drop(slot);
         assert!(
-            query.await.unwrap().is_err(),
+            running.await.unwrap().is_err(),
             "the running query should have been cancelled"
+        );
+        assert!(
+            queued.await.unwrap().is_err(),
+            "the queued query should have been cancelled"
         );
     }
 
@@ -1514,7 +1655,7 @@ mod tests {
     fn params(host: &str, secret: Option<&str>) -> PgParams {
         serde_json::from_value(serde_json::json!({
             "host": host, "port": 5432, "database": "app", "username": "svc",
-            "secretRef": secret, "tlsMode": "disabled"
+            "secretRef": secret, "tlsMode": "verify-full"
         }))
         .unwrap()
     }
@@ -1533,12 +1674,71 @@ mod tests {
         other_user.username = "postgres".into();
         assert!(authorize_secret(&app, &pg, &other_user).is_err());
         assert!(authorize_secret(&app, &pg, &params("anywhere", None)).is_ok());
+        // Same address, weaker channel: the downgrade this binding stops.
+        let mut plaintext = params("prod.db", Some("tn-secret-prod"));
+        plaintext.tls_mode = Some("disabled".into());
+        assert!(
+            authorize_secret(&app, &pg, &plaintext).is_err(),
+            "TLS downgrade must be refused"
+        );
+        let mut via_bastion = params("prod.db", Some("tn-secret-prod"));
+        via_bastion.ssh = Some(SshParams {
+            host: "attacker.example".into(),
+            port: 22,
+            username: "x".into(),
+            key_path: "~/.ssh/id_ed25519".into(),
+            fingerprint: "SHA256:attacker".into(),
+        });
+        assert!(
+            authorize_secret(&app, &pg, &via_bastion).is_err(),
+            "a different SSH hop must be refused"
+        );
         // A password typed into the form this session may be tried anywhere.
         pg.fresh_secrets
             .lock()
             .unwrap()
             .insert("tn-secret-new".into());
         assert!(authorize_secret(&app, &pg, &params("new.db", Some("tn-secret-new"))).is_ok());
+        // Once its profile is saved, a fresh ref is bound like any other.
+        pg.bind_secret("tn-secret-new");
+        assert!(authorize_secret(&app, &pg, &params("new.db", Some("tn-secret-new"))).is_err());
+    }
+
+    #[test]
+    fn non_finite_floats_are_shown_as_postgres_spells_them_not_as_null() {
+        assert_eq!(
+            cell_to_json(CellValue::Float(f64::NAN)),
+            serde_json::json!("NaN")
+        );
+        assert_eq!(
+            cell_to_json(CellValue::Float(f64::INFINITY)),
+            serde_json::json!("Infinity")
+        );
+        assert_eq!(
+            cell_to_json(CellValue::Float(f64::NEG_INFINITY)),
+            serde_json::json!("-Infinity")
+        );
+        assert_eq!(cell_to_json(CellValue::Float(1.5)), serde_json::json!(1.5));
+    }
+
+    #[test]
+    fn a_saved_profile_decides_its_environment_and_read_only() {
+        // The WebView used to decide both: it could drop "prod" (no audit log,
+        // query text in history) or read-only on a profile tagged otherwise.
+        let app = app_with_profile();
+        let mut p = params("prod.db", Some("tn-secret-prod"));
+        p.environment = Some("dev".into());
+        p.read_only = Some(false);
+        let out = with_profile_policy(&app, p);
+        assert_eq!(out.environment.as_deref(), Some("prod"));
+        assert_eq!(out.read_only, Some(false)); // the profile is not read-only
+                                                // An unsaved connection keeps what it was given.
+        let mut q = params("other.db", None);
+        q.environment = Some("dev".into());
+        assert_eq!(
+            with_profile_policy(&app, q).environment.as_deref(),
+            Some("dev")
+        );
     }
 
     #[test]

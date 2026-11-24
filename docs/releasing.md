@@ -25,9 +25,13 @@ versions. So bump the numeric version on every release, beta or not:
 | `v0.1.2-beta.13` | `0.1.2` |
 | `v0.2.0` (stable) | `0.2.0` |
 
-Betas 1–11 all shipped as `0.1.0`, which is why none of them ever offered an
-update to the next. Reusing a version means installed copies never see the
-release.
+Betas 1–11 all shipped as `0.1.0`; reusing a version means installed copies
+can never see the release. A rising version is necessary but not sufficient:
+the updater reads `releases/latest/download/latest.json`, and GitHub never
+counts a pre-release as "latest" — every tag with a hyphen is published as a
+pre-release (`release.yml`). So betas reach users only by manual download,
+and the first non-pre-release is the first one the updater will offer. CI
+fails a tag whose number does not match these files (see `release.yml`).
 
 A Tauri app cannot be usefully cross-compiled — Windows needs MSVC and WebView2,
 Linux needs webkit2gtk, macOS needs the Apple toolchain — so there is no script

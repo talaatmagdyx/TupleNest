@@ -434,13 +434,21 @@ async fn transactions_visible_only_after_commit() {
 }
 
 // --- TLS live tests (E1.2) --------------------------------------------------
-// Require a local server with ssl=on and a self-signed cert whose SAN covers
-// `localhost` (see docs). CA path from TUPLENEST_TEST_PG_SSL_CA, defaulting
-// to the brew PG 18 data dir.
+// Require a server with ssl=on and a certificate whose SAN covers `localhost`,
+// signed by the CA at TUPLENEST_TEST_PG_SSL_CA (CI builds one; see ci.yml and
+// CONTRIBUTING). Without that variable the tests that need TLS skip instead of
+// failing — the default used to be a path on the maintainer's own machine.
 
 fn ca_path() -> String {
-    std::env::var("TUPLENEST_TEST_PG_SSL_CA")
-        .unwrap_or_else(|_| "/opt/homebrew/var/postgresql@18/tuplenest_ca.crt".into())
+    std::env::var("TUPLENEST_TEST_PG_SSL_CA").expect("TUPLENEST_TEST_PG_SSL_CA")
+}
+
+fn tls_server_provisioned() -> bool {
+    let on = std::env::var("TUPLENEST_TEST_PG_SSL_CA").is_ok();
+    if !on {
+        eprintln!("skipping: set TUPLENEST_TEST_PG_SSL_CA to the CA of an ssl=on server to run");
+    }
+    on
 }
 
 fn tls_config(mode: TlsMode, ca: Option<String>) -> ConnectionConfig {
@@ -474,6 +482,9 @@ impl BatchSink for FirstCellSink {
 #[tokio::test]
 #[ignore]
 async fn live_tls_verify_full_with_ca_passes_and_encrypts() {
+    if !tls_server_provisioned() {
+        return;
+    }
     let config = tls_config(TlsMode::VerifyFull, Some(ca_path()));
     let report = PostgresDriver
         .test_with_password(&config, None)
@@ -517,6 +528,9 @@ async fn live_tls_verify_full_without_ca_fails_closed() {
 #[tokio::test]
 #[ignore]
 async fn live_tls_prefer_encrypts_without_verification() {
+    if !tls_server_provisioned() {
+        return;
+    }
     let mut session = PostgresDriver
         .connect_concrete(tls_config(TlsMode::Prefer, None))
         .await
@@ -651,6 +665,9 @@ async fn live_tls_disabled_connects_to_a_plaintext_server() {
 #[tokio::test]
 #[ignore]
 async fn live_tls_cancel_works_over_tls() {
+    if !tls_server_provisioned() {
+        return;
+    }
     let mut session = PostgresDriver
         .connect_concrete(tls_config(TlsMode::VerifyFull, Some(ca_path())))
         .await
@@ -1117,6 +1134,117 @@ async fn read_only_session_cannot_be_switched_back_to_read_write() {
     }
 }
 
+/// Batches are cut by bytes as well as rows, bytea/json cells over 1 MB are
+/// not decoded, and a sink that is full stops being fed — while the summary
+/// still counts every row. 600 rows of 1 MB bytea used to be decoded into one
+/// batch (882 MB peak) before the store's 256 MB budget could apply.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn large_cells_are_bounded_before_they_are_decoded() {
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+
+    let sink = CountingSink::default();
+    s.execute(
+        req("SELECT decode(repeat('ab', 1000000), 'hex') FROM generate_series(1, 40)"),
+        &sink,
+    )
+    .await
+    .unwrap();
+    assert_eq!(sink.rows.load(Ordering::SeqCst), 40);
+    assert!(
+        sink.max_batch_rows.load(Ordering::SeqCst) <= 9,
+        "an 8 MB batch holds at most 8 rows of 1 MB, got {}",
+        sink.max_batch_rows.load(Ordering::SeqCst)
+    );
+
+    let cell = FirstCellSink(Mutex::new(None));
+    s.execute(req("SELECT decode(repeat('ab', 2000000), 'hex')"), &cell)
+        .await
+        .unwrap();
+    let shown = cell.0.lock().unwrap().clone().unwrap_or_default();
+    assert!(
+        shown.contains("too large to show"),
+        "a 2 MB bytea must not be decoded: {shown:.80}"
+    );
+
+    struct FullAfterOne(AtomicU64);
+    #[async_trait]
+    impl BatchSink for FullAfterOne {
+        async fn deliver(&self, b: RowBatch) -> Result<(), Box<DriverError>> {
+            self.0.fetch_add(b.rows.len() as u64, Ordering::SeqCst);
+            Ok(())
+        }
+        fn wants_rows(&self) -> bool {
+            self.0.load(Ordering::SeqCst) == 0
+        }
+    }
+    let full = FullAfterOne(AtomicU64::new(0));
+    let summary = s
+        .execute(req("SELECT g FROM generate_series(1, 5000) g"), &full)
+        .await
+        .unwrap();
+    assert_eq!(summary.rows_returned, 5000, "every row is still counted");
+    assert!(
+        full.0.load(Ordering::SeqCst) < 5000,
+        "a full sink must stop being fed"
+    );
+}
+
+/// Row edits bind every value as text and cast it (`$n::text::uuid`), the shape
+/// `buildUpdate` emits. Binary-bound text was refused for uuid, timestamptz and
+/// numeric ("error serializing parameter"), which made editing most real tables
+/// impossible; this is the shape that must work, NULLs and big integers included.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn row_edits_bind_as_text_and_cast_for_every_common_type() {
+    use tuplenest_driver_api::ParamValue::{Null, Text};
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    s.execute(
+        req("CREATE TEMP TABLE tn_edit (id uuid PRIMARY KEY, ts timestamptz, n numeric(12,2), t text, b int8)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    s.execute(
+        req("INSERT INTO tn_edit VALUES ('6f1c3e1e-1c1a-4b9b-9a43-6b0c6d5b9f10', now(), 1.50, NULL, 9007199254740993)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    let mut r = req(
+        "UPDATE tn_edit SET ts = $1::text::timestamptz, n = $2::text::numeric(12,2), b = $3::text::int8 \
+         WHERE id = $4::text::uuid AND t IS NOT DISTINCT FROM $5::text::text AND b IS NOT DISTINCT FROM $6::text::int8",
+    );
+    r.params = vec![
+        Text("2026-02-02T00:00:00Z".into()),
+        Text("12.30".into()),
+        Text("9007199254740995".into()),
+        Text("6f1c3e1e-1c1a-4b9b-9a43-6b0c6d5b9f10".into()),
+        Null,
+        Text("9007199254740993".into()),
+    ];
+    let done = s
+        .execute(r, &NullSink)
+        .await
+        .expect("cast-bound row edit must serialize");
+    assert_eq!(done.rows_affected, Some(1));
+    let sink = FirstCellSink(Mutex::new(None));
+    s.execute(req("SELECT b::text FROM tn_edit"), &sink)
+        .await
+        .unwrap();
+    assert_eq!(
+        sink.0.lock().unwrap().as_deref(),
+        Some("9007199254740995"),
+        "bigint must be exact"
+    );
+}
+
 /// A COMMIT that fails at a deferred constraint rolls the transaction back.
 /// The driver used to have cleared its flag *and* left the UI believing the
 /// transaction was open; afterwards it must agree with the server, and a new
@@ -1157,6 +1285,32 @@ async fn a_failed_commit_leaves_the_driver_agreeing_with_the_server() {
         .await
         .expect("begin after a failed commit");
     s.commit().await.expect("commit after a failed commit");
+}
+
+/// The driver's transaction flag only knows about `begin()`. Commit must end
+/// a transaction the user opened by typing BEGIN, and `begin()` must work
+/// again after the user ended its transaction by typing COMMIT.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn transaction_commands_follow_the_server_not_the_flag() {
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    s.execute(req("BEGIN"), &NullSink).await.unwrap();
+    s.commit().await.expect("Commit must end a typed BEGIN");
+    assert!(!s.server_in_transaction().await.unwrap());
+
+    s.begin(TransactionOptions::default()).await.unwrap();
+    s.execute(req("COMMIT"), &NullSink).await.unwrap();
+    s.begin(TransactionOptions::default())
+        .await
+        .expect("begin after a typed COMMIT must not say 'already open'");
+    s.rollback().await.unwrap();
+    assert!(
+        s.commit().await.is_err(),
+        "with nothing open, Commit still says so"
+    );
 }
 
 /// A bigint past 2^53 travels from the WebView as text and must bind to the
@@ -1214,6 +1368,95 @@ async fn server_in_transaction_sees_a_typed_begin() {
         !s.server_in_transaction().await.unwrap(),
         "closed after ROLLBACK"
     );
+}
+
+/// `DO` and `CALL` can COMMIT inside, and the next transaction takes the
+/// default the block just set — one statement that flips the mode *and*
+/// writes. Both must be refused on a read-only profile.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn read_only_session_refuses_do_and_call() {
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    s.execute(
+        req("CREATE TABLE IF NOT EXISTS tn_ro_do (x int)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    s.execute(req("TRUNCATE tn_ro_do"), &NullSink)
+        .await
+        .unwrap();
+    s.execute(req("INSERT INTO tn_ro_do VALUES (1)"), &NullSink)
+        .await
+        .unwrap();
+    s.execute(
+        req("CREATE OR REPLACE PROCEDURE tn_ro_wipe() LANGUAGE plpgsql AS $$ BEGIN \
+             SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE; COMMIT; DELETE FROM tn_ro_do; END $$"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+
+    let mut cfg = test_config();
+    cfg.read_only = true;
+    let mut ro = PostgresDriver
+        .connect_concrete_with_password(cfg, None)
+        .await
+        .expect("connect");
+    for sql in [
+        "DO $$ BEGIN SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE; COMMIT; DELETE FROM tn_ro_do; END $$",
+        "/* hidden */ do $$ BEGIN DELETE FROM tn_ro_do; END $$",
+        "CALL tn_ro_wipe()",
+    ] {
+        assert!(ro.execute(req(sql), &NullSink).await.is_err(), "`{sql}` ran on a read-only session");
+    }
+    drop(ro);
+
+    let left = CountingSink::default();
+    s.execute(req("SELECT x FROM tn_ro_do"), &left)
+        .await
+        .unwrap();
+    assert_eq!(
+        left.rows.load(Ordering::SeqCst),
+        1,
+        "the row must still be there"
+    );
+    s.execute(req("DROP PROCEDURE tn_ro_wipe()"), &NullSink)
+        .await
+        .ok();
+    s.execute(req("DROP TABLE tn_ro_do"), &NullSink).await.ok();
+}
+
+/// The per-statement check must not break what a read-only session may do:
+/// SET TRANSACTION as the first statement of a transaction, and the first
+/// statement after the session default was flipped back.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn read_only_check_does_not_refuse_legitimate_reads() {
+    let mut cfg = test_config();
+    cfg.read_only = true;
+    let mut ro = PostgresDriver
+        .connect_concrete_with_password(cfg, None)
+        .await
+        .expect("connect");
+    ro.execute(req("BEGIN"), &NullSink).await.unwrap();
+    ro.execute(
+        req("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"),
+        &NullSink,
+    )
+    .await
+    .expect("SET TRANSACTION must be allowed as the first statement");
+    ro.execute(req("SELECT 1"), &NullSink).await.unwrap();
+    ro.execute(req("ROLLBACK"), &NullSink).await.unwrap();
+    let _ = ro
+        .execute(req("SET default_transaction_read_only = off"), &NullSink)
+        .await;
+    ro.execute(req("SELECT 1"), &NullSink)
+        .await
+        .expect("a read outside any transaction must not be refused after a flip");
 }
 
 /// The same connection without the flag must be unaffected — otherwise the

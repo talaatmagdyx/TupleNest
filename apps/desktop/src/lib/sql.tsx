@@ -163,13 +163,27 @@ export function exportChunk(
   }
   // Matches `JSON.stringify(array, null, 2)` exactly: each object is indented
   // one level, which means re-indenting its own newlines too.
+  // A join can return two columns named `id`; as object keys the second
+  // silently replaced the first. Repeats get `_2`, `_3`, like CSV import.
+  const keys = uniqueKeys(cols.map((c) => c.name));
   return rows
     .map((r, i) => {
-      const obj = Object.fromEntries(cols.map((c, j) => [c.name, r[j] ?? null]));
+      const obj = Object.fromEntries(keys.map((k, j) => [k, r[j] ?? null]));
       const body = JSON.stringify(obj, null, 2).replace(/\n/g, "\n  ");
       return `${first && i === 0 ? "\n  " : ",\n  "}${body}`;
     })
     .join("");
+}
+
+/** Column names made unique as object keys: `id`, `id_2`, … */
+export function uniqueKeys(names: string[]): string[] {
+  const seen = new Set<string>();
+  return names.map((n) => {
+    let k = n;
+    for (let i = 2; seen.has(k); i++) k = `${n}_${i}`;
+    seen.add(k);
+    return k;
+  });
 }
 
 /** Everything after the last row. `wroteAny` distinguishes `[]` from `[…]`. */

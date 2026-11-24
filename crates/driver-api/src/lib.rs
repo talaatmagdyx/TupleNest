@@ -30,6 +30,13 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait BatchSink: Send + Sync {
     async fn deliver(&self, batch: RowBatch) -> Result<(), Box<DriverError>>;
+
+    /// False once the sink will keep no more rows (a full result store). The
+    /// driver then only counts what is left instead of decoding it, and the
+    /// true total arrives in `ExecutionSummary::rows_returned`.
+    fn wants_rows(&self) -> bool {
+        true
+    }
 }
 
 #[async_trait]

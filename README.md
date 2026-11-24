@@ -53,7 +53,7 @@ refusal, so the claims on this page aren't copy. They're pinned behavior that
 CI would catch regressing.
 
 > ⚠️ **Early software, stated plainly.** This is a v0.1.0 beta — tested far
-> more than it has been *used*. 1,900+ frontend tests, contract tests against
+> more than it has been *used*. 2,000+ frontend tests, contract tests against
 > live PostgreSQL 13/15/17, SSH tunnel tests against a real sshd. What it
 > hasn't had is people living in it. **That's the part you'd be contributing.**
 
@@ -330,7 +330,7 @@ binary** — the release host only ever serves bytes.
 The claims on this page are only as good as what checks them. What runs in CI,
 on every push:
 
-- **1,900+ frontend tests** — including a suite that *executes each documented
+- **2,000+ frontend tests** — including a suite that *executes each documented
   misuse* (guard bypasses, editability holes, the racing edit, the cross-tab
   commit) and asserts the refusal.
 - **Contract tests against live PostgreSQL 13, 15, 17** — a real server, real
@@ -388,7 +388,7 @@ release (≈ +400 kB, slower). Install with `--include=dev`; build with
 ```sh
 # test suites
 cargo test --workspace                                          # Rust
-cd apps/desktop && npm test                                     # 1,900+ frontend
+cd apps/desktop && npm test                                     # 2,000+ frontend
 cargo test -p tuplenest-driver-postgres -- --include-ignored    # needs live PG
 ```
 

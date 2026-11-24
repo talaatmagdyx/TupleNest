@@ -106,7 +106,7 @@ sha256sum &lt;filename&gt;</pre></div>
 minisign -Vm &lt;artifact&gt; -P &lt;public-key&gt;</pre></div>
       </div>
     </div>
-    <div class="callout" style="margin-top:22px">Each release also carries a <code class="inline">SHA256SUMS</code> file, a <code class="inline">.sig</code> beside every artifact except the <code class="inline">.dmg</code> files (base64-encoded minisign signatures: <code class="inline">base64 -d X.sig &gt; X.minisig</code>, then <code class="inline">minisign -Vm X -x X.minisig -P RWQbzK7INNRew+Mo6Yu5/m4pd5wSYwPq+hlbG4pPuKytbR1oZ8LkTgQi</code>; key ID C35ED434C8AECC1B, the same key the updater pins in <code class="inline">tauri.conf.json</code>), an SBOM (CycloneDX), and a GitHub build-provenance attestation you can check with <code class="inline">gh attestation verify</code>.</div>
+    <div class="callout" style="margin-top:22px">Each release also carries a <code class="inline">SHA256SUMS</code> file, a <code class="inline">.sig</code> beside every artifact except the <code class="inline">.dmg</code> files (base64-encoded minisign signatures: <code class="inline">base64 -d &lt; X.sig &gt; X.minisig</code> (the <code class="inline">&lt;</code> matters on macOS), then <code class="inline">minisign -Vm X -x X.minisig -P RWQbzK7INNRew+Mo6Yu5/m4pd5wSYwPq+hlbG4pPuKytbR1oZ8LkTgQi</code>; key ID C35ED434C8AECC1B, the same key the updater pins in <code class="inline">tauri.conf.json</code>), an SBOM (CycloneDX), and a GitHub build-provenance attestation you can check with <code class="inline">gh attestation verify</code>.</div>
   </div>
 </section>
 

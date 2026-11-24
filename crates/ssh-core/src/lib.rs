@@ -149,11 +149,17 @@ pub async fn open_tunnel(config: SshTunnelConfig) -> Result<SshTunnel, TunnelErr
 
     let auth_result = match &config.auth {
         SshAuth::KeyFile { path, passphrase } => {
-            let key = russh::keys::load_secret_key(path, passphrase.as_deref()).map_err(|e| {
-                TunnelError::KeyLoad {
-                    path: path.clone(),
-                    source: e,
-                }
+            // A file read plus, for an encrypted key, a deliberately slow KDF:
+            // blocking work, so it runs off the async workers.
+            let (key_path, key_pass) = (path.clone(), passphrase.clone());
+            let key = tokio::task::spawn_blocking(move || {
+                russh::keys::load_secret_key(&key_path, key_pass.as_deref())
+            })
+            .await
+            .map_err(|e| TunnelError::Io(std::io::Error::other(e)))?
+            .map_err(|e| TunnelError::KeyLoad {
+                path: path.clone(),
+                source: e,
             })?;
             let hash_alg = session.best_supported_rsa_hash().await?.flatten();
             session

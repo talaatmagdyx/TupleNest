@@ -51,7 +51,7 @@ import { useSearch } from "./hooks/useSearch";
 import { useHealth } from "./hooks/useHealth";
 import { useConnectionForm, timeoutMs } from "./hooks/useConnectionForm";
 import { matchShortcut } from "./lib/shortcuts";
-import { useQuery } from "./hooks/useQuery";
+import { isConnectionLost, useQuery } from "./hooks/useQuery";
 import { defaultSearchPath } from "./lib/nodes";
 import { useTransaction } from "./hooks/useTransaction";
 import { useExplain } from "./hooks/useExplain";
@@ -154,7 +154,7 @@ export default function App() {
   const [updateInfo, setUpdateInfo] = useState<{ version: string; notes: string } | null>(null);
   // Execution and its result state live in a hook; App keeps the overlays.
   const query = useQuery();
-  const { running, result, lastError, ranSql } = query;
+  const { running, result, lastError, ranSql, ranParams } = query;
   const queryEpoch = query.epoch;
   /** Recent EXPLAIN summaries, oldest first — Phase 3 plan comparison. */
   // The raw root is kept beside the summary: a node-by-node diff needs the tree,
@@ -255,6 +255,11 @@ export default function App() {
    *  store. Anything that runs SQL would replace that store mid-export and
    *  the file would get the old header over the new query's rows. */
   const exportingRef = useRef(false);
+  /** True while row edits are applying or an import is running: each holds
+   *  its own BEGIN…COMMIT on the one shared session. Anything run then lands
+   *  inside that transaction — committed with it, or silently rolled back
+   *  with it after the status bar already called it done. */
+  const writingRef = useRef(false);
   const showToast = useCallback((t: string) => {
     setToast(t);
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -759,10 +764,29 @@ export default function App() {
 
   const currentSql = tabs[activeTab]?.sql ?? "";
 
+  /** The backend says the session is gone ("Connection lost: …"). Run was
+   *  the only path that noticed; Begin, Commit, Apply and Import failures left
+   *  the app showing a live session and an open transaction. */
+  const noticeLost = useCallback(
+    (message: string): boolean => {
+      if (!isConnectionLost(message)) return false;
+      session.markLost();
+      tx.forget(); // no server left to hold a transaction open
+      setConnLostDetail(message);
+      setOverlay("connLost");
+      return true;
+    },
+    [session, tx],
+  );
+
   const doRun = useCallback(
     async (force = false, boundParams?: unknown[], sqlOverride?: string) => {
       if (exportingRef.current) {
         showToast("Wait for the export to finish — it is still reading this result");
+        return;
+      }
+      if (writingRef.current) {
+        showToast("Wait — the app is writing in its own transaction, and this would run inside it");
         return;
       }
       // `sqlOverride` runs a specific statement (the guarded one, or the one
@@ -796,14 +820,11 @@ export default function App() {
           return o;
         });
       } else if (out.connectionLost) {
-        session.markLost();
-        tx.forget(); // no server left to hold a transaction open
-        setConnLostDetail(out.message);
-        setOverlay("connLost");
+        noticeLost(out.message);
       }
       void refreshHistory();
     },
-    [tabs, activeTab, connected, connectedEnv, query, tx, setTabs, refreshHistory, session, showToast]
+    [tabs, activeTab, connected, connectedEnv, query, setTabs, refreshHistory, showToast, noticeLost]
   );
 
   /* ---------------- safe row editing ---------------- */
@@ -829,8 +850,18 @@ export default function App() {
   /** Apply the staged edits and tell the user what became of them. The hook
    *  owns the transaction; this owns what the rest of the app does after. */
   const applyEdits = useCallback(async () => {
-    const out = await applyRowEdits({ target: editTarget, inTx });
-    if (out.kind === "noop" || out.kind === "error") return;
+    writingRef.current = true;
+    let out: Awaited<ReturnType<typeof applyRowEdits>>;
+    try {
+      out = await applyRowEdits({ target: editTarget, inTx });
+    } finally {
+      writingRef.current = false;
+    }
+    if (out.kind === "error") {
+      noticeLost(out.message);
+      return;
+    }
+    if (out.kind === "noop") return;
     void refreshHistory();
     if (out.kind === "staged") {
       showToast(`${out.count} statement(s) staged in your transaction`);
@@ -842,8 +873,10 @@ export default function App() {
     // show uncommitted rows as though they were.
     // Re-run the statement behind the grid, not the editor's current text,
     // and never with `force`: the editor may hold something else by now.
-    void doRun(false, undefined, ranSql);
-  }, [applyRowEdits, editTarget, inTx, doRun, ranSql, refreshHistory, showToast]);
+    // With the values it was run with: a parameterised query used to prompt
+    // for its `$1` again here, and leave the grid stale if dismissed.
+    void doRun(false, ranParams, ranSql);
+  }, [applyRowEdits, editTarget, inTx, doRun, ranSql, ranParams, refreshHistory, showToast, noticeLost]);
 
   const doCancel = useCallback(async () => {
     try {
@@ -872,22 +905,25 @@ export default function App() {
     const cur = tabs[activeTab];
     if (!cur) return;
     const r = await tx.begin({ tabId: cur.id, tabName: cur.name });
+    if (!r.ok && noticeLost(String(r.message))) return;
     showToast(r.ok ? `Transaction started in ${cur.name}` : String(r.message).slice(0, 80));
-  }, [tx, showToast, tabs, activeTab]);
+  }, [tx, showToast, tabs, activeTab, noticeLost]);
 
   const doCommit = useCallback(async () => {
     const wrong = notOwner();
     if (wrong) return showToast(wrong.slice(0, 90));
     const r = await tx.commit();
+    if (!r.ok && noticeLost(String(r.message))) return;
     showToast(r.ok ? "COMMIT" : `Commit error: ${String(r.message).slice(0, 70)}`);
-  }, [tx, showToast, notOwner]);
+  }, [tx, showToast, notOwner, noticeLost]);
 
   const doRollback = useCallback(async () => {
     const wrong = notOwner();
     if (wrong) return showToast(wrong.slice(0, 90));
     const r = await tx.rollback();
+    if (!r.ok && noticeLost(String(r.message))) return;
     showToast(r.ok ? "ROLLBACK" : `Rollback error: ${String(r.message).slice(0, 70)}`);
-  }, [tx, showToast, notOwner]);
+  }, [tx, showToast, notOwner, noticeLost]);
 
   /**
    * Closing the window with a transaction open.
@@ -902,6 +938,10 @@ export default function App() {
    * handler for the moment between unlisten and re-listen.
    */
   const inTxRef = useRef(inTx);
+  const connectedRef = useRef(connected);
+  useEffect(() => {
+    connectedRef.current = connected;
+  }, [connected]);
   // In an effect, not during render: writing a ref while rendering is the
   // thing that makes a component not re-render when you expect it to, and the
   // compiler lint is right to refuse it.
@@ -912,8 +952,13 @@ export default function App() {
 
   useEffect(() => {
     const win = getCurrentWindow();
-    const stop = win.onCloseRequested((e) => {
-      if (!inTxRef.current) return;
+    const stop = win.onCloseRequested(async (e) => {
+      // The UI flag follows only the Begin button; a transaction opened by
+      // typing BEGIN (or joined by an import) closed silently, rolled back.
+      const open =
+        inTxRef.current ||
+        (connectedRef.current && (await invoke<boolean>("pg_in_transaction").catch(() => false)));
+      if (!open) return;
       e.preventDefault();
       setClosing(true);
       setOverlay("txPrompt");
@@ -965,6 +1010,10 @@ export default function App() {
       // EXPLAIN replaces the backend row store too (see below).
       if (exportingRef.current) {
         showToast("Wait for the export to finish — it is still reading this result");
+        return;
+      }
+      if (writingRef.current) {
+        showToast("Wait — the app is writing in its own transaction, and this would run inside it");
         return;
       }
       const title = tabs[activeTab]?.name ?? "query";
@@ -1663,7 +1712,11 @@ export default function App() {
         buildLabel={buildLabel()}
       />
 
-      {toast && <div className="toast" role="status" aria-live="polite">{toast}</div>}
+      {/* The live region stays mounted and only its text changes: screen readers
+          often skip a region that appears already holding its message. */}
+      <div role="status" aria-live="polite" className="toast-live">
+        {toast && <div className="toast">{toast}</div>}
+      </div>
 
       {/* A running export gets its own persistent strip rather than the toast:
           it lasts longer than a toast should, and it needs a way out. */}
@@ -1771,6 +1824,8 @@ export default function App() {
           schemas={schemas ?? ["public"]}
           env={connectedEnv}
           inTx={inTx}
+          onBusy={(b) => (writingRef.current = b)}
+          onError={(m) => void noticeLost(m)}
           onDone={(m) => {
             showToast(m);
             // An import can create a table, so the catalog has to be re-read —

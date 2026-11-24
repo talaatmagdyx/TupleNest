@@ -56,6 +56,10 @@ type Props = {
   schemas: string[];
   env: string | null;
   inTx: boolean;
+  /** Told when an import starts and ends: while it runs, it owns a transaction. */
+  onBusy?: (busy: boolean) => void;
+  /** Every failure, so the app can notice a lost connection. */
+  onError?: (message: string) => void;
   onDone: (msg: string) => void;
   onClose: () => void;
 };
@@ -153,6 +157,7 @@ export default function ImportModal(p: Props) {
   const run = async () => {
     if (!table || !target || !file) return;
     setBusy(true);
+    p.onBusy?.(true);
     setError(null);
     setProgress(0);
     setInserted(0);
@@ -201,10 +206,17 @@ export default function ImportModal(p: Props) {
 
       if (joinExisting) await invoke("pg_query", { sql: `RELEASE SAVEPOINT ${SAVEPOINT}`, params: [] });
       else await invoke("pg_commit");
-      p.onDone(`Imported ${count.toLocaleString()} rows into ${schema}.${target}`);
+      // Inside the user's own transaction nothing is committed yet: saying
+      // "Imported" there let them close the window and lose it.
+      p.onDone(
+        joinExisting
+          ? `Imported ${count.toLocaleString()} rows into ${schema}.${target} inside your open transaction — commit it to keep them`
+          : `Imported ${count.toLocaleString()} rows into ${schema}.${target}`,
+      );
       p.onClose();
     } catch (e) {
       setError(String(e));
+      p.onError?.(String(e));
       try {
         if (joinExisting) {
           // Undo the import and only the import; their transaction stays usable.
@@ -218,6 +230,7 @@ export default function ImportModal(p: Props) {
       }
     } finally {
       setBusy(false);
+      p.onBusy?.(false);
     }
   };
 

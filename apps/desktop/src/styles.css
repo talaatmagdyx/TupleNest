@@ -312,6 +312,9 @@ a { color: var(--tn-accent); text-decoration: none; }
 .tree-row .count { margin-left: auto; font-size: 9.5px; color: var(--tn-tm); background: var(--tn-s2); padding: 0 6px; border-radius: 8px; }
 .tree-row .hover-act { margin-left: auto; display: none; gap: 4px; }
 .tree-row:hover .hover-act { display: inline-flex; }
+/* Keyboard users reach the row actions too: shown while the row has focus. */
+.tree-row:focus .hover-act,
+.tree-row:focus-within .hover-act { display: inline-flex; }
 .tree-row .hover-act span { color: var(--tn-tm); font-size: 11px; padding: 0 3px; border-radius: 4px; }
 .tree-row .hover-act span:hover { color: var(--tn-accent); background: var(--tn-as); }
 .obj-ic {

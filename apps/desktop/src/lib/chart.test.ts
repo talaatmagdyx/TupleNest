@@ -4,6 +4,7 @@ import {
   aggregateChart,
   chartSubtitle,
   chartTitle,
+  compareNumeric,
   isNumericType,
   pickChartColumns,
   type ChartColumn,
@@ -148,5 +149,40 @@ describe("chart labels", () => {
 
   it("says nothing extra when it charted everything", () => {
     expect(chartSubtitle(12, 12)).toBe("aggregated from 12 rows · bar");
+  });
+});
+
+describe("isNumericType — whole type names only", () => {
+  it.each(["interval", "point", "int4range", "_int4", "tinterval"])("does not count %s as numeric", (t) =>
+    expect(isNumericType(t)).toBe(false),
+  );
+  it("counts a modified numeric", () => expect(isNumericType("numeric(12,2)")).toBe(true));
+});
+
+describe("compareNumeric — exact, whatever the cell's JSON type", () => {
+  const sorted = (xs: unknown[]) => [...xs].sort(compareNumeric);
+  it("orders decimals numerically, not as text", () => {
+    expect(sorted(["100.00", "20.00", "9.50", "-3", "0"])).toEqual(["-3", "0", "9.50", "20.00", "100.00"]);
+  });
+  it("orders bigints past 2^53 exactly, mixed with numbers", () => {
+    expect(sorted(["9007199254740993", 5, "-9007199254740993", 95, "9007199254740992"])).toEqual([
+      "-9007199254740993",
+      5,
+      95,
+      "9007199254740992",
+      "9007199254740993",
+    ]);
+  });
+  it("treats equal values as equal and puts NaN above Infinity", () => {
+    expect(compareNumeric("1.50", 1.5)).toBe(0);
+    expect(compareNumeric("-0", "0")).toBe(0);
+    expect(sorted(["NaN", "Infinity", "-Infinity", "1"])).toEqual(["-Infinity", "1", "Infinity", "NaN"]);
+    expect(compareNumeric("-2.5", "-2.25")).toBeLessThan(0);
+    expect(compareNumeric(1e21, 5)).toBeGreaterThan(0);
+    // Same integer part: the fraction decides, padded to equal length.
+    expect(compareNumeric("1.25", "1.3")).toBeLessThan(0);
+    expect(compareNumeric("1.30", "1.3")).toBe(0);
+    expect(compareNumeric("12", "9")).toBeGreaterThan(0);
+    expect(compareNumeric("-12", "-9")).toBeLessThan(0);
   });
 });
