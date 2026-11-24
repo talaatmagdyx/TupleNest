@@ -13,6 +13,11 @@ extend-exclude = [
   "Cargo.lock",
   "package-lock.json",
   "apps/desktop/src/assets/fonts/OFL.txt",
+  # Audit records kept as they were produced: reviewers' reports, probe
+  # scripts with deliberately malformed inputs, and raw tool logs. Correcting
+  # a spelling there would be editing the evidence.
+  "docs/audits/*/evidence/",
+  "docs/audits/*/reviewers/",
 ]
 
 [default.extend-words]

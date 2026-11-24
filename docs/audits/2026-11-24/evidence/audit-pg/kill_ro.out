@@ -1,0 +1,69 @@
+begin -> Ok(())
+terminate idle backend 84467 -> Ok(true)
+is_broken after idle kill = true
+[kill-idle] ERR sql="SELECT 1" category=Network title="Connection closed" code=None msg=Some("connection closed")
+is_broken = true
+commit -> Err((Network, "Connection closed"))
+[kill-running] ERR sql="SELECT pg_sleep(20)" category=DriverFailure title="Database error" code=Some("57P01") msg=Some("terminating connection due to administrator command")
+terminate running -> Ok(true); is_broken=false
+is_broken later=true
+[kill-running] ERR sql="SELECT 1" category=Network title="Connection closed" code=None msg=Some("connection closed")
+[setup] OK  sql="DROP TABLE IF EXISTS ro_t" types=[] affected=Some(0) returned=0 cells=
+[setup] OK  sql="CREATE TABLE ro_t (id int primary key, v text)" types=[] affected=Some(0) returned=0 cells=
+[setup] OK  sql="INSERT INTO ro_t VALUES (1,'a')" types=[] affected=Some(1) returned=0 cells=
+[setup] OK  sql="CREATE SEQUENCE IF NOT EXISTS ro_seq" types=[] affected=Some(0) returned=0 cells=
+[ro] ERR sql="INSERT INTO ro_t VALUES (2,'b')" category=ReadOnlyViolation title="Read-only transaction" code=Some("25006") msg=Some("cannot execute INSERT in a read-only transaction")
+[ro] OK  sql="SET default_transaction_read_only = off" types=[] affected=Some(0) returned=0 cells=
+[ro] ERR sql="INSERT INTO ro_t VALUES (3,'c')" category=ReadOnlyViolation title="Read-only transaction" code=Some("25006") msg=Some("cannot execute INSERT in a read-only transaction")
+[ro] OK  sql="SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE" types=[] affected=Some(0) returned=0 cells=
+[ro] ERR sql="UPDATE ro_t SET v='z'" category=ReadOnlyViolation title="Read-only transaction" code=Some("25006") msg=Some("cannot execute UPDATE in a read-only transaction")
+[ro] OK  sql="SELECT set_config('default_transaction_read_only','off',false)" types=["text"] affected=Some(1) returned=1 cells={"type":"text","value":"off"}
+[ro] ERR sql="DELETE FROM ro_t" category=ReadOnlyViolation title="Read-only transaction" code=Some("25006") msg=Some("cannot execute DELETE in a read-only transaction")
+[ro] OK  sql="RESET ALL" types=[] affected=Some(0) returned=0 cells=
+[ro] ERR sql="TRUNCATE ro_t" category=ReadOnlyViolation title="Read-only transaction" code=Some("25006") msg=Some("cannot execute TRUNCATE TABLE in a read-only transaction")
+[ro] OK  sql="BEGIN READ WRITE" types=[] affected=Some(0) returned=0 cells=
+[ro] ERR sql="INSERT INTO ro_t VALUES (4,'d')" category=Authorization title="This connection is read-only, but the open transaction is read-write. Roll it back (or commit) to continue; nothing was run." code=None msg=None
+[ro] OK  sql="ROLLBACK" types=[] affected=Some(0) returned=0 cells=
+[ro] OK  sql="BEGIN" types=[] affected=Some(0) returned=0 cells=
+[ro] OK  sql="SET TRANSACTION READ WRITE" types=[] affected=Some(0) returned=0 cells=
+[ro] ERR sql="INSERT INTO ro_t VALUES (5,'e')" category=Authorization title="This connection is read-only, but the open transaction is read-write. Roll it back (or commit) to continue; nothing was run." code=None msg=None
+[ro] OK  sql="COMMIT" types=[] affected=Some(0) returned=0 cells=
+[ro] OK  sql="BEGIN" types=[] affected=Some(0) returned=0 cells=
+[ro] OK  sql="SET transaction_read_only = off" types=[] affected=Some(0) returned=0 cells=
+[ro] ERR sql="INSERT INTO ro_t VALUES (6,'f')" category=Authorization title="This connection is read-only, but the open transaction is read-write. Roll it back (or commit) to continue; nothing was run." code=None msg=None
+[ro] OK  sql="COMMIT" types=[] affected=Some(0) returned=0 cells=
+[ro] OK  sql="BEGIN READ WRITE" types=[] affected=Some(0) returned=0 cells=
+[ro] OK  sql="COMMIT AND CHAIN" types=[] affected=Some(0) returned=0 cells=
+[ro] ERR sql="INSERT INTO ro_t VALUES (7,'g')" category=Authorization title="This connection is read-only, but the open transaction is read-write. Roll it back (or commit) to continue; nothing was run." code=None msg=None
+[ro] OK  sql="ROLLBACK" types=[] affected=Some(0) returned=0 cells=
+[ro] ERR sql="DO $$ BEGIN INSERT INTO ro_t VALUES (8,'h'); END $$" category=Authorization title="DO blocks and CALL are refused on a read-only connection: they can commit and change the transaction mode from inside. Nothing was run." code=None msg=None
+[ro] ERR sql="/* x */ DO $$ BEGIN NULL; END $$" category=Authorization title="DO blocks and CALL are refused on a read-only connection: they can commit and change the transaction mode from inside. Nothing was run." code=None msg=None
+[ro] ERR sql="WITH d AS (DELETE FROM ro_t RETURNING *) SELECT * FROM d" category=ReadOnlyViolation title="Read-only transaction" code=Some("25006") msg=Some("cannot execute SELECT in a read-only transaction")
+[ro] ERR sql="SELECT nextval('ro_seq')" category=ReadOnlyViolation title="Read-only transaction" code=Some("25006") msg=Some("cannot execute nextval() in a read-only transaction")
+[ro] ERR sql="EXPLAIN ANALYZE DELETE FROM ro_t" category=ReadOnlyViolation title="Read-only transaction" code=Some("25006") msg=Some("cannot execute DELETE in a read-only transaction")
+[ro] ERR sql="SELECT * INTO ro_copy FROM ro_t" category=ReadOnlyViolation title="Read-only transaction" code=Some("25006") msg=Some("cannot execute SELECT INTO in a read-only transaction")
+[ro] ERR sql="CREATE TEMP TABLE ro_tmp AS SELECT * FROM ro_t" category=ReadOnlyViolation title="Read-only transaction" code=Some("25006") msg=Some("cannot execute CREATE TABLE AS in a read-only transaction")
+[ro] ERR sql="INSERT INTO ro_tmp VALUES (99,'temp write')" category=SchemaMissing title="Relation not found" code=Some("42P01") msg=Some("relation \"ro_tmp\" does not exist")
+[ro] OK  sql="VACUUM ro_t" types=[] affected=Some(0) returned=0 cells=
+[ro] OK  sql="ANALYZE ro_t" types=[] affected=Some(0) returned=0 cells=
+[ro] OK  sql="CHECKPOINT" types=[] affected=Some(0) returned=0 cells=
+[ro] OK  sql="NOTIFY ch, 'hello'" types=[] affected=Some(0) returned=0 cells=
+[ro] OK  sql="SELECT pg_advisory_lock(42)" types=["void"] affected=Some(1) returned=1 cells={"type":"other","value":{"rendered":"\\x","db_type":"void"}}
+[ro] ERR sql="SELECT lo_create(0)" category=ReadOnlyViolation title="Read-only transaction" code=Some("25006") msg=Some("cannot execute lo_create() in a read-only transaction")
+[ro] OK  sql="REINDEX TABLE ro_t" types=[] affected=Some(0) returned=0 cells=
+[ro] OK  sql="CLUSTER ro_t USING ro_t_pkey" types=[] affected=Some(0) returned=0 cells=
+[ro] ERR sql="REFRESH MATERIALIZED VIEW nope" category=ReadOnlyViolation title="Read-only transaction" code=Some("25006") msg=Some("cannot execute REFRESH MATERIALIZED VIEW in a read-only transaction")
+[ro] OK  sql="SELECT pg_stat_reset()" types=["void"] affected=Some(1) returned=1 cells={"type":"other","value":{"rendered":"\\x","db_type":"void"}}
+[ro] ERR sql="SELECT * FROM ro_t FOR UPDATE" category=ReadOnlyViolation title="Read-only transaction" code=Some("25006") msg=Some("cannot execute SELECT FOR UPDATE in a read-only transaction")
+[ro] ERR sql="LOCK TABLE ro_t IN ACCESS EXCLUSIVE MODE" category=DriverFailure title="Database error" code=Some("25P01") msg=Some("LOCK TABLE can only be used in transaction blocks")
+[ro] OK  sql="PREPARE w AS INSERT INTO ro_t VALUES (10,'p')" types=[] affected=Some(0) returned=0 cells=
+[ro] ERR sql="EXECUTE w" category=ReadOnlyViolation title="Read-only transaction" code=Some("25006") msg=Some("cannot execute INSERT in a read-only transaction")
+[ro] OK  sql="SELECT count(*) FROM ro_t" types=["int8"] affected=Some(1) returned=1 cells={"type":"int","value":1}
+[ro] OK  sql="COPY (SELECT 1) TO PROGRAM 'touch docs/audits/2026-11-24/evidence/audit-pg/probe/../ro_marker_file'" types=[] affected=Some(1) returned=0 cells=
+marker exists after COPY TO PROGRAM on read-only profile: true
+[ro] OK  sql="SELECT pg_terminate_backend(84651)" types=["bool"] affected=Some(1) returned=1 cells={"type":"bool","value":true}
+victim broken = true
+[ro-check] OK  sql="SELECT * FROM ro_t ORDER BY id" types=["int4", "text"] affected=Some(1) returned=1 cells={"type":"int","value":1} | {"type":"text","value":"a"}
+[timeout] ERR sql="SELECT pg_sleep(2)" category=Cancelled title="Query cancelled" code=Some("57014") msg=Some("canceling statement due to statement timeout")
+[timeout] OK  sql="SET statement_timeout = 0" types=[] affected=Some(0) returned=0 cells=
+[timeout] OK  sql="SELECT pg_sleep(0.6)" types=["void"] affected=Some(1) returned=1 cells={"type":"other","value":{"rendered":"\\x","db_type":"void"}}
