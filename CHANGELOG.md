@@ -217,6 +217,9 @@ trusting it.
 - Secrets in JSON shapes are redacted; logs keep 14 days.
 
 ### Performance and reliability
+- The "rows could not be loaded" bar sits under the grid's column headers; it
+  covered them. A dialog that cannot be loaded says so in words before the
+  technical detail. Both found by forcing the failures in a built app.
 - Three failures that were swallowed are now shown, each with a way to try
   again. The explorer says why the schemas did not load: it sat on "Loading
   schemas…" for ever. The grid says when a page of rows could not be

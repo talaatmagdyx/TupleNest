@@ -577,6 +577,16 @@ describe("Grid — a page of rows that cannot be loaded", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Some rows could not be loaded: result was dropped");
   });
 
+  it("sits below the column headers, not over them", async () => {
+    // Found in a built app: the bar was placed before the header and covered it.
+    invokeMock.mockRejectedValue("gone");
+    const { container } = render(<Grid {...base} />);
+    const bar = await screen.findByRole("alert");
+    const head = container.querySelector(".g-head")!;
+    expect(head.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("email")).toBeInTheDocument();
+  });
+
   it("loads them on Retry and takes the message away", async () => {
     invokeMock.mockRejectedValueOnce(new Error("temporary"));
     render(<Grid {...base} />);
