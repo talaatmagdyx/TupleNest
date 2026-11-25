@@ -596,6 +596,18 @@ fn main() {
 
             let store = Store::open(&dir.join("tuplenest.db"))
                 .map_err(|e| -> Box<dyn std::error::Error> { format!("{e}").into() })?;
+            // Keychain entries from passwords tested but never saved.
+            let swept = pg::sweep_pending_secrets(
+                &store,
+                &tuplenest_credential_store::KeychainStore::new(),
+            );
+            if swept > 0 {
+                tracing::info!(
+                    component = "credentials",
+                    swept,
+                    "removed keychain entries no profile owns"
+                );
+            }
             app.manage(AppState {
                 store: Mutex::new(store),
                 _log_guard: log_guard,
