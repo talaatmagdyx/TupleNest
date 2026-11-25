@@ -9,6 +9,14 @@ From a second audit, which re-tested every fix in 0.1.1-beta.12 rather than
 trusting it.
 
 ### Safety
+- The statement guard on prod and staging asks in two more cases. An
+  `UPDATE` or `DELETE` whose WHERE is plainly always true (`WHERE true`,
+  `WHERE 1=1`, `WHERE 'a'='a'`, or one of those as a side of an `OR`) counted
+  as bounded. `EXPLAIN ANALYZE` of a guarded statement, typed into the
+  editor, ran it without asking because its first word is `EXPLAIN`. The
+  README now lists what the guard asks about and what it does not: it is
+  armed only on connections tagged prod or staging, and `INSERT` and a
+  bounded `UPDATE`/`DELETE` never ask (audit TN-008).
 - A read-only profile sends only statements that read. PostgreSQL's read-only
   mode refuses writes to tables and the catalog but lets maintenance through:
   `VACUUM`, `ANALYZE`, `REINDEX`, `CLUSTER` and `CHECKPOINT` ran, and as a
