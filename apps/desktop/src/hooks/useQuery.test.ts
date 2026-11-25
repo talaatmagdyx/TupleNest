@@ -260,6 +260,17 @@ describe("useQuery — cancel and reset", () => {
     expect(result.current.ranSql).toBe("");
     expect(result.current.lastError).toBeNull();
   });
+
+  it("starts a new epoch on reset, so edits staged on the old result are dropped", async () => {
+    // TN-007: staged edits are keyed to the epoch. A reset that kept it let
+    // them survive a connection switch.
+    invokeMock.mockResolvedValue(res());
+    const { result } = renderHook(() => useQuery());
+    await act(async () => void (await result.current.run("select 1", dev)));
+    const before = result.current.epoch;
+    act(() => result.current.reset());
+    expect(result.current.epoch).not.toBe(before);
+  });
 });
 
 describe("isConnectionLost", () => {

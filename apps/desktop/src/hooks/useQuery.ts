@@ -95,6 +95,9 @@ export function useQuery(): Query {
     token.current += 1;
     busy.current = false;
     setRunning(false);
+    // A new epoch as well: edits staged against the old result are keyed by
+    // its rows, and must not outlive it to be applied to another database.
+    setEpoch((e) => e + 1);
     setResult(null);
     setLastError(null);
     setStatus(null);

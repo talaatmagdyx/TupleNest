@@ -9,6 +9,11 @@ From a second audit, which re-tested every fix in 0.1.1-beta.12 rather than
 trusting it.
 
 ### Safety
+- Switching connection clears what the previous one put on screen. Only
+  Disconnect did; after the titlebar switcher or Save & Connect over a live
+  session, the previous database's rows stayed in the grid — dev rows under
+  the PRODUCTION banner — and an edit staged against them could be reviewed
+  and applied to the new database (audit TN-007).
 - Explain no longer executes a statement that writes. ANALYZE was switched on
   for anything starting with `SELECT` or `WITH`, and EXPLAIN ANALYZE runs what
   it explains: `WITH gone AS (DELETE … RETURNING id) SELECT …` deleted the

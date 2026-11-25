@@ -386,30 +386,45 @@ export default function App() {
       .catch((e) => setStatus(`Explorer error: ${errText(e)}`));
   }, [resetExplorer, setMetaCached, setStatus]);
 
-  const doConnect = useCallback(async () => {
-    const out = await session.connect(await withSecret(), environment);
-    if (!out.ok) {
-      showToast(out.message.slice(0, 90));
-      return;
-    }
-    afterConnect();
-    showToast(`Connected — ${username}@${host}/${database}`);
-  }, [session, withSecret, environment, afterConnect, showToast, username, host, database]);
-
-  const reallyDisconnect = useCallback(async () => {
-    await session.disconnect();
+  /**
+   * Drop everything on screen that came from the session just left.
+   *
+   * One place, because there are three ways to leave a session — disconnect,
+   * the titlebar switcher, and connecting from the form while connected — and
+   * only disconnect used to clean up. After a switch the previous database's
+   * rows sat under the new connection's name (dev rows under the PRODUCTION
+   * banner), and edits staged against them could be applied to the new
+   * database.
+   */
+  const forgetSession = useCallback(() => {
     query.reset();
     tx.forget(); // the session is gone; the transaction went with it
-    setOverlay(null);
-    resetExplorer();
-    // Nothing below can be shown without a session, and each is refetched on
+    // Nothing below can be shown without its session, and each is refetched on
     // open — holding the last payloads only pins them in memory until then.
     setChart(null);
     setDetails(null);
     setParts(null);
     setSchemaCols(null);
     setSchemaExtra(null);
-  }, [session, resetExplorer, query, tx]);
+  }, [query, tx]);
+
+  const doConnect = useCallback(async () => {
+    const out = await session.connect(await withSecret(), environment);
+    if (!out.ok) {
+      showToast(out.message.slice(0, 90));
+      return;
+    }
+    forgetSession(); // connecting replaces whatever session there was
+    afterConnect();
+    showToast(`Connected — ${username}@${host}/${database}`);
+  }, [session, withSecret, environment, forgetSession, afterConnect, showToast, username, host, database]);
+
+  const reallyDisconnect = useCallback(async () => {
+    await session.disconnect();
+    forgetSession();
+    setOverlay(null);
+    resetExplorer();
+  }, [session, resetExplorer, forgetSession]);
 
   const doDisconnect = useCallback(async () => {
     if (inTx) {
@@ -459,6 +474,7 @@ export default function App() {
         return;
       }
       await session.disconnect();
+      forgetSession();
       loadProfile(c);
       const ssh = c.sshJson ? (JSON.parse(c.sshJson) as SshParams) : null;
       const out = await session.connect(
@@ -486,7 +502,7 @@ export default function App() {
       afterConnect();
       showToast(`Connected — ${c.name}`);
     },
-    [inTx, session, loadProfile, afterConnect, showToast]
+    [inTx, session, forgetSession, loadProfile, afterConnect, showToast]
   );
 
   /* ---------------- test / save profile ---------------- */
