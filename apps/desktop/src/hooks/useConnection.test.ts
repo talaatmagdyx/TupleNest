@@ -39,6 +39,41 @@ const connect = async (result: { current: ReturnType<typeof useConnection> }, en
   return out as unknown as Awaited<ReturnType<ReturnType<typeof useConnection>["connect"]>>;
 };
 
+// Audit TN-006: the bars name the connection from this, not from the form.
+describe("useConnection — where the live session goes", () => {
+  it("records the target that was sent, and the profile it came from", async () => {
+    const { result } = renderHook(() => useConnection());
+    expect(result.current.connectedTo).toBeNull();
+    await act(async () => void (await result.current.connect(PARAMS, "dev", "c1")));
+    expect(result.current.connectedTo).toEqual({
+      profileId: "c1",
+      username: PARAMS.username,
+      host: PARAMS.host,
+      port: PARAMS.port,
+      tlsMode: PARAMS.tlsMode,
+    });
+  });
+
+  it("has no profile for a connection made straight from the form", async () => {
+    const { result } = renderHook(() => useConnection());
+    await connect(result);
+    expect(result.current.connectedTo?.profileId).toBeNull();
+  });
+
+  it("claims nothing when the connect fails, and forgets on disconnect and on loss", async () => {
+    const { result } = renderHook(() => useConnection());
+    invokeMock.mockRejectedValueOnce(new Error("refused"));
+    await connect(result);
+    expect(result.current.connectedTo).toBeNull();
+    await connect(result);
+    await act(async () => void (await result.current.disconnect()));
+    expect(result.current.connectedTo).toBeNull();
+    await connect(result);
+    act(() => result.current.markLost());
+    expect(result.current.connectedTo).toBeNull();
+  });
+});
+
 describe("useConnection — connecting", () => {
   it("starts with no session", () => {
     const { result } = renderHook(() => useConnection());

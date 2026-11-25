@@ -10,8 +10,21 @@ export const STAGE_REVEAL_MS = 160;
 
 export type ConnectOutcome = { ok: true } | { ok: false; message: string };
 
+/** Where the live session goes: taken from what was sent to `pg_connect`. */
+export type ConnectedTo = {
+  profileId: string | null;
+  username: string;
+  host: string;
+  port: number;
+  tlsMode: string;
+};
+
 export type Connection = {
   connected: boolean;
+  /** The target of the *live session* — not the form. The title bar and the
+   *  status bar name the connection from this: the form changes the moment
+   *  another profile is opened for editing, while the session stays put. */
+  connectedTo: ConnectedTo | null;
   /** The environment of the *live session* — not the form. The prod banner
    *  keys off this, so it must never describe a connection we don't have. */
   connectedEnv: string | null;
@@ -21,7 +34,7 @@ export type Connection = {
   stages: TestStage[] | null;
   testing: boolean;
   testSummary: string;
-  connect: (params: PgParams, environment: string) => Promise<ConnectOutcome>;
+  connect: (params: PgParams, environment: string, profileId?: string | null) => Promise<ConnectOutcome>;
   /** Close the session and forget everything about it. */
   disconnect: () => Promise<void>;
   /** The server dropped us. Same forgetting, but nothing is sent — there is
@@ -44,6 +57,7 @@ export type Connection = {
 export function useConnection(): Connection {
   const [connected, setConnected] = useState(false);
   const [connectedEnv, setConnectedEnv] = useState<string | null>(null);
+  const [connectedTo, setConnectedTo] = useState<ConnectedTo | null>(null);
   const [serverVersion, setServerVersion] = useState<string | null>(null);
   const [status, setStatus] = useState("");
   const [stages, setStages] = useState<TestStage[] | null>(null);
@@ -74,12 +88,19 @@ export function useConnection(): Connection {
   }, []);
 
   const connect = useCallback(
-    async (params: PgParams, environment: string): Promise<ConnectOutcome> => {
+    async (params: PgParams, environment: string, profileId: string | null = null): Promise<ConnectOutcome> => {
       setStatus("Connecting…");
       try {
         await invoke("pg_connect", { params });
         setConnected(true);
         setConnectedEnv(environment);
+        setConnectedTo({
+          profileId,
+          username: params.username,
+          host: params.host,
+          port: params.port,
+          tlsMode: params.tlsMode,
+        });
         setStatus("Connected");
         void loadServerVersion();
         return { ok: true };
@@ -97,6 +118,7 @@ export function useConnection(): Connection {
   const forget = useCallback((why: string) => {
     setConnected(false);
     setConnectedEnv(null);
+    setConnectedTo(null);
     setServerVersion(null);
     setStatus(why);
   }, []);
@@ -168,6 +190,7 @@ export function useConnection(): Connection {
   return {
     connected,
     connectedEnv,
+    connectedTo,
     serverVersion,
     status,
     setStatus,
