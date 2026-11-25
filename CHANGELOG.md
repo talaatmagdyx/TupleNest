@@ -26,6 +26,12 @@ trusting it.
 - A column the query renamed or computed is no longer taken for a table
   column: `select parent_id as id …` is not editable, because that `id` is not
   the key, and `upper(email) as email` is read-only (audit TN-022).
+- A read-only profile no longer runs a `DO` block or `CALL` hidden behind a
+  nested comment. The check that refuses them skipped a leading `/* … */` by
+  stopping at the first `*/`, but PostgreSQL nests block comments, so
+  `/* a /* b */ c */ DO $$ … $$` was read as starting with `c` and ran — and a
+  DO block can commit, switch the session to read-write and write. Found while
+  fixing TN-001 (audit follow-up TN-030).
 - **Read-only profiles refuse `DO` and `CALL`.** Either can commit partway
   through and switch the session back to read-write, so one pasted block could
   delete rows on a profile marked read-only. `SET TRANSACTION` works again on

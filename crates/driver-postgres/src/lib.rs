@@ -2572,7 +2572,24 @@ fn leading_words(sql: &str, n: usize) -> Vec<String> {
         if let Some(rest) = s.strip_prefix("--") {
             s = rest.split_once('\n').map_or("", |(_, r)| r).trim_start();
         } else if let Some(rest) = s.strip_prefix("/*") {
-            s = rest.split_once("*/").map_or("", |(_, r)| r).trim_start();
+            // PostgreSQL nests block comments. Stopping at the first `*/`
+            // left the tail of `/* a /* b */ c */ DO …` to be read as the
+            // statement, so its first word was `c`, not `do`.
+            let bytes = rest.as_bytes();
+            let (mut depth, mut i) = (1, 0);
+            while i < bytes.len() && depth > 0 {
+                if bytes[i..].starts_with(b"/*") {
+                    depth += 1;
+                    i += 2;
+                } else if bytes[i..].starts_with(b"*/") {
+                    depth -= 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            // `i` is the end of the text or just past an ASCII `*/`.
+            s = rest.get(i..).unwrap_or("").trim_start();
         } else {
             break;
         }
@@ -2766,6 +2783,22 @@ mod begin_statement_tests {
     }
 
     #[test]
+    fn leading_words_skip_nested_and_unterminated_comments() {
+        assert_eq!(
+            leading_words("/* a /* b */ c */ DO $$ begin end $$", 1),
+            ["do"]
+        );
+        assert_eq!(
+            leading_words("/* /* /* deep */ */ */\n-- and a line\ncall p()", 1),
+            ["call"]
+        );
+        assert_eq!(leading_words("/* é /* ü */ ñ */ commit", 1), ["commit"]);
+        // Unterminated: there is no statement, so there are no words.
+        assert!(leading_words("/* never closed DO", 1).is_empty());
+        assert!(leading_words("/* a /* b */ still open DO", 1).is_empty());
+    }
+
+    #[test]
     fn only_transaction_enders_skip_the_read_only_check() {
         for sql in [
             "COMMIT",
@@ -2803,6 +2836,7 @@ mod begin_statement_tests {
             "COMMIT WORK",
             "commit and chain",
             "-- done\nCOMMIT",
+            "/* a /* nested */ note */ commit",
         ] {
             assert!(commits(sql), "{sql:?} commits");
         }

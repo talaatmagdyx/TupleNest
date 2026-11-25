@@ -1455,6 +1455,9 @@ async fn read_only_session_refuses_do_and_call() {
         "DO $$ BEGIN SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE; COMMIT; DELETE FROM tn_ro_do; END $$",
         "/* hidden */ do $$ BEGIN DELETE FROM tn_ro_do; END $$",
         "CALL tn_ro_wipe()",
+        // PostgreSQL nests block comments; the check must skip them as it does.
+        "/* a /* b */ c */ DO $$ BEGIN SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE; COMMIT; DELETE FROM tn_ro_do; END $$",
+        "/* a /* b */ c */ CALL tn_ro_wipe()",
     ] {
         assert!(ro.execute(req(sql), &NullSink).await.is_err(), "`{sql}` ran on a read-only session");
     }
