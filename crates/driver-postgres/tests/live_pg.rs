@@ -2720,3 +2720,117 @@ async fn a_text_parameter_binds_to_any_placeholder_type() {
     // And the session is still usable afterwards.
     assert_eq!(text_of(&first_row("SELECT 1").await[0]), "1");
 }
+
+/// Audit TN-009: PostgreSQL's read-only mode lets maintenance commands and
+/// `COPY … TO PROGRAM` through. A read-only profile does not send them.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn read_only_session_sends_only_statements_that_read() {
+    let mut rw = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    for sql in [
+        "DROP TABLE IF EXISTS tn_ro_maint",
+        "CREATE TABLE tn_ro_maint (x int PRIMARY KEY)",
+        "INSERT INTO tn_ro_maint VALUES (1), (2)",
+    ] {
+        rw.execute(req(sql), &NullSink).await.unwrap();
+    }
+
+    let mut cfg = test_config();
+    cfg.read_only = true;
+    let mut ro = PostgresDriver
+        .connect_concrete_with_password(cfg, None)
+        .await
+        .expect("connect");
+
+    // Every one of these runs on a session that is merely
+    // `default_transaction_read_only`: the server does not object.
+    for sql in [
+        "VACUUM tn_ro_maint",
+        "VACUUM",
+        "ANALYZE tn_ro_maint",
+        "REINDEX TABLE tn_ro_maint",
+        "CLUSTER tn_ro_maint USING tn_ro_maint_pkey",
+        "CHECKPOINT",
+        "COPY (SELECT 1) TO PROGRAM 'true'",
+        "COPY tn_ro_maint TO '/tmp/tn_ro_maint_should_not_exist.csv'",
+        "LOCK TABLE tn_ro_maint IN ACCESS SHARE MODE",
+        "NOTIFY tn_ro_channel, 'x'",
+        "/* note */ vacuum tn_ro_maint",
+        "-- note\nCHECKPOINT",
+    ] {
+        let err = ro
+            .execute(req(sql), &NullSink)
+            .await
+            .expect_err(&format!("`{sql}` ran on a read-only session"));
+        assert_eq!(err.category, ErrorCategory::Authorization, "{sql}: {err:?}");
+        assert!(err.title.contains("read-only connection"), "{sql}: {err:?}");
+        assert!(err.title.contains("Nothing was run"), "{sql}: {err:?}");
+    }
+    // Refused before reaching the server, so nothing was analyzed.
+    let analyzed = first_row(
+        "SELECT (last_analyze IS NULL AND last_vacuum IS NULL)::text \
+         FROM pg_stat_user_tables WHERE relname = 'tn_ro_maint'",
+    )
+    .await;
+    assert_eq!(text_of(&analyzed[0]), "true");
+
+    // Writes are still refused: by the allowlist, or by the server where the
+    // statement starts like a read.
+    for sql in [
+        "INSERT INTO tn_ro_maint VALUES (3)",
+        "DELETE FROM tn_ro_maint",
+        "DROP TABLE tn_ro_maint",
+        "WITH gone AS (DELETE FROM tn_ro_maint RETURNING x) SELECT * FROM gone",
+        "SELECT x INTO tn_ro_copy FROM tn_ro_maint",
+        "EXPLAIN ANALYZE DELETE FROM tn_ro_maint",
+    ] {
+        assert!(
+            ro.execute(req(sql), &NullSink).await.is_err(),
+            "`{sql}` ran on a read-only session"
+        );
+    }
+
+    // And reading is untouched.
+    for sql in [
+        "SELECT count(*) FROM tn_ro_maint",
+        "(SELECT 1) UNION ALL (SELECT 2)",
+        "WITH t AS (SELECT x FROM tn_ro_maint) SELECT * FROM t",
+        "TABLE tn_ro_maint",
+        "VALUES (1), (2)",
+        "SHOW server_version",
+        "EXPLAIN SELECT * FROM tn_ro_maint",
+        "EXPLAIN ANALYZE SELECT * FROM tn_ro_maint",
+        "SET statement_timeout = 0",
+        "BEGIN",
+        "DECLARE c CURSOR FOR SELECT x FROM tn_ro_maint",
+        "FETCH ALL FROM c",
+        "CLOSE c",
+        "COMMIT",
+        "PREPARE tn_ro_p AS SELECT 1",
+        "EXECUTE tn_ro_p",
+        "DEALLOCATE tn_ro_p",
+    ] {
+        ro.execute(req(sql), &NullSink)
+            .await
+            .unwrap_or_else(|e| panic!("`{sql}` should run on a read-only session: {e:?}"));
+    }
+
+    // The monitor's cancel and terminate are not sent either.
+    let pid = text_of(&first_row("SELECT pg_backend_pid()").await[0])
+        .parse::<i32>()
+        .unwrap();
+    for terminate in [false, true] {
+        let err = ro.admin_backend(pid, terminate).await.unwrap_err();
+        assert_eq!(err.category, ErrorCategory::Authorization);
+    }
+
+    // Both rows are still there.
+    let n = first_row("SELECT count(*)::text FROM tn_ro_maint").await;
+    assert_eq!(text_of(&n[0]), "2");
+    rw.execute(req("DROP TABLE tn_ro_maint"), &NullSink)
+        .await
+        .unwrap();
+}

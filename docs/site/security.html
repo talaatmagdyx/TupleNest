@@ -122,7 +122,7 @@
     <div class="grid2">
       <div class="card"><ul>
         <li>Connections are labelled development, staging, or production</li>
-        <li>Read-only mode issues a PostgreSQL read-only session characteristic</li>
+        <li>Read-only mode issues a PostgreSQL read-only session characteristic, and sends only statements that read (no <code class="inline">VACUUM</code>, <code class="inline">COPY</code>, <code class="inline">DO</code> or <code class="inline">CALL</code>)</li>
         <li>Destructive statements are detected and require confirmation</li>
         <li>The open transaction is owned by a tab; another tab can't commit it</li>
       </ul></div>

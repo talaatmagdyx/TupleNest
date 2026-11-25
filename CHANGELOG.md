@@ -9,6 +9,15 @@ From a second audit, which re-tested every fix in 0.1.1-beta.12 rather than
 trusting it.
 
 ### Safety
+- A read-only profile sends only statements that read. PostgreSQL's read-only
+  mode refuses writes to tables and the catalog but lets maintenance through:
+  `VACUUM`, `ANALYZE`, `REINDEX`, `CLUSTER` and `CHECKPOINT` ran, and as a
+  superuser so did `COPY … TO PROGRAM`, which runs a shell command on the
+  server. Those, and anything else that does not start as a read, are now
+  refused before they are sent. The monitor's cancel and terminate are
+  refused on a read-only profile too. A function with a side effect called
+  from a `SELECT` is still the role's privileges to allow; the documentation
+  now says so (audit TN-009).
 - The production audit row is written before the statement is sent, and a
   statement whose row cannot be written is not sent. The row used to be
   written after the statement finished, in the background, with any failure
