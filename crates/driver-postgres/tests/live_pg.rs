@@ -2070,3 +2070,121 @@ async fn explain_analyze_executes_a_writing_cte_and_plain_explain_does_not() {
         "EXPLAIN ANALYZE creates the table SELECT INTO names"
     );
 }
+
+/// TN-002: a row edit must not land in a different table than the one the
+/// query read.
+///
+/// `SELECT … FROM tn002_users` reads whichever table of that name the
+/// session's `search_path` finds first. The app's catalog can only guess the
+/// schema, so the UPDATE it builds carries `to_regclass($n) = to_regclass($m)`:
+/// the name as the query wrote it against the table being written. This runs
+/// that exact shape against a server where the guess is wrong, where it is
+/// right, and where a temp table shadows the real one.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn a_row_edit_refuses_a_table_the_query_did_not_read() {
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    for sql in [
+        "DROP SCHEMA IF EXISTS tn002_a CASCADE",
+        "DROP SCHEMA IF EXISTS tn002_b CASCADE",
+        "CREATE SCHEMA tn002_a",
+        "CREATE SCHEMA tn002_b",
+        "CREATE TABLE tn002_a.tn002_users (id int PRIMARY KEY, status text)",
+        "CREATE TABLE tn002_b.tn002_users (id int PRIMARY KEY, status text)",
+        "INSERT INTO tn002_a.tn002_users VALUES (1, 'active')",
+        "INSERT INTO tn002_b.tn002_users VALUES (1, 'active')",
+    ] {
+        s.execute(req(sql), &NullSink).await.unwrap();
+    }
+
+    // What `buildUpdate` produces for a catalog that guessed schema `a`.
+    let update = |written: &str| {
+        req_params(
+            format!(
+                "UPDATE {written} SET \"status\" = $1 WHERE \"id\" = $2 \
+                 AND \"status\" IS NOT DISTINCT FROM $3 \
+                 AND to_regclass($4) = to_regclass($5)"
+            ),
+            vec![
+                ParamValue::Text("suspended".into()),
+                ParamValue::Int(1),
+                ParamValue::Text("active".into()),
+                ParamValue::Text("tn002_users".into()),
+                ParamValue::Text(written.into()),
+            ],
+        )
+    };
+    async fn status(s: &mut tuplenest_driver_postgres::PostgresSession, table: &str) -> String {
+        let sink = CollectSink::default();
+        s.execute(
+            req(format!("SELECT status FROM {table} WHERE id = 1")),
+            &sink,
+        )
+        .await
+        .unwrap();
+        let rows = sink.rows.lock().unwrap();
+        text_of(&rows[0][0])
+    }
+    let a = "\"tn002_a\".\"tn002_users\"";
+    let b = "\"tn002_b\".\"tn002_users\"";
+
+    // The session reads schema b; the app guessed a. Without the test this
+    // UPDATE matched one row of a table the grid never showed.
+    s.execute(req("SET search_path = tn002_b, tn002_a"), &NullSink)
+        .await
+        .unwrap();
+    let done = s.execute(update(a), &NullSink).await.unwrap();
+    assert_eq!(
+        done.rows_affected,
+        Some(0),
+        "the wrong table must not be written"
+    );
+    assert_eq!(status(&mut s, a).await, "active");
+    assert_eq!(status(&mut s, b).await, "active");
+
+    // The guess is right: the edit lands, and only there.
+    let done = s.execute(update(b), &NullSink).await.unwrap();
+    assert_eq!(done.rows_affected, Some(1));
+    assert_eq!(status(&mut s, b).await, "suspended");
+    assert_eq!(status(&mut s, a).await, "active");
+
+    // A temp table of the same name shadows both.
+    s.execute(
+        req("CREATE TEMP TABLE tn002_users (id int PRIMARY KEY, status text)"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    let done = s.execute(update(a), &NullSink).await.unwrap();
+    assert_eq!(
+        done.rows_affected,
+        Some(0),
+        "a shadowing temp table is not schema a"
+    );
+    assert_eq!(status(&mut s, a).await, "active");
+
+    // A name that resolves to nothing compares as NULL, which is not a match.
+    s.execute(req("DROP TABLE tn002_users"), &NullSink)
+        .await
+        .unwrap();
+    s.execute(req("SET search_path = pg_catalog"), &NullSink)
+        .await
+        .unwrap();
+    let done = s.execute(update(a), &NullSink).await.unwrap();
+    assert_eq!(
+        done.rows_affected,
+        Some(0),
+        "an unresolvable name is not a match"
+    );
+
+    for sql in [
+        "RESET search_path",
+        "DROP SCHEMA tn002_a CASCADE",
+        "DROP SCHEMA tn002_b CASCADE",
+    ] {
+        s.execute(req(sql), &NullSink).await.unwrap();
+    }
+}
