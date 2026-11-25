@@ -9,6 +9,12 @@ From a second audit, which re-tested every fix in 0.1.1-beta.12 rather than
 trusting it.
 
 ### Safety
+- The title bar and the status bar name the connection that is live. They were
+  built from the connection form, and the form is rewritten whenever a profile
+  is opened for editing or a new one is started: with a session on one
+  database, the bars showed another's name, host and TLS mode, or nothing. The
+  environment pill and the production banner were already taken from the
+  session (audit TN-006).
 - Escape no longer dismisses a running import. The dialog refused the key
   itself, but only when focus was inside it; with focus on the page — after a
   click on the backdrop — the app-wide handler closed the dialog and the

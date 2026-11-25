@@ -226,3 +226,51 @@ describe("App — the editor toolbar", () => {
     expect(screen.getByRole("button", { name: /^Cancel$/ })).toBeDisabled();
   });
 });
+
+// Audit TN-006. The bars were built from the connection form, and the form is
+// rewritten whenever an editor opens: with a session live on one profile, the
+// title bar and the status bar named whatever the form held.
+describe("App — the bars name the live session, not the form", () => {
+  const title = () => document.querySelector(".conn-switch .name")?.textContent;
+  const titleHost = () => document.querySelector(".conn-switch .host")?.textContent;
+  const footer = () => document.querySelector("footer.statusbar")?.textContent ?? "";
+
+  it("keeps the connected profile's name, host and TLS while a new connection is being filled in", async () => {
+    const user = await connected();
+    expect(title()).toBe(CONNECTION.name);
+    expect(titleHost()).toBe("appuser@localhost:5432");
+
+    await palette(user, "New connection");
+    const host = await screen.findByLabelText("Host");
+    await user.clear(host);
+    await user.type(host, "prod-db.internal");
+    const username = screen.getByLabelText("Username");
+    await user.clear(username);
+    await user.type(username, "root");
+
+    // Nothing was connected to: one `pg_connect`, to the first profile.
+    expect(be.sent("pg_connect")).toHaveLength(1);
+    expect(title()).toBe(CONNECTION.name);
+    expect(titleHost()).toBe("appuser@localhost:5432");
+    expect(footer()).toContain(CONNECTION.name);
+    expect(footer()).not.toContain("prod-db.internal");
+    expect(footer()).toContain("prefer");
+  });
+
+  it("goes back to the form once nothing is connected", async () => {
+    const user = await connected();
+    await palette(user, "Disconnect");
+    await waitFor(() => expect(title()).toBe("Not connected"));
+    expect(footer()).toContain("disconnected");
+  });
+
+  it("names a session that has no saved profile by where it goes", async () => {
+    // A profile deleted while connected: the session is still there.
+    const user = await connected();
+    be.on("connection_list", () => []);
+    vi.mocked(ask).mockResolvedValue(true);
+    await user.click(screen.getByRole("button", { name: `Delete ${CONNECTION.name}` }));
+    await waitFor(() => expect(title()).toBe("appuser@localhost"));
+    expect(titleHost()).toBe("appuser@localhost:5432");
+  });
+});

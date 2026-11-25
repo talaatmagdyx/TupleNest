@@ -145,7 +145,7 @@ export default function App() {
   // The session. `connected` follows the server, never the form — the hook
   // owns that rule.
   const session = useConnection();
-  const { connected, connectedEnv, serverVersion, status, setStatus, stages, testing, testSummary } = session;
+  const { connected, connectedEnv, connectedTo, serverVersion, status, setStatus, stages, testing, testSummary } = session;
   const [updateInfo, setUpdateInfo] = useState<{ version: string; notes: string } | null>(null);
   // Execution and its result state live in a hook; App keeps the overlays.
   const query = useQuery();
@@ -408,8 +408,10 @@ export default function App() {
     setSchemaExtra(null);
   }, [query, tx]);
 
-  const doConnect = useCallback(async () => {
-    const out = await session.connect(await withSecret(), environment);
+  const doConnect = useCallback(async (savedId?: string) => {
+    // `savedId`: Save & Connect has the new profile's id before the form's
+    // state has caught up with it.
+    const out = await session.connect(await withSecret(), environment, savedId ?? profileId);
     if (!out.ok) {
       showToast(out.message.slice(0, 90));
       return;
@@ -417,7 +419,7 @@ export default function App() {
     forgetSession(); // connecting replaces whatever session there was
     afterConnect();
     showToast(`Connected — ${username}@${host}/${database}`);
-  }, [session, withSecret, environment, forgetSession, afterConnect, showToast, username, host, database]);
+  }, [session, withSecret, environment, profileId, forgetSession, afterConnect, showToast, username, host, database]);
 
   const reallyDisconnect = useCallback(async () => {
     await session.disconnect();
@@ -511,6 +513,7 @@ export default function App() {
           ssh,
         },
         c.environment ?? "dev",
+        c.id,
       );
       if (!out.ok) {
         showToast(out.message.slice(0, 90));
@@ -568,7 +571,7 @@ export default function App() {
     const rec = await doSaveProfile();
     if (!rec) return;
     setOverlay(null);
-    await doConnect();
+    await doConnect(rec.id);
   }, [doSaveProfile, doConnect]);
 
   /** Open the SQL-intelligence modal on a named pane. */
@@ -1488,8 +1491,17 @@ export default function App() {
 
   /* ---------------- render ---------------- */
 
-  const activeProfile = saved.find((c) => c.id === profileId) ?? null;
   const isProd = connected && connectedEnv === "prod";
+  // What the bars call the connection. While a session is live that is the
+  // session's own target: the form (`profileId`, `host`, `tlsMode`, …) is
+  // rewritten as soon as another profile is opened for editing, and the bars
+  // then named a database the queries were not going to.
+  const liveId = connected && connectedTo ? connectedTo.profileId : profileId;
+  const liveUser = connected && connectedTo ? connectedTo.username : username;
+  const liveHost = connected && connectedTo ? connectedTo.host : host;
+  const livePort = connected && connectedTo ? connectedTo.port : port;
+  const liveTls = connected && connectedTo ? connectedTo.tlsMode : tlsMode;
+  const liveProfile = saved.find((c) => c.id === liveId) ?? null;
   // HUD design: two-state label — live when connected, cached otherwise.
   const explorerSource: "live" | "cached" | "—" =
     connected && !metaCached ? "live" : schemas !== null || metaCached ? "cached" : "—";
@@ -1547,11 +1559,11 @@ export default function App() {
       <Titlebar
         theme={theme}
         connected={connected}
-        activeName={activeProfile?.name ?? profileName ?? "No connection"}
-        activeUserHost={host ? `${username || "?"}@${host}:${port}` : ""}
+        activeName={liveProfile?.name ?? (connected ? `${liveUser || "?"}@${liveHost}` : profileName || "No connection")}
+        activeUserHost={liveHost ? `${liveUser || "?"}@${liveHost}:${livePort}` : ""}
         activeEnv={connected ? (connectedEnv ?? "dev") : environment}
         saved={saved}
-        activeId={profileId}
+        activeId={liveId}
         connMenu={connMenu}
         onToggleConnMenu={() => setConnMenu((v) => !v)}
         onSelectProfile={selectProfile}
@@ -1590,7 +1602,7 @@ export default function App() {
             <>
               <SavedList
                 saved={saved}
-                activeId={profileId}
+                activeId={liveId}
                 connected={connected}
                 onLoad={editProfile}
                 onNew={newProfile}
@@ -1750,8 +1762,8 @@ export default function App() {
       <StatusBar
         connected={connected}
         isProd={isProd}
-        connName={activeProfile?.name ?? `${username || "?"}@${host}`}
-        tlsMode={tlsMode}
+        connName={liveProfile?.name ?? `${liveUser || "?"}@${liveHost}`}
+        tlsMode={liveTls}
         explorerSource={explorerSource}
         rowsInfo={result && result.columns.length > 0 ? rowsInfo : ""}
         txOpenSince={txOpenSince}
