@@ -168,6 +168,21 @@ impl PgState {
     }
 
     pub fn new(cache: tuplenest_metadata_cache::MetadataCache) -> Self {
+        // Earlier builds stored live-only answers (see `cacheable`). Not
+        // writing them any more does not remove the ones already on disk.
+        match cache.delete_types(&LIVE_ONLY_TYPES) {
+            Ok(0) => {}
+            Ok(removed) => tracing::info!(
+                component = "metadata-cache",
+                removed,
+                "removed live-only entries stored by an earlier version"
+            ),
+            Err(e) => tracing::warn!(
+                component = "metadata-cache",
+                error = %e,
+                "could not remove live-only entries"
+            ),
+        }
         Self {
             session: AsyncMutex::new(None),
             cancel: StdMutex::new(None),
@@ -1882,6 +1897,47 @@ pub struct MetadataOut {
     pub fetched_at: Option<i64>,
 }
 
+/// Whether a request's answer may be kept on disk.
+///
+/// Only the shape of the database: names, columns, keys, types. Everything
+/// else is a live fact — and some of it is other people's data.
+/// `pg_stat_statements` returns the text of statements run by every
+/// application on the server, a search stores the term that was typed, and
+/// sizes and usage counters are numbers people act on. The comments in
+/// `cache_scope` have always said these are never cached; the code cached all
+/// of them, on production connections too, and served the stale copy when the
+/// live request failed.
+///
+/// An allowlist, so a request added later is live-only until someone decides
+/// otherwise.
+fn cacheable(request: &MetadataRequest) -> bool {
+    matches!(
+        request,
+        MetadataRequest::ServerInfo
+            | MetadataRequest::ListSchemas
+            | MetadataRequest::ListObjects { .. }
+            | MetadataRequest::DescribeObject { .. }
+            | MetadataRequest::Relationships { .. }
+            | MetadataRequest::ListPartitions { .. }
+            | MetadataRequest::ListConstraints { .. }
+            | MetadataRequest::ListTypes { .. }
+            | MetadataRequest::ListRoutines { .. }
+    )
+}
+
+/// The cache's names for the requests that are not `cacheable`. Rows of these
+/// types were written by earlier builds and are removed at startup.
+pub const LIVE_ONLY_TYPES: [&str; 8] = [
+    "activity",
+    "indexes",
+    "details",
+    "index_health",
+    "table_health",
+    "top_queries",
+    "search",
+    "partition_overview",
+];
+
 /// (object_type, schema_scope, name_scope) addressing for a request.
 fn cache_scope(request: &MetadataRequest) -> (&'static str, String, String) {
     match request {
@@ -1939,6 +1995,9 @@ fn read_cache(
     key: &str,
     request: &MetadataRequest,
 ) -> Result<Option<MetadataOut>, String> {
+    if !cacheable(request) {
+        return Ok(None);
+    }
     let cache = state.cache.lock().map_err(|_| "cache lock poisoned")?;
     let (object_type, schema, name) = cache_scope(request);
     let out = match request {
@@ -1983,6 +2042,9 @@ fn write_cache(
     request: &MetadataRequest,
     payload: &serde_json::Value,
 ) -> Result<(), String> {
+    if !cacheable(request) {
+        return Ok(());
+    }
     let mut cache = state.cache.lock().map_err(|_| "cache lock poisoned")?;
     let (object_type, schema, name) = cache_scope(request);
     match request {
@@ -2934,5 +2996,135 @@ mod wide_bench {
             out.rows,
             t.elapsed().as_millis()
         );
+    }
+}
+
+// Audit TN-012. Health-panel answers (including `pg_stat_statements` query
+// text) and search terms were written to metadata-cache.db and served back
+// when the live request failed.
+#[cfg(test)]
+mod cache_policy_tests {
+    use super::*;
+    use serde_json::json;
+
+    const KEY: &str = "u@h:5432/db";
+
+    fn request(v: serde_json::Value) -> MetadataRequest {
+        serde_json::from_value(v).expect("a metadata request")
+    }
+    fn state() -> PgState {
+        PgState::new(tuplenest_metadata_cache::MetadataCache::open_in_memory().unwrap())
+    }
+    fn live_only() -> Vec<MetadataRequest> {
+        vec![
+            request(json!({"kind": "server_activity"})),
+            request(json!({"kind": "list_indexes", "schema": "public", "table": "t"})),
+            request(
+                json!({"kind": "object_details", "schema": "public", "name": "t", "objectKind": "table"}),
+            ),
+            request(json!({"kind": "index_health", "schema": null})),
+            request(json!({"kind": "table_health", "schema": "public"})),
+            request(json!({"kind": "top_queries", "limit": 20})),
+            request(json!({"kind": "search_objects", "term": "invoice", "limit": 50})),
+            request(json!({"kind": "partition_overview", "schema": "public", "table": "t"})),
+        ]
+    }
+    fn structural() -> Vec<MetadataRequest> {
+        vec![
+            request(json!({"kind": "server_info"})),
+            request(json!({"kind": "list_schemas"})),
+            request(json!({"kind": "list_objects", "schema": "public"})),
+            request(json!({"kind": "describe_object", "schema": "public", "name": "t"})),
+            request(json!({"kind": "relationships", "schema": "public"})),
+            request(json!({"kind": "list_partitions", "schema": "public", "table": "t"})),
+            request(json!({"kind": "list_constraints", "schema": "public", "table": "t"})),
+            request(json!({"kind": "list_types", "schema": "public"})),
+            request(json!({"kind": "list_routines", "schema": "public"})),
+        ]
+    }
+
+    #[test]
+    fn a_live_only_answer_is_neither_written_nor_read() {
+        let state = state();
+        let payload = json!([{"query": "UPDATE accounts SET balance = 0 WHERE owner = 'alice'"}]);
+        for req in live_only() {
+            write_cache(&state, KEY, &req, &payload).unwrap();
+            assert!(
+                read_cache(&state, KEY, &req).unwrap().is_none(),
+                "{req:?} came back from the cache"
+            );
+            // And nothing reached the store under its name.
+            let (object_type, schema, name) = cache_scope(&req);
+            let cache = state.cache.lock().unwrap();
+            assert!(
+                cache
+                    .get(KEY, object_type, &schema, &name)
+                    .unwrap()
+                    .is_none(),
+                "{object_type} was written"
+            );
+        }
+    }
+
+    #[test]
+    fn a_live_only_answer_already_on_disk_is_not_served() {
+        // What an earlier build left behind, put there directly.
+        let state = state();
+        for req in live_only() {
+            let (object_type, schema, name) = cache_scope(&req);
+            state
+                .cache
+                .lock()
+                .unwrap()
+                .put(KEY, object_type, &schema, &name, "[\"stale\"]")
+                .unwrap();
+            assert!(read_cache(&state, KEY, &req).unwrap().is_none(), "{req:?}");
+        }
+    }
+
+    #[test]
+    fn the_shape_of_the_database_is_still_cached() {
+        let state = state();
+        for req in structural() {
+            let payload = match req {
+                MetadataRequest::ListSchemas => json!(["public"]),
+                MetadataRequest::ListObjects { .. } => json!([{"name": "t", "kind": "table"}]),
+                _ => json!({"ok": true}),
+            };
+            write_cache(&state, KEY, &req, &payload).unwrap();
+            let back = read_cache(&state, KEY, &req)
+                .unwrap()
+                .unwrap_or_else(|| panic!("{req:?} was not cached"));
+            assert!(back.cached);
+            assert_eq!(back.payload, payload, "{req:?}");
+        }
+    }
+
+    #[test]
+    fn every_request_is_one_or_the_other_and_the_purge_list_matches() {
+        for req in live_only() {
+            assert!(!cacheable(&req), "{req:?}");
+            assert!(LIVE_ONLY_TYPES.contains(&cache_scope(&req).0), "{req:?}");
+        }
+        for req in structural() {
+            assert!(cacheable(&req), "{req:?}");
+            assert!(!LIVE_ONLY_TYPES.contains(&cache_scope(&req).0), "{req:?}");
+        }
+        assert_eq!(live_only().len(), LIVE_ONLY_TYPES.len());
+    }
+
+    #[test]
+    fn starting_up_removes_what_an_earlier_version_stored() {
+        let cache = tuplenest_metadata_cache::MetadataCache::open_in_memory().unwrap();
+        cache
+            .put(KEY, "top_queries", "", "", "[\"select * from payroll\"]")
+            .unwrap();
+        cache.put(KEY, "search", "salary", "", "[]").unwrap();
+        cache.put(KEY, "columns", "public", "t", "[]").unwrap();
+        let state = PgState::new(cache);
+        let cache = state.cache.lock().unwrap();
+        assert!(cache.get(KEY, "top_queries", "", "").unwrap().is_none());
+        assert!(cache.get(KEY, "search", "salary", "").unwrap().is_none());
+        assert!(cache.get(KEY, "columns", "public", "t").unwrap().is_some());
     }
 }

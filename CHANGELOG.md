@@ -76,6 +76,14 @@ trusting it.
   numeric.
 
 ### Security
+- Live-only answers are no longer written to the on-disk schema cache. The
+  Health panel's results — including `pg_stat_statements`, which holds the
+  text of statements run by every application on the server — search terms,
+  index usage, object sizes and server activity were all stored in
+  `metadata-cache.db`, on production connections too, and served back when the
+  live request failed. Only the shape of the database is cached now, and
+  entries of the other kinds left by earlier versions are removed at startup
+  (audit TN-012).
 - Passwords in SQL are redacted in every spelling before the statement is
   stored in history or the production audit log. The redactor looked for the
   next quote character, so `PASSWORD 'it''s-secret'` left `s-secret` on disk,
