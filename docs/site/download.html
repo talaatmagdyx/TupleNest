@@ -144,14 +144,16 @@ minisign -Vm &lt;artifact&gt; -P &lt;public-key&gt;</pre></div>
 git clone https://github.com/talaatmagdyx/TupleNest
 cd TupleNest/apps/desktop
 
-<span class="c"># install frontend deps</span>
-npm install
+<span class="c"># install frontend deps, exactly as locked</span>
+npm ci --include=dev
 
 <span class="c"># run in development</span>
 npm run tauri dev
 
-<span class="c"># production build (installers land in src-tauri/target/release/bundle)</span>
-npm run tauri build</pre></div>
+<span class="c"># production build (lands in target/release/bundle at the repository root).
+# Not plain "tauri build": that also signs updater artifacts, and fails
+# without the release key.</span>
+npm run build:app -- --bundles app</pre></div>
     <div class="callout info" style="margin-top:20px">Tauri prerequisites differ per platform (Xcode CLT on macOS; MSVC + WebView2 on Windows; webkit2gtk + build-essential on Linux). See the Tauri docs linked from the repository README.</div>
   </div>
 </section>

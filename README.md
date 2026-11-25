@@ -368,9 +368,13 @@ Three rules hold the shape:
 ```sh
 # build from source
 cd apps/desktop
-npm install --include=dev     # NOT plain npm install — see note
-npm run tauri build
+npm ci --include=dev                  # NOT plain npm ci — see note
+npm run build:app -- --bundles app    # no updater artifacts, so no signing key needed
 ```
+
+The app lands in `target/release/bundle/` at the repository root. Plain
+`npm run tauri build` is what the release workflow runs: it also signs updater
+artifacts, and fails at that step without the release key.
 
 <details>
 <summary><b>The <code>NODE_ENV</code> gotcha</b> (read before your first build)</summary>

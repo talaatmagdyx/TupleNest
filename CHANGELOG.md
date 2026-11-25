@@ -85,6 +85,11 @@ trusting it.
   numeric.
 
 ### Security
+- The release SBOM set includes the application crate. The collection step
+  searched three directories deep and the app lives four deep, so the SBOM
+  listing Tauri, the WebView bindings and the updater was never attached. The
+  step now fails unless there is one SBOM per workspace crate plus the
+  frontend's (audit TN-028).
 - The privacy policy, the security page and the website no longer claim what
   the code does not do: result rows are not "memory only" (a large result
   spills to an unnamed temporary file), the update-signing key is not "held
