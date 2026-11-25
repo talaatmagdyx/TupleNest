@@ -89,6 +89,10 @@ trusting it.
 - Secrets in JSON shapes are redacted; logs keep 14 days.
 
 ### Performance and reliability
+- Connecting through an SSH tunnel gives up after 20 seconds. There was no
+  limit on the SSH handshake, so a bastion that accepted the connection and
+  then said nothing left Connect and Test waiting forever, with no way to
+  cancel (audit TN-016).
 - A result keeps at most 20,000 rows (was 50,000). With result cells now 24
   bytes instead of 48, peak memory for a 200-column result is 19 MB (was 30),
   and a first sort or chart is about 2.5 times faster.

@@ -28,6 +28,12 @@ pub enum TunnelError {
     Ssh(#[from] russh::Error),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("the SSH server at {host}:{port} did not finish connecting within {seconds} seconds")]
+    Timeout {
+        host: String,
+        port: u16,
+        seconds: u64,
+    },
 }
 
 /// How to authenticate to the SSH server. Passwords/passphrases are
@@ -122,8 +128,36 @@ impl client::Handler for HostKeyChecker {
     }
 }
 
+/// How long the SSH handshake and authentication may take together.
+///
+/// There was no limit. A host that accepts the TCP connection and then says
+/// nothing — a firewall tarpit, the wrong port, a half-dead bastion — left
+/// Connect waiting forever, with no way to cancel it. The PostgreSQL side has
+/// had a 15 second connect timeout all along; a tunnel adds one more hop.
+const OPEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// Opens the SSH session and starts the local forwarder.
 pub async fn open_tunnel(config: SshTunnelConfig) -> Result<SshTunnel, TunnelError> {
+    open_tunnel_within(config, OPEN_TIMEOUT).await
+}
+
+async fn open_tunnel_within(
+    config: SshTunnelConfig,
+    limit: std::time::Duration,
+) -> Result<SshTunnel, TunnelError> {
+    let (host, port) = (config.ssh_host.clone(), config.ssh_port);
+    // Dropping the future on timeout drops the half-open session with it.
+    match tokio::time::timeout(limit, open_tunnel_unbounded(config)).await {
+        Ok(result) => result,
+        Err(_) => Err(TunnelError::Timeout {
+            host,
+            port,
+            seconds: limit.as_secs(),
+        }),
+    }
+}
+
+async fn open_tunnel_unbounded(config: SshTunnelConfig) -> Result<SshTunnel, TunnelError> {
     let checker = HostKeyChecker {
         policy: config.host_key,
         ssh_host: config.ssh_host.clone(),
@@ -226,4 +260,83 @@ pub async fn open_tunnel(config: SshTunnelConfig) -> Result<SshTunnel, TunnelErr
 async fn pipe(mut local: TcpStream, channel: russh::Channel<client::Msg>) {
     let mut remote = channel.into_stream();
     let _ = tokio::io::copy_bidirectional(&mut local, &mut remote).await;
+}
+
+#[cfg(test)]
+mod open_timeout_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn config_for(port: u16) -> SshTunnelConfig {
+        SshTunnelConfig {
+            ssh_host: "127.0.0.1".into(),
+            ssh_port: port,
+            username: "nobody".into(),
+            auth: SshAuth::Password("unused".into()),
+            host_key: HostKeyPolicy::KnownHosts,
+            target_host: "127.0.0.1".into(),
+            target_port: 5432,
+        }
+    }
+
+    /// Audit TN-016. A peer that accepts the connection and never speaks used
+    /// to hold `open_tunnel` open indefinitely.
+    #[tokio::test]
+    async fn a_silent_server_is_given_up_on() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // Accept and hold the socket open without sending a byte.
+        let held = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            drop(socket);
+        });
+
+        let started = Instant::now();
+        let err = open_tunnel_within(config_for(port), Duration::from_millis(300))
+            .await
+            .err()
+            .expect("a silent server is not a tunnel");
+        assert!(
+            matches!(&err, TunnelError::Timeout { host, port: p, .. } if host == "127.0.0.1" && *p == port),
+            "{err}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(
+            err.to_string().contains("did not finish connecting"),
+            "{err}"
+        );
+        held.abort();
+    }
+
+    /// The limit must not turn an ordinary failure into a timeout: a refused
+    /// connection is reported as itself, at once.
+    #[tokio::test]
+    async fn a_refused_connection_is_still_reported_as_refused() {
+        // Bind to learn a free port, then close it so nothing is listening.
+        let port = {
+            let l = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let started = Instant::now();
+        let err = open_tunnel_within(config_for(port), Duration::from_secs(10))
+            .await
+            .err()
+            .expect("nothing is listening");
+        assert!(!matches!(err, TunnelError::Timeout { .. }), "{err}");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn the_limit_is_longer_than_the_postgres_connect_timeout() {
+        assert!(OPEN_TIMEOUT >= Duration::from_secs(15));
+    }
 }
