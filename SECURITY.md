@@ -99,6 +99,9 @@ Reporting these is not useful; they are documented decisions.
   release workflow signs with it, so the key and its passphrase are stored as
   GitHub Actions secrets. Anyone who can run a workflow in this repository
   with access to those secrets can sign an update.
+  The release build compiles everything first, with no secret in the
+  environment, and only then runs the bundler and signer with the key, so
+  the frontend toolchain and dependency build scripts do not see it.
 - **The keychain is the control protecting passwords in memory, not `Secret`.**
   `Secret` redacts `Debug`, cannot cross IPC, and wipes its own buffer on drop
   — but a brief unwiped copy passes through freed heap inside

@@ -174,6 +174,11 @@ trusting it.
   numeric.
 
 ### Security
+- The release build no longer exposes the update-signing key to the whole
+  build. The key was in the environment while the frontend toolchain ran and
+  while every dependency's build script ran. The build is now two passes:
+  compile with no secrets, then bundle and sign with them (audit TN-011).
+  Checked by hand on macOS; the workflow itself has not run since the change.
 - The release SBOM set includes the application crate. The collection step
   searched three directories deep and the app lives four deep, so the SBOM
   listing Tauri, the WebView bindings and the updater was never attached. The
