@@ -1871,7 +1871,8 @@ select.intel-input { font-family: var(--tn-sans); }
 /* A grid block that failed to load: pinned to the visible corner of the
    scroll area, so it is seen wherever the grid has been scrolled to. */
 .g-error {
-  position: sticky; top: 0; left: 0; z-index: 3;
+  /* 29px: the header's height. The header keeps the top edge. */
+  position: sticky; top: 29px; left: 0; z-index: 1;
   display: flex; align-items: center; gap: 10px;
   padding: 6px 10px; font-size: 12px;
   color: var(--tn-danger); background: var(--tn-s1);

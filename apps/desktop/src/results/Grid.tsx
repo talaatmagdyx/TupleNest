@@ -572,14 +572,6 @@ export default function Grid(p: Props) {
         setScrollLeft(Math.floor(el.scrollLeft / COL_STEP) * COL_STEP);
       }}
     >
-      {pageError && (
-        <div className="g-error" role="alert">
-          <span>Some rows could not be loaded: {pageError}</span>
-          <button className="btn" onClick={() => setRetry((n) => n + 1)}>
-            Retry
-          </button>
-        </div>
-      )}
       <div className="g-head" role="row" style={{ minWidth: totalW }}>
         <div className="g-rownum" role="columnheader" aria-label="Row number" style={{ width: NUM_W }} />
         {p.columns.map((c, ci) => (
@@ -607,6 +599,16 @@ export default function Grid(p: Props) {
           </div>
         ))}
       </div>
+      {/* After the header, and stuck just under it: placed before it, this
+          bar sat on top of the column names for as long as it was shown. */}
+      {pageError && (
+        <div className="g-error" role="alert">
+          <span>Some rows could not be loaded: {pageError}</span>
+          <button className="btn" onClick={() => setRetry((n) => n + 1)}>
+            Retry
+          </button>
+        </div>
+      )}
       {body}
       <div style={{ height: HEAD_H }} />
     </div>

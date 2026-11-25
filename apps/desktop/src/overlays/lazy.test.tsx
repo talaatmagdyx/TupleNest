@@ -35,7 +35,7 @@ describe("lazyModal", () => {
       </div>,
     );
     expect(await screen.findByText("This panel could not be opened")).toBeInTheDocument();
-    expect(screen.getByText("Failed to fetch chunk")).toBeInTheDocument();
+    expect(screen.getByText("Its code could not be loaded (Failed to fetch chunk).")).toBeInTheDocument();
     expect(screen.getByText("the app")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalled();
@@ -50,7 +50,7 @@ describe("lazyModal", () => {
         : Promise.resolve({ default: () => <div>opened</div> });
     });
     const first = render(<Modal onClose={() => {}} />);
-    expect(await screen.findByText("first try failed")).toBeInTheDocument();
+    expect(await screen.findByText("Its code could not be loaded (first try failed).")).toBeInTheDocument();
     first.unmount();
     render(<Modal onClose={() => {}} />);
     expect(await screen.findByText("opened")).toBeInTheDocument();
@@ -59,7 +59,7 @@ describe("lazyModal", () => {
   it("reports a rejection that is not an Error", async () => {
     const Modal = lazyModal<{ onClose: () => void }>(() => Promise.reject("offline"));
     render(<Modal onClose={() => {}} />);
-    expect(await screen.findByText("offline")).toBeInTheDocument();
+    expect(await screen.findByText("Its code could not be loaded (offline).")).toBeInTheDocument();
   });
 
   it("catches a modal that throws while rendering", async () => {

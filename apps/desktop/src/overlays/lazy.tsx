@@ -54,7 +54,12 @@ export function lazyModal<P extends object>(load: () => Promise<{ default: Compo
       let live = true;
       get().then(
         (m) => live && setReady(() => m.default),
-        (e: unknown) => live && setFailed(e instanceof Error ? e : new Error(String(e))),
+        // Said in words first. What the webview reports for a file it could
+        // not load is whatever it tripped over — a missing chunk came back
+        // as "Unexpected token '<'", which tells a user nothing.
+        (e: unknown) =>
+          live &&
+          setFailed(new Error(`Its code could not be loaded (${e instanceof Error ? e.message : String(e)}).`)),
       );
       return () => {
         live = false;
