@@ -120,8 +120,9 @@ export default function ConnectionForm(p: Props) {
             <div>
               <div className="st">Read-only connection</div>
               <div className="sd">
-                Asks PostgreSQL to refuse writes for the whole session. Enforced by the server, not
-                by TupleNest — a write fails at the database, not in the app.
+                Asks PostgreSQL to refuse writes for the whole session, and sends only statements that
+                read. Writes are refused by the server; maintenance commands the server would allow
+                (VACUUM, COPY, DO, CALL) are not sent.
               </div>
             </div>
             {/* Without these it is announced as an unlabelled button, and its

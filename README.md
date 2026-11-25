@@ -145,7 +145,7 @@ careful"* is not an architecture:
 
 | Layer | What it does | What enforces it |
 |---|---|---|
-| 🔒 **Read-only profiles** | Writes are refused | **PostgreSQL itself** (`SET SESSION CHARACTERISTICS … READ ONLY`), with the transaction's mode re-checked on the server before every statement, so the editor can't switch it back. A role without write privileges is the hard boundary |
+| 🔒 **Read-only profiles** | Writes are refused | **PostgreSQL itself** (`SET SESSION CHARACTERISTICS … READ ONLY`), with the transaction's mode re-checked on the server before every statement, so the editor can't switch it back. The app also sends only statements that read: PostgreSQL's read-only mode would let `VACUUM`, `ANALYZE`, `REINDEX`, `CHECKPOINT` and `COPY … TO PROGRAM` through. A function with a side effect called from a `SELECT` (`pg_terminate_backend`, …) is not stopped by either. A role without those privileges is the hard boundary |
 | ⚠️ **Destructive-statement guard** | No-`WHERE` `UPDATE`/`DELETE`, `DROP`, `TRUNCATE`, `ALTER`, `GRANT`… ask before running on prod *and* staging | SQL is masked (comments, strings, dollar-quotes) before matching — `-- where` can't disarm it. Best-effort by design: the seatbelt *light*, not the seatbelt |
 | ✏️ **Safe row editing** | Only single-table SELECTs with the full primary key are editable; joins, CTEs, groups refused *with a reason* | You review the exact `UPDATE`s first. Parameter-bound, keyed by the full PK, guarded with `IS NOT DISTINCT FROM` — a racing edit affects 0 rows and is **refused**, not silently won |
 | 🔁 **Transactions** | The tab that opened a transaction owns it | Committing from another tab is refused and names the owner. Closing mid-transaction always prompts |

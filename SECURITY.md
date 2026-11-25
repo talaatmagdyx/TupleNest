@@ -65,6 +65,12 @@ Reporting these is not useful; they are documented decisions.
   profile if you need enforcement — PostgreSQL enforces it, and the driver
   re-checks the transaction's mode before every statement. A database role
   without write privileges is stronger still.
+- **A read-only profile does not stop functions with side effects.** It
+  refuses every statement that does not start as a read (so `VACUUM`,
+  `ANALYZE`, `REINDEX`, `CHECKPOINT`, `COPY`, `DO` and `CALL` are not sent),
+  and PostgreSQL refuses writes to tables and the catalog. Neither can see
+  inside `SELECT pg_terminate_backend(…)`, `pg_reload_conf()` or `lo_unlink(…)`:
+  whether those run is the role's privileges.
 - **An SSH tunnel's local port is reachable by other local processes** while
   it is open, exactly like `ssh -L`: it listens on `127.0.0.1` on a random
   port. It has to accept more than one connection (query cancellation dials

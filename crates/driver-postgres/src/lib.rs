@@ -495,6 +495,16 @@ impl PostgresSession {
     /// Cancel (soft) or terminate (hard) another backend by pid — powers the
     /// monitoring panel's actions. Returns whether the admin call succeeded.
     pub async fn admin_backend(&self, pid: i32, terminate: bool) -> Result<bool, Box<DriverError>> {
+        // Cancelling or ending someone else's session is an effect on the
+        // server, and the read-only mode does not stop the functions that do
+        // it. A read-only profile does not send them.
+        if self.read_only {
+            return Err(DriverError::new(
+                ErrorCategory::Authorization,
+                "This connection is read-only: it does not cancel or terminate other                  sessions. Nothing was sent.",
+            )
+            .into());
+        }
         let sql = if terminate {
             "SELECT pg_terminate_backend($1)"
         } else {
@@ -661,6 +671,25 @@ impl DatabaseSession for PostgresSession {
                     ErrorCategory::Authorization,
                     "DO blocks and CALL are refused on a read-only connection: they can \
                      commit and change the transaction mode from inside. Nothing was run.",
+                )
+                .into());
+            }
+            // PostgreSQL's read-only mode stops writes to tables and to the
+            // catalog. It does not stop maintenance or server-side effects:
+            // VACUUM, ANALYZE, REINDEX, CLUSTER and CHECKPOINT all run in a
+            // read-only session, and `COPY … TO PROGRAM` runs a shell command
+            // on the server. So a read-only profile sends only what reads.
+            if !reads_only(first) {
+                return Err(DriverError::new(
+                    ErrorCategory::Authorization,
+                    format!(
+                        "{} is refused on a read-only connection: only statements that read                          are sent, and PostgreSQL's own read-only mode would not stop this                          one. Nothing was run.",
+                        if first.is_empty() {
+                            "This statement".to_owned()
+                        } else {
+                            first.to_ascii_uppercase()
+                        }
+                    ),
                 )
                 .into());
             }
@@ -2554,6 +2583,54 @@ fn ends_transaction(sql: &str) -> bool {
     )
 }
 
+/// May a read-only profile send a statement that starts with this word?
+///
+/// An allowlist, so a command added to PostgreSQL later is refused until
+/// someone decides otherwise. Everything here either reads or manages the
+/// session and its transaction; the server's read-only mode still judges what
+/// the statement does (`WITH … DELETE`, `SELECT … INTO`, `EXPLAIN ANALYZE` of
+/// a write, a prepared write on `EXECUTE`). `DO` and `CALL` are refused
+/// before this is asked.
+///
+/// What this cannot see is a function with a side effect called from a
+/// `SELECT` — `pg_terminate_backend`, `pg_reload_conf`, `lo_unlink`. Those are
+/// the role's privileges, and only the database can withhold them.
+fn reads_only(first_word: &str) -> bool {
+    matches!(
+        first_word,
+        // A statement that is only a comment, or empty: nothing to run.
+        ""
+            | "select"
+            | "with"
+            | "table"
+            | "values"
+            | "show"
+            | "explain"
+            // Session and transaction control.
+            | "set"
+            | "reset"
+            | "begin"
+            | "start"
+            | "commit"
+            | "end"
+            | "rollback"
+            | "abort"
+            | "savepoint"
+            | "release"
+            // Cursors and prepared statements.
+            | "declare"
+            | "fetch"
+            | "move"
+            | "close"
+            | "prepare"
+            | "execute"
+            | "deallocate"
+            | "listen"
+            | "unlisten"
+            | "discard"
+    )
+}
+
 /// The first `n` words of a statement, lowercased, skipping leading comments
 /// the way the server would.
 fn leading_words(sql: &str, n: usize) -> Vec<String> {
@@ -2772,6 +2849,70 @@ mod begin_statement_tests {
             let mut buf = tokio_postgres::types::private::BytesMut::new();
             p.to_sql_checked(&ty, &mut buf).unwrap();
             assert_eq!(&buf[..], b"007", "{ty}");
+        }
+    }
+
+    #[test]
+    fn a_read_only_profile_sends_only_what_reads() {
+        // Audit TN-009. By first word, as `execute` asks.
+        let first = |sql: &str| leading_words(sql, 1).first().cloned().unwrap_or_default();
+        for sql in [
+            "select 1",
+            "  SELECT now()",
+            "(select 1) union all (select 2)",
+            "with t as (select 1) select * from t",
+            "table pg_class",
+            "values (1), (2)",
+            "show server_version",
+            "explain select 1",
+            "/* why */ select 1",
+            "-- only a comment",
+            "",
+            "begin",
+            "start transaction read only",
+            "commit",
+            "rollback to savepoint a",
+            "savepoint a",
+            "set statement_timeout = 0",
+            "declare c cursor for select 1",
+            "fetch all from c",
+            "close c",
+            "prepare p as select 1",
+            "execute p",
+            "deallocate p",
+        ] {
+            assert!(reads_only(&first(sql)), "{sql:?} should be sent");
+        }
+        for sql in [
+            "vacuum",
+            "VACUUM FULL pg_class",
+            "analyze",
+            "reindex table t",
+            "cluster",
+            "checkpoint",
+            "copy (select 1) to program 'id'",
+            "COPY t TO '/tmp/out.csv'",
+            "copy t from stdin",
+            "/* x */ vacuum",
+            "lock table t",
+            "notify ch",
+            "load 'auto_explain'",
+            "insert into t values (1)",
+            "update t set x = 1",
+            "delete from t",
+            "merge into t using s on true when matched then delete",
+            "truncate t",
+            "create table t (x int)",
+            "drop table t",
+            "alter system set work_mem = '1GB'",
+            "grant all on t to public",
+            "refresh materialized view m",
+            "comment on table t is 'x'",
+            "security label on table t is 'x'",
+            "import foreign schema s from server x into public",
+            "some_command_from_a_future_release",
+        ] {
+            assert!(!reads_only(&first(sql)), "{sql:?} should be refused");
         }
     }
 

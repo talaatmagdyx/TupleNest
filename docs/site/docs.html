@@ -174,7 +174,7 @@
       <p style="margin-top:12px">On Windows and Linux, use Ctrl in place of ⌘. This is the same list the app shows for <code class="inline">?</code>; both come from one table in the source, so a binding cannot exist without appearing in both.</p>
 
       <h2 id="read-only">Read-only mode</h2>
-      <p>Turn on read-only for a connection and TupleNest issues a PostgreSQL read-only session characteristic — the <em>server</em> refuses writes, not just the UI. It's an accident guardrail; for strict enforcement, use a database role without write privileges.</p>
+      <p>Turn on read-only for a connection and TupleNest issues a PostgreSQL read-only session characteristic — the <em>server</em> refuses writes, not just the UI. TupleNest also sends only statements that read, because the server's read-only mode would still run <code class="inline">VACUUM</code>, <code class="inline">ANALYZE</code>, <code class="inline">CHECKPOINT</code> and <code class="inline">COPY … TO PROGRAM</code>. A function with a side effect called from a <code class="inline">SELECT</code> is not stopped. It's an accident guardrail; for strict enforcement, use a database role without write privileges.</p>
 
       <h2 id="dangerous">Dangerous statements</h2>
       <p>Statements like <code class="inline">DELETE</code>/<code class="inline">UPDATE</code> without a WHERE, or <code class="inline">DROP</code>/<code class="inline">TRUNCATE</code>, trigger a confirmation. The check masks comments and strings first, so a commented-out WHERE can't disarm it.</p>
