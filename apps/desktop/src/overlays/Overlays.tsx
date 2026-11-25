@@ -3,6 +3,7 @@ import { enterKey, kbd } from "../lib/platform";
 import { SHORTCUTS } from "../lib/shortcuts";
 import { BrandMark } from "../lib/icons";
 import { prettyJson } from "../lib/text";
+import { guardReason } from "../lib/sql";
 
 /* ---------- shared ---------- */
 
@@ -264,9 +265,9 @@ export function ParamPrompt(p: {
       <div className="modal dialog" style={{ width: 460 }}>
         <div className="d-title">Bind query parameters</div>
         <p style={{ marginBottom: 12 }}>
-          This query has {p.count} placeholder{p.count > 1 ? "s" : ""}. Values are typed
-          automatically: <span className="mono">null</span>, <span className="mono">true</span>/
-          <span className="mono">false</span>, numbers, else text.
+          This query has {p.count} placeholder{p.count > 1 ? "s" : ""}. Each value is sent as you type it and
+          read by the server for its placeholder&apos;s type, like a quoted literal. Leave a box empty, or type{" "}
+          <span className="mono">null</span>, for NULL.
         </p>
         {Array.from({ length: p.count }).map((_, i) => (
           <div key={i} className="field">
@@ -351,17 +352,24 @@ export function NamePrompt(p: {
 
 /* ---------- destructive statement guard ---------- */
 
-export function Guard(p: { sql: string; onCancel: () => void; onRun: () => void }) {
-  const verb = /^\s*delete/i.test(p.sql) ? "DELETE" : "UPDATE";
+export function Guard(p: { sql: string; env?: string | null; onCancel: () => void; onRun: () => void }) {
+  // The same judgement that opened this dialog, so it says why it opened.
+  // It used to say "Statement has no WHERE clause … this UPDATE will affect
+  // every row" for whatever it was asked about: a DROP TABLE, a DO block, a
+  // DELETE inside EXPLAIN ANALYZE.
+  const staging = p.env === "staging";
+  const reason = guardReason(p.sql, staging ? "staging" : "prod") ?? {
+    verb: "statement",
+    why: "It was flagged as one to confirm.",
+  };
   return (
     <Overlay onClose={p.onCancel} center>
       <div className="modal dialog">
         <div className="d-title" style={{ color: "var(--tn-danger)" }}>
-          ⚠ Statement has no WHERE clause
+          ⚠ Confirm this {reason.verb} on {staging ? "staging" : "production"}
         </div>
         <p>
-          This <b style={{ color: "var(--tn-tp)" }}>{verb}</b> will affect{" "}
-          <b style={{ color: "var(--tn-danger)" }}>every row</b> it touches. On a production
+          <b style={{ color: "var(--tn-danger)" }}>{reason.why}</b> On a {staging ? "staging" : "production"}{" "}
           connection this cannot be undone.
         </p>
         <pre>{p.sql.trim().slice(0, 400)}</pre>

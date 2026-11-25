@@ -327,6 +327,15 @@ describe("ParamPrompt", () => {
     expect(screen.getByText("$2")).toBeInTheDocument();
   });
 
+  it("says the server reads each value, and does not promise to guess a type", () => {
+    // The prompt described type guessing that TN-018 removed.
+    const { container } = render(<ParamPrompt {...base} />);
+    const text = container.ownerDocument.body.textContent ?? "";
+    expect(text).toMatch(/read by the server for its placeholder's type/);
+    expect(text).toMatch(/empty, or type null, for NULL/);
+    expect(text).not.toMatch(/typed automatically/);
+  });
+
   it("pluralises the count", () => {
     render(<ParamPrompt {...base} />);
     expect(screen.getByText(/2 placeholders/)).toBeInTheDocument();
@@ -372,18 +381,51 @@ describe("Guard", () => {
 
   it("names the verb it is guarding — UPDATE", () => {
     render(<Guard {...base} />);
-    expect(screen.getByText("UPDATE")).toBeInTheDocument();
+    expect(screen.getByText(/Confirm this UPDATE on production/)).toBeInTheDocument();
   });
 
   it("names the verb it is guarding — DELETE", () => {
     render(<Guard {...base} sql="  DELETE FROM t" />);
-    expect(screen.getByText("DELETE")).toBeInTheDocument();
+    expect(screen.getByText(/Confirm this DELETE on production/)).toBeInTheDocument();
   });
 
   it("says every row, and that it cannot be undone", () => {
     render(<Guard {...base} />);
-    expect(screen.getByText("every row")).toBeInTheDocument();
+    expect(screen.getByText(/no WHERE clause, so it affects every row/)).toBeInTheDocument();
     expect(screen.getByText(/cannot be undone/)).toBeInTheDocument();
+  });
+
+  // Found in a built app: the dialog said "Statement has no WHERE clause …
+  // this UPDATE will affect every row" for every statement it was shown for.
+  it.each([
+    ["DROP TABLE users", /Confirm this DROP/, /changes or removes database objects/],
+    ["TRUNCATE users", /Confirm this TRUNCATE/, /changes or removes database objects/],
+    ["DO $$ BEGIN DELETE FROM t; END $$", /Confirm this DO/, /cannot be seen from the statement/],
+    ["CALL purge()", /Confirm this CALL/, /cannot be seen from the statement/],
+    ["COPY t FROM '/tmp/x.csv'", /Confirm this COPY/, /writes rows straight into the table/],
+    ["DELETE FROM t WHERE 1=1", /Confirm this DELETE/, /WHERE clause is always true/],
+    ["EXPLAIN ANALYZE DELETE FROM t", /Confirm this DELETE/, /EXPLAIN ANALYZE runs the statement/],
+  ])("says why it is asking about %s", (sql, title, why) => {
+    render(<Guard {...base} sql={sql} />);
+    expect(screen.getByText(title)).toBeInTheDocument();
+    expect(screen.getByText(why)).toBeInTheDocument();
+    expect(screen.queryByText(/this UPDATE/i)).not.toBeInTheDocument();
+  });
+
+  it("does not claim a WHERE is missing when it is there", () => {
+    render(<Guard {...base} sql="DROP TABLE users" />);
+    expect(screen.queryByText(/no WHERE clause/)).not.toBeInTheDocument();
+  });
+
+  it("names staging on a staging connection", () => {
+    render(<Guard {...base} env="staging" />);
+    expect(screen.getByText(/Confirm this UPDATE on staging/)).toBeInTheDocument();
+    expect(screen.getByText(/On a staging connection/)).toBeInTheDocument();
+  });
+
+  it("still opens with something to say for a statement it would not have flagged", () => {
+    render(<Guard {...base} sql="select 1" />);
+    expect(screen.getByText(/Confirm this statement on production/)).toBeInTheDocument();
   });
 
   it("shows the statement being run", () => {

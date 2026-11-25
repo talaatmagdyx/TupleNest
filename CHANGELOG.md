@@ -94,6 +94,12 @@ trusting it.
   rolled back with it.
 
 ### Correctness
+- The confirmation dialog on prod and staging says why it opened. It said
+  "Statement has no WHERE clause … this UPDATE will affect every row" for
+  every statement it was shown for, including `DROP TABLE`, a `DO` block and
+  a `DELETE`. It now names the statement and gives the guard's own reason,
+  and says "staging" on a staging connection. The parameter prompt no longer
+  describes the type guessing that was removed.
 - A query parameter is sent as the text that was typed, and the server
   reads it for the placeholder's own type, as it would a quoted literal. The
   app used to guess a type from the characters and could bind only to
