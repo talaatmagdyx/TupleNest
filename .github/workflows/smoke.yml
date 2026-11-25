@@ -103,10 +103,15 @@ jobs:
       # A real server, so the connect spec exercises the driver rather than a
       # mock. Linux only — it is the only leg that runs the specs, and this
       # action takes roughly twenty minutes on a Windows runner.
+      # On both platforms: Linux for the WebDriver run, Windows for the
+      # keystroke-driven check further down.
       - name: PostgreSQL
-        if: runner.os == 'Linux'
         uses: ikalnytskyi/action-setup-postgres@325155bfd7807b2a21ac9c2c7bb9b9a6eacc44df # v9
         id: postgres
+        with:
+          # Chocolatey has no postgresql18 package yet, so the action's
+          # default fails on the Windows runner.
+          postgres-version: ${{ runner.os == 'Windows' && '17' || '18' }}
 
       - name: Download the release artifacts
         env:
@@ -190,6 +195,41 @@ jobs:
       # `npm install` away from silently resolving a different tree than the
       # one that was verified. It already happened once — a service version
       # that imports a symbol its own pinned dependency does not export.
+      # Past "a window opened". WebDriver cannot drive this build (see the top
+      # of this file), so the app is driven with keystrokes instead: connect
+      # through the command palette, run the query in the editor, and then
+      # read the app's own history and log for the result. See
+      # e2e/native_drive.py for why that is evidence and not a guess.
+      - name: Let the local PostgreSQL accept the app without a password (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          # The setup action writes the connection details, password
+          # included, to a pg_service.conf; psql reads them from there.
+          PGSERVICE: ${{ steps.postgres.outputs.service-name }}
+        run: |
+          set -euo pipefail
+          hba=$(psql -Atc "show hba_file")
+          printf 'host all all 127.0.0.1/32 trust\nhost all all ::1/128 trust\n' | cat - "$hba" > hba.new
+          cp hba.new "$hba"
+          psql -Atc "select pg_reload_conf()"
+
+      - name: Connect and run a query through the installed app (Windows)
+        if: runner.os == 'Windows'
+        env:
+          PGUSER: postgres
+          PGDATABASE: postgres
+        run: python e2e/native_drive.py "$env:TUPLENEST_BIN"
+
+      - name: Keep the screenshots (Windows)
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-drive-windows
+          path: native-*.png
+          retention-days: 3
+          if-no-files-found: ignore
+
       - name: Install test dependencies
         if: runner.os == 'Linux'
         run: npm ci
@@ -295,4 +335,41 @@ jobs:
             exit 1
           fi
           kill "$pid" || true
+
+      # And past "a window opened", the same way as on Windows.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: repo
+
+      - name: PostgreSQL
+        uses: ikalnytskyi/action-setup-postgres@325155bfd7807b2a21ac9c2c7bb9b9a6eacc44df # v9
+        id: postgres
+
+      - name: Let the local PostgreSQL accept the app without a password
+        env:
+          # The setup action writes the connection details, password
+          # included, to a pg_service.conf; psql reads them from there.
+          PGSERVICE: ${{ steps.postgres.outputs.service-name }}
+        run: |
+          set -euo pipefail
+          hba=$(psql -Atc "show hba_file")
+          printf 'host all all 127.0.0.1/32 trust\nhost all all ::1/128 trust\n' | cat - "$hba" > hba.new
+          cp hba.new "$hba"
+          psql -Atc "select pg_reload_conf()"
+
+      - name: Connect and run a query through the app
+        env:
+          PGUSER: postgres
+          PGDATABASE: postgres
+        run: python3 repo/e2e/native_drive.py "$PWD/artifacts/TupleNest.app/Contents/MacOS/tuplenest-desktop"
+
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-drive-intel-mac
+          path: native-*.png
+          retention-days: 3
+          if-no-files-found: ignore
 

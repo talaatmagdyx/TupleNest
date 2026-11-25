@@ -368,10 +368,48 @@ Git Bash on the Windows runner does not have. Pull request 86 changes it to
 Limits of this evidence: on Windows and on the Intel Mac the app is started
 and seen to open a window; nothing is clicked in it. Only Linux is driven.
 
-### Still resting on tests alone
+## Fifth verification pass (2026-11-25, late)
 
-- **TN-025**, a failed page of rows and a dialog that cannot be loaded. Neither
-  can be made to fail in a real build by hand.
+### TN-025 in a built app
+
+| Case | How it was made to fail | Seen |
+|---|---|---|
+| A dialog that cannot be loaded | The app was built, then the pasted-plan analyser's code file was deleted from the built frontend and the app bundled from what was left | "This panel could not be opened. The rest of the app is unaffected, and nothing was sent to the database." over a working window; the explorer and editor still answer |
+| A page of rows that cannot be fetched | A local build with a switch in `pg_rows` that fails on demand (never committed, removed afterwards); a 5,000-row result scrolled past what was loaded with the switch on | "Some rows could not be loaded: …" with Retry; with the switch off, Retry loads the rows |
+
+Two defects found and fixed in pull request 87: the bar covered the grid's
+column headers while it was shown, and a missing dialog file was described
+only as "Unexpected token '<'".
+
+### Windows and the Intel Mac, driven
+
+Pull request 88 adds `e2e/native_drive.py` to the Smoke workflow on both. It
+adds a profile to the installed app's store, starts the app, connects through
+the command palette by keystrokes, runs the query in the editor, and passes
+only if the app's own history holds that query as a one-row success and its
+log says a session was opened.
+
+Smoke run 45699087910 against Release run 45682026563:
+
+| Machine | Database | Result |
+|---|---|---|
+| Windows, x86_64, installed `.msi` | PostgreSQL 17.12 on the runner | history `select now(), version()`, success, 1 row; session opened |
+| macOS on an Intel runner | PostgreSQL 18.6 on the runner | the same |
+| Ubuntu 22.04 | PostgreSQL on the runner | the 21 WebDriver tests, as before |
+
+The screenshots each machine took after the query are in
+`evidence/native-drive/`: the grid shows the row, the status bar names the
+server and the platform.
+
+The run before it (45698523097) failed in setup on both: no PostgreSQL 18
+package for Windows, and empty credentials passed to the Mac's `psql`.
+
+### Nothing left resting on tests alone
+
+Every item that was listed as proven only by tests has now been seen in a
+built app. What is still not exercised at runtime: on Windows and the Intel
+Mac, anything beyond connecting and running a query; on Linux, anything
+beyond the 21 tests.
 
 ## What "done" means for the scores
 
