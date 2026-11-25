@@ -165,3 +165,64 @@ describe("App — deleting the connected profile", () => {
     await waitFor(() => expect(be.sent("connection_delete")).toHaveLength(1));
   });
 });
+
+// Audit TN-024. The UI's transaction flag follows only the Begin button. A
+// BEGIN typed in the editor was invisible to every way of leaving the session
+// except closing the window.
+describe("App — a transaction opened by typing BEGIN", () => {
+  const typedBegin = () => be.on("pg_in_transaction", () => true);
+
+  it("is asked about before Disconnect drops the session", async () => {
+    const user = await connected();
+    typedBegin();
+    const before = be.sent("pg_disconnect").length;
+    await palette(user, "Disconnect");
+    expect(await screen.findByText(/open transaction|uncommitted/i)).toBeInTheDocument();
+    expect(be.sent("pg_in_transaction").length).toBeGreaterThan(0);
+    expect(be.sent("pg_disconnect")).toHaveLength(before);
+  });
+
+  it("is asked about before the connection switcher replaces the session", async () => {
+    const user = await connected();
+    typedBegin();
+    await palette(user, "Connect to prod db");
+    expect(await screen.findByText(/open transaction|uncommitted/i)).toBeInTheDocument();
+    expect(be.sent("pg_connect")).toHaveLength(1);
+  });
+
+  it("holds an update back", async () => {
+    const { check } = await import("@tauri-apps/plugin-updater");
+    const downloadAndInstall = vi.fn();
+    vi.mocked(check).mockResolvedValue({ version: "0.2.0", body: "fixes", downloadAndInstall } as never);
+    const user = await connected();
+    typedBegin();
+    const toast = (await waitFor(() => {
+      const t = document.querySelector(".update-toast");
+      expect(t).not.toBeNull();
+      return t;
+    })) as HTMLElement;
+    await user.click(within(toast).getByRole("button", { name: /restart|update|install/i }));
+    expect(await screen.findByText(/Commit or roll back your transaction before updating/)).toBeInTheDocument();
+    expect(downloadAndInstall).not.toHaveBeenCalled();
+  });
+
+  it("does not get in the way when there is no transaction", async () => {
+    const user = await connected();
+    const before = be.sent("pg_disconnect").length;
+    await palette(user, "Disconnect");
+    await waitFor(() => expect(be.sent("pg_disconnect").length).toBeGreaterThan(before));
+    expect(screen.queryByText(/open transaction|uncommitted/i)).not.toBeInTheDocument();
+  });
+
+  it("lets the session go when the server cannot even be asked", async () => {
+    // The check failing means the session is already gone; there is nothing
+    // left to protect, and refusing to disconnect would trap the user.
+    const user = await connected();
+    be.on("pg_in_transaction", () => {
+      throw new Error("connection closed");
+    });
+    const before = be.sent("pg_disconnect").length;
+    await palette(user, "Disconnect");
+    await waitFor(() => expect(be.sent("pg_disconnect").length).toBeGreaterThan(before));
+  });
+});

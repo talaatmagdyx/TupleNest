@@ -9,6 +9,11 @@ From a second audit, which re-tested every fix in 0.1.1-beta.12 rather than
 trusting it.
 
 ### Safety
+- Disconnect, the connection switcher and the updater ask the server whether
+  a transaction is open. They went by the app's own flag, which follows only
+  the Begin button, so a transaction opened by typing `BEGIN` was dropped with
+  its uncommitted work and no prompt. Closing the window already asked (audit
+  TN-024).
 - Switching connection clears what the previous one put on screen. Only
   Disconnect did; after the titlebar switcher or Save & Connect over a live
   session, the previous database's rows stayed in the grid — dev rows under
