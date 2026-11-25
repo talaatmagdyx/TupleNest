@@ -285,10 +285,40 @@ would now appear over a working window.
 ### Release workflow (TN-011)
 
 Run 45672866668, a manual dispatch on `main` at `ff4a9a3`, approved by the
-owner. It produces a draft `-dev` build; nothing is published. Results are in
-the table that follows once the run has finished.
+owner. All five jobs succeeded. It produced the draft pre-release `v16-dev`
+with 29 assets; nothing is published. Counted from the job logs:
 
-RELEASE_RUN_RESULTS
+| Target | Compile step (no secrets) | Bundle-and-sign step (keys present) |
+|---|---|---|
+| Linux x86_64 | 510 crates compiled; frontend build ran | 1 crate compiled (`tuplenest-desktop`); no frontend build; 3 bundles, 3 updater signatures |
+| macOS Apple Silicon | 428 crates; frontend build ran | 1 crate (`tuplenest-desktop`); no frontend build; `.app.tar.gz.sig` produced |
+| macOS Intel | 429 crates; frontend build ran | 1 crate (`tuplenest-desktop`); no frontend build; `.app.tar.gz.sig` produced |
+| Windows x86_64 | 427 crates; frontend build ran | 1 crate (`tuplenest-desktop`); no frontend build; installers signed |
+
+So with the signing key in the environment, no dependency was compiled and
+the JavaScript toolchain did not run, on every target. The one crate that is
+rebuilt is this repository's own, because its embedded configuration differs
+between the two passes.
+
+The same run confirms TN-028: the release carries `tuplenest-desktop.cdx.json`
+beside the nine crate SBOMs and `frontend-sbom.cdx.json`.
+
+### The Intel build, run under Rosetta
+
+`TupleNest_0.1.1_x64.app.tar.gz` from `v16-dev`: its SHA-256 matches
+`SHA256SUMS`, the binary is `x86_64`, and started with `arch -x86_64` and
+`HOME` pointed at an empty folder it stayed up for the 12 seconds it was
+watched and wrote "TupleNest starting" to its log. That is the Intel build
+running on Apple Silicon through Rosetta, **not** an Intel Mac, and nothing
+was clicked in it.
+
+### Linux and Windows at runtime: not possible without publishing
+
+The Smoke workflow installs the app on Ubuntu and Windows runners and drives
+it. Dispatched against `v16-dev` (run 45677222036) it failed on both at
+"Download the release artifacts": its token is read-only, and a draft release
+is not visible to a read-only token. It works only against a published
+release, and none is to be published yet.
 
 ### Could not be done
 
@@ -297,9 +327,10 @@ RELEASE_RUN_RESULTS
   for that one step was not answered.
 - **TN-025, the other two cases.** A failed page of rows and a dialog that
   cannot load could not be induced by hand; they rest on their tests.
-- **Runtime on Windows, Linux and an Intel Mac.** No such machine was
-  available. The release run builds, bundles and signs for all three, which
-  shows they compile and package, not that the app runs.
+- **Runtime on Windows and Linux.** The builds compile, bundle and sign; the
+  app has not been run on either. See above.
+- **An Intel Mac.** Only the Rosetta run above.
+- **The keychain clean-up** against the real keychain.
 
 ## What "done" means for the scores
 
