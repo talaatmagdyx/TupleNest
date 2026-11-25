@@ -22,23 +22,34 @@ Windows, `~/.local/share/app.tuplenest.desktop` on Linux.
 | **Connection profiles** | `<data>` SQLite | Host, port, database, username, TLS mode, SSH settings. Not the password. |
 | **Query history** | `<data>` SQLite | Newest 1,000. **On prod-tagged connections the SQL text is not recorded** — only timing, row counts, and status. On other environments the SQL is stored with a best-effort scrub of secret literals (`PASSWORD '…'`, `IDENTIFIED BY '…'`, `key=…`, connection-string URLs → `[REDACTED]`). Add a `-- tuplenest:no-history` comment to a statement to skip its history row entirely. When a query fails, only a reduced error is stored (title, SQLSTATE, category); the server's DETAIL/HINT — which can quote row values like `Key (email)=(…)` — is shown on screen but **not** written to disk. |
 | **Production audit log** | `<data>` SQLite | Separate from history and deliberately the opposite trade: on prod-tagged connections the SQL is **retained in full** (secret literals still scrubbed) so there is a record of what was run against production. This is an accountability record: `-- tuplenest:no-history` does **not** suppress it. If you do not want it, do not tag the connection prod. |
-| **Cached schema** | `<data>` SQLite | Table, column and index names, so the explorer works offline. Not row data. |
+| **Cached schema** | `<data>` SQLite | The shape of the database, so the explorer works offline: schema, table, column, constraint, type and routine names, with what describes them (column types and defaults, comments, enum labels, partition bounds). Not row data, and not query text: health figures, server activity, index usage, object sizes and search terms are live-only and are never stored. |
 | **Snippets, layout, settings** | `<data>` SQLite | |
 | **Logs** | `<data>/logs/tuplenest.log.*` | One file a day, the last 14 kept. Session events — connected/disconnected, with host and database name — timings, row counts and redacted errors. **Never query text**, never passwords. |
 | **Crash reports** | `<data>/crashes/*.txt` | Written locally on a panic. **Never uploaded.** Timestamp, thread, source location, panic message. Delete them freely. |
 | **Exports** | wherever you choose | CSV/JSON/Markdown go only where the save dialog puts them. |
 
-Row data from your database is held **in memory only** while a result is on
-screen, and is dropped when you run the next query or close the app. The one
-place a stray value could otherwise reach disk — a database error whose DETAIL
+Row data from your database is held in memory while a result is on screen,
+and is dropped when you run the next query, switch connection or close the
+app. A result keeps at most 20,000 rows or 128 MB, compressed. **One case
+touches disk:** when the compressed rows pass 16 MB, the rest are written to
+a temporary file in the operating system's temp directory. That file has no
+name — it is unlinked the moment it is created (macOS, Linux) or marked
+delete-on-close (Windows) — so it disappears when the result is dropped or the
+app exits, including after a crash. It is compressed but **not encrypted**, so
+for as long as such a result is open its rows exist on that disk. Results
+under the threshold never leave memory.
+
+Another place a stray value could otherwise reach disk — a database error whose DETAIL
 quotes the offending row — is reduced before it is written to history, so the
 persisted copy keeps the error's title, SQLSTATE and category but not the
 value. The full detail still appears on screen for as long as the error is
 shown.
 
 The SQL redaction is **best-effort, not a guarantee.** It catches the common
-secret shapes (`PASSWORD '…'`, `IDENTIFIED BY '…'`, `key=value`, connection
-strings), but a novel phrasing could slip a secret through. For a statement you
+secret shapes (`PASSWORD '…'` and `IDENTIFIED BY '…'` however the literal is
+quoted, literals passed to `crypt`, `pgp_sym_encrypt` and their relatives,
+`key=value`, connection strings), but a novel phrasing could slip a secret
+through. For a statement you
 know is sensitive, use `-- tuplenest:no-history` so it is never written at all,
 or run it on a prod-tagged connection (which stores no history SQL). Do not
 rely on redaction as a substitute for those.

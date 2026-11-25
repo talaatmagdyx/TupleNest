@@ -52,7 +52,7 @@ of those guarantees has a test that executes the misuse and asserts the
 refusal, so the claims on this page aren't copy. They're pinned behavior that
 CI would catch regressing.
 
-> ⚠️ **Early software, stated plainly.** This is a v0.1.0 beta — tested far
+> ⚠️ **Early software, stated plainly.** This is a v0.1.1 beta — tested far
 > more than it has been *used*. 2,000+ frontend tests, contract tests against
 > live PostgreSQL 13/15/17, SSH tunnel tests against a real sshd. What it
 > hasn't had is people living in it. **That's the part you'd be contributing.**

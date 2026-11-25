@@ -85,6 +85,12 @@ trusting it.
   numeric.
 
 ### Security
+- The privacy policy, the security page and the website no longer claim what
+  the code does not do: result rows are not "memory only" (a large result
+  spills to an unnamed temporary file), the update-signing key is not "held
+  offline" (it is a GitHub Actions secret), new profiles are not read-only by
+  default, and running a selection, filtering the grid and configurable
+  retention do not exist yet (audit TN-014, TN-015).
 - Live-only answers are no longer written to the on-disk schema cache. The
   Health panel's results — including `pg_stat_statements`, which holds the
   text of statements run by every application on the server — search terms,
@@ -124,8 +130,11 @@ trusting it.
   crashes. 200 columns × 50,000 rows: peak 98 → 30 MB.
 - A result keeps at most 50,000 rows or 128 MB of row text (was 100,000 and
   256 MB); rows past that are still counted.
-- Memory freed by dropping a result is handed back to the system (macOS and
-  Linux), and read batches are cut at 4 MB instead of 8 MB.
+- After a result is dropped, the allocator is asked to hand its memory back
+  to the system (macOS and Linux). Measured since: on macOS it mostly
+  declines, so this is a request and not a bound; the result caps are what
+  bound memory (audit TN-017).
+- Read batches are cut at 4 MB instead of 8 MB.
 - The explorer tree draws only the rows on screen (2,000 tables: about 14,000
   page nodes down to under 300). Rows are a uniform 24px.
 - The SQL editor re-renders only the lines an edit changed.

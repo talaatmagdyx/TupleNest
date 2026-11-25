@@ -140,9 +140,9 @@
       <tr><th>Data</th><th>Storage</th></tr>
       <tr><td>Passwords</td><td class="how">OS keychain</td></tr>
       <tr><td>Connection metadata</td><td class="how">Local SQLite (owner-only on Unix)</td></tr>
-      <tr><td>Query history</td><td class="how">Local SQLite, configurable retention; secret literals scrubbed</td></tr>
+      <tr><td>Query history</td><td class="how">Local SQLite, newest 1,000 statements; secret literals scrubbed (best-effort)</td></tr>
       <tr><td>Production SQL history</td><td class="how">A <code class="inline">-- tuplenest:no-history</code> directive drops a row; a production audit log records a redacted entry</td></tr>
-      <tr><td>Result rows</td><td class="how">Memory only — never written to disk</td></tr>
+      <tr><td>Result rows</td><td class="how">In memory, compressed. Past 16 MB the rest go to an unnamed, unencrypted temporary file that is removed when the result is dropped or the app exits</td></tr>
       <tr><td>Reduced error history</td><td class="how">Local SQLite — title, SQLSTATE, category only; no row values</td></tr>
       <tr><td>Logs</td><td class="how">Local rotating files (owner-only on Unix); chatty transport/crypto crates capped to warn in release</td></tr>
       <tr><td>Crash reports</td><td class="how">Local only — never uploaded</td></tr>

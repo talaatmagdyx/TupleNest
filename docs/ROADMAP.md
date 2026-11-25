@@ -1,6 +1,6 @@
 # TupleNest Roadmap
 
-**Where things stand (v0.1.1, beta).** Phases 0 and 1 are done. Several later
+**Where things stand (v0.1.1, beta).** Phase 0 is done and Phase 1 mostly is: running only the selection or the statement at the cursor, and multiple result sets from one run, are not built yet. Several later
 items shipped early, for PostgreSQL only: the CSV import wizard, ER diagrams,
 snippets, the formatter, query parameters, find-usages, plan and schema
 comparison (phases 2–3), charts (4), and the activity monitor and production

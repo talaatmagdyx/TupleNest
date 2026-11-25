@@ -5,6 +5,14 @@
 //! mark until something else needs them. A database client holds one big
 //! result at a time and then sits idle, which is exactly the case where those
 //! pages should go back.
+//!
+//! What this does is *ask*. Whether the allocator complies is its decision,
+//! and the one measurement taken so far says not much: in a test harness on
+//! macOS (audit of 2026-11-24, finding TN-017) the footprint after dropping a
+//! result and calling this was within a couple of megabytes of what it was
+//! while holding it. Peak memory is bounded by the result caps, not by this
+//! call. It stays because it is cheap and correct to ask; it is not a
+//! guarantee that memory returns.
 
 /// Return free heap pages to the OS. Cheap when there is little to return;
 /// call it after dropping something large, not in a loop.
