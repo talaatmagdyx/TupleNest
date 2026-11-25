@@ -2836,6 +2836,7 @@ mod begin_statement_tests {
             "COMMIT WORK",
             "commit and chain",
             "-- done\nCOMMIT",
+            "/* a /* nested */ note */ commit",
         ] {
             assert!(commits(sql), "{sql:?} commits");
         }
