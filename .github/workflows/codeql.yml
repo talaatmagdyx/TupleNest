@@ -50,6 +50,12 @@ jobs:
           # this job from needing the webkit2gtk stack the real build needs.
           build-mode: none
           queries: security-and-quality
+          # The audit's evidence is kept as it was produced: probe scripts and
+          # throwaway tests, with the unused imports that implies. They are
+          # records, not code that ships, and their findings are noise.
+          config: |
+            paths-ignore:
+              - docs/audits
 
       - name: Analyze
         uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1

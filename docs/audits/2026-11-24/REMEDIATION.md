@@ -38,17 +38,26 @@ exposure, as a condition of starting remediation:
 
 Data integrity and safety first, release engineering last.
 
-| # | Finding | Branch | Status |
+| # | Finding | Pull request | Status |
 |---|---|---|---|
-| 1 | TN-003 Explain can execute a writing statement | `fix/tn-003-explain-safety` | open: pull request 50 |
-| 2 | TN-002 row edit written to the wrong schema, with TN-022 | `fix/tn-002-edit-target` | open: pull request 51 |
-| 3 | TN-001 Commit reports success after a rollback | `fix/tn-001-commit-tag` | open: pull request 52 |
-| 4 | TN-030 read-only profile runs `DO`/`CALL` behind a nested comment (new, see below) | `fix/tn-030-readonly-nested-comment` | open: pull request 53 |
-| 5 | TN-004 Format SQL rewrites literals and quoted identifiers | `fix/tn-004-format-literals` | open: pull request 54 |
-| 6 | TN-021 row edit truncates `varchar(n)`, `char(n)`, `bit(n)` | `fix/tn-021-edit-truncation` | planned |
-| 7 | TN-007 result grid and staged edits survive a profile switch | `fix/tn-007-session-switch` | planned |
-| 8 | TN-013 password redaction | `fix/tn-013-redaction` | planned |
-| 9 | TN-005 release readiness and an end-to-end updater test | `release/…` | blocked on 1 to 7 |
+| 1 | TN-003 Explain can execute a writing statement | 50 | merged |
+| 2 | TN-002 row edit written to the wrong schema, with TN-022 | 51 | merged |
+| 3 | TN-001 Commit reports success after a rollback | 52 | merged |
+| 4 | TN-030 read-only profile runs `DO`/`CALL` behind a nested comment (new, see below) | 53 | merged |
+| 5 | TN-004 Format SQL rewrites literals and quoted identifiers | 54 | merged |
+| 6 | TN-021 row edit truncates `varchar(n)`, `char(n)`, `bit(n)` | 55 | merged |
+| 7 | TN-007 result grid and staged edits survive a profile switch | 56 | merged |
+| 8 | TN-013 password redaction | 57 | open |
+| 9 | TN-005 release readiness and an end-to-end updater test | — | not started; needs the fixes above verified in a built app first |
+
+Every merged fix has a regression test that fails without it, and passed the
+full gates and CI (including the PostgreSQL 13, 15 and 17 contract jobs)
+before merging. **What they do not have yet is verification in the running
+app**: each was exercised through tests, not by hand in a built copy. That is
+the remaining condition before TN-005.
+
+Still open after these: TN-006, TN-008 to TN-012, TN-014 to TN-020, TN-023 to
+TN-029 and the P3 list, in the order of REPORT.md section F.
 
 Each pull request changes one thing, but several touch the same files
 (`CHANGELOG.md`, `lib/sql.tsx` and its tests, the end of `live_pg.rs`), so
