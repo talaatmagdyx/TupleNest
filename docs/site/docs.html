@@ -79,7 +79,7 @@
       <div class="callout info">New profiles default to <b>verify-full</b> TLS — they fail closed until you deliberately relax them.</div>
 
       <h2 id="first-query">Run your first query</h2>
-      <p>Type SQL in the editor and press <span class="kbd">⌘↵</span> (or Ctrl+Enter). Results stream into a virtualized grid below, with execution duration and true row count. Select part of the query to run only the selection.</p>
+      <p>Type SQL in the editor and press <span class="kbd">⌘↵</span> (or Ctrl+Enter). Results stream into a virtualized grid below, with execution duration and true row count. The whole editor is sent as one statement; running only a selection is not supported yet.</p>
 
       <h2 id="schema">Explore the schema</h2>
       <p>The left explorer lazily loads schemas, tables, views, functions, indexes, and constraints. Use global search (<span class="kbd">⌘P</span>) to jump to any object, or open the ER diagram to see foreign-key relationships as a graph.</p>
@@ -100,7 +100,7 @@
       <p>Schema-aware completion, formatting, multiple tabs, query history, snippets, and parameter binding. The editor understands PostgreSQL literals (dollar-quoting, nested comments), which is what makes the safety guard reliable.</p>
 
       <h2 id="results">Result grid</h2>
-      <p>Streaming rows, virtualized rendering, sort/filter/search, explicit NULLs, copy cell/row/selection, and export. Large results are bounded by row, byte, and per-cell limits, with clear truncation indicators.</p>
+      <p>Streaming rows, virtualized rendering, sorting by column, explicit NULLs, copy cell/row/selection, and export. Large results are bounded by row, byte, and per-cell limits, with clear truncation indicators.</p>
 
       <h2 id="plans">Query plans</h2>
       <p>Run <code class="inline">EXPLAIN</code> on the current statement from the command palette. Toggle <b>ANALYZE</b> to execute it and get real timings, and <b>BUFFERS</b> to see which nodes read from disk. ANALYZE defaults on for a plain <code class="inline">SELECT</code> and off for anything that writes — it really runs the statement.</p>
@@ -183,7 +183,7 @@
       <p>No telemetry, no account, no cloud. The only network destinations are your PostgreSQL host, your SSH host (if configured), and the GitHub update endpoint. The full model is on the <a href="security.html">Security page</a>.</p>
 
       <h2 id="settings">Settings</h2>
-      <p>Configure appearance, editor and query preferences, history retention, export defaults, update behaviour, and keyboard shortcuts. Query-history retention and the production audit log are both under your control.</p>
+      <p>Settings holds the theme and the telemetry switch, and shows two fixed limits: explorer-generated SELECTs use <code class="inline">LIMIT 100</code>, and history keeps the newest 1,000 statements (favourites are never dropped). The production audit log keeps the newest 5,000. Neither limit is configurable yet, and the update check at startup cannot be turned off.</p>
 
       <h2 id="troubleshooting">Troubleshooting</h2>
       <ul>
@@ -191,7 +191,7 @@
         <li><b>TLS certificate failure</b> — check the mode and, for a private CA, set the custom CA path.</li>
         <li><b>SSH host-key failure</b> — the key changed; verify with your admin before trusting it.</li>
         <li><b>Keychain access error</b> — grant TupleNest keychain permission when the OS prompts.</li>
-        <li><b>Query timeout / large result</b> — adjust the statement timeout or narrow the query; the grid caps are configurable.</li>
+        <li><b>Query timeout / large result</b> — adjust the statement timeout or narrow the query; the grid keeps the first 20,000 rows (or 128 MB) and says when it has stopped; those limits are fixed.</li>
         <li><b>Update failure</b> — betas update by manual download; the auto-updater targets stable releases.</li>
         <li><b>Logs</b> — rotating log files live in the app-data directory, under the bundle identifier rather than the product name: <code class="inline">~/Library/Application Support/app.tuplenest.desktop/logs</code> on macOS, <code class="inline">~/.local/share/app.tuplenest.desktop/logs</code> on Linux, <code class="inline">%APPDATA%\app.tuplenest.desktop\logs</code> on Windows. Owner-only on Unix.</li>
         <li><b>Checking a Windows build by hand</b> — CI installs the <code class="inline">.msi</code> and confirms a window opens, but cannot drive the UI on Windows (a release build has no WebView2 debugging port). There is a <a href="https://github.com/talaatmagdyx/TupleNest/blob/main/docs/windows-manual-check.md">twelve-step manual check</a> for the rest.</li>

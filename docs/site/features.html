@@ -86,7 +86,7 @@
         <p>Rows stream from a bounded store into a virtualized grid, so large or wide results don't freeze the window — and the footer counts the real total, not the cap.</p>
         <ul>
           <li>Streaming result loading, virtualized rows</li>
-          <li>Column sorting, client-side, up to 50,000 rows — past that it says so rather than hanging the window</li>
+          <li>Column sorting over every stored row (up to 20,000), done in the backend so the window never holds them all</li>
           <li>NULL rendered as a distinct <code class="inline">null</code>, never as an empty cell</li>
           <li>Copy the selected cell, or the whole result as CSV or Markdown</li>
           <li>Export (CSV / JSON / Markdown)</li><li>Query duration, row count, truncation indicators</li>

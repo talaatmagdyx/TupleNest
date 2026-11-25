@@ -112,7 +112,7 @@ NODE_ENV=test npm run test:coverage
 npm run build
 ```
 
-The suite is large on purpose — over 2,000 frontend tests and about 180 Rust
+The suite is large on purpose — over 2,000 frontend tests and about 250 Rust
 tests (a quarter of them live tests that need a server). The frontend has a coverage floor; a change that drops it
 fails CI. If a legitimate change lowers the floor, move the number in
 `vitest.config.ts` and say why in the commit — don't delete the block.

@@ -93,7 +93,10 @@ Reporting these is not useful; they are documented decisions.
   **key rotation does not reach installs that already exist** — their public
   key is baked in. If the private key were ever compromised, existing installs
   could only be fixed by telling their owners to download a new build by hand.
-  The private key is passphrase-protected and held offline.
+  The private key is passphrase-protected. It is **not** held offline: the
+  release workflow signs with it, so the key and its passphrase are stored as
+  GitHub Actions secrets. Anyone who can run a workflow in this repository
+  with access to those secrets can sign an update.
 - **The keychain is the control protecting passwords in memory, not `Secret`.**
   `Secret` redacts `Debug`, cannot cross IPC, and wipes its own buffer on drop
   — but a brief unwiped copy passes through freed heap inside
