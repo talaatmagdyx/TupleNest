@@ -426,13 +426,30 @@ export default function App() {
     resetExplorer();
   }, [session, resetExplorer, forgetSession]);
 
+  /**
+   * Is there a transaction to lose — whoever opened it?
+   *
+   * `inTx` follows only the Begin button. A `BEGIN` typed in the editor opens
+   * one it never hears about, so Disconnect, the connection switcher and the
+   * updater all dropped the session and its uncommitted work without a word.
+   * Closing the window already asked the server; this is that question, for
+   * the other three doors.
+   *
+   * A check that fails means the session is gone, and there is nothing left
+   * to lose with it.
+   */
+  const transactionOpen = useCallback(
+    async () => inTx || (connected && (await invoke<boolean>("pg_in_transaction").catch(() => false))),
+    [inTx, connected],
+  );
+
   const doDisconnect = useCallback(async () => {
-    if (inTx) {
+    if (await transactionOpen()) {
       setOverlay("txPrompt");
       return;
     }
     await reallyDisconnect();
-  }, [inTx, reallyDisconnect]);
+  }, [transactionOpen, reallyDisconnect]);
 
   const loadProfile = useCallback(
     (c: ConnectionRecord) => {
@@ -469,7 +486,7 @@ export default function App() {
   const selectProfile = useCallback(
     async (c: ConnectionRecord) => {
       setConnMenu(false);
-      if (inTx) {
+      if (await transactionOpen()) {
         setOverlay("txPrompt");
         return;
       }
@@ -502,7 +519,7 @@ export default function App() {
       afterConnect();
       showToast(`Connected — ${c.name}`);
     },
-    [inTx, session, forgetSession, loadProfile, afterConnect, showToast]
+    [transactionOpen, session, forgetSession, loadProfile, afterConnect, showToast]
   );
 
   /* ---------------- test / save profile ---------------- */
@@ -1504,7 +1521,7 @@ export default function App() {
   const installUpdate = useCallback(async () => {
     const up = pendingUpdate.current;
     if (!up) return;
-    if (inTx) {
+    if (await transactionOpen()) {
       showToast("Commit or roll back your transaction before updating");
       return;
     }
@@ -1517,7 +1534,7 @@ export default function App() {
       setUpdating(false);
       showToast(`Update failed: ${String(e).slice(0, 60)}`);
     }
-  }, [inTx, showToast]);
+  }, [transactionOpen, showToast]);
 
   return (
     <div className={`shell ${connected ? `env-frame env-${connectedEnv ?? "dev"}` : ""}`}>
