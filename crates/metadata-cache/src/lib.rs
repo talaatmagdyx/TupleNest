@@ -239,6 +239,22 @@ impl MetadataCache {
         Ok(rows)
     }
 
+    /// Drops every entry of the given object types, for every connection.
+    ///
+    /// For types that should never have been stored: an older build wrote
+    /// them, and stopping the writes does not remove what is already there.
+    /// Returns how many rows went.
+    pub fn delete_types(&self, object_types: &[&str]) -> Result<usize, CacheError> {
+        let mut removed = 0;
+        for object_type in object_types {
+            removed += self.conn.execute(
+                "DELETE FROM metadata_objects WHERE object_type = ?1",
+                params![object_type],
+            )?;
+        }
+        Ok(removed)
+    }
+
     /// Drops everything cached for one connection (manual refresh / delete).
     pub fn invalidate(&self, connection_key: &str) -> Result<(), CacheError> {
         self.conn.execute(
@@ -252,6 +268,30 @@ impl MetadataCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delete_types_removes_those_types_for_every_connection_and_nothing_else() {
+        let cache = MetadataCache::open_in_memory().unwrap();
+        for key in ["a@h:5432/db", "b@h:5432/db"] {
+            cache
+                .put(key, "top_queries", "", "", "[\"select secret\"]")
+                .unwrap();
+            cache.put(key, "search", "invoice", "", "[]").unwrap();
+            cache.put(key, "columns", "public", "users", "[]").unwrap();
+        }
+        assert_eq!(cache.delete_types(&["top_queries", "search"]).unwrap(), 4);
+        for key in ["a@h:5432/db", "b@h:5432/db"] {
+            assert!(cache.get(key, "top_queries", "", "").unwrap().is_none());
+            assert!(cache.get(key, "search", "invoice", "").unwrap().is_none());
+            assert!(cache
+                .get(key, "columns", "public", "users")
+                .unwrap()
+                .is_some());
+        }
+        // Nothing left to remove, and an empty list is not an error.
+        assert_eq!(cache.delete_types(&["top_queries"]).unwrap(), 0);
+        assert_eq!(cache.delete_types(&[]).unwrap(), 0);
+    }
 
     const KEY: &str = "talaat@localhost:5432/postgres";
 
