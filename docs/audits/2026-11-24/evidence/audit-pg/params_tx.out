@@ -1,0 +1,62 @@
+[setup] OK  sql="DROP TABLE IF EXISTS p" types=[] affected=Some(0) returned=0 cells=
+[setup] OK  sql="CREATE TABLE p (i4 int, i8 bigint, n numeric, t text, ts timestamptz, d date, u uuid, b bool, f8 float8, j jsonb)" types=[] affected=Some(0) returned=0 cells=
+[setup] OK  sql="INSERT INTO p VALUES (1, 9007199254740993, 1.5, 'x', now(), current_date, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', true, 0.1, '{}')" types=[] affected=Some(1) returned=0 cells=
+[params] OK  sql="SELECT i8 FROM p WHERE i8 = $1" types=["int8"] affected=Some(1) returned=1 cells={"type":"int","value":9007199254740993}
+[params] OK  sql="SELECT i4 FROM p WHERE i4 = $1" types=["int4"] affected=Some(1) returned=1 cells={"type":"int","value":1}
+[params] ERR sql="SELECT i4 FROM p WHERE i4 = $1" category=DriverFailure title="Driver error" code=None msg=Some("error serializing parameter 0")
+[params] ERR sql="SELECT n FROM p WHERE n = $1" category=DriverFailure title="Driver error" code=None msg=Some("error serializing parameter 0")
+[params] ERR sql="SELECT n FROM p WHERE n = $1" category=DriverFailure title="Driver error" code=None msg=Some("error serializing parameter 0")
+[params] ERR sql="SELECT n FROM p WHERE n = $1" category=DriverFailure title="Driver error" code=None msg=Some("error serializing parameter 0")
+[params] ERR sql="SELECT t FROM p WHERE t = $1" category=DriverFailure title="Driver error" code=None msg=Some("error serializing parameter 0")
+[params] ERR sql="SELECT t FROM p WHERE t = $1" category=DriverFailure title="Driver error" code=None msg=Some("error serializing parameter 0")
+[params] ERR sql="SELECT ts FROM p WHERE ts > $1" category=DriverFailure title="Driver error" code=None msg=Some("error serializing parameter 0")
+[params] ERR sql="SELECT d FROM p WHERE d = $1" category=DriverFailure title="Driver error" code=None msg=Some("error serializing parameter 0")
+[params] ERR sql="SELECT u FROM p WHERE u = $1" category=DriverFailure title="Driver error" code=None msg=Some("error serializing parameter 0")
+[params] ERR sql="SELECT i4 FROM p WHERE i4 IS NOT DISTINCT FROM $1" category=DriverFailure title="Driver error" code=None msg=Some("error serializing parameter 0")
+[params] OK  sql="SELECT t FROM p WHERE t IS NOT DISTINCT FROM $1" types=[] affected=Some(0) returned=0 cells=
+[params] OK  sql="SELECT f8 FROM p WHERE f8 = $1" types=["float8"] affected=Some(1) returned=1 cells={"type":"float","value":0.1}
+[params] ERR sql="SELECT f8 FROM p WHERE f8 = $1" category=DriverFailure title="Driver error" code=None msg=Some("error serializing parameter 0")
+[params] ERR sql="SELECT $1" category=DriverFailure title="Driver error" code=None msg=Some("error serializing parameter 0")
+[params] OK  sql="SELECT $1::text::uuid" types=["uuid"] affected=Some(1) returned=1 cells={"type":"text","value":"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"}
+[params] OK  sql="SELECT $1::text::int" types=["int4"] affected=Some(1) returned=1 cells={"type":"null"}
+[multi] ERR sql="SELECT 1; SELECT 2" category=Syntax title="Syntax error" code=Some("42601") msg=Some("cannot insert multiple commands into a prepared statement")
+[multi] ERR sql="BEGIN; DROP TABLE p; COMMIT" category=Syntax title="Syntax error" code=Some("42601") msg=Some("cannot insert multiple commands into a prepared statement")
+[multi] OK  sql="SELECT 1;" types=["int4"] affected=Some(1) returned=1 cells={"type":"int","value":1}
+[affected] OK  sql="UPDATE p SET t = 'y'" types=[] affected=Some(1) returned=0 cells=
+[affected] OK  sql="CREATE TEMP TABLE zz AS SELECT 1" types=[] affected=Some(1) returned=0 cells=
+[setup] OK  sql="DROP TABLE IF EXISTS vc" types=[] affected=Some(0) returned=0 cells=
+[setup] OK  sql="CREATE TABLE vc (id int primary key, v varchar(5), c char(3), n numeric(6,2), b bit(4))" types=[] affected=Some(0) returned=0 cells=
+[setup] OK  sql="INSERT INTO vc VALUES (1,'abc','ab',1.25,B'1010')" types=[] affected=Some(1) returned=0 cells=
+[vc-plain] ERR sql="UPDATE vc SET v = $1 WHERE id = 1" category=DriverFailure title="Database error" code=Some("22001") msg=Some("value too long for type character varying(5)")
+[vc-cast] OK  sql="UPDATE \"public\".\"vc\" SET \"v\" = $1::text::character varying(5) WHERE \"id\" = $2::text::integer AND \"v\" IS NOT DISTINCT FROM $3::text::character varying(5)" types=[] affected=Some(1) returned=0 cells=
+[vc-cast] OK  sql="UPDATE vc SET c = $1::text::character(3) WHERE id = 1" types=[] affected=Some(1) returned=0 cells=
+[vc-cast] OK  sql="UPDATE vc SET b = $1::text::bit(4) WHERE id = 1" types=[] affected=Some(1) returned=0 cells=
+[vc-cast] OK  sql="SELECT * FROM vc" types=["int4", "varchar", "bpchar", "numeric", "bit"] affected=Some(1) returned=1 cells={"type":"int","value":1} | {"type":"text","value":"abcde"} | {"type":"text","value":"abc"} | {"type":"text","value":"1.25"} | {"type":"other","value":{"rendered":"\\x00000004f0","db_type":"bit"}}
+[setup] OK  sql="DROP TABLE IF EXISTS txt" types=[] affected=Some(0) returned=0 cells=
+[setup] OK  sql="CREATE TABLE txt (id int primary key, v text)" types=[] affected=Some(0) returned=0 cells=
+begin -> Ok(())
+[tx] OK  sql="INSERT INTO txt VALUES (1,'kept?')" types=[] affected=Some(1) returned=0 cells=
+[tx] ERR sql="SELECT 1/0" category=DriverFailure title="Database error" code=Some("22012") msg=Some("division by zero")
+server_in_transaction (aborted) -> Ok(true)
+COMMIT of aborted tx -> Ok(())
+server_in_transaction after -> Ok(false)
+[tx] OK  sql="SELECT count(*) AS rows_after_commit FROM txt" types=["int8"] affected=Some(1) returned=1 cells={"type":"int","value":0}
+[tx] OK  sql="BEGIN" types=[] affected=Some(0) returned=0 cells=
+begin() while typed BEGIN open -> Ok(())
+[tx] OK  sql="INSERT INTO txt VALUES (2,'x')" types=[] affected=Some(1) returned=0 cells=
+rollback -> Ok(())
+in tx -> Ok(false)
+[tx] OK  sql="SELECT count(*) FROM txt" types=["int8"] affected=Some(1) returned=1 cells={"type":"int","value":0}
+[tx] OK  sql="COMMIT" types=[] affected=Some(0) returned=0 cells=
+begin -> Ok(())
+[tx] OK  sql="INSERT INTO txt VALUES (3,'user work')" types=[] affected=Some(1) returned=0 cells=
+[tx] OK  sql="SAVEPOINT tuplenest_edit" types=[] affected=Some(0) returned=0 cells=
+[tx] ERR sql="INSERT INTO txt VALUES (3,'dup')" category=ConstraintViolation title="Constraint violation" code=Some("23505") msg=Some("duplicate key value violates unique constraint \"txt_pkey\"\nDetail: Key (id)=(3) already exists.\nOn: schema \"public\", table \"txt\", constraint \"txt_pkey\"")
+[tx] OK  sql="ROLLBACK TO SAVEPOINT tuplenest_edit" types=[] affected=Some(0) returned=0 cells=
+[tx] OK  sql="SELECT * FROM txt" types=["int4", "text"] affected=Some(1) returned=1 cells={"type":"int","value":3} | {"type":"text","value":"user work"}
+[cancel-in-tx] ERR sql="SELECT pg_sleep(20)" category=Cancelled title="Query cancelled" code=Some("57014") msg=Some("canceling statement due to user request")
+cancel result Ok(())
+[cancel-in-tx] ERR sql="SELECT * FROM txt" category=DriverFailure title="Transaction aborted — roll back to continue" code=Some("25P02") msg=Some("current transaction is aborted, commands ignored until end of transaction block")
+in tx after cancel -> Ok(true)
+COMMIT after cancel -> Ok(())
+[cancel-in-tx] OK  sql="SELECT * FROM txt" types=[] affected=Some(0) returned=0 cells=
