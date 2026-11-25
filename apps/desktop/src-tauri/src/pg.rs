@@ -1343,7 +1343,10 @@ mod redact_sql_tests {
             ),
         ] {
             let out = redact_sql(sql);
-            assert!(!out.contains(planted), "{sql:?} left {planted:?} in {out:?}");
+            assert!(
+                !out.contains(planted),
+                "{sql:?} left {planted:?} in {out:?}"
+            );
             assert!(out.contains("[REDACTED]"), "{sql:?} -> {out:?}");
         }
     }
@@ -1391,7 +1394,10 @@ mod redact_sql_tests {
             ),
         ] {
             let out = redact_sql(sql);
-            assert!(!out.contains(planted), "{sql:?} left {planted:?} in {out:?}");
+            assert!(
+                !out.contains(planted),
+                "{sql:?} left {planted:?} in {out:?}"
+            );
         }
         // The call is still recognisable, and what follows it is untouched.
         assert_eq!(
