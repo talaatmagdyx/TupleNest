@@ -54,16 +54,27 @@ Data integrity and safety first, release engineering last.
 | 12 | TN-026 Escape dismisses a running import | 62 | merged | **not verified** |
 | 13 | TN-014, TN-015, TN-017 documentation that contradicted the code | 63 | merged | not applicable; the live site matches `main` |
 | 14 | TN-028, TN-029 release SBOM and build instructions | 64 | merged | the documented build command produced the app used below; the SBOM step runs only in a release |
-| 15 | TN-005 release readiness and an end-to-end updater test | — | not started; no release until the items under "Still to verify" are closed | — |
+| 15 | TN-006 title and status bars name the form, not the live session | 66 | merged | verified |
+| 16 | TN-023 CSV import changes or invents data | 67 | merged | **not verified** (needs the file picker) |
+| 17 | TN-019 json and jsonb values altered | 68 | merged | verified |
+| 18 | TN-020 types rendered as hex | 69 | merged | verified |
+| 19 | TN-025 load failures swallowed | 70 | merged | **not verified** (no failure could be induced) |
+| 20 | TN-027 production audit row written late and its failure discarded | 71 | merged | verified, after TN-031; the refusal on a failed write was not exercised |
+| 21 | TN-018 query parameters guessed and bound to four types only | 72 | merged | verified (`007` to a text column) |
+| 22 | TN-009 read-only lets maintenance commands through | 73 | merged | verified (`VACUUM`) |
+| 23 | TN-008 guard misses always-true WHERE and EXPLAIN ANALYZE | 74 | merged | verified |
+| 24 | TN-031 two profiles for one database: the first one's tag wins (new, see below) | 75 | open | verified on its branch |
+| 25 | Guard dialog and parameter prompt wording (found in verification) | 76 | open | verified on its branch |
+| 26 | TN-011 signing key in the environment of the whole release build | — | not started: the release workflow cannot be tested without running a release build | — |
+| 27 | TN-010 signing secrets not scoped to the `release` environment | — | repository-settings change for the owner | — |
+| 28 | TN-005 release readiness and an end-to-end updater test | — | not started; no release until the items under "Still to verify" are closed | — |
 
 Every merged fix has a regression test that fails without it, and passed the
 full gates and CI (including the PostgreSQL 13, 15 and 17 contract jobs)
 before merging.
 
-Still open: TN-006, TN-008 to TN-011, TN-018 to TN-020, TN-023, TN-025, TN-027
-and the P3 list, in the order of REPORT.md section F. TN-010 (move the two
-signing secrets into the `release` environment) is a repository-settings
-change for the owner; the sentence in SECURITY.md is already corrected.
+Still open: TN-005, TN-010 and TN-011 (rows above), and the P3 list in
+REPORT.md section F. Every other finding has a merged fix.
 
 ## Verification in a built app (2026-11-25)
 
@@ -166,6 +177,59 @@ Each is confirmed or adjusted when the finding is revalidated.
   error when PostgreSQL answered `ROLLBACK`.
 - **TN-004.** The formatter rewrites only the code between string literals,
   comments and quoted identifiers.
+
+## Second verification pass (2026-11-25, later the same day)
+
+**Build.** `main` at `f36b22e` (the merge of pull request 74), built and driven
+the same way as the first pass, against a fresh scratch database holding one
+table with `text`, `jsonb` and `json` columns. Three profiles for that one
+database were written into the copy's own store: dev, prod, and dev read-only.
+After TN-031 and the dialog wording were fixed, the copy was rebuilt from
+`f034339` (the top of pull request 76) and the production and read-only checks
+were repeated on it. Everything was removed afterwards.
+
+| Finding | Action | Seen |
+|---|---|---|
+| TN-019 | `SELECT` a `jsonb` holding a 23-digit number and a `json` stored as `{"z":1,  "a":2, "a":3}`, plus a JSON `null` and a SQL NULL in each | The `json` cell keeps its spacing and both `a` keys; the inspector shows every digit of the number; JSON `null` and SQL NULL are drawn differently |
+| TN-020 | One row of `interval`, `timetz`, `time '24:00:00'`, `date 'infinity'`, `int4range`, a two-dimensional `int4[]`, a `timestamp` with `.25`, a BC date | `1 year 2 mons -3…`, `10:30:00+02`, `24:00:00`, `infinity`, `[1,10)`, `{{1,2},{3,4}}`, `2024-01-15 10:30:00.25`; no hex |
+| TN-006 | Connected to the dev profile, open the read-only profile's editor | Title bar and status bar still name the dev profile |
+| TN-018 | `SELECT code, owner FROM accounts WHERE code = $1`, value `007` | One row: `007`, `alice` |
+| TN-008 | On the prod profile: `DELETE FROM accounts WHERE 1=1`, then `EXPLAIN ANALYZE DELETE FROM accounts` | The confirmation dialog opens for both; cancelled; all three rows still present |
+| TN-027 | On the prod profile: `SELECT 1/0` | Audit log holds `prod`, `SELECT 1/0`, although the statement failed; the history row has no SQL text |
+| TN-009 | On the read-only profile: `VACUUM accounts` | "VACUUM is refused on a read-only connection … Nothing was run." |
+
+### TN-031, found during this pass
+
+The first attempt at the TN-027 check failed: under a window showing
+PRODUCTION there was no audit row, and the history row held the SQL. The
+backend decides a session's environment itself, from the saved profile the
+connection matches, and with several matching profiles it took the first in
+the list — here the dev one. **P1, Confirmed** in the built app and by a unit
+test that fails on `main`. Fixed in pull request 75 by taking the most
+protective tag among the matching profiles and the one asked for.
+
+It leaves the opposite disagreement: a session opened from the dev-tagged
+profile of such a pair is treated as production by the backend while the
+window shows DEV and does not arm the statement guard. That errs on the
+protective side for the audit log and history; it is not yet closed.
+
+### Also found: dialog wording
+
+The confirmation dialog said "Statement has no WHERE clause … this UPDATE will
+affect every row" for every statement it was opened for, `DROP TABLE` and
+`EXPLAIN ANALYZE DELETE` included. The parameter prompt still described the
+type guessing TN-018 removed. Both corrected in pull request 76 and seen in
+the rebuilt copy.
+
+### Still to verify, added by this pass
+
+- **TN-023** and **TN-026**: the CSV import, which needs the file picker.
+- **TN-025**: a failed schema load, a failed page of rows, a dialog that
+  cannot load. None could be induced by hand.
+- **TN-027**: the refusal when the audit row cannot be written.
+- **TN-009**: the monitor's cancel and terminate on a read-only profile.
+- **TN-018** for placeholder types other than text; **TN-020** for ranges of
+  timestamps, multiranges and `money` staying raw.
 
 ## What "done" means for the scores
 
