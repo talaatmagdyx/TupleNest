@@ -9,6 +9,15 @@ From a second audit, which re-tested every fix in 0.1.1-beta.12 rather than
 trusting it.
 
 ### Safety
+- Two saved profiles for the same database no longer let a production
+  session run as a development one. The backend decides for itself whether a
+  session is production (it does not trust the window), by finding the saved
+  profile the connection matches; with two that match it took the first in
+  the list. A session opened from the profile tagged prod could then be
+  treated as dev: no audit row, and its SQL kept in history, under a window
+  showing PRODUCTION. It now takes the most protective tag among the
+  matching profiles and what was asked for. Found while verifying TN-027 in
+  a built app (TN-031).
 - The statement guard on prod and staging asks in two more cases. An
   `UPDATE` or `DELETE` whose WHERE is plainly always true (`WHERE true`,
   `WHERE 1=1`, `WHERE 'a'='a'`, or one of those as a side of an `OR`) counted
