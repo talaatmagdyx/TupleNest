@@ -63,9 +63,9 @@ Data integrity and safety first, release engineering last.
 | 21 | TN-018 query parameters guessed and bound to four types only | 72 | merged | verified (`007` to a text column) |
 | 22 | TN-009 read-only lets maintenance commands through | 73 | merged | verified (`VACUUM`) |
 | 23 | TN-008 guard misses always-true WHERE and EXPLAIN ANALYZE | 74 | merged | verified |
-| 24 | TN-031 two profiles for one database: the first one's tag wins (new, see below) | 75 | open | verified on its branch |
-| 25 | Guard dialog and parameter prompt wording (found in verification) | 76 | open | verified on its branch |
-| 26 | TN-011 signing key in the environment of the whole release build | — | not started: the release workflow cannot be tested without running a release build | — |
+| 24 | TN-031 two profiles for one database: the first one's tag wins (new, see below) | 75, then 80 | merged; 80 open | verified on its branch; 80 (the window follows the backend's tag) is not |
+| 25 | Guard dialog and parameter prompt wording (found in verification) | 76 | merged | verified on its branch |
+| 26 | TN-011 signing key in the environment of the whole release build | 81 | open | the two-pass build was run by hand on macOS; the workflow itself has not run |
 | 27 | TN-010 signing secrets not scoped to the `release` environment | — | repository-settings change for the owner | — |
 | 28 | TN-005 release readiness and an end-to-end updater test | — | not started; no release until the items under "Still to verify" are closed | — |
 
@@ -73,8 +73,24 @@ Every merged fix has a regression test that fails without it, and passed the
 full gates and CI (including the PostgreSQL 13, 15 and 17 contract jobs)
 before merging.
 
-Still open: TN-005, TN-010 and TN-011 (rows above), and the P3 list in
-REPORT.md section F. Every other finding has a merged fix.
+Still open: TN-005 and TN-010 (rows above), and part of the P3 list.
+
+### The P3 list
+
+| Item | Status |
+|---|---|
+| A statement timeout is recorded as "cancelled" | Fixed in pull request 78, with a refused COMMIT that had the same cause |
+| A stale `cargo deny` ignore entry | Fixed in pull request 79, with three unused licence allowances |
+| Keychain entries from tested-but-unsaved passwords are never removed | Fixed in pull request 82: swept at the next start |
+| `e2e/` has 27 known npm vulnerabilities (test-only) | Open. `npm audit fix` leaves 22, the rest need breaking upgrades, and those tests run only against a published release, so the change could not be checked |
+| `row_limit` and `timeout_ms` are accepted and ignored | Open, a decision: stopping at the row cap would lose the exact total the grid shows ("20,000 of 1,000,000") |
+| Two roadmaps that contradict each other | Open, a decision: `docs/ROADMAP.md` plans other engines and an assistant; the site lists them as not planned |
+| Release assets are mutable | Open: a repository setting for the owner |
+| A killed backend is not recognised until the next statement | Open |
+| SSH supports only unencrypted key files | Open: needs a passphrase prompt |
+| Accessibility gaps | Open |
+| Grid loses keyboard focus after End on wide results | Open |
+| Stale numbers in docs and comments | Open |
 
 ## Verification in a built app (2026-11-25)
 
