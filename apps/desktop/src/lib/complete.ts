@@ -98,10 +98,13 @@ function dollarTagAt(sql: string, i: number): string | null {
  *  - **E-prefixed escape strings**, where a backslash escapes the closing quote.
  *  - Doubled quotes as escapes, which it already did.
  */
-export function maskLiterals(sql: string): string {
+export function maskLiterals(sql: string, onSpan?: (from: number, to: number) => void): string {
   const out = sql.split("");
   let i = 0;
   const blank = (from: number, to: number) => {
+    // `onSpan` hears about every stretch that is not code, for callers that
+    // need to leave those stretches exactly as they are (the formatter).
+    onSpan?.(from, Math.min(to, out.length));
     for (let k = from; k < to && k < out.length; k++) if (out[k] !== "\n") out[k] = " ";
   };
   while (i < sql.length) {

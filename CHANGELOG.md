@@ -48,6 +48,11 @@ trusting it.
   with the work gone. The Commit button, "Commit & disconnect" and a `COMMIT`
   or `END` typed in the editor now say that nothing was committed (audit
   TN-001).
+- Format SQL no longer rewrites what is inside a string, a comment or a
+  quoted name. `'made from scratch and love, order by mail'` came back with
+  uppercase keywords and line breaks in it, trailing spaces inside a
+  multi-line string were trimmed, and `"from"` became `"FROM"`, a different
+  column; Format then Run wrote different data than was typed (audit TN-004).
 - **Row editing works on uuid keys, timestamps, decimals and NULLs**, and stays
   exact: values are sent as text and cast to the column's type. Editing a
   bigint above 2^53 no longer writes a different number.

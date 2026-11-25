@@ -197,16 +197,49 @@ export function needsGuard(sql: string, env: string | null): boolean {
   return guardReason(sql, env) !== null;
 }
 
-/** Lightweight SQL formatter: uppercases keywords, breaks major clauses. */
+/**
+ * Lightweight SQL formatter: uppercases keywords, breaks major clauses.
+ *
+ * Only code is formatted. The patterns used to run over the whole text, so
+ * the words inside `'made from scratch and love, order by mail'` were
+ * uppercased and broken across lines, trailing spaces inside a multi-line
+ * string were trimmed, and `"from"` became `"FROM"` — another column. Format
+ * and then Run wrote different data than was typed. String and dollar-quoted
+ * bodies, comments and quoted identifiers now pass through byte for byte.
+ */
 export function formatSQL(sql: string): string {
+  const spans: [number, number][] = [];
+  maskLiterals(sql, (from, to) => {
+    if (to > from) spans.push([from, to]);
+  });
+
+  let out = "";
+  let at = 0;
+  for (const [from, to] of [...spans, [sql.length, sql.length] as [number, number]]) {
+    let code = formatCode(sql.slice(at, from));
+    if (at === 0) code = code.trimStart();
+    if (from === sql.length) code = code.trimEnd();
+    out += code + sql.slice(from, to);
+    at = to;
+  }
+  return out;
+}
+
+/** `formatSQL` for a stretch that is known to be code. */
+function formatCode(code: string): string {
   const KW =
     /\b(select|from|where|join|left join|right join|inner join|full join|cross join|on|group by|order by|having|limit|offset|insert into|values|update|set|delete from|union all|union|and|or|as|desc|asc|distinct|case|when|then|else|end|returning|with)\b/gi;
-  let out = sql.replace(KW, (m) => m.toUpperCase());
+  // A dollar-quote tag is not a keyword: `$end$` must still close `$end$`.
+  let out = code.replace(KW, (m, _k: string, i: number) =>
+    code[i - 1] === "$" || code[i + m.length] === "$" ? m : m.toUpperCase(),
+  );
   const BREAK_BEFORE =
     /\s+(FROM|WHERE|LEFT JOIN|RIGHT JOIN|INNER JOIN|FULL JOIN|CROSS JOIN|JOIN|GROUP BY|ORDER BY|HAVING|LIMIT|OFFSET|UNION ALL|UNION|VALUES|SET|RETURNING)\b/g;
   out = out.replace(BREAK_BEFORE, "\n$1");
   out = out.replace(/\s+(AND|OR)\b/g, "\n  $1");
-  return out.replace(/[ \t]+$/gm, "").trim();
+  // Trailing blanks before a line break only: this stretch may end where a
+  // string begins, and the space before it is not the end of a line.
+  return out.replace(/[ \t]+(?=\n)/g, "");
 }
 
 export function looksLikeSelect(sql: string): boolean {
