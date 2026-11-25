@@ -76,10 +76,6 @@ Reporting these is not useful; they are documented decisions.
   port. It has to accept more than one connection (query cancellation dials
   it separately). On a shared machine, anyone who can reach your loopback
   interface can reach the database through it for that time.
-- **`RUSTSEC-2023-0071` (Marvin Attack)** is accepted, with reasoning in
-  `deny.toml`. RSA private-key timing sidechannel via `russh`; no patched
-  version exists. **Ed25519 SSH keys do not touch that code path — prefer
-  them.**
 - **macOS builds are not notarized and Windows builds are unsigned.** Stated in
   the README. This is a funding problem, not an oversight.
 - **Crash reports are written to local disk** and never uploaded. Key–value
