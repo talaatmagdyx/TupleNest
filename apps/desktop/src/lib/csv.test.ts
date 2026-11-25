@@ -322,3 +322,87 @@ describe("empty string versus NULL, as COPY … CSV reads them", () => {
     expect(inferType(["1", QUOTED_EMPTY, "3"])).toBe("int8");
   });
 });
+
+// Audit TN-023: four ways an import changed or invented data without a word.
+describe("CSV import integrity (TN-023)", () => {
+  describe("leading zeros", () => {
+    it("keeps a column of zero-padded codes as text", () => {
+      expect(inferType(["007", "042", "100"])).toBe("text");
+      expect(inferType(["02134", "90210"])).toBe("text");
+      expect(inferType(["-007"])).toBe("text");
+      expect(inferType(["00.50", "1.25"])).toBe("text");
+    });
+    it("still reads ordinary numbers as numbers", () => {
+      expect(inferType(["0", "7", "-12", "100"])).toBe("int8");
+      expect(inferType(["0.5", "-0.25", ".5", "10.", "1e3"])).toBe("numeric");
+      expect(inferType(["0", "0.0"])).toBe("numeric");
+    });
+    it("one padded value is enough to keep the whole column text", () => {
+      expect(inferType(["1", "2", "03"])).toBe("text");
+    });
+    it("writes the padded value as it was read", () => {
+      const cols = [{ name: "zip", type: inferType(["02134"]) }];
+      expect(buildInsert("public", "t", cols, [["02134"]]).params).toEqual(["02134"]);
+    });
+  });
+
+  describe("blank lines", () => {
+    it("are not rows", () => {
+      const t = parseCsv("a,b\n1,2\n\n3,4\n\n\n");
+      expect(t.rows).toEqual([["1", "2"], ["3", "4"]]);
+    });
+    it("are not rows with CRLF endings either", () => {
+      expect(parseCsv("a,b\r\n1,2\r\n\r\n3,4\r\n").rows).toEqual([["1", "2"], ["3", "4"]]);
+    });
+    it("are counted, so the import can say how many it passed over", () => {
+      const p = new CsvStreamParser();
+      p.push("a\n\n1\n");
+      p.push("\n\n2\n");
+      p.end();
+      expect(p.blankLines).toBe(3);
+    });
+    it("a blank line split across two chunks is still one blank line", () => {
+      const p = new CsvStreamParser();
+      const rows = [...p.push("a\r"), ...p.push("\n\r"), ...p.push("\n1\n"), ...p.end()];
+      expect(rows).toEqual([["a"], ["1"]]);
+      expect(p.blankLines).toBe(1);
+    });
+    it("keeps a line that holds a value: an empty string, a delimiter, or spaces", () => {
+      expect(parseCsv('a\n""\n').rows).toEqual([[QUOTED_EMPTY]]);
+      expect(parseCsv("a,b\n,\n").rows).toEqual([["", ""]]);
+      expect(parseCsv("a\n  \n").rows).toEqual([["  "]]);
+    });
+    it("keeps a newline inside a quoted value", () => {
+      expect(parseCsv('a\n"x\n\ny"\n').rows).toEqual([["x\n\ny"]]);
+    });
+  });
+
+  describe("a quote that never closes", () => {
+    it("is an error that names the line it opened on", () => {
+      const p = new CsvStreamParser();
+      p.push('id,note\n1,fine\n2,"oops\n3,more\n4,more\n');
+      expect(() => p.end()).toThrow(/starts on line 3 is never closed/);
+    });
+    it("counts lines inside earlier quoted values", () => {
+      const p = new CsvStreamParser();
+      p.push('a\n"two\nlines"\n"open');
+      expect(() => p.end()).toThrow(/line 4/);
+    });
+    it("parseCsv throws too, rather than returning the swallowed rows", () => {
+      expect(() => parseCsv('a\n"never closed\n1\n2\n')).toThrow(/never closed/);
+    });
+    it("a closing quote as the very last character is closed", () => {
+      const p = new CsvStreamParser();
+      expect([...p.push('a\n"x"'), ...p.end()]).toEqual([["a"], ["x"]]);
+    });
+    it("a closing quote that ends one chunk is closed", () => {
+      const p = new CsvStreamParser();
+      expect([...p.push('a\n"x"'), ...p.push("\n"), ...p.end()]).toEqual([["a"], ["x"]]);
+    });
+    it("an escaped quote at the end leaves the field open", () => {
+      const p = new CsvStreamParser();
+      p.push('a\n"x""');
+      expect(() => p.end()).toThrow(/line 2 is never closed/);
+    });
+  });
+});

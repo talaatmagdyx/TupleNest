@@ -40,6 +40,12 @@ export class CsvStreamParser {
   private atStart = true;
   /** A chunk can end on `"` while the escape `""` straddles the boundary. */
   private pendingQuote = false;
+  /** The line being read, counting newlines inside quoted fields too. */
+  private line = 1;
+  /** The line the open quoted field started on, for the error at `end`. */
+  private quoteLine = 0;
+  /** Empty lines passed over. See the newline case in `push`. */
+  blankLines = 0;
 
   constructor(private readonly delimiter = ",") {}
 
@@ -101,6 +107,7 @@ export class CsvStreamParser {
           i++;
           continue;
         }
+        if (c === "\n") this.line++;
         this.field += c;
         i++;
         continue;
@@ -109,6 +116,7 @@ export class CsvStreamParser {
       if (c === '"' && this.field === "") {
         this.inQuotes = true;
         this.fieldWasQuoted = true;
+        this.quoteLine = this.line;
         i++;
         continue;
       }
@@ -122,7 +130,13 @@ export class CsvStreamParser {
         continue;
       }
       if (c === "\n") {
-        endRow();
+        this.line++;
+        // A line with nothing on it is not a record. It used to become a row
+        // of one empty field, which the import wrote as a row of NULLs: a
+        // trailing blank line, or one between blocks, added rows nobody had.
+        // `""` on a line by itself is a value and is kept.
+        if (this.row.length === 0 && this.field === "" && !this.fieldWasQuoted) this.blankLines++;
+        else endRow();
         i++;
         continue;
       }
@@ -136,7 +150,18 @@ export class CsvStreamParser {
   /** The final row, when the file did not end with a newline. */
   end(): string[][] {
     // A chunk that ended mid-escape closed the field; nothing more is coming.
-    this.pendingQuote = false;
+    if (this.pendingQuote) {
+      this.pendingQuote = false;
+      this.inQuotes = false;
+    }
+    // A quote that never closes takes every later line into one field. That
+    // was returned as a last, enormous value and imported; it is a broken
+    // file, and saying where it broke is the only useful thing to do with it.
+    if (this.inQuotes) {
+      throw new Error(
+        `The quoted value that starts on line ${this.quoteLine} is never closed, so everything after it would be read as one field. Fix the quoting and try again.`,
+      );
+    }
     if (this.field !== "" || this.fieldWasQuoted || this.row.length > 0) {
       this.row.push(this.field === "" && this.fieldWasQuoted ? QUOTED_EMPTY : this.field);
       const last = this.row;
@@ -161,8 +186,10 @@ export function parseCsv(text: string, delimiter = ","): CsvTable {
 
 export type InferredType = "int8" | "numeric" | "boolean" | "timestamptz" | "date" | "text";
 
-const INT_RE = /^-?\d{1,18}$/;
-const NUM_RE = /^-?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;
+// No leading zeros: `007` and `02134` are codes, not numbers, and a numeric
+// column would store 7 and 2134. A column holding one stays text.
+const INT_RE = /^-?(0|[1-9]\d{0,17})$/;
+const NUM_RE = /^-?((0|[1-9]\d*)(\.\d*)?|\.\d+)([eE][-+]?\d+)?$/;
 const BOOL_RE = /^(true|false|t|f|yes|no|y|n|0|1)$/i;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TS_RE = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[-+]\d{2}:?\d{2})?$/;
