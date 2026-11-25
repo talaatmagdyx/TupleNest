@@ -62,6 +62,16 @@ trusting it.
   rolled back with it.
 
 ### Correctness
+- More types read as the server writes them, where they showed as `\x…`
+  hex: `interval`, `timetz`, ranges and multiranges, multi-dimensional
+  arrays, arrays of any of these, and `infinity` / `-infinity` dates and
+  timestamps. `time '24:00:00'` is no longer shown as `00:00:00`, a BC date
+  no longer as a negative year, an array with non-default bounds keeps them
+  (`[0:1]={7,8}`), a boolean array reads `{t,f}`, and fractional seconds are
+  not padded (`.25`, not `.250`). Each is checked against the server's own
+  `::text` on PostgreSQL 13, 15 and 17. `money` still shows raw: its text
+  depends on the server's `lc_monetary`, which the value does not carry
+  (audit TN-020).
 - A `json` or `jsonb` value is shown, copied and exported as the text the
   server sent. It used to be parsed and written back out, three times over
   (in the driver, by the page, and in the export), and each pass made it a

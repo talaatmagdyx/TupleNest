@@ -2458,3 +2458,140 @@ async fn a_row_edit_too_long_for_its_column_is_refused_not_truncated() {
         .unwrap();
     assert_eq!(cell(&mut s, "v").await, "abcde");
 }
+
+/// Audit TN-020: these all rendered as `\x…` hex, and `24:00:00` as
+/// `00:00:00`. Each cell must now read exactly as the server's own `::text`.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn types_decoded_from_the_wire_read_as_the_server_writes_them() {
+    let exprs = [
+        // interval, with every sign combination the output rules distinguish
+        "interval '0'",
+        "interval '1 day'",
+        "interval '1 year 2 mons 3 days 04:05:06.5'",
+        "interval '-1 day +02:00:00'",
+        "interval '-1 mon +1 day -02:00:00'",
+        "interval '-00:00:00.000001'",
+        "interval '-25 months'",
+        "interval '100 hours'",
+        "interval '1 mon -1 day'",
+        "interval '2 years -3 mons +4 days -00:00:01'",
+        // time and timetz
+        "time '24:00:00'",
+        "time '00:00:00'",
+        "time '10:30:00.1234'",
+        "time '23:59:59.999999'",
+        "timetz '10:30:00+02'",
+        "timetz '10:30:00.5-05:30'",
+        "timetz '24:00:00+00'",
+        "timetz '00:00:00+14:59:59'",
+        // infinity and BC
+        "date 'infinity'",
+        "date '-infinity'",
+        "date '0044-03-15 BC'",
+        "date '0001-01-01'",
+        "timestamp 'infinity'",
+        "timestamp '-infinity'",
+        "timestamp '0044-03-15 12:00:00 BC'",
+        "timestamp '1999-12-31 23:59:59.999999'",
+        // ranges
+        "int4range(1, 10)",
+        "int4range(NULL, 5, '(]')",
+        "int4range(3, NULL)",
+        "'empty'::int4range",
+        "int8range(-5, 9007199254740993, '[]')",
+        "numrange(1.50, 2.25, '(]')",
+        "numrange(NULL, NULL)",
+        "daterange('2024-01-01', '2024-02-01')",
+        "daterange('2024-01-01', 'infinity')",
+        "tsrange('2024-01-01 10:00', '2024-01-02 11:30:00.25', '[]')",
+        // arrays the native path cannot take
+        "'{{1,2},{3,4}}'::int4[]",
+        "'{{{1},{2}},{{3},{NULL}}}'::int8[]",
+        "'[0:1]={7,8}'::int4[]",
+        "'{{a,\"b c\"},{\"\",NULL}}'::text[]",
+        "ARRAY[interval '1 day', NULL, interval '-1 hour']",
+        "ARRAY[1.10, 22.5]::numeric[]",
+        "ARRAY[date '2024-01-01', date 'infinity']",
+        "ARRAY[int4range(1,2), int4range(5,NULL)]",
+        "ARRAY[time '24:00:00']",
+        "'{}'::interval[]",
+    ];
+    let mut session = PostgresDriver.connect(test_config()).await.unwrap();
+    // The decoders write these two styles; say so rather than hope.
+    session
+        .execute(req("SET intervalstyle = postgres"), &NullSink)
+        .await
+        .unwrap();
+    session
+        .execute(req("SET datestyle = ISO, MDY"), &NullSink)
+        .await
+        .unwrap();
+    for e in exprs {
+        let sink = CollectSink::default();
+        session
+            .execute(req(format!("SELECT {e}, ({e})::text")), &sink)
+            .await
+            .unwrap_or_else(|err| panic!("{e}: {err:?}"));
+        let rows = sink.rows.lock().unwrap();
+        let row = &rows[0];
+        let CellValue::Text(server) = &row[1] else {
+            panic!("{e}: {row:?}");
+        };
+        assert!(
+            matches!(&row[0], CellValue::Text(_)),
+            "{e}: not decoded, got {:?}",
+            row[0]
+        );
+        assert_eq!(&text_of(&row[0]), server, "{e}");
+    }
+}
+
+/// Multiranges exist from PostgreSQL 14; tstz ranges are written in UTC with
+/// a `Z`, like every other timestamptz cell, whatever the session's zone.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn multiranges_and_tstz_ranges() {
+    let mut session = PostgresDriver.connect(test_config()).await.unwrap();
+    session
+        .execute(req("SET timezone = 'Asia/Tokyo'"), &NullSink)
+        .await
+        .unwrap();
+    let sink = CollectSink::default();
+    session
+        .execute(
+            req("SELECT tstzrange('2024-01-01 00:00+00', '2024-01-01 12:30+00')"),
+            &sink,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        text_of(&sink.rows.lock().unwrap()[0][0]),
+        r#"[2024-01-01T00:00:00Z,2024-01-01T12:30:00Z)"#
+    );
+
+    let version = first_row("SHOW server_version_num").await;
+    if text_of(&version[0]).parse::<i32>().unwrap() < 140_000 {
+        return;
+    }
+    for e in [
+        "int4multirange(int4range(1,3), int4range(5,8))",
+        "'{}'::int4multirange",
+        "nummultirange(numrange(1.5,2), numrange(NULL,0))",
+    ] {
+        let row = first_row(&format!("SELECT {e}, ({e})::text")).await;
+        assert_eq!(text_of(&row[0]), text_of(&row[1]), "{e}");
+    }
+}
+
+/// `money` is written by the server according to `lc_monetary`, which the
+/// wire value does not carry: it stays visibly raw rather than guessed.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn money_stays_raw() {
+    let row = first_row("SELECT 12.34::money").await;
+    assert!(
+        matches!(&row[0], CellValue::Other(o) if o.db_type == "money"),
+        "{row:?}"
+    );
+}
