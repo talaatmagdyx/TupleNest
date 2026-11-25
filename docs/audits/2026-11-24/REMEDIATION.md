@@ -40,14 +40,30 @@ Data integrity and safety first, release engineering last.
 
 | # | Finding | Branch | Status |
 |---|---|---|---|
-| 1 | TN-003 Explain can execute a writing statement | `fix/tn-003-explain-safety` | planned |
-| 2 | TN-002 row edit written to the wrong schema, with TN-022 | `fix/tn-002-edit-target` | planned |
-| 3 | TN-021 row edit truncates `varchar(n)`, `char(n)`, `bit(n)` | `fix/tn-021-edit-truncation` | planned |
-| 4 | TN-007 result grid and staged edits survive a profile switch | `fix/tn-007-session-switch` | planned |
-| 5 | TN-001 Commit reports success after a rollback | `fix/tn-001-commit-tag` | planned |
-| 6 | TN-004 Format SQL rewrites literals and quoted identifiers | `fix/tn-004-format-literals` | planned |
-| 7 | TN-013 password redaction | `fix/tn-013-redaction` | planned |
-| 8 | TN-005 release readiness and an end-to-end updater test | `release/…` | blocked on 1 to 6 |
+| 1 | TN-003 Explain can execute a writing statement | `fix/tn-003-explain-safety` | open: pull request 50 |
+| 2 | TN-002 row edit written to the wrong schema, with TN-022 | `fix/tn-002-edit-target` | open: pull request 51 |
+| 3 | TN-001 Commit reports success after a rollback | `fix/tn-001-commit-tag` | open: pull request 52 |
+| 4 | TN-030 read-only profile runs `DO`/`CALL` behind a nested comment (new, see below) | `fix/tn-030-readonly-nested-comment` | open: pull request 53 |
+| 5 | TN-004 Format SQL rewrites literals and quoted identifiers | `fix/tn-004-format-literals` | open: pull request 54 |
+| 6 | TN-021 row edit truncates `varchar(n)`, `char(n)`, `bit(n)` | `fix/tn-021-edit-truncation` | planned |
+| 7 | TN-007 result grid and staged edits survive a profile switch | `fix/tn-007-session-switch` | planned |
+| 8 | TN-013 password redaction | `fix/tn-013-redaction` | planned |
+| 9 | TN-005 release readiness and an end-to-end updater test | `release/…` | blocked on 1 to 7 |
+
+Each pull request changes one thing, but several touch the same files
+(`CHANGELOG.md`, `lib/sql.tsx` and its tests, the end of `live_pg.rs`), so
+they merge one at a time, each rebased on the one before.
+
+### TN-030, found during remediation
+
+While fixing TN-001, a test for a `COMMIT` behind a nested comment failed, and
+the cause turned out to be shared with the read-only check: the driver's
+`leading_words` helper skipped a leading `/* … */` by stopping at the first
+`*/`, and PostgreSQL nests block comments. On a read-only profile,
+`/* a /* b */ c */ DO $$ … $$` was read as starting with `c`, so the refusal of
+`DO` and `CALL` did not apply and the block ran; a `DO` block can commit,
+switch the session to read-write and write. **P1, Confirmed** by the existing
+live test with the nested-comment case added, which fails on `main`.
 
 Then the remaining P2 findings in the order of REPORT.md section F, and the P3
 findings after them.
