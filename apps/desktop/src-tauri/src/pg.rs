@@ -1519,6 +1519,22 @@ mod redact_sql_tests {
     }
 }
 
+/// How a failed statement is recorded in history: `cancelled` only when it
+/// was cancelled.
+///
+/// This was a search for the letters "cancel" anywhere in the error's text.
+/// A statement stopped by `statement_timeout` matched (the server's message
+/// is "canceling statement due to statement timeout"), and so did a COMMIT
+/// refused because its transaction had failed, whose explanation mentions
+/// that a statement may have been cancelled. Both are errors.
+fn history_status(e: &tuplenest_driver_api::DriverError) -> &'static str {
+    if e.category == tuplenest_driver_api::ErrorCategory::Cancelled {
+        "cancelled"
+    } else {
+        "error"
+    }
+}
+
 /// Who the live session is, for the records: its key, and whether it is
 /// tagged production.
 fn session_identity(state: &PgState) -> (String, bool) {
@@ -1712,11 +1728,7 @@ pub async fn pg_query(
             // report in memory. Compute the disk copy before `e` is consumed.
             let persisted = persisted_error(&e);
             let msg = err_to_string(&e);
-            let status = if msg.to_lowercase().contains("cancel") {
-                "cancelled"
-            } else {
-                "error"
-            };
+            let status = history_status(&e);
             record_history(
                 &app,
                 &state,
@@ -3434,5 +3446,35 @@ mod audit_before_run_tests {
             audit_before_run(&store, KEY, &format!("SELECT {n}")).unwrap();
         }
         assert_eq!(store.lock().unwrap().audit_list(10).unwrap().len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod history_status_tests {
+    use super::*;
+    use tuplenest_driver_api::{DriverError, ErrorCategory};
+
+    #[test]
+    fn only_a_cancel_is_recorded_as_cancelled() {
+        let cancelled = DriverError::new(ErrorCategory::Cancelled, "Query cancelled");
+        assert_eq!(history_status(&cancelled), "cancelled");
+
+        // The words "cancel" in the text do not make it one.
+        let timeout = DriverError::new(ErrorCategory::StatementTimeout, "Statement timed out")
+            .with_native_code("57014")
+            .with_explanation("canceling statement due to statement timeout");
+        assert_eq!(history_status(&timeout), "error");
+
+        let commit = DriverError::new(
+            ErrorCategory::DriverFailure,
+            "Nothing was committed: the transaction had failed and was rolled back",
+        )
+        .with_explanation(
+            "An earlier statement in this transaction failed, was cancelled or timed out.",
+        );
+        assert_eq!(history_status(&commit), "error");
+
+        let syntax = DriverError::new(ErrorCategory::Syntax, "Syntax error");
+        assert_eq!(history_status(&syntax), "error");
     }
 }

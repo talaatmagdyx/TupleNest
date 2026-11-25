@@ -1644,10 +1644,11 @@ async fn statement_timeout_is_enforced_by_the_server() {
         .execute(req("SELECT pg_sleep(5)"), &NullSink)
         .await
         .expect_err("a 5s sleep must not survive a 250ms timeout");
-    // Postgres reports a timeout as query_canceled, same as a user cancel.
+    // Postgres reports a timeout with the code of a user cancel (57014);
+    // the driver tells them apart by the message.
     assert!(
-        matches!(err.category, ErrorCategory::Cancelled),
-        "expected a cancellation, got {:?}",
+        matches!(err.category, ErrorCategory::StatementTimeout),
+        "expected a statement timeout, got {:?}",
         err.category
     );
 }
@@ -2833,4 +2834,43 @@ async fn read_only_session_sends_only_statements_that_read() {
     rw.execute(req("DROP TABLE tn_ro_maint"), &NullSink)
         .await
         .unwrap();
+}
+
+/// A statement the server stops at `statement_timeout` is a timeout, and one
+/// cancelled on request is a cancel. PostgreSQL gives both SQLSTATE 57014.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn a_statement_timeout_is_not_reported_as_a_cancel() {
+    let mut session = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .unwrap();
+    session
+        .execute(req("SET statement_timeout = '50ms'"), &NullSink)
+        .await
+        .unwrap();
+    let err = session
+        .execute(req("SELECT pg_sleep(5)"), &NullSink)
+        .await
+        .unwrap_err();
+    assert_eq!(err.category, ErrorCategory::StatementTimeout, "{err:?}");
+    assert_eq!(err.native_code.as_deref(), Some("57014"));
+    assert_eq!(err.title, "Statement timed out");
+
+    // A cancel that was asked for is still a cancel.
+    session
+        .execute(req("SET statement_timeout = 0"), &NullSink)
+        .await
+        .unwrap();
+    let handle = session.cancel_handle();
+    let canceller = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        handle.cancel().await
+    });
+    let err = session
+        .execute(req("SELECT pg_sleep(5)"), &NullSink)
+        .await
+        .unwrap_err();
+    canceller.await.unwrap().unwrap();
+    assert_eq!(err.category, ErrorCategory::Cancelled, "{err:?}");
 }

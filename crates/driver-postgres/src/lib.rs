@@ -2672,6 +2672,13 @@ fn leading_words(sql: &str, n: usize) -> Vec<String> {
 pub fn normalize_error(e: tokio_postgres::Error) -> Box<DriverError> {
     if let Some(db) = e.as_db_error() {
         let (category, title) = match *db.code() {
+            // PostgreSQL uses one code, 57014, for a cancel someone asked for
+            // and for a statement the server stopped at `statement_timeout`.
+            // Only the message tells them apart, and they are different
+            // facts: one was a decision, the other a limit being hit.
+            SqlState::QUERY_CANCELED if db.message().contains("statement timeout") => {
+                (ErrorCategory::StatementTimeout, "Statement timed out")
+            }
             SqlState::QUERY_CANCELED => (ErrorCategory::Cancelled, "Query cancelled"),
             SqlState::SYNTAX_ERROR => (ErrorCategory::Syntax, "Syntax error"),
             SqlState::UNDEFINED_TABLE => (ErrorCategory::SchemaMissing, "Relation not found"),

@@ -94,6 +94,12 @@ trusting it.
   rolled back with it.
 
 ### Correctness
+- History records a statement as cancelled only when it was cancelled. A
+  statement the server stopped at its `statement_timeout`, and a COMMIT
+  refused because its transaction had failed, were both recorded as
+  "cancelled": the status was decided by looking for those letters in the
+  error text. A timeout is now reported as "Statement timed out" where it
+  said "Query cancelled".
 - The confirmation dialog on prod and staging says why it opened. It said
   "Statement has no WHERE clause … this UPDATE will affect every row" for
   every statement it was shown for, including `DROP TABLE`, a `DO` block and
