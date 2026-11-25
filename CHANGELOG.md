@@ -9,6 +9,10 @@ From a second audit, which re-tested every fix in 0.1.1-beta.12 rather than
 trusting it.
 
 ### Safety
+- Escape no longer dismisses a running import. The dialog refused the key
+  itself, but only when focus was inside it; with focus on the page — after a
+  click on the backdrop — the app-wide handler closed the dialog and the
+  INSERTs carried on with no progress and no Cancel (audit TN-026).
 - Disconnect, the connection switcher and the updater ask the server whether
   a transaction is open. They went by the app's own flag, which follows only
   the Begin button, so a transaction opened by typing `BEGIN` was dropped with

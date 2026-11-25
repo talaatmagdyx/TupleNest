@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import { CONNECTION, PROD, RESULT, backend, type Backend } from "./test/backend";
@@ -286,5 +286,49 @@ describe("App — rename from find usages", () => {
     await waitFor(() => expect(document.querySelector(".modal")).not.toBeInTheDocument());
     const editor = screen.getByRole("textbox", { name: /sql editor/i }) as HTMLTextAreaElement;
     expect(editor.value).toBe("select * from orders");
+  });
+});
+
+// Audit TN-026. The dialog's own Escape handler refuses to close mid-import,
+// but it only hears the key when focus is inside the dialog.
+describe("App — Escape while the app is writing", () => {
+  const startImport = async (user: ReturnType<typeof userEvent.setup>) => {
+    be.on("pg_query", (a) => {
+      // The first INSERT never finishes: the import is in flight for the test.
+      if (/^insert into/i.test(String(a.sql ?? ""))) return new Promise(() => {});
+      return { columns: [], totalRows: 0, storedRows: 0, truncated: false, rowsAffected: 0 };
+    });
+    await palette(user, "Import CSV");
+    const dialog = await screen.findByRole("dialog", { name: "Import CSV" });
+    const text = "id,name\n1,Ada\n2,Alan\n";
+    const file = new File([text], "people.csv", { type: "text/csv" });
+    Object.defineProperty(file, "text", { value: async () => text, configurable: true });
+    const input = dialog.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    await act(async () => {
+      fireEvent.change(input);
+    });
+    await user.click(await screen.findByRole("button", { name: /Import 2 rows/ }));
+    await waitFor(() =>
+      expect(be.sent("pg_query").some((q) => /^insert into/i.test(String(q.sql)))).toBe(true),
+    );
+  };
+
+  it("does not close a running import when focus is outside the dialog", async () => {
+    const user = await connected();
+    await startImport(user);
+    // The key as the page hears it when focus is not in the dialog — where a
+    // click on the backdrop leaves it in a real browser.
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(document.querySelector(".modal.import")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Import CSV" })).toBeInTheDocument();
+  });
+
+  it("still closes the import with Escape before anything is being written", async () => {
+    const user = await connected();
+    await palette(user, "Import CSV");
+    await screen.findByRole("dialog", { name: "Import CSV" });
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(document.querySelector(".modal.import")).not.toBeInTheDocument());
   });
 });
