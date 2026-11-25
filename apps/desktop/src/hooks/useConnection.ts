@@ -91,9 +91,13 @@ export function useConnection(): Connection {
     async (params: PgParams, environment: string, profileId: string | null = null): Promise<ConnectOutcome> => {
       setStatus("Connecting…");
       try {
-        await invoke("pg_connect", { params });
+        // The backend answers with the environment it settled on, which can
+        // be more protective than the one asked for: two saved profiles for
+        // one database, one tagged prod. The window follows the backend, so
+        // the banner and the statement guard match the audit log.
+        const settled = await invoke<{ environment?: string | null } | null | undefined>("pg_connect", { params });
         setConnected(true);
-        setConnectedEnv(environment);
+        setConnectedEnv(settled?.environment ?? environment);
         setConnectedTo({
           profileId,
           username: params.username,

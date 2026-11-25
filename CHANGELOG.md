@@ -9,6 +9,11 @@ From a second audit, which re-tested every fix in 0.1.1-beta.12 rather than
 trusting it.
 
 ### Safety
+- The window follows the environment the backend settled on for a session.
+  After TN-031 the backend could treat a session as production while the
+  window, going by the profile that was clicked, showed DEV and left the
+  statement guard unarmed. `pg_connect` now reports the tag it chose, and
+  the banner, the pill and the guard use it.
 - Two saved profiles for the same database no longer let a production
   session run as a development one. The backend decides for itself whether a
   session is production (it does not trust the window), by finding the saved
