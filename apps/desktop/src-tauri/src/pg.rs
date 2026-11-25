@@ -1484,19 +1484,9 @@ mod redact_sql_tests {
     }
 }
 
-/// Records an execution in query history (E1.5). Prod-tagged connections
-/// store no SQL text. History failures never fail the query itself.
-#[allow(clippy::too_many_arguments)]
-fn record_history(
-    app: &tauri::AppHandle,
-    state: &PgState,
-    sql: &str,
-    status: &str,
-    error_text: Option<String>,
-    rows_returned: u64,
-    rows_affected: Option<u64>,
-    duration_ms: u64,
-) {
+/// Who the live session is, for the records: its key, and whether it is
+/// tagged production.
+fn session_identity(state: &PgState) -> (String, bool) {
     let connection_key = state
         .cache_key
         .lock()
@@ -1510,6 +1500,59 @@ fn record_history(
         .and_then(|e| e.clone())
         .as_deref()
         == Some("prod");
+    (connection_key, is_prod)
+}
+
+/// Writes the production audit row for a statement that is about to run.
+///
+/// Before, not after, and its failure is the statement's failure. The row
+/// used to be written once the statement had finished, on a background
+/// thread, with the result of the write thrown away. So a statement that was
+/// still running when the app was killed or crashed — the long, heavy ones —
+/// left no trace of having been sent, and a store that could not be written
+/// (a full disk, a locked or damaged file) meant production statements ran
+/// unrecorded with nothing said. An accountability record that can be
+/// skipped silently is not one: if it cannot be written, the statement is
+/// not sent.
+///
+/// The row says the statement was *submitted*. How it ended is in the
+/// history row, which carries no SQL on production.
+fn audit_before_run(
+    store: &StdMutex<tuplenest_workspace_store::Store>,
+    connection_key: &str,
+    sql: &str,
+) -> Result<(), String> {
+    const NOT_RUN: &str =
+        "Not run: this production statement could not be recorded in the audit log";
+    let store = store.lock().map_err(|_| {
+        tracing::error!(
+            component = "audit",
+            "store lock poisoned; statement refused"
+        );
+        format!("{NOT_RUN} (the local store is unavailable). Restart TupleNest and try again.")
+    })?;
+    store
+        .audit_add(connection_key, Some("prod"), &redact_sql(sql))
+        .map_err(|e| {
+            tracing::error!(component = "audit", error = %e, "audit write failed; statement refused");
+            format!("{NOT_RUN} ({e}). Nothing was sent to the database.")
+        })
+}
+
+/// Records an execution in query history (E1.5). Prod-tagged connections
+/// store no SQL text. History failures never fail the query itself.
+#[allow(clippy::too_many_arguments)]
+fn record_history(
+    app: &tauri::AppHandle,
+    state: &PgState,
+    sql: &str,
+    status: &str,
+    error_text: Option<String>,
+    rows_returned: u64,
+    rows_affected: Option<u64>,
+    duration_ms: u64,
+) {
+    let (connection_key, is_prod) = session_identity(state);
     let no_history = opts_out_of_history(sql);
     // Store SQL redacted of secret literals; prod history still omits it
     // entirely. The `-- tuplenest:no-history` directive drops the history row.
@@ -1533,7 +1576,6 @@ fn record_history(
         duration_ms,
         favorite: false,
     };
-    let audit_sql = is_prod.then(|| redact_sql(sql));
     let app = app.clone();
     // SQLite writes are blocking disk I/O (a sync per commit), and the store
     // lock is shared with every other command. Run on the async runtime they
@@ -1553,13 +1595,8 @@ fn record_history(
                 tracing::warn!(component = "history", error = %e, "failed to record history");
             }
         }
-        // Prod audit trail: retained even under the no-history directive — it is
-        // an accountability record, not user history, and must not be
-        // silenceable by a comment. SQL is redacted of secret literals but
-        // otherwise kept in full.
-        if let Some(audit_sql) = audit_sql {
-            let _ = store.audit_add(&entry.connection_key, Some("prod"), &audit_sql);
-        }
+        // The production audit row is not written here: see
+        // `audit_before_run`, which writes it before the statement is sent.
     });
 }
 
@@ -1593,6 +1630,21 @@ pub async fn pg_query(
     let started_wall = std::time::Instant::now();
     let mut guard = state.session.lock().await;
     let session = guard.as_mut().ok_or("not connected")?;
+
+    // Production: the audit row first. It is kept even under the no-history
+    // directive — an accountability record, not user history, and not
+    // something a comment can switch off. SQL is redacted of secret literals
+    // but otherwise kept in full.
+    let (connection_key, is_prod) = session_identity(&state);
+    if is_prod {
+        let (app, sql) = (app.clone(), sql.clone());
+        tauri::async_runtime::spawn_blocking(move || {
+            use tauri::Manager;
+            audit_before_run(&app.state::<crate::AppState>().store, &connection_key, &sql)
+        })
+        .await
+        .map_err(|e| format!("Not run: the audit log write did not complete ({e})."))??;
+    }
 
     let sink = StoreSink::new(Some(&state.result));
     // JSON param values from the WebView → typed ParamValue. Text is the
@@ -3181,5 +3233,63 @@ mod json_cell_bridge_tests {
                 "{text}"
             );
         }
+    }
+}
+
+// Audit TN-027: the production audit row.
+#[cfg(test)]
+mod audit_before_run_tests {
+    use super::*;
+    use tuplenest_workspace_store::Store;
+
+    const KEY: &str = "ops@db.internal:5432/prod";
+
+    #[test]
+    fn the_row_is_there_when_the_call_returns() {
+        // Written synchronously, so it exists before the statement is sent
+        // and whatever happens to the statement — or the app — afterwards.
+        let store = StdMutex::new(Store::open_in_memory().unwrap());
+        audit_before_run(&store, KEY, "DELETE FROM orders WHERE id = 7").unwrap();
+        let rows = store.lock().unwrap().audit_list(10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].connection_key, KEY);
+        assert_eq!(rows[0].environment.as_deref(), Some("prod"));
+        assert_eq!(rows[0].sql_text, "DELETE FROM orders WHERE id = 7");
+    }
+
+    #[test]
+    fn secrets_are_redacted_and_the_no_history_comment_does_not_silence_it() {
+        let store = StdMutex::new(Store::open_in_memory().unwrap());
+        let sql = "-- tuplenest:no-history\nALTER ROLE app PASSWORD 'hunter2-planted'";
+        assert!(opts_out_of_history(sql));
+        audit_before_run(&store, KEY, sql).unwrap();
+        let rows = store.lock().unwrap().audit_list(10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].sql_text.contains("ALTER ROLE app PASSWORD"));
+        assert!(!rows[0].sql_text.contains("hunter2-planted"));
+    }
+
+    #[test]
+    fn a_store_that_cannot_be_used_refuses_the_statement() {
+        let store = std::sync::Arc::new(StdMutex::new(Store::open_in_memory().unwrap()));
+        // Poison the lock, as a panic in another command holding it would.
+        let held = store.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = held.lock().unwrap();
+            panic!("poison");
+        })
+        .join();
+        let err = audit_before_run(&store, KEY, "DROP TABLE users").unwrap_err();
+        assert!(err.starts_with("Not run:"), "{err}");
+        assert!(err.contains("audit log"), "{err}");
+    }
+
+    #[test]
+    fn every_statement_gets_its_own_row_in_order() {
+        let store = StdMutex::new(Store::open_in_memory().unwrap());
+        for n in 0..3 {
+            audit_before_run(&store, KEY, &format!("SELECT {n}")).unwrap();
+        }
+        assert_eq!(store.lock().unwrap().audit_list(10).unwrap().len(), 3);
     }
 }

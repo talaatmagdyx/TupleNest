@@ -9,6 +9,12 @@ From a second audit, which re-tested every fix in 0.1.1-beta.12 rather than
 trusting it.
 
 ### Safety
+- The production audit row is written before the statement is sent, and a
+  statement whose row cannot be written is not sent. The row used to be
+  written after the statement finished, in the background, with any failure
+  discarded: a statement still running when the app was killed left no
+  record, and a store that could not be written meant production statements
+  ran unrecorded with nothing said (audit TN-027).
 - The title bar and the status bar name the connection that is live. They were
   built from the connection form, and the form is rewritten whenever a profile
   is opened for editing or a new one is started: with a session on one
