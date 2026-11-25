@@ -63,9 +63,9 @@ Data integrity and safety first, release engineering last.
 | 21 | TN-018 query parameters guessed and bound to four types only | 72 | merged | verified (`007` to a text column) |
 | 22 | TN-009 read-only lets maintenance commands through | 73 | merged | verified (`VACUUM`) |
 | 23 | TN-008 guard misses always-true WHERE and EXPLAIN ANALYZE | 74 | merged | verified |
-| 24 | TN-031 two profiles for one database: the first one's tag wins (new, see below) | 75, then 80 | merged; 80 open | verified on its branch; 80 (the window follows the backend's tag) is not |
+| 24 | TN-031 two profiles for one database: the first one's tag wins (new, see below) | 75, then 80 | merged | verified, including 80: connected through the dev profile of a dev/prod pair, the window shows PRODUCTION |
 | 25 | Guard dialog and parameter prompt wording (found in verification) | 76 | merged | verified on its branch |
-| 26 | TN-011 signing key in the environment of the whole release build | 81 | open | the two-pass build was run by hand on macOS; the workflow itself has not run |
+| 26 | TN-011 signing key in the environment of the whole release build | 81 | merged | the workflow was run by manual dispatch on 2026-11-25 (run 45672866668); see the third pass below |
 | 27 | TN-010 signing secrets not scoped to the `release` environment | — | repository-settings change for the owner | — |
 | 28 | TN-005 release readiness and an end-to-end updater test | — | not started; no release until the items under "Still to verify" are closed | — |
 
@@ -81,7 +81,7 @@ Still open: TN-005 and TN-010 (rows above), and part of the P3 list.
 |---|---|
 | A statement timeout is recorded as "cancelled" | Fixed in pull request 78, with a refused COMMIT that had the same cause |
 | A stale `cargo deny` ignore entry | Fixed in pull request 79, with three unused licence allowances |
-| Keychain entries from tested-but-unsaved passwords are never removed | Fixed in pull request 82: swept at the next start |
+| Keychain entries from tested-but-unsaved passwords are never removed | Fixed in pull request 82, corrected in 84: swept in the background after the next start. **Not proven** against the real keychain |
 | `e2e/` has 27 known npm vulnerabilities (test-only) | Open. `npm audit fix` leaves 22, the rest need breaking upgrades, and those tests run only against a published release, so the change could not be checked |
 | `row_limit` and `timeout_ms` are accepted and ignored | Open, a decision: stopping at the row cap would lose the exact total the grid shows ("20,000 of 1,000,000") |
 | Two roadmaps that contradict each other | Open, a decision: `docs/ROADMAP.md` plans other engines and an assistant; the site lists them as not planned |
@@ -246,6 +246,91 @@ the rebuilt copy.
 - **TN-009**: the monitor's cancel and terminate on a read-only profile.
 - **TN-018** for placeholder types other than text; **TN-020** for ranges of
   timestamps, multiranges and `money` staying raw.
+
+## Third verification pass (2026-11-25, evening)
+
+**Build.** `main` at `ff4a9a3` (the merge of pull request 83), rebuilt from
+`81062a7` (pull request 84) after the keychain problem below. Same method as
+before. Four profiles were written into the copy's own store; a scratch
+database held 4,000 extra schemas so that listing them takes longer than a
+1 ms statement timeout. Everything was removed afterwards.
+
+| Item | Action | Seen |
+|---|---|---|
+| TN-031, window side (pull request 80) | Two profiles for one database, dev and prod; connect through the dev one | Title pill reads PROD and the PRODUCTION banner is shown |
+| TN-027, the refusal | A trigger on the copy's `audit_log` that aborts every insert; run a statement on the production session | "Not run: this production statement could not be recorded in the audit log (database error: disk is full (simulated)). Nothing was sent to the database."; no audit row |
+| TN-025, schema load | Connect with a 1 ms statement timeout | The explorer reads "Could not load the schemas: Statement timed out [SQLSTATE 57014] …" with a Retry button, not "Loading schemas…" |
+| TN-025, Retry | Drop the extra schemas, lift the timeout, press Retry | The schemas load |
+| Timeout status (pull request 78) | `SELECT pg_sleep(1)` under the 1 ms timeout | "Statement timed out"; the history row is an error, not a cancel |
+| TN-016 | A local listener that accepts on the SSH port and never answers; Save & Connect | The listener records the app holding the connection for **20.0 s**, then closing it |
+
+### Found in this pass: the keychain clean-up blocked the launch
+
+To test pull request 82, a keychain entry was created with the `security`
+tool and put on the copy's pending list. At startup the copy tried to delete
+it, macOS asked for the login-keychain password (the entry belonged to another
+program), and until that was answered the app had no window: the clean-up ran
+during setup, inside the store lock. The owner saw the prompt.
+
+Fixed in pull request 84: the clean-up runs on its own thread and holds the
+lock only to read the list and to write it back. A unit test holds a keychain
+call open and shows the store is still usable.
+
+The clean-up itself is **not proven** against the real keychain. The probe was
+not a fair copy of an entry the app creates, and no further keychain test was
+run. An unsigned build may count as a different program from the build that
+made an entry, in which case macOS would ask before deleting it; that prompt
+would now appear over a working window.
+
+### Release workflow (TN-011)
+
+Run 45672866668, a manual dispatch on `main` at `ff4a9a3`, approved by the
+owner. All five jobs succeeded. It produced the draft pre-release `v16-dev`
+with 29 assets; nothing is published. Counted from the job logs:
+
+| Target | Compile step (no secrets) | Bundle-and-sign step (keys present) |
+|---|---|---|
+| Linux x86_64 | 510 crates compiled; frontend build ran | 1 crate compiled (`tuplenest-desktop`); no frontend build; 3 bundles, 3 updater signatures |
+| macOS Apple Silicon | 428 crates; frontend build ran | 1 crate (`tuplenest-desktop`); no frontend build; `.app.tar.gz.sig` produced |
+| macOS Intel | 429 crates; frontend build ran | 1 crate (`tuplenest-desktop`); no frontend build; `.app.tar.gz.sig` produced |
+| Windows x86_64 | 427 crates; frontend build ran | 1 crate (`tuplenest-desktop`); no frontend build; installers signed |
+
+So with the signing key in the environment, no dependency was compiled and
+the JavaScript toolchain did not run, on every target. The one crate that is
+rebuilt is this repository's own, because its embedded configuration differs
+between the two passes.
+
+The same run confirms TN-028: the release carries `tuplenest-desktop.cdx.json`
+beside the nine crate SBOMs and `frontend-sbom.cdx.json`.
+
+### The Intel build, run under Rosetta
+
+`TupleNest_0.1.1_x64.app.tar.gz` from `v16-dev`: its SHA-256 matches
+`SHA256SUMS`, the binary is `x86_64`, and started with `arch -x86_64` and
+`HOME` pointed at an empty folder it stayed up for the 12 seconds it was
+watched and wrote "TupleNest starting" to its log. That is the Intel build
+running on Apple Silicon through Rosetta, **not** an Intel Mac, and nothing
+was clicked in it.
+
+### Linux and Windows at runtime: not possible without publishing
+
+The Smoke workflow installs the app on Ubuntu and Windows runners and drives
+it. Dispatched against `v16-dev` (run 45677222036) it failed on both at
+"Download the release artifacts": its token is read-only, and a draft release
+is not visible to a read-only token. It works only against a published
+release, and none is to be published yet.
+
+### Could not be done
+
+- **CSV import (TN-023, TN-026).** The import opens the system file picker,
+  which cannot be driven in the background; the request to take the screen
+  for that one step was not answered.
+- **TN-025, the other two cases.** A failed page of rows and a dialog that
+  cannot load could not be induced by hand; they rest on their tests.
+- **Runtime on Windows and Linux.** The builds compile, bundle and sign; the
+  app has not been run on either. See above.
+- **An Intel Mac.** Only the Rosetta run above.
+- **The keychain clean-up** against the real keychain.
 
 ## What "done" means for the scores
 

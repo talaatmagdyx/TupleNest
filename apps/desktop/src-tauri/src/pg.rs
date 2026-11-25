@@ -585,52 +585,85 @@ fn remember_pending_secret(store: &tuplenest_workspace_store::Store, key: &str) 
 }
 
 /// Removes keychain entries left by passwords that were typed and tested but
-/// whose profile was never saved. Run once at startup; returns how many went.
+/// whose profile was never saved. Returns how many went.
 ///
 /// Testing a connection stores the typed password in the keychain. Saving the
 /// profile adopts that entry; closing the form, or the app, without saving
 /// left it there for good — the keychain cannot be listed, so nothing could
-/// find it again. Each entry is now written down when it is made. At the
-/// next start, any that no saved profile refers to is deleted, and the list
-/// is emptied. An entry a profile has adopted is kept.
+/// find it again. Each entry is now written down when it is made. After the
+/// next start, any that no saved profile refers to is deleted. An entry a
+/// profile has adopted is kept.
 ///
-/// At startup, not when the form closes: a password in the form may be
+/// Run after a start, not when the form closes: a password in the form may be
 /// carrying a live, unsaved connection, and only a new start is certain to
 /// have none.
+///
+/// **The store is not locked while the keychain is called.** A keychain call
+/// can stop on a system prompt for as long as the user leaves it there: macOS
+/// asks before one program touches an entry another made, and an unsigned
+/// build can count as another program than the build before it. This used to
+/// run inside the lock, before the window existed, and such a prompt left the
+/// app with no window at all. It is now called from a background thread, and
+/// holds the lock only to read the list and to write it back.
 pub fn sweep_pending_secrets(
-    store: &tuplenest_workspace_store::Store,
+    store: &StdMutex<tuplenest_workspace_store::Store>,
     keychain: &dyn CredentialStore,
 ) -> usize {
-    let pending: Vec<String> = match store.setting_get(PENDING_SECRETS) {
-        Ok(Some(p)) => p,
-        _ => return 0,
-    };
-    if pending.is_empty() {
-        return 0;
-    }
-    // Without the profile list there is no telling which entries are owned.
-    let Ok(profiles) = store.connection_list() else {
-        return 0;
-    };
-    let mut removed = 0;
-    let mut keep = Vec::new();
-    for key in pending {
-        if profiles
-            .iter()
-            .any(|p| p.secret_ref.as_deref() == Some(&key))
-        {
-            continue; // adopted by a profile: no longer pending
+    // Read: which noted entries does no profile own?
+    let unowned: Vec<String> = {
+        let Ok(store) = store.lock() else { return 0 };
+        let pending: Vec<String> = match store.setting_get(PENDING_SECRETS) {
+            Ok(Some(p)) => p,
+            _ => return 0,
+        };
+        if pending.is_empty() {
+            return 0;
         }
-        match keychain.delete(&SecretRef::new(key.clone())) {
-            Ok(()) => removed += 1,
-            // Try again next start rather than forget an entry that is still there.
-            Err(_) => keep.push(key),
-        }
-    }
+        // Without the profile list there is no telling which entries are owned.
+        let Ok(profiles) = store.connection_list() else {
+            return 0;
+        };
+        pending
+            .into_iter()
+            .filter(|key| {
+                !profiles
+                    .iter()
+                    .any(|p| p.secret_ref.as_deref() == Some(key))
+            })
+            .collect()
+    };
+
+    // Delete, with the store free for everything else.
+    let deleted: Vec<String> = unowned
+        .into_iter()
+        .filter(|key| keychain.delete(&SecretRef::new(key.clone())).is_ok())
+        .collect();
+
+    // Write back: drop what was deleted and what a profile has adopted. Read
+    // again rather than reuse the first list — a password tested while the
+    // keychain was being asked has added to it.
+    let Ok(store) = store.lock() else {
+        return deleted.len();
+    };
+    let pending: Vec<String> = store
+        .setting_get(PENDING_SECRETS)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let profiles = store.connection_list().unwrap_or_default();
+    let keep: Vec<String> = pending
+        .into_iter()
+        .filter(|key| {
+            !deleted.contains(key)
+                && !profiles
+                    .iter()
+                    .any(|p| p.secret_ref.as_deref() == Some(key))
+        })
+        .collect();
     if let Err(e) = store.setting_set(PENDING_SECRETS, &keep) {
         tracing::warn!(component = "credentials", error = %e, "could not update the pending-secret list");
     }
-    removed
+    deleted.len()
 }
 
 fn save_secret(password: String, reuse_ref: Option<String>) -> Result<String, String> {
@@ -3635,25 +3668,34 @@ mod pending_secret_tests {
             statement_timeout_ms: 0,
         }
     }
-    fn pending(store: &Store) -> Vec<String> {
+    fn pending(store: &StdMutex<Store>) -> Vec<String> {
         store
+            .lock()
+            .unwrap()
             .setting_get(PENDING_SECRETS)
             .unwrap()
             .unwrap_or_default()
     }
+    fn note(store: &StdMutex<Store>, key: &str) {
+        remember_pending_secret(&store.lock().unwrap(), key);
+    }
 
     #[test]
     fn an_entry_no_profile_adopted_is_removed_and_an_adopted_one_is_kept() {
-        let store = Store::open_in_memory().unwrap();
+        let store = StdMutex::new(Store::open_in_memory().unwrap());
         let keychain = FakeKeychain::with(&["tn-tested", "tn-saved", "tn-other-profile"]);
         // Two passwords were typed and tested; one of the profiles was saved.
-        remember_pending_secret(&store, "tn-tested");
-        remember_pending_secret(&store, "tn-saved");
-        remember_pending_secret(&store, "tn-saved"); // tested twice: noted once
+        note(&store, "tn-tested");
+        note(&store, "tn-saved");
+        note(&store, "tn-saved"); // tested twice: noted once
         store
+            .lock()
+            .unwrap()
             .connection_upsert(&profile("p1", Some("tn-saved")))
             .unwrap();
         store
+            .lock()
+            .unwrap()
             .connection_upsert(&profile("p2", Some("tn-other-profile")))
             .unwrap();
         assert_eq!(pending(&store), ["tn-tested", "tn-saved"]);
@@ -3670,11 +3712,11 @@ mod pending_secret_tests {
 
     #[test]
     fn an_entry_that_could_not_be_deleted_is_tried_again_next_time() {
-        let store = Store::open_in_memory().unwrap();
+        let store = StdMutex::new(Store::open_in_memory().unwrap());
         let keychain = FakeKeychain::with(&["tn-a", "tn-b"]);
         keychain.failing.lock().unwrap().insert("tn-a".into());
-        remember_pending_secret(&store, "tn-a");
-        remember_pending_secret(&store, "tn-b");
+        note(&store, "tn-a");
+        note(&store, "tn-b");
 
         assert_eq!(sweep_pending_secrets(&store, &keychain), 1);
         assert_eq!(pending(&store), ["tn-a"]);
@@ -3688,9 +3730,64 @@ mod pending_secret_tests {
 
     #[test]
     fn nothing_pending_touches_nothing() {
-        let store = Store::open_in_memory().unwrap();
+        let store = StdMutex::new(Store::open_in_memory().unwrap());
         let keychain = FakeKeychain::with(&["tn-x"]);
         assert_eq!(sweep_pending_secrets(&store, &keychain), 0);
         assert!(keychain.has("tn-x"));
+    }
+
+    /// A keychain whose delete stops, as on a system prompt, until released.
+    struct BlockedKeychain {
+        entered: std::sync::mpsc::Sender<()>,
+        release: StdMutex<std::sync::mpsc::Receiver<()>>,
+    }
+    impl CredentialStore for BlockedKeychain {
+        fn set(&self, _: Secret) -> Result<SecretRef, CredentialError> {
+            unreachable!()
+        }
+        fn replace(&self, _: &SecretRef, _: Secret) -> Result<(), CredentialError> {
+            unreachable!()
+        }
+        fn get(&self, _: &SecretRef) -> Result<Secret, CredentialError> {
+            unreachable!()
+        }
+        fn delete(&self, _: &SecretRef) -> Result<(), CredentialError> {
+            self.entered.send(()).unwrap();
+            self.release.lock().unwrap().recv().unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_store_is_free_while_the_keychain_is_waiting_on_a_prompt() {
+        // Found in a built app: the sweep ran inside the store lock, before
+        // the window existed, and a keychain prompt left the app windowless.
+        let store = std::sync::Arc::new(StdMutex::new(Store::open_in_memory().unwrap()));
+        note(&store, "tn-old");
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let keychain = BlockedKeychain {
+            entered: entered_tx,
+            release: StdMutex::new(release_rx),
+        };
+        let sweeping = {
+            let store = store.clone();
+            std::thread::spawn(move || sweep_pending_secrets(&store, &keychain))
+        };
+        // The keychain call is in progress and not returning…
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the sweep reached the keychain");
+        // …and the store can still be used: here, a password tested meanwhile.
+        let guard = store
+            .try_lock()
+            .expect("the store is not held during the keychain call");
+        remember_pending_secret(&guard, "tn-new");
+        drop(guard);
+
+        release_tx.send(()).unwrap();
+        assert_eq!(sweeping.join().unwrap(), 1);
+        // The old entry is off the list; the one added meanwhile is still on it.
+        assert_eq!(pending(&store), ["tn-new"]);
     }
 }
