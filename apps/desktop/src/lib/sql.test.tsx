@@ -361,6 +361,79 @@ describe("formatSQL", () => {
   });
 });
 
+// Audit TN-004. The formatter's patterns ran over the whole text, so Format
+// followed by Run could write different data than was typed.
+describe("formatSQL — only code is formatted", () => {
+  it.each([
+    ["a string full of keywords", "insert into notes(body) values ('made from scratch and love, order by mail')", "'made from scratch and love, order by mail'"],
+    ["trailing spaces and a newline inside a string", "select 'line one   \nline two  ' as t", "'line one   \nline two  '"],
+    ["a doubled quote", "select 'it''s from where and or' as t", "'it''s from where and or'"],
+    ["an escape string", "select e'a\\' from b' as t", "e'a\\' from b'"],
+    ["a dollar-quoted body", "select $$ select x from y where z $$ as t", "$$ select x from y where z $$"],
+    ["a tagged dollar-quoted body", "select $q$ delete from t where a and b $q$", "$q$ delete from t where a and b $q$"],
+    ["a quoted identifier that is a keyword", 'select "from", "order by" from t', '"from", "order by"'],
+    ["a line comment", "select 1 -- pick from where it is, and then set\nfrom t", "-- pick from where it is, and then set"],
+    ["a block comment", "select 1 /* from here\n   where   and there */ from t", "/* from here\n   where   and there */"],
+    ["a nested block comment", "select /* a /* from */ where */ 1", "/* a /* from */ where */"],
+  ])("leaves %s exactly as written", (_name, sql, kept) => {
+    expect(formatSQL(sql)).toContain(kept);
+  });
+
+  it("still formats the code around them", () => {
+    expect(formatSQL("select 'a from b' as x from t where y = 'c and d' and z = 1")).toBe(
+      "SELECT 'a from b' AS x\nFROM t\nWHERE y = 'c and d'\n  AND z = 1",
+    );
+  });
+
+  it("keeps the space between code and the string that follows it", () => {
+    // The old end-of-line trim would have run at the end of every stretch.
+    expect(formatSQL("select   'x'")).toBe("SELECT   'x'");
+    expect(formatSQL("select 1 as  \"my col\"  from t")).toBe('SELECT 1 AS  "my col"\nFROM t');
+  });
+
+  it("does not turn a dollar tag into a keyword", () => {
+    const sql = "select $end$ from where $end$ as t";
+    expect(formatSQL(sql)).toContain("$end$ from where $end$");
+  });
+
+  it("copes with a string or comment that never closes", () => {
+    expect(formatSQL("select 'never closed from where")).toBe("SELECT 'never closed from where");
+    expect(formatSQL("select 1 /* open from")).toBe("SELECT 1 /* open from");
+  });
+
+  it("changes nothing a second time", () => {
+    for (const sql of [
+      "select a,b from t where c=1 and d=2 order by a",
+      "insert into notes(body) values ('made from scratch and love, order by mail')",
+      "select 1 -- from\nfrom t /* where */ where x = $$ and $$",
+    ]) {
+      const once = formatSQL(sql);
+      expect(formatSQL(once)).toBe(once);
+    }
+  });
+
+  it("never changes what a literal, comment or quoted name contains", () => {
+    // Generated: every combination of a few code shapes around each protected
+    // piece. What goes in protected must come out protected, byte for byte.
+    const pieces = [
+      "'from where and  or'",
+      "'a\n  from b  '",
+      "'it''s set'",
+      '"order by"',
+      "$$ union all select $$",
+      "/* having limit */",
+    ];
+    const frames = [
+      (p: string) => `select ${p} from t`,
+      (p: string) => `select 1 from t where x = ${p} and y = 2`,
+      (p: string) => `${p}\nselect 1`,
+      (p: string) => `select 1   ${p}`,
+      (p: string) => `update t set a = ${p} where b = ${p} returning ${p}`,
+    ];
+    for (const p of pieces) for (const f of frames) expect(formatSQL(f(p))).toContain(p);
+  });
+});
+
 describe("hasWriteVerb", () => {
   it.each([
     "with gone as (delete from users returning id) select count(*) from gone",
