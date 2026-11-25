@@ -62,6 +62,14 @@ trusting it.
   rolled back with it.
 
 ### Correctness
+- CSV import no longer changes or invents data in four cases (audit TN-023).
+  A column of zero-padded codes (`007`, `02134`) stays text: it was typed as
+  a number and stored as 7 and 2134. A file that is not UTF-8 is refused with
+  a message saying how to re-save it: its non-ASCII letters were imported as
+  the replacement character. Blank lines are skipped and counted in the
+  result message: each became a row of NULLs. A quoted value that never
+  closes is an error naming the line it starts on: everything after it was
+  imported as one field.
 - A row edit too long for its column is refused instead of being cut to
   fit. Edited values were cast to the column's full type, and an explicit cast
   to `varchar(5)`, `char(3)` or `bit(4)` truncates without an error: the edit

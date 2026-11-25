@@ -30,21 +30,35 @@ async function streamRows(
   file: File,
   delimiter: string,
   onRows: (rows: string[][], bytesRead: number) => boolean | Promise<boolean>,
-): Promise<void> {
+): Promise<number> {
   const reader = file.stream().getReader();
   const parser = new CsvStreamParser(delimiter);
-  const decoder = new TextDecoder("utf-8");
+  // `fatal`: without it, bytes that are not UTF-8 decode to U+FFFD and are
+  // imported as that — a Latin-1 or UTF-16 export went in with its accented
+  // letters replaced and nothing said.
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const decode = (bytes?: Uint8Array) => {
+    try {
+      return bytes ? decoder.decode(bytes, { stream: true }) : decoder.decode();
+    } catch {
+      throw new Error(
+        "This file is not UTF-8 text. Save it again as UTF-8 (a spreadsheet's \"CSV UTF-8\" option) and try again.",
+      );
+    }
+  };
   let bytes = 0;
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       bytes += value.byteLength;
-      const rows = parser.push(decoder.decode(value, { stream: true }));
-      if (rows.length && !(await onRows(rows, bytes))) return;
+      const rows = parser.push(decode(value));
+      if (rows.length && !(await onRows(rows, bytes))) return parser.blankLines;
     }
-    const tail = parser.end();
+    // Flush: a file cut off inside a multi-byte character fails here.
+    const tail = [...parser.push(decode()), ...parser.end()];
     if (tail.length) await onRows(tail, bytes);
+    return parser.blankLines;
   } finally {
     // Releasing matters on the early-exit path: without it the preview would
     // hold the file open after it has what it needs.
@@ -188,7 +202,7 @@ export default function ImportModal(p: Props) {
         pending = [];
       };
 
-      await streamRows(file, delimiter, async (batch, bytes) => {
+      const blank = await streamRows(file, delimiter, async (batch, bytes) => {
         for (const r of batch) {
           if (isHeader) {
             isHeader = false; // the header was already mapped in the preview
@@ -208,10 +222,11 @@ export default function ImportModal(p: Props) {
       else await invoke("pg_commit");
       // Inside the user's own transaction nothing is committed yet: saying
       // "Imported" there let them close the window and lose it.
+      const skipped = blank ? ` (${blank.toLocaleString()} blank ${blank === 1 ? "line" : "lines"} skipped)` : "";
       p.onDone(
         joinExisting
-          ? `Imported ${count.toLocaleString()} rows into ${schema}.${target} inside your open transaction — commit it to keep them`
-          : `Imported ${count.toLocaleString()} rows into ${schema}.${target}`,
+          ? `Imported ${count.toLocaleString()} rows into ${schema}.${target}${skipped} inside your open transaction — commit it to keep them`
+          : `Imported ${count.toLocaleString()} rows into ${schema}.${target}${skipped}`,
       );
       p.onClose();
     } catch (e) {

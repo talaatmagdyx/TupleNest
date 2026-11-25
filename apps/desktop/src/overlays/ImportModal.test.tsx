@@ -330,3 +330,77 @@ describe("ImportModal — streaming a file it never holds whole", () => {
     expect(onDone).not.toHaveBeenCalled();
   });
 });
+
+// Audit TN-023, the parts that live in the dialog.
+describe("ImportModal — a file that cannot be imported faithfully", () => {
+  const bytes = (b: number[], name = "export.csv") => new File([new Uint8Array(b)], name, { type: "text/csv" });
+
+  it("refuses a file that is not UTF-8 instead of importing replacement characters", async () => {
+    // "name\ncafé\n" in Latin-1: 0xE9 alone is not valid UTF-8.
+    const latin1 = [0x6e, 0x61, 0x6d, 0x65, 0x0a, 0x63, 0x61, 0x66, 0xe9, 0x0a];
+    const { container } = render(<ImportModal {...base} />);
+    await choose(container, bytes(latin1));
+    expect(await screen.findByText(/not UTF-8 text/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Import \d/ })).not.toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a UTF-16 export", async () => {
+    // BOM FF FE, then "a\n1\n" in UTF-16LE.
+    const { container } = render(<ImportModal {...base} />);
+    await choose(container, bytes([0xff, 0xfe, 0x61, 0x00, 0x0a, 0x00, 0x31, 0x00, 0x0a, 0x00]));
+    expect(await screen.findByText(/not UTF-8 text/)).toBeInTheDocument();
+  });
+
+  it("refuses a file cut off inside a character", async () => {
+    // "a\n" then the first two bytes of a three-byte character.
+    const { container } = render(<ImportModal {...base} />);
+    await choose(container, bytes([0x61, 0x0a, 0xe2, 0x82]));
+    expect(await screen.findByText(/not UTF-8 text/)).toBeInTheDocument();
+  });
+
+  it("still reads real UTF-8, accents and all", async () => {
+    const { container } = render(<ImportModal {...base} />);
+    await choose(container, csv("name\ncafé\n日本\n"));
+    expect(await screen.findByText(/Import 2 rows/)).toBeInTheDocument();
+    expect(screen.getByText("café")).toBeInTheDocument();
+  });
+
+  it("says where an unclosed quote starts, and offers nothing to import", async () => {
+    const { container } = render(<ImportModal {...base} />);
+    await choose(container, csv('id,note\n1,ok\n2,"oops\n3,x\n'));
+    expect(await screen.findByText(/starts on line 3 is never closed/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Import \d/ })).not.toBeInTheDocument();
+  });
+
+  it("does not count blank lines as rows, and says how many it skipped", async () => {
+    const onDone = vi.fn();
+    const { container } = render(<ImportModal {...base} onDone={onDone} />);
+    await choose(container, csv("id,name\n1,Ada\n\n2,Alan\n\n\n"));
+    await userEvent.click(await screen.findByRole("button", { name: /Import 2 rows/ }));
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(onDone.mock.calls[0][0]).toMatch(/Imported 2 rows .*\(3 blank lines skipped\)/);
+    const insert = invokeMock.mock.calls.find((c) => /insert into/i.test(JSON.stringify(c[1])));
+    expect((insert![1] as { params: unknown[] }).params).toEqual(["1", "Ada", "2", "Alan"]);
+  });
+
+  it("says nothing about blank lines when there were none", async () => {
+    const onDone = vi.fn();
+    const { container } = render(<ImportModal {...base} onDone={onDone} />);
+    await choose(container, csv(GOOD));
+    await userEvent.click(await screen.findByRole("button", { name: /Import 2 rows/ }));
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(onDone.mock.calls[0][0]).not.toMatch(/blank/);
+  });
+
+  it("keeps zero-padded codes as text all the way to the INSERT", async () => {
+    const onDone = vi.fn();
+    const { container } = render(<ImportModal {...base} onDone={onDone} />);
+    await choose(container, csv("zip,n\n02134,1\n00501,2\n"));
+    await userEvent.click(await screen.findByRole("button", { name: /Import 2 rows/ }));
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    const sent = invokeMock.mock.calls.map((c) => c[1] as { sql?: string; params?: unknown[] });
+    expect(sent.find((s) => /create table/i.test(s?.sql ?? ""))!.sql).toMatch(/"zip" text/);
+    expect(sent.find((s) => /insert into/i.test(s?.sql ?? ""))!.params).toEqual(["02134", "1", "00501", "2"]);
+  });
+});
