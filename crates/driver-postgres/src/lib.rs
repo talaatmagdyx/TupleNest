@@ -2428,33 +2428,35 @@ fn fallback(row: &Row, i: usize, ty: &Type) -> CellValue {
 /// An integer bind value that adapts to whatever integer width Postgres
 /// infers for the placeholder (int2/int4/int8), so `where id = $1` works
 /// whether the column is int4 or int8.
-/// A text parameter. Bound as text, except for integer columns, where digits
-/// are parsed and range-checked: a bigint beyond 2^53 cannot survive the trip
-/// through JavaScript as a number, so the WebView sends it as a string.
+/// A parameter given as text, for a placeholder of any type.
+///
+/// Sent in the protocol's *text* format, so the server parses it with the
+/// placeholder's own input function — exactly as it would a quoted literal
+/// in the statement. That is what a value typed into a parameter box is.
+///
+/// It used to be sent in binary and accepted only where the placeholder was
+/// a string type (or an integer, parsed here). A value for a `numeric`,
+/// `date`, `uuid`, `timestamptz` or `jsonb` placeholder could not be bound at
+/// all, and the page worked around its half of that by guessing a type from
+/// the characters: `007` for a text column was sent as the number 7, and a
+/// decimal went through a double and lost its digits.
 #[derive(Debug)]
 struct AnyText(String);
 
 impl tokio_postgres::types::ToSql for AnyText {
     fn to_sql(
         &self,
-        ty: &Type,
+        _: &Type,
         out: &mut tokio_postgres::types::private::BytesMut,
     ) -> Result<tokio_postgres::types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
-        match *ty {
-            Type::INT2 | Type::INT4 | Type::INT8 => {
-                let n: i64 = self
-                    .0
-                    .trim()
-                    .parse()
-                    .map_err(|_| format!("{:?} is not an integer", self.0))?;
-                AnyInt(n).to_sql(ty, out)
-            }
-            _ => self.0.to_sql(ty, out),
-        }
+        out.extend_from_slice(self.0.as_bytes());
+        Ok(tokio_postgres::types::IsNull::No)
     }
-    fn accepts(ty: &Type) -> bool {
-        matches!(*ty, Type::INT2 | Type::INT4 | Type::INT8)
-            || <String as tokio_postgres::types::ToSql>::accepts(ty)
+    fn accepts(_: &Type) -> bool {
+        true
+    }
+    fn encode_format(&self, _: &Type) -> tokio_postgres::types::Format {
+        tokio_postgres::types::Format::Text
     }
     tokio_postgres::types::to_sql_checked!();
 }
@@ -2751,23 +2753,26 @@ mod begin_statement_tests {
     }
 
     #[test]
-    fn digit_strings_bind_exactly_to_integer_columns() {
-        use tokio_postgres::types::ToSql;
-        // How a bigint past 2^53 arrives from the WebView: as text.
-        let mut buf = tokio_postgres::types::private::BytesMut::new();
-        AnyText("9007199254740993".into())
-            .to_sql(&Type::INT8, &mut buf)
-            .unwrap();
-        assert_eq!(&buf[..], &9_007_199_254_740_993_i64.to_be_bytes());
-        assert!(AnyText("abc".into()).to_sql(&Type::INT8, &mut buf).is_err());
-        assert!(AnyText("70000".into())
-            .to_sql(&Type::INT2, &mut buf)
-            .is_err());
-        buf.clear();
-        AnyText("hello".into())
-            .to_sql(&Type::TEXT, &mut buf)
-            .unwrap();
-        assert_eq!(&buf[..], b"hello");
+    fn a_text_parameter_is_sent_as_text_for_any_placeholder_type() {
+        use tokio_postgres::types::{Format, ToSql};
+        // Audit TN-018. The bytes are the characters, whatever the type: the
+        // server does the parsing. (The live tests check that it does.)
+        for ty in [
+            Type::INT8,
+            Type::NUMERIC,
+            Type::TEXT,
+            Type::DATE,
+            Type::UUID,
+            Type::JSONB,
+            Type::INT4_ARRAY,
+        ] {
+            assert!(<AnyText as ToSql>::accepts(&ty), "{ty}");
+            let p = AnyText("007".into());
+            assert!(matches!(p.encode_format(&ty), Format::Text), "{ty}");
+            let mut buf = tokio_postgres::types::private::BytesMut::new();
+            p.to_sql_checked(&ty, &mut buf).unwrap();
+            assert_eq!(&buf[..], b"007", "{ty}");
+        }
     }
 
     #[test]

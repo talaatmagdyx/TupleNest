@@ -68,6 +68,13 @@ trusting it.
   rolled back with it.
 
 ### Correctness
+- A query parameter is sent as the text that was typed, and the server
+  reads it for the placeholder's own type, as it would a quoted literal. The
+  app used to guess a type from the characters and could bind only to
+  integer, float, boolean and string placeholders: `007` for a text column
+  was sent as the number 7, a long decimal lost digits, `true` could not be
+  searched for as a word, and a value for a `numeric`, `date`, `uuid`,
+  `timestamp` or `jsonb` placeholder failed to bind at all (audit TN-018).
 - More types read as the server writes them, where they showed as `\x…`
   hex: `interval`, `timetz`, ranges and multiranges, multi-dimensional
   arrays, arrays of any of these, and `infinity` / `-infinity` dates and

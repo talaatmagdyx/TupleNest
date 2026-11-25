@@ -2595,3 +2595,128 @@ async fn money_stays_raw() {
         "{row:?}"
     );
 }
+
+/// Audit TN-018: a text parameter binds to a placeholder of any type, and
+/// the server reads it as it would a quoted literal.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn a_text_parameter_binds_to_any_placeholder_type() {
+    let t = |s: &str| ParamValue::Text(s.to_string());
+    // (expression with $1, the value typed, the result as text)
+    let cases = [
+        // A zero-padded code stays what was typed for a text placeholder…
+        ("$1::text", "007", "007"),
+        ("$1::varchar(10)", "02134", "02134"),
+        // …and is a number only where the placeholder is one.
+        ("($1::int4 + 1)::text", "007", "8"),
+        ("$1::int8::text", "9007199254740993", "9007199254740993"),
+        // Every digit of a numeric.
+        (
+            "$1::numeric::text",
+            "12345678901234567890.1234567890123456789012345678901234567890",
+            "12345678901234567890.1234567890123456789012345678901234567890",
+        ),
+        ("($1::numeric * 2)::text", "0.10", "0.20"),
+        // Types that could not be bound at all.
+        ("($1::date + 1)::text", "2024-02-28", "2024-02-29"),
+        (
+            "$1::uuid::text",
+            "A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11",
+            "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+        ),
+        ("($1::jsonb ->> 'a')", r#"{"a": "x"}"#, "x"),
+        ("($1::interval * 2)::text", "1 day 02:00", "2 days 04:00:00"),
+        ("array_length($1::int4[], 1)::text", "{1,2,3}", "3"),
+        (
+            "$1::timestamp::text",
+            "2024-01-15 10:30:00.25",
+            "2024-01-15 10:30:00.25",
+        ),
+        ("$1::float8::text", "1.5", "1.5"),
+        // The word `true` is a word for a text placeholder and a boolean for
+        // a boolean one.
+        ("$1::text", "true", "true"),
+        ("(NOT $1::bool)::text", "true", "false"),
+        // Text as typed: whitespace, quotes, and what would be SQL.
+        ("$1::text", "  padded  ", "  padded  "),
+        (
+            "$1::text",
+            "x'; DROP TABLE users; --",
+            "x'; DROP TABLE users; --",
+        ),
+        ("$1::text", "", ""),
+    ];
+    let mut session = PostgresDriver.connect(test_config()).await.unwrap();
+    for (expr, typed, want) in cases {
+        let sink = CollectSink::default();
+        session
+            .execute(req_params(format!("SELECT {expr}"), vec![t(typed)]), &sink)
+            .await
+            .unwrap_or_else(|e| panic!("{expr} with {typed:?}: {e:?}"));
+        assert_eq!(
+            text_of(&sink.rows.lock().unwrap()[0][0]),
+            want,
+            "{expr} with {typed:?}"
+        );
+    }
+
+    // A placeholder with no cast takes its type from the column it meets.
+    session
+        .execute(
+            req("CREATE TEMP TABLE tn018 (code text, n int2, amount numeric(30,20))"),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+    session
+        .execute(
+            req_params(
+                "INSERT INTO tn018 VALUES ($1, $2, $3)",
+                vec![t("007"), t("42"), t("0.12345678901234567890")],
+            ),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+    let sink = CollectSink::default();
+    session
+        .execute(
+            req_params(
+                "SELECT code, n::text, amount::text FROM tn018 WHERE code = $1 AND n = $2",
+                vec![t("007"), t("42")],
+            ),
+            &sink,
+        )
+        .await
+        .unwrap();
+    {
+        let rows = sink.rows.lock().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(text_of(&rows[0][0]), "007");
+        assert_eq!(text_of(&rows[0][2]), "0.12345678901234567890");
+    }
+
+    // A value the type does not accept is the server's error, not a wrong value.
+    for (sql, typed) in [
+        ("INSERT INTO tn018 (n) VALUES ($1)", "70000"),
+        ("INSERT INTO tn018 (n) VALUES ($1)", "abc"),
+        ("SELECT $1::date", "2024-02-30"),
+        ("SELECT $1::uuid", "not-a-uuid"),
+    ] {
+        let err = session
+            .execute(req_params(sql, vec![t(typed)]), &NullSink)
+            .await
+            .expect_err(&format!("{sql} with {typed:?} should fail"));
+        // The server's own complaint about the value, with its SQLSTATE
+        // class 22 (data exception) — not a bind failure in the client.
+        assert!(
+            err.native_code
+                .as_deref()
+                .is_some_and(|c| c.starts_with("22")),
+            "{sql} with {typed:?}: {err:?}"
+        );
+        assert_ne!(err.category, tuplenest_driver_api::ErrorCategory::Network);
+    }
+    // And the session is still usable afterwards.
+    assert_eq!(text_of(&first_row("SELECT 1").await[0]), "1");
+}

@@ -115,7 +115,7 @@ describe("App — query parameters", () => {
     await user.click(screen.getByRole("button", { name: /run with values/i }));
     await waitFor(() => expect(be.sent("pg_query")).toHaveLength(1));
     const sent = be.sent("pg_query")[0];
-    expect(sent.params).toEqual([42]);
+    expect(sent.params).toEqual(["42"]); // the text as typed: the server parses it (TN-018)
     expect(sent.sql).toContain("$1");
   });
 });

@@ -283,18 +283,21 @@ export function paramCount(sql: string): number {
   return max;
 }
 
-/** Coerce a UI string into a JSON value the backend maps to a ParamValue. */
-export function coerceParam(raw: string): unknown {
+/**
+ * What was typed into a parameter box, as the value to bind: the text, or
+ * null for an empty box or the word `null`.
+ *
+ * Nothing is guessed from the characters. The driver sends a text parameter
+ * in text format and the server parses it for the placeholder's own type, as
+ * it would a quoted literal. Guessing here was wrong whenever the guess and
+ * the placeholder disagreed: `007` for a text column became the number 7,
+ * `true` for a text column could not be bound, and a decimal went through a
+ * double — `0.1234567890123456789` for a numeric lost its last digits.
+ */
+export function coerceParam(raw: string): string | null {
   const t = raw.trim();
   if (t === "" || t.toLowerCase() === "null") return null;
-  if (t.toLowerCase() === "true") return true;
-  if (t.toLowerCase() === "false") return false;
-  // Past 2^53 Number() rounds (9007199254740993 → …992), so a bigint key
-  // would match a different row. Keep those as exact text; the driver
-  // parses digits for integer columns.
-  if (/^-?\d+$/.test(t)) return Number.isSafeInteger(Number(t)) ? Number(t) : t;
-  if (/^-?\d*\.\d+$/.test(t)) return Number(t);
-  return raw; // text as-is
+  return raw;
 }
 
 export const ENV_COLORS: Record<string, { color: string; bg: string }> = {
