@@ -293,3 +293,61 @@ describe("App — describing an object from the palette", () => {
     expect(await screen.findByText(/Describe failed: .*permission denied/)).toBeInTheDocument();
   });
 });
+
+// Audit TN-007. Leaving a session by any door must clear what it put on screen.
+describe("App — nothing follows you to another connection", () => {
+  it("drops the grid and the staged edits when the titlebar switcher changes connection", async () => {
+    // The dev rows used to stay up under the PRODUCTION banner, with the edit
+    // still staged: Review and Apply would have sent its UPDATE to prod.
+    const user = await withGrid();
+    await editCell(user, "new@b.c");
+    expect(await screen.findByRole("button", { name: /review/i })).toBeInTheDocument();
+
+    await palette(user, "Connect to prod db");
+    await waitFor(() => expect(be.sent("pg_connect")).toHaveLength(2));
+    await screen.findByText(/Connected — prod db/);
+
+    expect(screen.queryByRole("grid")).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/a@b\.c/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /review/i })).not.toBeInTheDocument();
+  });
+
+  it("does not bring the old edit back when the same query is run on the new connection", async () => {
+    const user = await withGrid();
+    await editCell(user, "new@b.c");
+    await palette(user, "Connect to prod db");
+    await waitFor(() => expect(be.sent("pg_connect")).toHaveLength(2));
+
+    await user.click(screen.getByRole("button", { name: /^Run/ }));
+    await screen.findByRole("grid");
+    // The row is there again, as prod returned it, with nothing staged on it.
+    expect(await screen.findByTitle(/a@b\.c — double-click to edit/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /review/i })).not.toBeInTheDocument();
+    expect(be.sent("pg_query").every((q) => !/^\s*update/i.test(String(q.sql)))).toBe(true);
+  });
+
+  it("drops them when the form connects over a live session", async () => {
+    // Save & Connect while connected replaces the session just the same.
+    const user = await withGrid();
+    await editCell(user, "new@b.c");
+    await user.click(document.querySelector(".conn-open") as HTMLElement);
+    await screen.findByText("Edit connection");
+    await user.click(screen.getByRole("button", { name: /^Save & Connect$/ }));
+    await waitFor(() => expect(be.sent("pg_connect")).toHaveLength(2));
+
+    await waitFor(() => expect(screen.queryByRole("grid")).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /review/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps the grid when a connect from the form fails — the old session is still the session", async () => {
+    const user = await withGrid();
+    be.on("pg_connect", () => {
+      throw new Error("connection refused");
+    });
+    await user.click(document.querySelector(".conn-open") as HTMLElement);
+    await screen.findByText("Edit connection");
+    await user.click(screen.getByRole("button", { name: /^Save & Connect$/ }));
+    await waitFor(() => expect(be.sent("pg_connect")).toHaveLength(2));
+    expect(screen.getByRole("grid")).toBeInTheDocument();
+  });
+});
