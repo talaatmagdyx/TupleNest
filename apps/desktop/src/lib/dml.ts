@@ -287,6 +287,35 @@ function asText(v: unknown): string | null {
   return JSON.stringify(v);
 }
 
+/**
+ * The type to cast an edited value to, given the column's.
+ *
+ * Not always the column's own type. An *explicit* cast to a length-limited
+ * type truncates, by the SQL standard: `'abcdefghij'::varchar(5)` is `abcde`,
+ * with no error. So `SET name = $1::text::character varying(5)` stored a
+ * shortened value and reported one row updated. A plain assignment of the same
+ * value is refused ("value too long"), which is what an edit should get.
+ *
+ * So for the types where the two differ — character and bit strings — the
+ * cast drops the length and the assignment to the column enforces it. `bpchar`
+ * and `bit varying` rather than `character` and `bit`, which without a length
+ * mean a length of one.
+ */
+export function castType(type: string): string {
+  const m = /^(character varying|varchar|character|char|bpchar|bit varying|varbit|bit)\s*\(\d+\)((?:\[\])*)$/i.exec(
+    type.trim(),
+  );
+  if (!m) return type;
+  const base = m[1].toLowerCase();
+  const to =
+    base === "character varying" || base === "varchar"
+      ? "character varying"
+      : base.includes("bit")
+        ? "bit varying"
+        : "bpchar";
+  return to + m[2];
+}
+
 /** `$n`, cast to the column's type when it is known: `$n::text::uuid`. */
 function placeholder(
   target: Pick<EditTarget, "types">,
@@ -300,7 +329,7 @@ function placeholder(
     return `$${params.length}`;
   }
   params.push(asText(value));
-  return `$${params.length}::text::${type}`;
+  return `$${params.length}::text::${castType(type)}`;
 }
 
 /** `col IS NOT DISTINCT FROM $n`. `json` has no equality operator, so it is

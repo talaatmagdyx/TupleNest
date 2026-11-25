@@ -42,6 +42,11 @@ trusting it.
   rolled back with it.
 
 ### Correctness
+- A row edit too long for its column is refused instead of being cut to
+  fit. Edited values were cast to the column's full type, and an explicit cast
+  to `varchar(5)`, `char(3)` or `bit(4)` truncates without an error: the edit
+  stored a shortened value and reported one row updated. The cast now drops
+  the length, so PostgreSQL's own assignment check applies (audit TN-021).
 - Commit no longer reports success when PostgreSQL rolled the transaction
   back. After a statement in a transaction fails, is cancelled or times out,
   `COMMIT` is answered with `ROLLBACK` and no error; the app showed "COMMIT"

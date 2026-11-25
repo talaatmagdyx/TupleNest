@@ -2321,3 +2321,124 @@ async fn commit_of_a_failed_transaction_is_an_error_not_a_success() {
 
     s.execute(req("DROP TABLE tn001"), &NullSink).await.unwrap();
 }
+
+/// TN-021: a row edit must not shorten a value to make it fit.
+///
+/// An explicit cast to `varchar(5)` truncates and reports success; assigning
+/// the same value to the column is an error. The app cast edited values to the
+/// column's full type, length included. This runs the old shape and the new
+/// one against the server for each type where the two differ.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn a_row_edit_too_long_for_its_column_is_refused_not_truncated() {
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    s.execute(
+        req(
+            "CREATE TEMP TABLE tn021 (id int PRIMARY KEY, v varchar(5), c char(3), b bit(4), \
+             vb bit varying(4), va varchar(3)[])",
+        ),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    s.execute(
+        req("INSERT INTO tn021 VALUES (1, 'a', 'a', B'1010', B'1', ARRAY['a'])"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    async fn cell(s: &mut tuplenest_driver_postgres::PostgresSession, col: &str) -> String {
+        let sink = CollectSink::default();
+        s.execute(
+            req(format!("SELECT {col}::text FROM tn021 WHERE id = 1")),
+            &sink,
+        )
+        .await
+        .unwrap();
+        let rows = sink.rows.lock().unwrap();
+        text_of(&rows[0][0])
+    }
+    let edit = |col: &str, cast: &str, value: &str| {
+        req_params(
+            format!("UPDATE tn021 SET \"{col}\" = $1::text::{cast} WHERE \"id\" = $2"),
+            vec![ParamValue::Text(value.into()), ParamValue::Int(1)],
+        )
+    };
+
+    // (column, the old cast, the new cast, a value that is too long, what the
+    // old cast silently stored, a value that fits)
+    for (col, old, new, long, cut, fits) in [
+        (
+            "v",
+            "character varying(5)",
+            "character varying",
+            "abcdefghij",
+            "abcde",
+            "abcde",
+        ),
+        ("c", "character(3)", "bpchar", "abcdef", "abc", "xyz"),
+        ("b", "bit(4)", "bit varying", "101011", "1010", "0101"),
+        (
+            "vb",
+            "bit varying(4)",
+            "bit varying",
+            "101011",
+            "1010",
+            "11",
+        ),
+        (
+            "va",
+            "character varying(3)[]",
+            "character varying[]",
+            "{abcdef}",
+            "{abc}",
+            "{abc,de}",
+        ),
+    ] {
+        // Before: accepted, and what is stored is not what was typed.
+        let done = s.execute(edit(col, old, long), &NullSink).await.unwrap();
+        assert_eq!(done.rows_affected, Some(1), "{col}: old cast");
+        assert_eq!(
+            cell(&mut s, col).await,
+            cut,
+            "{col}: the old cast truncates"
+        );
+
+        // After: refused by the server, and the column is as it was.
+        let before = cell(&mut s, col).await;
+        let err = s
+            .execute(edit(col, new, long), &NullSink)
+            .await
+            .expect_err("an over-long value must be refused");
+        assert!(
+            err.original_message
+                .as_deref()
+                .is_some_and(|m| m.contains("too long") || m.contains("does not match")),
+            "{col}: {err:?}"
+        );
+        assert_eq!(
+            cell(&mut s, col).await,
+            before,
+            "{col}: nothing was written"
+        );
+
+        // A value that fits is stored exactly.
+        let done = s.execute(edit(col, new, fits), &NullSink).await.unwrap();
+        assert_eq!(done.rows_affected, Some(1), "{col}: a fitting value");
+        assert_eq!(cell(&mut s, col).await, fits, "{col}");
+    }
+
+    // bit(n) is exact-length: too short is refused as well, not padded.
+    s.execute(edit("b", "bit varying", "10"), &NullSink)
+        .await
+        .expect_err("a bit string of the wrong length must be refused");
+    // Trailing spaces past the limit are dropped by assignment itself, as the
+    // SQL standard requires; that is the server's rule, not truncation of data.
+    s.execute(edit("v", "character varying", "abcde   "), &NullSink)
+        .await
+        .unwrap();
+    assert_eq!(cell(&mut s, "v").await, "abcde");
+}
