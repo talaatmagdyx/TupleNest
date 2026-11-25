@@ -532,6 +532,7 @@ mod err_to_string_tests {
 /// This is the ONLY command that ever sees a secret, and it does not log it.
 #[tauri::command]
 pub fn pg_secret_save(
+    app: tauri::State<'_, crate::AppState>,
     state: tauri::State<'_, PgState>,
     password: String,
     reuse_ref: Option<String>,
@@ -551,12 +552,85 @@ pub fn pg_secret_save(
                 .unwrap_or(false)
     });
     let key = save_secret(password, reuse)?;
+    // On disk too, so an entry whose profile is never saved can be removed
+    // the next time the app starts: see `sweep_pending_secrets`.
+    if let Ok(store) = app.store.lock() {
+        remember_pending_secret(&store, &key);
+    }
     state
         .fresh_secrets
         .lock()
         .map_err(|_| "secret lock poisoned")?
         .insert(key.clone());
     Ok(key)
+}
+
+/// The setting that lists keychain entries no saved profile owns yet.
+const PENDING_SECRETS: &str = "pending_secret_refs";
+
+/// Notes a keychain entry that was just written for a password in the form.
+fn remember_pending_secret(store: &tuplenest_workspace_store::Store, key: &str) {
+    let mut pending: Vec<String> = store
+        .setting_get(PENDING_SECRETS)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if pending.iter().any(|k| k == key) {
+        return;
+    }
+    pending.push(key.to_owned());
+    if let Err(e) = store.setting_set(PENDING_SECRETS, &pending) {
+        tracing::warn!(component = "credentials", error = %e, "could not note a pending secret");
+    }
+}
+
+/// Removes keychain entries left by passwords that were typed and tested but
+/// whose profile was never saved. Run once at startup; returns how many went.
+///
+/// Testing a connection stores the typed password in the keychain. Saving the
+/// profile adopts that entry; closing the form, or the app, without saving
+/// left it there for good — the keychain cannot be listed, so nothing could
+/// find it again. Each entry is now written down when it is made. At the
+/// next start, any that no saved profile refers to is deleted, and the list
+/// is emptied. An entry a profile has adopted is kept.
+///
+/// At startup, not when the form closes: a password in the form may be
+/// carrying a live, unsaved connection, and only a new start is certain to
+/// have none.
+pub fn sweep_pending_secrets(
+    store: &tuplenest_workspace_store::Store,
+    keychain: &dyn CredentialStore,
+) -> usize {
+    let pending: Vec<String> = match store.setting_get(PENDING_SECRETS) {
+        Ok(Some(p)) => p,
+        _ => return 0,
+    };
+    if pending.is_empty() {
+        return 0;
+    }
+    // Without the profile list there is no telling which entries are owned.
+    let Ok(profiles) = store.connection_list() else {
+        return 0;
+    };
+    let mut removed = 0;
+    let mut keep = Vec::new();
+    for key in pending {
+        if profiles
+            .iter()
+            .any(|p| p.secret_ref.as_deref() == Some(&key))
+        {
+            continue; // adopted by a profile: no longer pending
+        }
+        match keychain.delete(&SecretRef::new(key.clone())) {
+            Ok(()) => removed += 1,
+            // Try again next start rather than forget an entry that is still there.
+            Err(_) => keep.push(key),
+        }
+    }
+    if let Err(e) = store.setting_set(PENDING_SECRETS, &keep) {
+        tracing::warn!(component = "credentials", error = %e, "could not update the pending-secret list");
+    }
+    removed
 }
 
 fn save_secret(password: String, reuse_ref: Option<String>) -> Result<String, String> {
@@ -3492,5 +3566,131 @@ mod history_status_tests {
 
         let syntax = DriverError::new(ErrorCategory::Syntax, "Syntax error");
         assert_eq!(history_status(&syntax), "error");
+    }
+}
+
+#[cfg(test)]
+mod pending_secret_tests {
+    use super::*;
+    use std::collections::HashSet;
+    use tuplenest_credential_store::CredentialError;
+    use tuplenest_workspace_store::{ConnectionRecord, Store};
+
+    /// A keychain that only remembers which entries exist.
+    #[derive(Default)]
+    struct FakeKeychain {
+        entries: StdMutex<HashSet<String>>,
+        failing: StdMutex<HashSet<String>>,
+    }
+    impl FakeKeychain {
+        fn with(keys: &[&str]) -> Self {
+            let k = Self::default();
+            k.entries
+                .lock()
+                .unwrap()
+                .extend(keys.iter().map(|s| s.to_string()));
+            k
+        }
+        fn has(&self, key: &str) -> bool {
+            self.entries.lock().unwrap().contains(key)
+        }
+    }
+    impl CredentialStore for FakeKeychain {
+        fn set(&self, _: Secret) -> Result<SecretRef, CredentialError> {
+            unreachable!("the sweep never writes a secret")
+        }
+        fn replace(&self, _: &SecretRef, _: Secret) -> Result<(), CredentialError> {
+            unreachable!("the sweep never writes a secret")
+        }
+        fn get(&self, _: &SecretRef) -> Result<Secret, CredentialError> {
+            unreachable!("the sweep never reads a secret")
+        }
+        fn delete(&self, reference: &SecretRef) -> Result<(), CredentialError> {
+            let key = reference.key().to_string();
+            if self.failing.lock().unwrap().contains(&key) {
+                return Err(CredentialError::BackendUnavailable("locked".into()));
+            }
+            self.entries.lock().unwrap().remove(&key);
+            Ok(())
+        }
+    }
+
+    fn profile(id: &str, secret: Option<&str>) -> ConnectionRecord {
+        ConnectionRecord {
+            id: id.into(),
+            name: id.into(),
+            driver: "postgres".into(),
+            environment: Some("dev".into()),
+            color: None,
+            read_only: false,
+            host: "h".into(),
+            port: 5432,
+            database: "d".into(),
+            username: "u".into(),
+            secret_ref: secret.map(str::to_owned),
+            tls_mode: "verify-full".into(),
+            tls_ca_path: None,
+            ssh_json: None,
+            options_json: None,
+            statement_timeout_ms: 0,
+        }
+    }
+    fn pending(store: &Store) -> Vec<String> {
+        store
+            .setting_get(PENDING_SECRETS)
+            .unwrap()
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn an_entry_no_profile_adopted_is_removed_and_an_adopted_one_is_kept() {
+        let store = Store::open_in_memory().unwrap();
+        let keychain = FakeKeychain::with(&["tn-tested", "tn-saved", "tn-other-profile"]);
+        // Two passwords were typed and tested; one of the profiles was saved.
+        remember_pending_secret(&store, "tn-tested");
+        remember_pending_secret(&store, "tn-saved");
+        remember_pending_secret(&store, "tn-saved"); // tested twice: noted once
+        store
+            .connection_upsert(&profile("p1", Some("tn-saved")))
+            .unwrap();
+        store
+            .connection_upsert(&profile("p2", Some("tn-other-profile")))
+            .unwrap();
+        assert_eq!(pending(&store), ["tn-tested", "tn-saved"]);
+
+        assert_eq!(sweep_pending_secrets(&store, &keychain), 1);
+        assert!(!keychain.has("tn-tested"));
+        assert!(keychain.has("tn-saved"));
+        // An entry that was never on the list is never touched.
+        assert!(keychain.has("tn-other-profile"));
+        assert!(pending(&store).is_empty());
+        // Nothing left to do the second time.
+        assert_eq!(sweep_pending_secrets(&store, &keychain), 0);
+    }
+
+    #[test]
+    fn an_entry_that_could_not_be_deleted_is_tried_again_next_time() {
+        let store = Store::open_in_memory().unwrap();
+        let keychain = FakeKeychain::with(&["tn-a", "tn-b"]);
+        keychain.failing.lock().unwrap().insert("tn-a".into());
+        remember_pending_secret(&store, "tn-a");
+        remember_pending_secret(&store, "tn-b");
+
+        assert_eq!(sweep_pending_secrets(&store, &keychain), 1);
+        assert_eq!(pending(&store), ["tn-a"]);
+        assert!(keychain.has("tn-a"));
+
+        keychain.failing.lock().unwrap().clear();
+        assert_eq!(sweep_pending_secrets(&store, &keychain), 1);
+        assert!(!keychain.has("tn-a"));
+        assert!(pending(&store).is_empty());
+    }
+
+    #[test]
+    fn nothing_pending_touches_nothing() {
+        let store = Store::open_in_memory().unwrap();
+        let keychain = FakeKeychain::with(&["tn-x"]);
+        assert_eq!(sweep_pending_secrets(&store, &keychain), 0);
+        assert!(keychain.has("tn-x"));
     }
 }

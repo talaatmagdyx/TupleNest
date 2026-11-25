@@ -174,6 +174,9 @@ trusting it.
   numeric.
 
 ### Security
+- A password that was typed and tested but whose profile was never saved no
+  longer stays in the keychain for good. The entry is noted when it is made,
+  and at the next start any entry no saved profile refers to is deleted.
 - The release build no longer exposes the update-signing key to the whole
   build. The key was in the environment while the frontend toolchain ran and
   while every dependency's build script ran. The build is now two passes:
