@@ -497,34 +497,40 @@ describe("paramCount", () => {
 });
 
 describe("coerceParam", () => {
-  it("keeps integers past 2^53 as exact text instead of rounding them", () => {
-    // Number("9007199254740993") is …992: a different key.
-    expect(coerceParam("9007199254740993")).toBe("9007199254740993");
-    expect(coerceParam("-9007199254740993")).toBe("-9007199254740993");
-    expect(coerceParam("9007199254740991")).toBe(9007199254740991);
-  });
-
+  // Audit TN-018: the value is the text; the server parses it for the
+  // placeholder's type.
   it("maps empty and the word null to null", () => {
     expect(coerceParam("")).toBeNull();
     expect(coerceParam("  ")).toBeNull();
     expect(coerceParam("NULL")).toBeNull();
+    expect(coerceParam(" null ")).toBeNull();
   });
 
-  it("maps booleans", () => {
-    expect(coerceParam("true")).toBe(true);
-    expect(coerceParam("FALSE")).toBe(false);
+  it("does not turn a zero-padded code into a number", () => {
+    expect(coerceParam("007")).toBe("007");
+    expect(coerceParam("02134")).toBe("02134");
   });
 
-  it("maps integers and decimals, including negatives", () => {
-    expect(coerceParam("42")).toBe(42);
-    expect(coerceParam("-42")).toBe(-42);
-    expect(coerceParam("1.5")).toBe(1.5);
-    expect(coerceParam("-.5")).toBe(-0.5);
+  it("keeps every digit of a number", () => {
+    expect(coerceParam("9007199254740993")).toBe("9007199254740993");
+    expect(coerceParam("0.1234567890123456789012345678901234567890")).toBe(
+      "0.1234567890123456789012345678901234567890",
+    );
+    expect(coerceParam("1.50")).toBe("1.50");
+    expect(coerceParam("42")).toBe("42");
+    expect(coerceParam("-.5")).toBe("-.5");
   });
 
-  it("keeps anything else as the raw text, whitespace included", () => {
+  it("does not decide that a word is a boolean", () => {
+    // `where name = $1` with the value "true" is a search for that word.
+    expect(coerceParam("true")).toBe("true");
+    expect(coerceParam("FALSE")).toBe("FALSE");
+  });
+
+  it("keeps the text as typed, whitespace included", () => {
     expect(coerceParam(" hello ")).toBe(" hello ");
     expect(coerceParam("12abc")).toBe("12abc");
+    expect(coerceParam("2024-01-15")).toBe("2024-01-15");
   });
 });
 

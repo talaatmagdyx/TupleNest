@@ -285,7 +285,7 @@ describe("App — query parameters", () => {
     await user.type(box, "42");
     await user.click(within(modal()).getByRole("button", { name: /^Run/ }));
     await waitFor(() => expect(be.sent("pg_query")).toHaveLength(1));
-    expect(be.sent("pg_query")[0].params).toEqual([42]);
+    expect(be.sent("pg_query")[0].params).toEqual(["42"]); // the text as typed (TN-018)
   });
 
   it("backs out without running", async () => {
