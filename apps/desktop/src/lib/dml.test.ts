@@ -4,6 +4,7 @@ import {
   buildDelete,
   buildStatements,
   buildUpdate,
+  castType,
   coerceValue,
   directColumns,
   previewSql,
@@ -703,5 +704,65 @@ describe("analyzeEditability — a column is only what the table says it is", ()
       expect(r.editable).toBe(true);
       if (r.editable) expect(r.target.writable[1]).toBe(true);
     }
+  });
+});
+
+// Audit TN-021. An explicit cast to varchar(5) cuts the value to five
+// characters and reports success; the edit stored something the user never
+// typed.
+describe("castType — an edit is assigned, not truncated", () => {
+  it.each([
+    ["character varying(5)", "character varying"],
+    ["varchar(255)", "character varying"],
+    ["character(3)", "bpchar"],
+    ["char(1)", "bpchar"],
+    ["bpchar(10)", "bpchar"],
+    ["bit(4)", "bit varying"],
+    ["bit varying(8)", "bit varying"],
+    ["varbit(8)", "bit varying"],
+    ["character varying(5)[]", "character varying[]"],
+    ["character(2)[][]", "bpchar[][]"],
+    ["CHARACTER VARYING(5)", "character varying"],
+    [" character varying (5) ", "character varying"],
+  ])("%s is cast as %s", (type, expected) => expect(castType(type)).toBe(expected));
+
+  it.each([
+    "text",
+    "character varying",
+    "integer",
+    "numeric(12,2)",
+    "timestamp(3) without time zone",
+    "uuid",
+    "jsonb",
+    "integer[]",
+    "bit",
+    "public.my_domain",
+    "character varying(5) with something",
+    "int; DROP TABLE x",
+  ])("%s is left alone", (type) => expect(castType(type)).toBe(type));
+
+  it("is what buildUpdate casts to, for the new value and the old one", () => {
+    const t = {
+      schema: "public",
+      table: "t",
+      pk: [{ name: "id", index: 0 }],
+      writable: [false, true, true, true],
+      types: { id: "integer", name: "character varying(5)", code: "character(3)", flags: "bit(4)" },
+    };
+    const st = buildUpdate(t, [1], [
+      { column: "name", value: "abcdefghij", oldValue: "abc" },
+      { column: "code", value: "abcdef", oldValue: "ab " },
+      { column: "flags", value: "101011", oldValue: "1010" },
+    ]);
+    expect(st.sql).toBe(
+      'UPDATE "public"."t" SET "name" = $1::text::character varying, "code" = $2::text::bpchar, ' +
+        '"flags" = $3::text::bit varying WHERE "id" = $4::text::integer ' +
+        'AND "name" IS NOT DISTINCT FROM $5::text::character varying ' +
+        'AND "code" IS NOT DISTINCT FROM $6::text::bpchar ' +
+        'AND "flags" IS NOT DISTINCT FROM $7::text::bit varying',
+    );
+    // The value goes to the server whole; nothing is cut on the way.
+    expect(st.params.slice(0, 3)).toEqual(["abcdefghij", "abcdef", "101011"]);
+    expect(st.sql).not.toMatch(/\(\d+\)/);
   });
 });
