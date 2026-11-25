@@ -1071,48 +1071,200 @@ fn opts_out_of_history(sql: &str) -> bool {
 /// Best-effort redaction of secret literals before SQL is written to disk.
 ///
 /// `tuplenest_telemetry::redact_text` already handles `password=…` and
-/// connection-string URLs, but SQL's own shapes use a keyword + whitespace +
-/// quoted literal (`PASSWORD 'x'`, `IDENTIFIED BY 'x'`, `ENCRYPTED PASSWORD
-/// 'x'`) that it doesn't match. This scrubs those, then defers to redact_text.
-/// Documented as best-effort, not a guarantee — the honest position is that
-/// truly sensitive statements should be run with history disabled.
+/// connection-string URLs, but SQL's own shapes use a keyword, then
+/// whitespace, then a literal (`PASSWORD 'x'`, `IDENTIFIED BY 'x'`,
+/// `ENCRYPTED PASSWORD 'x'`), or pass the secret to a function
+/// (`crypt('x', …)`, `pgp_sym_decrypt(col, 'key')`). This scrubs those, then
+/// defers to redact_text.
+///
+/// The literal is read the way PostgreSQL reads it. Looking for the next
+/// quote character was not enough: `'it''s-secret'` ended at the doubled
+/// quote and left `s-secret` in the file, and `$$secret$$`, `E'secret'` and a
+/// comment between the keyword and the literal were not recognised at all.
+///
+/// Still best-effort, not a guarantee: a secret passed some other way — a
+/// bind parameter is the right one — is not seen here. On a production
+/// connection the statement is always written to the audit log, so this is
+/// the only thing standing between a typed password and that file.
 fn redact_sql(sql: &str) -> String {
-    let mut out = String::with_capacity(sql.len());
-    let lower = sql.to_ascii_lowercase();
-    let mut i = 0;
-    // Keywords after which a quoted literal is a secret.
+    // After these words a literal is a secret.
     const MARKERS: [&str; 2] = ["password", "identified by"];
-    while i < sql.len() {
-        let mut matched = false;
-        for m in MARKERS {
-            if lower[i..].starts_with(m) {
-                // Emit the keyword, then look for the next quoted literal and
-                // replace its contents.
-                let after = i + m.len();
-                let rest = &sql[after..];
-                let ws = rest.len() - rest.trim_start().len();
-                let body = &rest[ws..];
-                if let Some(q @ ('\'' | '"')) = body.chars().next() {
-                    if let Some(close) = body[1..].find(q) {
-                        out.push_str(&sql[i..after]); // keyword
-                        out.push_str(&rest[..ws]); // whitespace
-                        out.push(q);
-                        out.push_str("[REDACTED]");
-                        out.push(q);
-                        i = after + ws + 1 + close + 1;
-                        matched = true;
-                        break;
-                    }
+    // Inside a call to one of these, every literal is treated as one: the
+    // password or key is an argument, and which argument varies.
+    const FUNCTIONS: [&str; 11] = [
+        "pgp_sym_encrypt_bytea",
+        "pgp_sym_decrypt_bytea",
+        "pgp_sym_encrypt",
+        "pgp_sym_decrypt",
+        "pgp_pub_decrypt",
+        "encrypt_iv",
+        "decrypt_iv",
+        "encrypt",
+        "decrypt",
+        "crypt",
+        "hmac",
+    ];
+    let bytes = sql.as_bytes();
+    let lower = sql.to_ascii_lowercase();
+    let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let mut out = String::with_capacity(sql.len());
+    let mut i = 0;
+    'scan: while i < sql.len() {
+        let starts_word = i == 0 || !word(bytes[i - 1]);
+        if starts_word {
+            for m in MARKERS {
+                if !lower[i..].starts_with(m) {
+                    continue;
+                }
+                let at = skip_trivia(sql, i + m.len());
+                if let Some((open, end)) = literal_at(sql, at) {
+                    out.push_str(&sql[i..open]);
+                    push_redacted(&mut out, &sql[open..end]);
+                    i = end;
+                    continue 'scan;
                 }
             }
+            for f in FUNCTIONS {
+                if !lower[i..].starts_with(f) {
+                    continue;
+                }
+                let paren = skip_trivia(sql, i + f.len());
+                if bytes.get(paren) != Some(&b'(') {
+                    continue;
+                }
+                out.push_str(&sql[i..=paren]);
+                i = paren + 1;
+                let mut depth = 1;
+                while i < sql.len() && depth > 0 {
+                    let after_trivia = skip_trivia(sql, i);
+                    if after_trivia > i {
+                        out.push_str(&sql[i..after_trivia]);
+                        i = after_trivia;
+                    } else if let Some((open, end)) = literal_at(sql, i) {
+                        out.push_str(&sql[i..open]);
+                        push_redacted(&mut out, &sql[open..end]);
+                        i = end;
+                    } else {
+                        match bytes[i] {
+                            b'(' => depth += 1,
+                            b')' => depth -= 1,
+                            _ => {}
+                        }
+                        let ch = sql[i..].chars().next().unwrap_or(' ');
+                        out.push(ch);
+                        i += ch.len_utf8();
+                    }
+                }
+                continue 'scan;
+            }
         }
-        if !matched {
-            let ch = sql[i..].chars().next().unwrap();
-            out.push(ch);
-            i += ch.len_utf8();
-        }
+        // Anything else is copied as it is — including a whole literal or
+        // comment, so a marker word inside one is not mistaken for SQL.
+        let after_trivia = skip_trivia(sql, i);
+        let end = if after_trivia > i {
+            after_trivia
+        } else if let Some((_, end)) = literal_at(sql, i) {
+            end
+        } else {
+            i + sql[i..].chars().next().map_or(1, char::len_utf8)
+        };
+        out.push_str(&sql[i..end]);
+        i = end;
     }
     tuplenest_telemetry::redact_text(&out)
+}
+
+/// The index after any whitespace and comments at `i`. Block comments nest,
+/// as PostgreSQL's do.
+fn skip_trivia(sql: &str, mut i: usize) -> usize {
+    let bytes = sql.as_bytes();
+    loop {
+        let rest = &sql[i..];
+        if rest.starts_with("--") {
+            i += rest.find('\n').unwrap_or(rest.len());
+        } else if rest.starts_with("/*") {
+            let (mut depth, mut k) = (1, i + 2);
+            while k < bytes.len() && depth > 0 {
+                if bytes[k..].starts_with(b"/*") {
+                    depth += 1;
+                    k += 2;
+                } else if bytes[k..].starts_with(b"*/") {
+                    depth -= 1;
+                    k += 2;
+                } else {
+                    k += 1;
+                }
+            }
+            // Either the end of the text or just past an ASCII `*/`.
+            i = k.min(bytes.len());
+        } else if bytes.get(i).is_some_and(u8::is_ascii_whitespace) {
+            i += 1;
+        } else {
+            return i;
+        }
+    }
+}
+
+/// If a literal starts at `i`, where its opening quote is and where it ends.
+///
+/// `'…'` with doubled quotes, `E'…'` with backslash escapes, `U&'…'`, `"…"`
+/// and `$tag$…$tag$`. An unterminated literal runs to the end of the text:
+/// when in doubt, more is hidden, not less.
+fn literal_at(sql: &str, i: usize) -> Option<(usize, usize)> {
+    let bytes = sql.as_bytes();
+    let (open, escapes) = match (bytes.get(i)?, bytes.get(i + 1), bytes.get(i + 2)) {
+        (b'e' | b'E', Some(b'\''), _) => (i + 1, true),
+        (b'u' | b'U', Some(b'&'), Some(b'\'')) => (i + 2, false),
+        (b'\'' | b'"' | b'$', _, _) => (i, false),
+        _ => return None,
+    };
+    let quote = bytes[open];
+    if quote == b'$' {
+        // `$tag$`: a tag is letters, digits and underscores, and may be empty.
+        let tag_end = open + 1 + sql[open + 1..].find('$')?;
+        let tag = &sql[open..=tag_end];
+        if !tag[1..tag.len() - 1]
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'_')
+        {
+            return None;
+        }
+        let end = sql[tag_end + 1..]
+            .find(tag)
+            .map_or(sql.len(), |k| tag_end + 1 + k + tag.len());
+        return Some((open, end));
+    }
+    let mut k = open + 1;
+    while k < bytes.len() {
+        // A backslash escape (in an E'…' string) or a doubled quote: two
+        // bytes that are part of the literal, not its end.
+        let escaped = escapes && bytes[k] == b'\\';
+        let doubled = bytes[k] == quote && bytes.get(k + 1) == Some(&quote);
+        if escaped || doubled {
+            k += 2;
+        } else if bytes[k] == quote {
+            return Some((open, k + 1));
+        } else {
+            k += 1;
+        }
+    }
+    Some((open, sql.len()))
+}
+
+/// `literal` with its contents replaced, keeping its quoting so the statement
+/// still reads as SQL.
+fn push_redacted(out: &mut String, literal: &str) {
+    if let Some(rest) = literal.strip_prefix('$') {
+        let tag = &literal[..=rest.find('$').map_or(0, |k| k + 1)];
+        out.push_str(tag);
+        out.push_str("[REDACTED]");
+        out.push_str(tag);
+    } else {
+        let quote = &literal[..1];
+        out.push_str(quote);
+        out.push_str("[REDACTED]");
+        out.push_str(quote);
+    }
 }
 
 #[cfg(test)]
@@ -1130,6 +1282,167 @@ mod redact_sql_tests {
     fn scrubs_alter_user_and_identified_by() {
         assert!(!redact_sql("ALTER USER x PASSWORD 'p@ss'").contains("p@ss"));
         assert!(!redact_sql("... IDENTIFIED BY \"sekret\"").contains("sekret"));
+    }
+
+    // Audit TN-013: every spelling PostgreSQL accepts for the literal. The
+    // values are made up; `planted` is the text that must not survive.
+    #[test]
+    fn scrubs_the_whole_literal_however_it_is_quoted() {
+        for (sql, planted) in [
+            ("ALTER ROLE app PASSWORD 'it''s-secret-tail'", "secret-tail"),
+            ("ALTER ROLE app PASSWORD $$dollar-secret$$", "dollar-secret"),
+            (
+                "ALTER ROLE app PASSWORD $pw$tagged-secret$pw$",
+                "tagged-secret",
+            ),
+            ("ALTER ROLE app PASSWORD E'escape\\'-secret'", "-secret"),
+            (
+                "ALTER ROLE app PASSWORD e'lower-escape-secret'",
+                "lower-escape-secret",
+            ),
+            (
+                "ALTER ROLE app PASSWORD U&'unicode-secret'",
+                "unicode-secret",
+            ),
+            (
+                "ALTER ROLE app PASSWORD /* c */ 'comment-secret'",
+                "comment-secret",
+            ),
+            (
+                "ALTER ROLE app PASSWORD /* a /* b */ c */ 'nested-secret'",
+                "nested-secret",
+            ),
+            (
+                "ALTER ROLE app PASSWORD -- why\n 'line-comment-secret'",
+                "line-comment-secret",
+            ),
+            (
+                "ALTER ROLE app PASSWORD\n\t'newline-secret'",
+                "newline-secret",
+            ),
+            (
+                "ALTER ROLE app WITH ENCRYPTED PASSWORD 'encrypted-secret' VALID UNTIL 'infinity'",
+                "encrypted-secret",
+            ),
+            ("CREATE USER u IDENTIFIED BY 'mysql-secret'", "mysql-secret"),
+            (
+                "ALTER ROLE app PASSWORD 'never-closed-secret",
+                "never-closed-secret",
+            ),
+            (
+                "ALTER ROLE app PASSWORD $$never-closed-dollar",
+                "never-closed-dollar",
+            ),
+            (
+                "ALTER ROLE \"näme\" PASSWORD 'sécret-ünïcode'",
+                "sécret-ünïcode",
+            ),
+            (
+                "alter role a password 'one-secret'; alter role b password 'two-secret'",
+                "two-secret",
+            ),
+        ] {
+            let out = redact_sql(sql);
+            assert!(
+                !out.contains(planted),
+                "{sql:?} left {planted:?} in {out:?}"
+            );
+            assert!(out.contains("[REDACTED]"), "{sql:?} -> {out:?}");
+        }
+    }
+
+    #[test]
+    fn keeps_the_statement_readable_around_the_literal() {
+        assert_eq!(
+            redact_sql("ALTER ROLE app PASSWORD 'it''s' VALID UNTIL '2030-01-01'"),
+            "ALTER ROLE app PASSWORD '[REDACTED]' VALID UNTIL '2030-01-01'"
+        );
+        assert_eq!(
+            redact_sql("ALTER ROLE app PASSWORD $pw$x$pw$;"),
+            "ALTER ROLE app PASSWORD $pw$[REDACTED]$pw$;"
+        );
+        assert_eq!(
+            redact_sql("ALTER ROLE app PASSWORD /* c */ E'x'"),
+            "ALTER ROLE app PASSWORD /* c */ E'[REDACTED]'"
+        );
+    }
+
+    #[test]
+    fn scrubs_secrets_passed_to_crypto_functions() {
+        for (sql, planted) in [
+            ("SELECT crypt('hunter2', gen_salt('bf'))", "hunter2"),
+            (
+                "UPDATE u SET pw = crypt ( 'spaced-secret' , pw )",
+                "spaced-secret",
+            ),
+            (
+                "SELECT pgp_sym_decrypt(card, 'aes-key-123') FROM cards",
+                "aes-key-123",
+            ),
+            (
+                "SELECT pgp_sym_encrypt('4111 1111', $k$dollar-key$k$)",
+                "dollar-key",
+            ),
+            (
+                "SELECT encode(hmac('payload', 'hmac-key', 'sha256'), 'hex')",
+                "hmac-key",
+            ),
+            ("SELECT decrypt(data, 'raw-key'::bytea, 'aes')", "raw-key"),
+            (
+                "SELECT pgp_sym_decrypt(col, coalesce(k, 'fallback-key')) FROM t",
+                "fallback-key",
+            ),
+        ] {
+            let out = redact_sql(sql);
+            assert!(
+                !out.contains(planted),
+                "{sql:?} left {planted:?} in {out:?}"
+            );
+        }
+        // The call is still recognisable, and what follows it is untouched.
+        assert_eq!(
+            redact_sql("SELECT crypt('a', gen_salt('bf')), name FROM t WHERE x = 'kept'"),
+            "SELECT crypt('[REDACTED]', gen_salt('[REDACTED]')), name FROM t WHERE x = 'kept'"
+        );
+    }
+
+    #[test]
+    fn does_not_redact_what_is_not_a_secret() {
+        for sql in [
+            "SELECT * FROM users WHERE id = 1",
+            "SELECT password_hash, passwords FROM users",
+            "ALTER ROLE app PASSWORD NULL",
+            "SELECT 'the word password is here' AS note",
+            "SELECT 1 -- change the password 'later'",
+            "SELECT 'call crypt(''x'') some time' AS note",
+            "SELECT decrypted, encrypt_count, mycrypt('visible') FROM t",
+            "SELECT $$ password 'inside a body' $$",
+            "COMMENT ON COLUMN users.password IS 'bcrypt hash'",
+            "",
+        ] {
+            assert_eq!(redact_sql(sql), sql, "{sql:?}");
+        }
+    }
+
+    #[test]
+    fn never_panics_on_hostile_text() {
+        for sql in [
+            "password",
+            "password '",
+            "password $",
+            "password $a",
+            "password E",
+            "password U&",
+            "crypt(",
+            "crypt('",
+            "crypt((((",
+            "/* password 'x",
+            "pässwörd 'x' password 'ÿ",
+            "password\u{0}'x'",
+            "$$$$ password $$ 'x'",
+        ] {
+            let _ = redact_sql(sql);
+        }
     }
 
     #[test]

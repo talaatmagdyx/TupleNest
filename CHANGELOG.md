@@ -76,6 +76,13 @@ trusting it.
   numeric.
 
 ### Security
+- Passwords in SQL are redacted in every spelling before the statement is
+  stored in history or the production audit log. The redactor looked for the
+  next quote character, so `PASSWORD 'it''s-secret'` left `s-secret` on disk,
+  and `$$…$$`, `E'…'`, `U&'…'` and a comment before the literal were not
+  recognised at all. Literals passed to `crypt`, `pgp_sym_encrypt` /
+  `pgp_sym_decrypt`, `encrypt` / `decrypt` and `hmac` are redacted too (audit
+  TN-013).
 - A stored password is bound to how its profile connects (TLS mode, CA file,
   SSH hop), not only where; a profile's environment and read-only flag come
   from the profile.
