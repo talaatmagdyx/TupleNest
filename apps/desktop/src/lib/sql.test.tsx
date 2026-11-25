@@ -7,6 +7,7 @@ import {
   rowCountNote,
   envMeta,
   formatSQL,
+  hasWriteVerb,
   looksLikeSelect,
   needsGuard,
   guardReason,
@@ -358,6 +359,33 @@ describe("formatSQL", () => {
   it("leaves an empty string empty", () => {
     expect(formatSQL("")).toBe("");
   });
+});
+
+describe("hasWriteVerb", () => {
+  it.each([
+    "with gone as (delete from users returning id) select count(*) from gone",
+    "WITH x AS (UPDATE t SET a = 1 RETURNING a) SELECT * FROM x",
+    "with x as (insert into t values (1) returning a) select * from x",
+    "with x as (merge into t using s on true when matched then delete) select 1",
+    "select * into t2 from t",
+    "select 1;\ndelete from t",
+    "with x as (\n\tDELETE\nFROM t returning 1) select * from x",
+    "select 1 /* harmless */ ; delete /* really */ from t",
+    "with x as (insert into t values (1) on conflict do update set a = 2 returning a) select * from x",
+  ])("sees the write in %s", (sql) => expect(hasWriteVerb(sql)).toBe(true));
+
+  it.each([
+    "select * from users",
+    "select 'delete from users', $$update t set a = 1$$, $tag$insert into t$tag$",
+    "select 1 -- delete from users\n",
+    "select 1 /* update t /* nested */ insert into t */",
+    'select "update", "insert", "delete", "into" from t',
+    "select deleted, updated_at, inserted, merged_into, intox from t",
+    "select * from t where id = 1 for update",
+    "select * from t for no key update",
+    "select e'it\\'s; delete from t' from t",
+    "",
+  ])("does not see one in %s", (sql) => expect(hasWriteVerb(sql)).toBe(false));
 });
 
 describe("looksLikeSelect", () => {

@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { QueryResult } from "../ipc/types";
-import { looksLikeSelect } from "../lib/sql";
+import { hasWriteVerb, looksLikeSelect, needsGuard } from "../lib/sql";
 import { DEFAULT_EXPLAIN, type ExplainOptions } from "../lib/explain-options";
 import type { Insight, ParsedPlanNode } from "../lib/explain";
 import { loadExplain } from "../lib/explain-load";
@@ -30,7 +30,7 @@ export type ExplainState = {
 };
 
 export type ExplainOutcome =
-  | { kind: "blocked"; reason: "empty" | "disconnected" | "options" }
+  | { kind: "blocked"; reason: "empty" | "disconnected" | "options" | "guard" }
   /** `root` is the raw FORMAT JSON root, for plan comparison. Null when the
    *  server format wasn't JSON and there is nothing to compare. */
   | { kind: "ok"; root: Record<string, unknown> | null }
@@ -40,6 +40,9 @@ export type ExplainRunArgs = {
   sql: string;
   title: string;
   connected: boolean;
+  /** The connection's environment tag. With ANALYZE on, the statement really
+   *  runs, so it answers to the same guard as Run. */
+  env?: string | null;
   override?: unknown;
   /** Column types, so the index advisor can tell an indexable expression from
    *  one PostgreSQL would reject. Passed per run rather than to the hook
@@ -67,7 +70,12 @@ export type Explain = {
  * for everything else, because EXPLAIN ANALYZE *executes* the statement. A
  * DELETE explained with ANALYZE really deletes. The user can still tick the
  * box — that is a deliberate act with a warning attached — but we never turn it
- * on for them on a statement that writes.
+ * on for them on a statement that writes. "Writes" is decided by the whole
+ * statement, not its first word: a WITH can carry a DELETE.
+ *
+ * Ticking the box does not get past the guard either. On a guarded connection
+ * a statement Run would stop for is refused here, and the user is sent to the
+ * editor, where the confirmation dialog is.
  */
 export function useExplain(serverMajor?: number): Explain {
   const [explain, setExplain] = useState<ExplainState | null>(null);
@@ -75,7 +83,7 @@ export function useExplain(serverMajor?: number): Explain {
   const [busy, setBusy] = useState(false);
 
   const run = useCallback(
-    async ({ sql, title, connected, override, onStart, catalog }: ExplainRunArgs): Promise<ExplainOutcome> => {
+    async ({ sql, title, connected, env, override, onStart, catalog }: ExplainRunArgs): Promise<ExplainOutcome> => {
       if (!sql.trim()) return { kind: "blocked", reason: "empty" };
       if (!connected) return { kind: "blocked", reason: "disconnected" };
 
@@ -83,8 +91,11 @@ export function useExplain(serverMajor?: number): Explain {
       // hands over a MouseEvent, which used to sail through as `override` and
       // throw on `format.toUpperCase()` — the button silently did nothing.
       const valid = override && typeof (override as ExplainOptions).format === "string";
-      const o = valid ? (override as ExplainOptions) : { ...opts, analyze: looksLikeSelect(sql) };
+      const o = valid
+        ? (override as ExplainOptions)
+        : { ...opts, analyze: looksLikeSelect(sql) && !hasWriteVerb(sql) };
       setOpts(o);
+      if (o.analyze && needsGuard(sql, env ?? null)) return { kind: "blocked", reason: "guard" };
       // The plan parser and index advisor are a chunk of their own, read from
       // disk the first time a plan is asked for rather than at startup.
       const [{ buildExplain, optionIssues, parsePlan, readPlanPayload }, { catalogTypeLookup }] = await Promise.all([

@@ -9,6 +9,12 @@ From a second audit, which re-tested every fix in 0.1.1-beta.12 rather than
 trusting it.
 
 ### Safety
+- Explain no longer executes a statement that writes. ANALYZE was switched on
+  for anything starting with `SELECT` or `WITH`, and EXPLAIN ANALYZE runs what
+  it explains: `WITH gone AS (DELETE … RETURNING id) SELECT …` deleted the
+  rows, and `SELECT … INTO t` created the table. The whole statement is read
+  now, not its first word. With ANALYZE ticked by hand on a prod or staging
+  connection, a statement Run would stop for is refused (audit TN-003).
 - **Read-only profiles refuse `DO` and `CALL`.** Either can commit partway
   through and switch the session back to read-write, so one pasted block could
   delete rows on a profile marked read-only. `SET TRANSACTION` works again on

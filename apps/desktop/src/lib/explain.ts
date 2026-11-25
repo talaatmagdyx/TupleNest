@@ -12,6 +12,7 @@
  */
 
 import { maskLiterals } from "./complete";
+import { hasWriteVerb } from "./sql";
 import { suggestIndexes, type ColumnTypeLookup, type IndexSuggestion } from "./index-advisor";
 import { cellText, mdCell } from "./text";
 
@@ -49,7 +50,9 @@ export const OPTION_META: OptionMeta[] = [
 const MUTATING = /^\s*(insert|update|delete|merge|truncate|drop|alter|create|grant|revoke|reindex|vacuum|refresh)\b/i;
 
 export function isMutating(sql: string): boolean {
-  return MUTATING.test(maskLiterals(sql).trimStart());
+  // The leading verb, or a write further in: a data-modifying CTE starts with
+  // WITH and deletes all the same.
+  return MUTATING.test(maskLiterals(sql).trimStart()) || hasWriteVerb(sql);
 }
 
 export type Issue = { level: "error" | "warning"; message: string };

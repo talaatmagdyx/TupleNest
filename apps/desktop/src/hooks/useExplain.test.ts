@@ -98,6 +98,75 @@ describe("useExplain — ANALYZE is not chosen on the user's behalf", () => {
     expect(result.current.opts.analyze).toBe(false);
   });
 
+  // TN-003. The first keyword of each of these is WITH or SELECT, which is all
+  // the default used to look at. EXPLAIN ANALYZE ran them, and the rows went.
+  it.each([
+    ["with gone as (delete from users returning id) select count(*) from gone"],
+    ["WITH moved AS (\n  UPDATE users SET tier = 'x' WHERE id = 1 RETURNING id\n) SELECT * FROM moved"],
+    ["with added as (insert into audit(note) values ('x') returning id) select id from added"],
+    ["with m as (merge into t using s on t.id = s.id when matched then delete returning t.id) select * from m"],
+    ["select * into backup_users from users"],
+    ["/* report */ with gone as (delete from users returning id) select 1"],
+  ])("leaves ANALYZE off for a query that writes: %s", async (sql) => {
+    const { result } = renderHook(() => useExplain());
+    await run(result, { sql });
+    expect(invokeMock).toHaveBeenCalledWith("pg_query", { sql: expect.not.stringContaining("ANALYZE") });
+    expect(result.current.opts.analyze).toBe(false);
+  });
+
+  it.each([
+    ["select note from audit where note = 'delete from users'"],
+    ["select 1 -- then delete the rest\nfrom users"],
+    ['select "delete", "update" from flags'],
+    ["select deleted_at, updated_by, insert_count from users"],
+    ["select * from users where id = 1 for update"],
+    ["select * from users for no key update"],
+    ["with recent as (select * from orders) select count(*) from recent"],
+  ])("keeps ANALYZE on for a query that only mentions a write: %s", async (sql) => {
+    // The other direction matters too: a check that cries wolf gets switched
+    // off in the user's head, and an untimed plan is the lesser product.
+    const { result } = renderHook(() => useExplain());
+    await run(result, { sql });
+    expect(invokeMock).toHaveBeenCalledWith("pg_query", { sql: expect.stringContaining("ANALYZE") });
+  });
+
+  it("refuses an explicit ANALYZE the guard would stop on a guarded connection", async () => {
+    // Run asks before `delete from users` on prod. Explain with the box ticked
+    // executes the same statement, and used to ask nothing.
+    for (const env of ["prod", "staging"]) {
+      invokeMock.mockClear();
+      const { result } = renderHook(() => useExplain());
+      const out = await run(result, { sql: "delete from users", env, override: opts({ analyze: true }) });
+      expect(out).toEqual({ kind: "blocked", reason: "guard" });
+      expect(invokeMock).not.toHaveBeenCalledWith("pg_query", expect.anything());
+    }
+  });
+
+  it("refuses it for an unbounded write hidden in a CTE as well", async () => {
+    const { result } = renderHook(() => useExplain());
+    const out = await run(result, {
+      sql: "with gone as (delete from users returning id) select count(*) from gone",
+      env: "prod",
+      override: opts({ analyze: true }),
+    });
+    expect(out).toEqual({ kind: "blocked", reason: "guard" });
+    expect(invokeMock).not.toHaveBeenCalledWith("pg_query", expect.anything());
+  });
+
+  it("still plans a guarded statement without ANALYZE — planning changes nothing", async () => {
+    const { result } = renderHook(() => useExplain());
+    const out = await run(result, { sql: "delete from users", env: "prod" });
+    expect(out.kind).toBe("ok");
+    expect(invokeMock).toHaveBeenCalledWith("pg_query", { sql: expect.not.stringContaining("ANALYZE") });
+  });
+
+  it("does not guard a plain SELECT on prod", async () => {
+    const { result } = renderHook(() => useExplain());
+    const out = await run(result, { sql: "select * from users", env: "prod" });
+    expect(out.kind).toBe("ok");
+    expect(invokeMock).toHaveBeenCalledWith("pg_query", { sql: expect.stringContaining("ANALYZE") });
+  });
+
   it("still obeys an explicit ANALYZE on a DELETE — it was asked for", async () => {
     const { result } = renderHook(() => useExplain());
     await run(result, { sql: "delete from users", override: opts({ analyze: true }) });

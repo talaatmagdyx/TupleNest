@@ -213,6 +213,33 @@ export function looksLikeSelect(sql: string): boolean {
   return /^\s*(select|with|values|table)\b/i.test(sql);
 }
 
+/**
+ * Whether a statement that *looks* like a query writes anyway.
+ *
+ * `looksLikeSelect` reads the first keyword, and the first keyword of
+ * `WITH gone AS (DELETE FROM users RETURNING id) SELECT count(*) FROM gone` is
+ * WITH. EXPLAIN ANALYZE executes what it explains, so treating that as a plain
+ * query deleted the rows from a button labelled Explain. `SELECT … INTO t`
+ * creates a table the same way.
+ *
+ * Masked first, so a keyword inside a string, a comment or a quoted identifier
+ * does not count. `FOR UPDATE` locks rows; it does not change them.
+ *
+ * It errs towards "writes": a false yes costs a ticked box, a false no costs
+ * data. What it cannot see is a function with side effects — `SELECT purge()`
+ * — which nothing short of the server can.
+ */
+export function hasWriteVerb(sql: string): boolean {
+  const masked = maskLiterals(sql);
+  const re = /\b(insert|update|delete|merge|into)\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(masked))) {
+    if (m[1].toLowerCase() === "update" && /\b(for|key)$/i.test(masked.slice(0, m.index).trimEnd())) continue;
+    return true;
+  }
+  return false;
+}
+
 /** Highest $n placeholder referenced in the SQL (ignoring string literals). */
 export function paramCount(sql: string): number {
   const stripped = sql.replace(/'(?:[^']|'')*'/g, "''").replace(/--[^\n]*/g, "");
