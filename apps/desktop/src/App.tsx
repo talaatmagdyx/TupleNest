@@ -216,6 +216,8 @@ export default function App() {
 
   // Explorer
   const [schemas, setSchemas] = useState<string[] | null>(null);
+  /** Why the catalog did not load, when it did not. */
+  const [schemasError, setSchemasError] = useState<string | null>(null);
   const [details, setDetails] = useState<{
     schema: string;
     data: ObjectDetails | null;
@@ -372,6 +374,7 @@ export default function App() {
   /** A new connection is a new catalog. */
   const resetExplorer = useCallback(() => {
     setSchemas(null);
+    setSchemasError(null);
     tree.reset();
   }, [tree]);
 
@@ -383,7 +386,12 @@ export default function App() {
         setSchemas(r.payload);
         setMetaCached(r.cached);
       })
-      .catch((e) => setStatus(`Explorer error: ${errText(e)}`));
+      .catch((e) => {
+        // In the tree, where the user is looking. The status line alone left
+        // "Loading schemas…" on screen for ever.
+        setSchemasError(errText(e));
+        setStatus(`Explorer error: ${errText(e)}`);
+      });
   }, [resetExplorer, setMetaCached, setStatus]);
 
   /**
@@ -1611,6 +1619,8 @@ export default function App() {
               <div className="side-sep" />
               <ExplorerTree
                 schemas={schemas}
+                loadError={schemasError}
+                onRetry={afterConnect}
                 metaCached={metaCached}
                 connected={connected}
                 open={openNodes}

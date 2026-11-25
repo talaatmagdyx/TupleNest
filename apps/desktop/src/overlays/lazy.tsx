@@ -1,4 +1,6 @@
-import { lazy, Suspense, useState, type ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
+import { ErrorBoundary } from "../app-shell/ErrorBoundary";
+import { ModalHead, Overlay } from "./Overlays";
 
 /**
  * Modals most sessions never open, split out of the main bundle.
@@ -7,13 +9,32 @@ import { lazy, Suspense, useState, type ComponentType } from "react";
  * is first opened. Tauri serves the chunks from disk, so "loading" one is a
  * local file read, not a network round trip, and it works offline.
  *
- * Why not bare `React.lazy`: a lazy component suspends on its first render
- * even when its module is already in memory, so a modal would always appear
- * one tick after the click that opened it. Once a chunk has loaded, the
- * wrapper here renders the real component directly, with no Suspense in
- * between. `preloadOverlays()` loads every chunk up front; the test setup
- * calls it so App tests can still assert on a modal synchronously.
+ * Why not `React.lazy`, for two reasons. A lazy component suspends on its
+ * first render even when its module is already in memory, so a modal would
+ * always appear one tick after the click that opened it: once a chunk has
+ * loaded, the wrapper here renders the real component directly. And
+ * `React.lazy` keeps a failed load for ever and throws it into the tree,
+ * where — with no boundary — it unmounted the whole app: one chunk that
+ * could not be read left an empty window. Here a failed load is a small
+ * dialog saying so, the next open tries again, and an error thrown by the
+ * modal itself is caught the same way.
+ *
+ * `preloadOverlays()` loads every chunk up front; the test setup calls it so
+ * App tests can still assert on a modal synchronously.
  */
+
+/** Shown in place of a modal that could not be loaded or threw. */
+function ModalFailed(p: { error: Error; onClose: () => void }) {
+  return (
+    <Overlay onClose={p.onClose} center>
+      <div className="modal dialog" role="alert">
+        <ModalHead title="This panel could not be opened" onClose={p.onClose} />
+        <p>The rest of the app is unaffected, and nothing was sent to the database. Close this and try again.</p>
+        <pre className="modal-error">{p.error.message}</pre>
+      </div>
+    </Overlay>
+  );
+}
 
 const loaders: (() => Promise<unknown>)[] = [];
 
@@ -25,17 +46,28 @@ export function lazyModal<P extends object>(load: () => Promise<{ default: Compo
       return m;
     });
   loaders.push(get);
-  const Lazy = lazy(get) as unknown as ComponentType<P>;
   return function LazyModal(props: P) {
-    // Decided once per mount: switching from the lazy path to the direct one
-    // mid-life would change the element type and remount the modal, losing
-    // whatever the user had typed into it.
-    const [Ready] = useState(() => loaded);
-    if (Ready) return <Ready {...props} />;
+    const [Ready, setReady] = useState<ComponentType<P> | null>(() => loaded);
+    const [failed, setFailed] = useState<Error | null>(null);
+    useEffect(() => {
+      if (Ready) return;
+      let live = true;
+      get().then(
+        (m) => live && setReady(() => m.default),
+        (e: unknown) => live && setFailed(e instanceof Error ? e : new Error(String(e))),
+      );
+      return () => {
+        live = false;
+      };
+    }, [Ready]);
+    // Every modal takes `onClose`; without it the dialog can still be read.
+    const close = (props as { onClose?: () => void }).onClose ?? (() => {});
+    if (failed) return <ModalFailed error={failed} onClose={close} />;
+    if (!Ready) return null;
     return (
-      <Suspense fallback={null}>
-        <Lazy {...props} />
-      </Suspense>
+      <ErrorBoundary fallback={(error) => <ModalFailed error={error} onClose={close} />}>
+        <Ready {...props} />
+      </ErrorBoundary>
     );
   };
 }

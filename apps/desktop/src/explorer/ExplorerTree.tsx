@@ -29,6 +29,9 @@ export type NodeKey = string;
 
 type Props = {
   schemas: string[] | null;
+  /** Why the schemas did not load, and a way to ask again. */
+  loadError?: string | null;
+  onRetry?: () => void;
   metaCached: boolean;
   connected: boolean;
   /** Expanded state, keyed by node id. */
@@ -655,7 +658,17 @@ export default function ExplorerTree(p: Props) {
           setScrollTop(top);
         }}
       >
-        {p.schemas === null && p.connected && <div className="note">Loading schemas…</div>}
+        {p.schemas === null && p.connected && !p.loadError && <div className="note">Loading schemas…</div>}
+        {p.schemas === null && p.connected && p.loadError && (
+          <div className="explorer-empty" role="alert">
+            <p>Could not load the schemas: {p.loadError}</p>
+            {p.onRetry && (
+              <button className="btn" onClick={p.onRetry}>
+                Retry
+              </button>
+            )}
+          </div>
+        )}
         {p.schemas === null && !p.connected && (
           <div className="explorer-empty">
             <p>Not connected.</p>

@@ -567,3 +567,40 @@ describe("Grid — a page that fails to load", () => {
     expect(await screen.findByText("ada@x.com")).toBeInTheDocument();
   });
 });
+
+// Audit TN-025: a block that failed to load was swallowed, and its rows
+// stayed placeholders as if they were still on their way.
+describe("Grid — a page of rows that cannot be loaded", () => {
+  it("says so, with the reason", async () => {
+    invokeMock.mockRejectedValue("result was dropped");
+    render(<Grid {...base} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Some rows could not be loaded: result was dropped");
+  });
+
+  it("loads them on Retry and takes the message away", async () => {
+    invokeMock.mockRejectedValueOnce(new Error("temporary"));
+    render(<Grid {...base} />);
+    await screen.findByRole("alert");
+    const before = invokeMock.mock.calls.length;
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("ada@x.com")).toBeInTheDocument();
+    expect(invokeMock.mock.calls.length).toBeGreaterThan(before);
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  });
+
+  it("does not keep asking by itself after a failure", async () => {
+    invokeMock.mockRejectedValue(new Error("down"));
+    render(<Grid {...base} />);
+    await screen.findByRole("alert");
+    const calls = invokeMock.mock.calls.length;
+    await new Promise((r) => setTimeout(r, 50));
+    expect(invokeMock.mock.calls.length).toBe(calls);
+  });
+
+  it("shows nothing of the kind when rows load", async () => {
+    render(<Grid {...base} />);
+    await screen.findByText("ada@x.com");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+

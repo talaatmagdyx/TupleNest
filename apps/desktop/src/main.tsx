@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { Crashed, ErrorBoundary } from "./app-shell/ErrorBoundary";
 import { osName } from "./lib/platform";
 import "./styles.css";
 
@@ -11,6 +12,8 @@ document.documentElement.setAttribute("data-tn-os", osName());
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <ErrorBoundary fallback={(error) => <Crashed error={error} onReload={() => window.location.reload()} />}>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>,
 );

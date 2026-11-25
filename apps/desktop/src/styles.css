@@ -1867,3 +1867,18 @@ select.intel-input { font-family: var(--tn-sans); }
     animation: none !important;
   }
 }
+
+/* A grid block that failed to load: pinned to the visible corner of the
+   scroll area, so it is seen wherever the grid has been scrolled to. */
+.g-error {
+  position: sticky; top: 0; left: 0; z-index: 3;
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px; font-size: 12px;
+  color: var(--tn-danger); background: var(--tn-s1);
+  border-bottom: 1px solid var(--tn-bs);
+}
+.modal-error { margin: 8px 16px 16px; font-size: 11px; white-space: pre-wrap; color: var(--tn-tm); }
+.crashed { padding: 48px; max-width: 640px; margin: 0 auto; }
+.crashed h1 { font-size: 16px; margin-bottom: 12px; }
+.crashed p { font-size: 13px; color: var(--tn-tm); margin-bottom: 12px; }
+.crashed pre { font-size: 11px; white-space: pre-wrap; margin-bottom: 16px; }

@@ -237,3 +237,30 @@ describe("App — the update toast", () => {
     expect(await screen.findByText(/commit or roll back/i)).toBeInTheDocument();
   });
 });
+
+// Audit TN-025: the catalog failing to load was a line in the status bar and
+// "Loading schemas…" for ever in the tree.
+describe("App — the catalog does not load", () => {
+  it("says why in the explorer, and Retry loads it", async () => {
+    const user = await mount();
+    let fail = true;
+    be.on("pg_metadata", (a) => {
+      const req = a.request as { kind: string };
+      if (req.kind === "list_schemas") {
+        if (fail) throw new Error("permission denied for schema pg_catalog");
+        return { payload: ["public", "billing"], cached: false };
+      }
+      if (req.kind === "server_info") return { payload: { version: "PostgreSQL 18.0" }, cached: false };
+      return { payload: [], cached: false };
+    });
+    await palette(user, "Connect to local dev");
+    const alert = await screen.findByText(/Could not load the schemas: permission denied for schema pg_catalog/);
+    expect(alert).toBeInTheDocument();
+    expect(screen.queryByText("Loading schemas…")).not.toBeInTheDocument();
+
+    fail = false;
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("billing")).toBeInTheDocument();
+    expect(screen.queryByText(/Could not load the schemas/)).not.toBeInTheDocument();
+  });
+});
