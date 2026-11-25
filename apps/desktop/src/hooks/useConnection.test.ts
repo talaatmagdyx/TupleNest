@@ -74,6 +74,25 @@ describe("useConnection — where the live session goes", () => {
   });
 });
 
+// TN-031: the window follows the environment the backend settled on.
+describe("useConnection — the backend decides the environment", () => {
+  it("takes the backend's tag when it is more protective than the one asked for", async () => {
+    invokeMock.mockResolvedValueOnce({ environment: "prod", readOnly: false });
+    const { result } = renderHook(() => useConnection());
+    await connect(result, "dev");
+    expect(result.current.connectedEnv).toBe("prod");
+  });
+
+  it("keeps what was asked for when the backend names none", async () => {
+    for (const answer of [undefined, null, {}, { environment: null }]) {
+      invokeMock.mockResolvedValueOnce(answer);
+      const { result } = renderHook(() => useConnection());
+      await connect(result, "staging");
+      expect(result.current.connectedEnv).toBe("staging");
+    }
+  });
+});
+
 describe("useConnection — connecting", () => {
   it("starts with no session", () => {
     const { result } = renderHook(() => useConnection());

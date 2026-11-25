@@ -695,12 +695,25 @@ pub async fn pg_test(
     })
 }
 
+/// What the backend settled on for a session it has just opened.
+///
+/// The window asks for an environment; the backend may decide on a more
+/// protective one (see `with_profile_policy`). Reporting it back is what
+/// keeps the two from disagreeing: the banner, the pill and the statement
+/// guard in the window follow the same tag the audit log and history do.
+#[derive(serde::Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Connected {
+    environment: Option<String>,
+    read_only: bool,
+}
+
 #[tauri::command]
 pub async fn pg_connect(
     app: tauri::State<'_, crate::AppState>,
     state: tauri::State<'_, PgState>,
     params: PgParams,
-) -> Result<(), String> {
+) -> Result<Connected, String> {
     authorize_secret(&app, &state, &params)?;
     let params = with_profile_policy(&app, params);
     // The keychain can block — on a permission prompt, for as long as the
@@ -762,7 +775,10 @@ pub async fn pg_connect(
         tunneled = params.ssh.is_some(),
         "session opened"
     );
-    Ok(())
+    Ok(Connected {
+        environment: params.environment.clone(),
+        read_only: params.read_only.unwrap_or(false),
+    })
 }
 
 #[tauri::command]
