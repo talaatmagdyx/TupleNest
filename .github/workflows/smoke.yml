@@ -117,7 +117,9 @@ jobs:
           if [ -n "${RUN_ID:-}" ]; then
             # A dev build: its release is a draft, which this token cannot see.
             gh run download "$RUN_ID" -n smoke-inputs -D artifacts
-            (cd artifacts && grep -E '_amd64\.deb$|_x64_en-US\.msi$' SHA256SUMS | shasum -a 256 -c -)
+            # `sha256sum`, not `shasum`: Git Bash on the Windows runner has
+            # only the former. Both read the same checksum file.
+            (cd artifacts && grep -E '_amd64\.deb$|_x64_en-US\.msi$' SHA256SUMS | sha256sum -c -)
           else
             gh release download "$TAG" -D artifacts -p 'TupleNest_*_amd64.deb' -p 'TupleNest_*_x64_en-US.msi'
           fi
