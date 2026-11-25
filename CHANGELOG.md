@@ -36,6 +36,12 @@ trusting it.
   rolled back with it.
 
 ### Correctness
+- Commit no longer reports success when PostgreSQL rolled the transaction
+  back. After a statement in a transaction fails, is cancelled or times out,
+  `COMMIT` is answered with `ROLLBACK` and no error; the app showed "COMMIT"
+  with the work gone. The Commit button, "Commit & disconnect" and a `COMMIT`
+  or `END` typed in the editor now say that nothing was committed (audit
+  TN-001).
 - **Row editing works on uuid keys, timestamps, decimals and NULLs**, and stays
   exact: values are sent as text and cast to the column's type. Editing a
   bigint above 2^53 no longer writes a different number.

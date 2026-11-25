@@ -2188,3 +2188,133 @@ async fn a_row_edit_refuses_a_table_the_query_did_not_read() {
         s.execute(req(sql), &NullSink).await.unwrap();
     }
 }
+
+/// TN-001: Commit must not report success when PostgreSQL rolled back.
+///
+/// `COMMIT` on a transaction in which a statement failed is answered with the
+/// command tag `ROLLBACK` and no error. The driver returned `Ok`, the app
+/// showed "COMMIT", and the rows were gone.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn commit_of_a_failed_transaction_is_an_error_not_a_success() {
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    for sql in [
+        "DROP TABLE IF EXISTS tn001",
+        "CREATE TABLE tn001 (id int PRIMARY KEY, note text)",
+    ] {
+        s.execute(req(sql), &NullSink).await.unwrap();
+    }
+    async fn rows(s: &mut tuplenest_driver_postgres::PostgresSession) -> String {
+        let sink = CollectSink::default();
+        s.execute(req("SELECT count(*) FROM tn001"), &sink)
+            .await
+            .unwrap();
+        let rows = sink.rows.lock().unwrap();
+        text_of(&rows[0][0])
+    }
+
+    // A statement fails partway through.
+    s.begin(TransactionOptions::default()).await.unwrap();
+    s.execute(req("INSERT INTO tn001 VALUES (1, 'kept?')"), &NullSink)
+        .await
+        .unwrap();
+    s.execute(req("SELECT 1/0"), &NullSink).await.unwrap_err();
+    let err = s
+        .commit()
+        .await
+        .expect_err("a rolled-back commit is not a success");
+    assert!(err.title.contains("Nothing was committed"), "{}", err.title);
+    assert_eq!(err.native_code.as_deref(), Some("25P02"));
+    // The transaction is over, and it left nothing behind.
+    assert!(!s.server_in_transaction().await.unwrap());
+    assert_eq!(rows(&mut s).await, "0");
+
+    // A cancelled statement aborts the transaction the same way.
+    s.begin(TransactionOptions::default()).await.unwrap();
+    s.execute(req("INSERT INTO tn001 VALUES (2, 'kept?')"), &NullSink)
+        .await
+        .unwrap();
+    s.execute(req("SET LOCAL statement_timeout = '50ms'"), &NullSink)
+        .await
+        .unwrap();
+    s.execute(req("SELECT pg_sleep(5)"), &NullSink)
+        .await
+        .unwrap_err();
+    s.commit()
+        .await
+        .expect_err("a timed-out transaction cannot commit");
+    assert_eq!(rows(&mut s).await, "0");
+
+    // A COMMIT typed in the editor is the same statement by another door.
+    for typed in [
+        "COMMIT",
+        "commit;",
+        "END",
+        "/* done */ Commit work",
+        "COMMIT AND NO CHAIN",
+    ] {
+        s.execute(req("BEGIN"), &NullSink).await.unwrap();
+        s.execute(req("INSERT INTO tn001 VALUES (3, 'kept?')"), &NullSink)
+            .await
+            .unwrap();
+        s.execute(req("SELECT 1/0"), &NullSink).await.unwrap_err();
+        let err = s
+            .execute(req(typed), &NullSink)
+            .await
+            .expect_err("a typed COMMIT of a failed transaction is not a success");
+        assert!(
+            err.title.contains("Nothing was committed"),
+            "{typed}: {}",
+            err.title
+        );
+        assert!(!s.server_in_transaction().await.unwrap(), "{typed}");
+        assert_eq!(rows(&mut s).await, "0", "{typed}");
+    }
+
+    // AND CHAIN keeps its meaning: the failed transaction ends, a new one starts.
+    s.execute(req("BEGIN"), &NullSink).await.unwrap();
+    s.execute(req("SELECT 1/0"), &NullSink).await.unwrap_err();
+    s.execute(req("COMMIT AND CHAIN"), &NullSink)
+        .await
+        .unwrap_err();
+    assert!(s.server_in_transaction().await.unwrap());
+    s.execute(req("ROLLBACK"), &NullSink).await.unwrap();
+
+    // And the ordinary cases are untouched: a healthy transaction commits,
+    s.begin(TransactionOptions::default()).await.unwrap();
+    s.execute(req("INSERT INTO tn001 VALUES (4, 'kept')"), &NullSink)
+        .await
+        .unwrap();
+    s.commit().await.expect("a healthy transaction commits");
+    assert_eq!(rows(&mut s).await, "1");
+    // a typed one does too,
+    s.execute(req("BEGIN"), &NullSink).await.unwrap();
+    s.execute(req("INSERT INTO tn001 VALUES (5, 'kept')"), &NullSink)
+        .await
+        .unwrap();
+    s.execute(req("COMMIT"), &NullSink)
+        .await
+        .expect("typed COMMIT");
+    assert_eq!(rows(&mut s).await, "2");
+    // a failed transaction can still be rolled back without complaint,
+    s.begin(TransactionOptions::default()).await.unwrap();
+    s.execute(req("SELECT 1/0"), &NullSink).await.unwrap_err();
+    s.rollback()
+        .await
+        .expect("rollback of a failed transaction");
+    // and COMMIT PREPARED is not a commit of the current transaction.
+    let err = s
+        .execute(req("COMMIT PREPARED 'tn001_no_such_gid'"), &NullSink)
+        .await
+        .unwrap_err();
+    assert!(
+        !err.title.contains("Nothing was committed"),
+        "{}",
+        err.title
+    );
+
+    s.execute(req("DROP TABLE tn001"), &NullSink).await.unwrap();
+}
