@@ -120,16 +120,17 @@ fn text_of(c: &CellValue) -> String {
     }
 }
 
-/// json and jsonb cells are carried as text, not as a `serde_json::Value`
-/// tree. The text must be what that tree serialized to — compact, keys sorted,
-/// the last of a duplicated key — for both types, whatever spelling and key
-/// order the server sent.
+/// json and jsonb cells are the text the server sent: exactly what `::text`
+/// and psql show. (Audit TN-019: they used to be parsed and re-serialized,
+/// which re-sorted keys, dropped duplicated keys and rounded big numbers.)
 #[tokio::test]
 #[ignore = "requires live PostgreSQL"]
-async fn json_cells_are_the_compact_text_a_value_tree_serialized_to() {
+async fn json_cells_are_exactly_the_text_the_server_sends() {
     let docs = [
-        r#"{"bb": 1,  "a": [1, 2.50, null, true], "a": {"z": "é\n\u0041", "y": 1e2}}"#,
+        r#"{"bb": 1,  "a": [1, 2.50, null, true], "a": {"z": "é\nA", "y": 1e2}}"#,
         r#"{"b": {"dd": 1, "c": 2}, "aa": [], "": {}, "n": -0.0, "big": 12345678901234567890123}"#,
+        r#"{"10": 1, "9": 2, "b": 3, "a": 4}"#,
+        r#"{"n": 0.1000000000000000055511151231257827, "e": 1E400}"#,
         r#"[ ]"#,
         r#" "just a string with \"quotes\" and \\ " "#,
         "null",
@@ -145,24 +146,39 @@ async fn json_cells_are_the_compact_text_a_value_tree_serialized_to() {
             let (CellValue::Json(cell), CellValue::Text(server_text)) = (&row[0], &row[1]) else {
                 panic!("{ty} {doc}: expected a JSON cell and its text, got {row:?}");
             };
-            let tree: serde_json::Value = serde_json::from_str(server_text).unwrap();
-            assert_eq!(
-                cell.get(),
-                serde_json::to_string(&tree).unwrap(),
-                "{ty} {doc}"
-            );
+            // Only whitespace around the whole document is not carried.
+            assert_eq!(cell.get(), server_text.trim(), "{ty} {doc}");
         }
     }
-    // Spelled out once, so the comparison above is not all there is: keys
-    // sorted, the duplicate's last value kept, numbers as serde_json writes them.
+    // Spelled out, so the comparison above is not all there is.
     let row = first_row(&format!(
-        "SELECT '{}'::json, '{}'::jsonb, NULL::jsonb",
+        "SELECT '{}'::json, '{}'::jsonb, NULL::jsonb, 'null'::jsonb",
         docs[0], docs[0]
     ))
     .await;
-    assert_eq!(text_of(&row[0]), r#"{"a":{"y":100.0,"z":"é\nA"},"bb":1}"#);
-    assert_eq!(text_of(&row[1]), r#"{"a":{"y":100,"z":"é\nA"},"bb":1}"#);
+    // json: the document as written — both `a` keys, the spacing, `2.50`, `1e2`.
+    assert_eq!(text_of(&row[0]), docs[0]);
+    // jsonb: the server's own normal form.
+    assert_eq!(
+        text_of(&row[1]),
+        r#"{"a": {"y": 100, "z": "é\nA"}, "bb": 1}"#
+    );
+    // SQL NULL and a JSON null are different cells.
     assert_eq!(row[2], CellValue::Null);
+    assert!(matches!(&row[3], CellValue::Json(j) if j.get() == "null"));
+
+    // No digit of a big number is lost, in either type.
+    let big = first_row(
+        "SELECT '{\"n\": 12345678901234567890123.000000000000000000001}'::json,
+                '{\"n\": 12345678901234567890123.000000000000000000001}'::jsonb",
+    )
+    .await;
+    for cell in &big {
+        assert!(
+            text_of(cell).contains("12345678901234567890123.000000000000000000001"),
+            "{cell:?}"
+        );
+    }
 }
 
 // Regression: these types all rendered as "<unsupported in PoC>", which made

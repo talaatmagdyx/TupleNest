@@ -804,7 +804,7 @@ fn cell_to_json(cell: CellValue) -> serde_json::Value {
             }),
         CellValue::Text(t) => t.into(),
         CellValue::Bytes(b) => format!("\\x{}", hex(&b)).into(),
-        CellValue::Json(v) => serde_json::from_str(v.get()).expect("a RawValue is valid JSON"),
+        CellValue::Json(v) => v.get().into(),
         CellValue::Other(o) => o.rendered.into(),
     }
 }
@@ -848,8 +848,12 @@ fn write_cell(out: &mut Vec<u8>, cell: &CellValue) {
             push_hex(out, b);
             out.push(b'"');
         }
-        // Already the compact JSON text: copied, not parsed and re-written.
-        CellValue::Json(j) => out.extend_from_slice(j.get().as_bytes()),
+        // As a string holding the document, not as the document. Spliced in
+        // as a value it was parsed by the page's `JSON.parse`, which rounds
+        // numbers past 2^53, keeps one of a duplicated key, moves integer-like
+        // keys to the front, and turns a JSON `null` into the same thing as a
+        // SQL NULL. The text is what the server sent; it stays that.
+        CellValue::Json(j) => write_json(out, j.get()),
         CellValue::Other(o) => write_json(out, o.rendered.as_str()),
     }
 }
@@ -1740,6 +1744,13 @@ pub fn export_page(
     let mut guard = state.result.lock().map_err(|_| "result lock poisoned")?;
     let stored = guard.as_mut().ok_or("no result")?;
     let names: Vec<String> = stored.columns.iter().map(|(n, _)| n.clone()).collect();
+    // json and jsonb cells are stored as the document's text. A JSON export
+    // nests them, so it needs to know which strings are documents.
+    let documents: Vec<bool> = stored
+        .columns
+        .iter()
+        .map(|(_, t)| t == "json" || t == "jsonb")
+        .collect();
     // One page of rows parsed at a time; the rest stay as stored text.
     let page: Vec<Vec<serde_json::Value>> = stored
         .store
@@ -1758,6 +1769,7 @@ pub fn export_page(
         &mut out,
         kind,
         &names,
+        &documents,
         page.iter().map(Vec::as_slice),
         offset == 0,
         mode,
@@ -2562,7 +2574,7 @@ mod tests {
                 CellValue::Text("a\"b\n".into()),
                 json(serde_json::json!({"b": [1, null], "a": "x"})),
             ]),
-            r#"[null,"9007199254740993","NaN",1.0,"\\x00abff","a\"b\n",{"a":"x","b":[1,null]}]"#
+            r#"[null,"9007199254740993","NaN",1.0,"\\x00abff","a\"b\n","{\"a\":\"x\",\"b\":[1,null]}"]"#
         );
     }
 
@@ -3126,5 +3138,48 @@ mod cache_policy_tests {
         assert!(cache.get(KEY, "top_queries", "", "").unwrap().is_none());
         assert!(cache.get(KEY, "search", "salary", "").unwrap().is_none());
         assert!(cache.get(KEY, "columns", "public", "t").unwrap().is_some());
+    }
+}
+
+// Audit TN-019: what the page receives for a json or jsonb cell.
+#[cfg(test)]
+mod json_cell_bridge_tests {
+    use super::*;
+
+    fn doc(text: &str) -> CellValue {
+        CellValue::Json(serde_json::value::RawValue::from_string(text.to_owned()).unwrap())
+    }
+    fn written(cell: &CellValue) -> String {
+        let mut out = Vec::new();
+        write_cell(&mut out, cell);
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn a_document_crosses_as_a_string_holding_its_exact_text() {
+        let text = r#"{"b": 1, "a": 12345678901234567890123, "a": 2, "10": [1.10, -0.0]}"#;
+        let wire = written(&doc(text));
+        // The page parses the row; what it gets back is the text, untouched.
+        let back: String = serde_json::from_str(&wire).unwrap();
+        assert_eq!(back, text);
+    }
+
+    #[test]
+    fn a_json_null_is_not_a_sql_null() {
+        assert_eq!(written(&doc("null")), "\"null\"");
+        assert_eq!(written(&CellValue::Null), "null");
+    }
+
+    #[test]
+    fn the_tree_form_agrees_with_the_written_form() {
+        for text in ["null", "42", "\"s\"", "[]", r#"{"k": "é\n"}"#] {
+            let cell = doc(text);
+            let wire = written(&cell);
+            assert_eq!(
+                serde_json::to_string(&cell_to_json(cell)).unwrap(),
+                wire,
+                "{text}"
+            );
+        }
     }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cellText, errText, mdCell } from "./text";
+import { cellText, errText, mdCell, prettyJson } from "./text";
 
 describe("cellText — a cell on screen", () => {
   it("shows a null rather than hiding it", () => {
@@ -108,3 +108,59 @@ describe("mdCell — one Markdown table cell", () => {
     expect(mdCell("plain text 123")).toBe("plain text 123");
   });
 });
+
+// Audit TN-019: the inspector showed `JSON.stringify(JSON.parse(text))`, a
+// different document from the one in the database.
+describe("prettyJson — re-indents, never rewrites", () => {
+  const tokens = (s: string) => s.replace(/\s+(?=(?:[^"\\]|\\.|"(?:[^"\\]|\\.)*")*$)/g, "");
+
+  it("lays an object out two spaces deep", () => {
+    expect(prettyJson('{"a":1,"b":[true,null]}')).toBe('{\n  "a": 1,\n  "b": [\n    true,\n    null\n  ]\n}');
+  });
+
+  it("agrees with JSON.stringify where JSON.stringify changes nothing", () => {
+    for (const v of [{ a: 1, b: { c: [1, 2, { d: "x" }] }, e: [] }, [], {}, [[]], "s", 0, null, [{}]]) {
+      expect(prettyJson(JSON.stringify(v))).toBe(JSON.stringify(v, null, 2));
+    }
+  });
+
+  it("keeps every digit of a number JavaScript cannot hold", () => {
+    const out = prettyJson('{"n": 12345678901234567890123, "d": 1.10, "e": 1E400, "z": -0.0}');
+    expect(out).toContain("12345678901234567890123");
+    expect(out).toContain("1.10");
+    expect(out).toContain("1E400");
+    expect(out).toContain("-0.0");
+  });
+
+  it("keeps a duplicated key and the order the keys came in", () => {
+    const out = prettyJson('{"b":1,"a":2,"a":3,"10":4,"9":5}');
+    expect(out).toBe('{\n  "b": 1,\n  "a": 2,\n  "a": 3,\n  "10": 4,\n  "9": 5\n}');
+  });
+
+  it("does not touch the inside of a string", () => {
+    const src = '{"k": "a, b: {c} [d] \\" \\\\", "s": "  spaces  \\n"}';
+    const out = prettyJson(src);
+    expect(out).toContain('"a, b: {c} [d] \\" \\\\"');
+    expect(out).toContain('"  spaces  \\n"');
+    expect(JSON.parse(out)).toEqual(JSON.parse(src));
+  });
+
+  it("drops only whitespace, whatever layout it was given", () => {
+    const src = ' {\r\n\t"a" :  [ 1 ,2 ] ,\n"b":{ }  , "c" : [\n] } ';
+    const out = prettyJson(src);
+    expect(tokens(out)).toBe(tokens(src));
+    expect(out).toBe('{\n  "a": [\n    1,\n    2\n  ],\n  "b": {},\n  "c": []\n}');
+  });
+
+  it("is stable when applied twice", () => {
+    const once = prettyJson('{"a":[1,{"b":[]}],"c":"x"}');
+    expect(prettyJson(once)).toBe(once);
+  });
+
+  it("returns text that is not JSON unchanged", () => {
+    for (const s of ["not json at all", "{", '{"a":}', "", "{'a': 1}", "NaN"]) {
+      expect(prettyJson(s)).toBe(s);
+    }
+  });
+});
+
