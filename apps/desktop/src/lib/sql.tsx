@@ -133,6 +133,19 @@ export function guardReason(sql: string, env: string | null): GuardReason | null
   const verb = firstKeyword(sql);
   if (!verb) return null;
 
+  // EXPLAIN ANALYZE runs what it explains. Typed into the editor it went
+  // straight through, because its first word is `explain`: judge the
+  // statement inside it. (The Explain button has its own check.)
+  if (verb === "explain") {
+    const head = /^\s*explain\s*(?:\(([^)]*)\)|((?:\s*\b(?:analyze|analyse|verbose)\b)*))/i.exec(masked);
+    if (!head) return null;
+    const options = head[1] ?? head[2] ?? "";
+    const analyze = /\banaly[sz]e\b(?!\s*(?:false|off|0)\b)/i.test(options);
+    if (!analyze) return null;
+    const inner = guardReason(sql.slice(head[0].length), env);
+    return inner && { verb: inner.verb, why: `EXPLAIN ANALYZE runs the statement. ${inner.why}` };
+  }
+
   // A CTE can front a DELETE: `WITH x AS (…) DELETE FROM t`. The leading
   // keyword is `with`, so look for the real verb after it.
   const effective =
@@ -154,9 +167,14 @@ export function guardReason(sql: string, env: string | null): GuardReason | null
   // Every UPDATE/DELETE needs its own WHERE. One WHERE anywhere in the text
   // used to count, so `WITH d AS (DELETE FROM a WHERE false) DELETE FROM
   // users` — or a WHERE only inside a subquery — disarmed the guard.
-  const unbounded = dmlWithoutWhere(masked);
+  const unbounded = unboundedDml(masked);
   if (unbounded) {
-    return { verb: unbounded.toUpperCase(), why: "It has no WHERE clause, so it affects every row in the table." };
+    return {
+      verb: unbounded.verb.toUpperCase(),
+      why: unbounded.trivial
+        ? "Its WHERE clause is always true, so it affects every row in the table."
+        : "It has no WHERE clause, so it affects every row in the table.",
+    };
   }
   return null;
 }
@@ -171,6 +189,20 @@ export function guardReason(sql: string, env: string | null): GuardReason | null
  * `FOR [NO KEY] UPDATE` (row locks) are not row-wide writes and are skipped.
  */
 export function dmlWithoutWhere(masked: string): string | null {
+  return unboundedDml(masked)?.verb ?? null;
+}
+
+/**
+ * The first UPDATE or DELETE that reaches every row: no WHERE of its own, or
+ * one that is plainly always true (`WHERE true`, `WHERE 1=1`, `WHERE 'a'='a'`,
+ * or any of those as one side of a top-level OR).
+ *
+ * The second case is the habit the guard is for: `WHERE 1=1` is what a query
+ * builder leaves behind when every filter was optional, and it used to count
+ * as a WHERE. Only the obvious spellings are recognised; `WHERE id = id` and
+ * `WHERE now() > '2000-01-01'` are as unbounded and are not caught.
+ */
+function unboundedDml(masked: string): { verb: string; trivial: boolean } | null {
   const re = /\b(update|delete)\b/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(masked))) {
@@ -178,18 +210,48 @@ export function dmlWithoutWhere(masked: string): string | null {
     if (/\b(do|for|key)$/.test(before)) continue;
     let depth = 0;
     let own = "";
+    // Where each character of `own` sits in `masked`, to find the WHERE's
+    // condition with its parentheses still in it.
+    const at: number[] = [];
+    let end = masked.length;
     for (let i = m.index; i < masked.length; i++) {
       const c = masked[i];
       if (c === "(") depth++;
       else if (c === ")") {
-        if (depth === 0) break; // end of the CTE body this verb lives in
+        if (depth === 0) {
+          end = i; // end of the CTE body this verb lives in
+          break;
+        }
         depth--;
-      } else if (c === ";" && depth === 0) break;
-      if (depth === 0) own += c;
+      } else if (c === ";" && depth === 0) {
+        end = i;
+        break;
+      }
+      if (depth === 0) {
+        own += c;
+        at.push(i);
+      }
     }
-    if (!/\bwhere\b/i.test(own)) return m[1].toLowerCase();
+    const verb = m[1].toLowerCase();
+    const where = /\bwhere\b/i.exec(own);
+    if (!where) return { verb, trivial: false };
+    if (alwaysTrue(masked.slice(at[where.index] + where[0].length, end))) return { verb, trivial: true };
   }
   return null;
+}
+
+/** Is this WHERE condition (masked text) one of the plainly-always-true ones? */
+function alwaysTrue(condition: string): boolean {
+  const whole = condition.replace(/\breturning\b[\s\S]*$/i, "");
+  return whole.split(/\bor\b/i).some((part) => {
+    let c = part.trim().toLowerCase();
+    while (c.startsWith("(") && c.endsWith(")")) c = c.slice(1, -1).trim();
+    c = c.replace(/\s+/g, "");
+    // `=` alone, or between empty quotes, is two string literals compared:
+    // masking blanked what was in them. Which strings is not known, so this
+    // also flags `'a' = 'b'`, which matches nothing — asking is the safe side.
+    return c === "true" || c === "notfalse" || c === "1" || /^(\d+)=\1$/.test(c) || /^('')?=('')?$/.test(c);
+  });
 }
 
 /** Destructive-statement guard for prod/staging. See `guardReason`. */

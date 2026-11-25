@@ -10,6 +10,7 @@ import {
   hasWriteVerb,
   looksLikeSelect,
   needsGuard,
+  dmlWithoutWhere,
   guardReason,
   firstKeyword,
   paramCount,
@@ -240,6 +241,94 @@ describe("needsGuard — bypasses the audit found", () => {
     expect(guarded("SELECT * FROM t WHERE id = 1 FOR NO KEY UPDATE")).toBe(false);
     expect(guarded("COPY (SELECT * FROM t) TO STDOUT")).toBe(false);
     expect(guarded("COPY t TO STDOUT")).toBe(false);
+  });
+});
+
+// Audit TN-008: two more ways a row-wide write got past the guard on prod.
+describe("guardReason — an always-true WHERE is not a WHERE", () => {
+  const why = (sql: string) => guardReason(sql, "prod")?.why;
+  it.each([
+    "DELETE FROM users WHERE true",
+    "delete from users where TRUE;",
+    "UPDATE users SET active = false WHERE 1=1",
+    "UPDATE users SET active = false WHERE 1 = 1",
+    "DELETE FROM users WHERE (1=1)",
+    "DELETE FROM users WHERE ((true))",
+    "DELETE FROM users WHERE 'a' = 'a'",
+    "DELETE FROM users WHERE NOT false",
+    "DELETE FROM users WHERE 1",
+    "DELETE FROM users WHERE id = 5 OR 1=1",
+    "DELETE FROM users WHERE true OR id = 5",
+    "DELETE FROM users WHERE 1=1 RETURNING id",
+    "WITH gone AS (DELETE FROM users WHERE true RETURNING id) SELECT count(*) FROM gone",
+    "DELETE FROM users WHERE 42 = 42 -- just this once",
+  ])("%s", (sql) => {
+    expect(why(sql)).toMatch(/always true/);
+  });
+
+  it.each([
+    "DELETE FROM users WHERE id = 5",
+    "DELETE FROM users WHERE (id = 5)",
+    "DELETE FROM users WHERE active = true",
+    "DELETE FROM users WHERE true AND id = 5",
+    "DELETE FROM users WHERE 1=1 AND id = 5",
+    "DELETE FROM users WHERE 1 = 2",
+    "DELETE FROM users WHERE name = 'true'",
+    "DELETE FROM users WHERE name = 'x' OR name = 'y'",
+    "DELETE FROM users WHERE id IN (SELECT id FROM old WHERE true)",
+    "UPDATE users SET note = 'where 1=1' WHERE id = 7",
+    "DELETE FROM users WHERE flag",
+    "DELETE FROM users WHERE id = 11",
+  ])("does not flag %s", (sql) => {
+    expect(guardReason(sql, "prod")).toBeNull();
+  });
+
+  it("still says there is no WHERE when there is none", () => {
+    expect(why("DELETE FROM users")).toMatch(/no WHERE clause/);
+    expect(dmlWithoutWhere("delete from users")).toBe("delete");
+    expect(dmlWithoutWhere("delete from users where true")).toBe("delete");
+    expect(dmlWithoutWhere("delete from users where id = 1")).toBeNull();
+  });
+});
+
+describe("guardReason — EXPLAIN ANALYZE runs the statement", () => {
+  const reason = (sql: string) => guardReason(sql, "prod");
+  it.each([
+    "EXPLAIN ANALYZE DELETE FROM users",
+    "explain analyze delete from users",
+    "EXPLAIN (ANALYZE) DELETE FROM users",
+    "EXPLAIN (ANALYZE, BUFFERS) UPDATE users SET a = 1",
+    "EXPLAIN (BUFFERS, ANALYZE true, FORMAT JSON) DELETE FROM users WHERE true",
+    "EXPLAIN ANALYZE VERBOSE DROP TABLE users",
+    "EXPLAIN ANALYSE DELETE FROM users",
+    "/* plan */ EXPLAIN ANALYZE TRUNCATE users",
+    "EXPLAIN ANALYZE WITH gone AS (DELETE FROM users RETURNING id) SELECT * FROM gone",
+  ])("asks before %s", (sql) => {
+    expect(reason(sql)?.why).toMatch(/^EXPLAIN ANALYZE runs the statement\./);
+  });
+
+  it("names the statement inside, not EXPLAIN", () => {
+    expect(reason("EXPLAIN ANALYZE DELETE FROM users")?.verb).toBe("DELETE");
+    expect(reason("EXPLAIN (ANALYZE) DROP TABLE users")?.verb).toBe("DROP");
+  });
+
+  it.each([
+    "EXPLAIN DELETE FROM users",
+    "EXPLAIN (BUFFERS false) DELETE FROM users",
+    "EXPLAIN (ANALYZE false) DELETE FROM users",
+    "EXPLAIN (ANALYZE off, VERBOSE) DELETE FROM users",
+    "EXPLAIN VERBOSE DROP TABLE users",
+    "EXPLAIN ANALYZE SELECT * FROM users",
+    "EXPLAIN ANALYZE DELETE FROM users WHERE id = 1",
+    "EXPLAIN (ANALYZE) UPDATE users SET a = 1 WHERE id = 1",
+    "EXPLAIN SELECT 'analyze delete from users'",
+  ])("does not ask before %s", (sql) => {
+    expect(reason(sql)).toBeNull();
+  });
+
+  it("only on a guarded connection", () => {
+    expect(guardReason("EXPLAIN ANALYZE DELETE FROM users", "dev")).toBeNull();
+    expect(guardReason("EXPLAIN ANALYZE DELETE FROM users", "staging")).not.toBeNull();
   });
 });
 
