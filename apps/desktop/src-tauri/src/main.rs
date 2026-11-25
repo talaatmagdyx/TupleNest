@@ -596,18 +596,6 @@ fn main() {
 
             let store = Store::open(&dir.join("tuplenest.db"))
                 .map_err(|e| -> Box<dyn std::error::Error> { format!("{e}").into() })?;
-            // Keychain entries from passwords tested but never saved.
-            let swept = pg::sweep_pending_secrets(
-                &store,
-                &tuplenest_credential_store::KeychainStore::new(),
-            );
-            if swept > 0 {
-                tracing::info!(
-                    component = "credentials",
-                    swept,
-                    "removed keychain entries no profile owns"
-                );
-            }
             app.manage(AppState {
                 store: Mutex::new(store),
                 _log_guard: log_guard,
@@ -616,6 +604,24 @@ fn main() {
                 tuplenest_metadata_cache::MetadataCache::open(&dir.join("metadata-cache.db"))
                     .map_err(|e| -> Box<dyn std::error::Error> { format!("{e}").into() })?;
             app.manage(pg::PgState::new(cache));
+            // Keychain entries from passwords tested but never saved. On its
+            // own thread: a keychain call can wait on a system prompt, and
+            // nothing about opening the window should wait with it.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                use tauri::Manager;
+                let swept = pg::sweep_pending_secrets(
+                    &handle.state::<AppState>().store,
+                    &tuplenest_credential_store::KeychainStore::new(),
+                );
+                if swept > 0 {
+                    tracing::info!(
+                        component = "credentials",
+                        swept,
+                        "removed keychain entries no profile owns"
+                    );
+                }
+            });
             app.manage(ExportState::default());
             Ok(())
         })
