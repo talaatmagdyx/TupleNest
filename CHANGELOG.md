@@ -150,6 +150,14 @@ trusting it.
 - Secrets in JSON shapes are redacted; logs keep 14 days.
 
 ### Performance and reliability
+- Three failures that were swallowed are now shown, each with a way to try
+  again. The explorer says why the schemas did not load: it sat on "Loading
+  schemas…" for ever. The grid says when a page of rows could not be
+  fetched: its rows stayed placeholders. A dialog that cannot be loaded, or
+  throws while drawing, is a small message in its place: it used to empty
+  the whole window, because nothing caught the error. The app as a whole now
+  has a last-resort screen with a reload button for the same reason (audit
+  TN-025).
 - Connecting through an SSH tunnel gives up after 20 seconds. There was no
   limit on the SSH handshake, so a bastion that accepted the connection and
   then said nothing left Connect and Test waiting forever, with no way to

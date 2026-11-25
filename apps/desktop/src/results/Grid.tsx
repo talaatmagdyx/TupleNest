@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { cellText } from "../lib/text";
+import { cellText, errText } from "../lib/text";
 import { isNumericType } from "../lib/chart";
 import { invoke } from "@tauri-apps/api/core";
 import { coerceValue, rowKey, type CellEdit, type EditTarget } from "../lib/dml";
@@ -306,6 +306,11 @@ export default function Grid(p: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [first, last, p.storedRows]);
 
+  // A block that could not be fetched. Its rows stay placeholders, so
+  // without this the grid looked as if it were still loading, for ever.
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+
   // Backend block fetch, in the current sort order.
   useEffect(() => {
     if (p.storedRows === 0 || last <= first) return;
@@ -319,6 +324,7 @@ export default function Grid(p: Props) {
         invoke<unknown[][]>("pg_rows", { offset: b * BLOCK, limit: BLOCK, sort })
           .then((rows) => {
             if (gen !== sortGen.current) return;
+            setPageError(null);
             setBlocks((m) => {
               const next = keepNear({ ...m, [b]: rows }, b);
               // The row under an open editor stays cached however far the
@@ -330,11 +336,14 @@ export default function Grid(p: Props) {
               return next;
             });
           })
-          .catch(() => {})
+          .catch((e: unknown) => {
+            if (gen === sortGen.current) setPageError(errText(e));
+          })
           .finally(() => pending.current.delete(b));
       }
     }
-  }, [first, last, blocks, p.storedRows, sortCol, sortDir]);
+    // `retry` is here to run this again; nothing in the body reads it.
+  }, [first, last, blocks, p.storedRows, sortCol, sortDir, retry]);
 
   const rowAt = (i: number): unknown[] | null => blocks[Math.floor(i / BLOCK)]?.[i % BLOCK] ?? null;
 
@@ -563,6 +572,14 @@ export default function Grid(p: Props) {
         setScrollLeft(Math.floor(el.scrollLeft / COL_STEP) * COL_STEP);
       }}
     >
+      {pageError && (
+        <div className="g-error" role="alert">
+          <span>Some rows could not be loaded: {pageError}</span>
+          <button className="btn" onClick={() => setRetry((n) => n + 1)}>
+            Retry
+          </button>
+        </div>
+      )}
       <div className="g-head" role="row" style={{ minWidth: totalW }}>
         <div className="g-rownum" role="columnheader" aria-label="Row number" style={{ width: NUM_W }} />
         {p.columns.map((c, ci) => (

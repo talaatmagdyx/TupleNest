@@ -731,6 +731,24 @@ describe("ExplorerTree — windowing", () => {
     expect(screen.getByText("Loading schemas…")).toBeInTheDocument();
   });
 
+  // Audit TN-025: a failed load left "Loading schemas…" on screen for ever.
+  it("says why the schemas did not load and offers to try again", async () => {
+    const onRetry = vi.fn();
+    render(<ExplorerTree {...base} schemas={null} loadError="permission denied for pg_namespace" onRetry={onRetry} />);
+    expect(screen.queryByText("Loading schemas…")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not load the schemas: permission denied for pg_namespace");
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetry).toHaveBeenCalled();
+  });
+
+  it("shows the error without a button when there is no way to retry, and not at all once schemas arrive", () => {
+    const { rerender } = render(<ExplorerTree {...base} schemas={null} loadError="boom" />);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    rerender(<ExplorerTree {...base} loadError="boom" />);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("marks a unique index, and titles a constraint with its kind when it has no definition", () => {
     render(
       <ExplorerTree
