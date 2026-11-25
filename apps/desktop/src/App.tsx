@@ -1367,8 +1367,13 @@ export default function App() {
           // rarely runs for a dialog. It stays because the other two cases
           // have no other owner: cancelling a running query, and closing the
           // connection and export menus, which are not overlays.
-          if (overlay) setOverlay(null);
-          else if (running) void doCancel();
+          if (overlay) {
+            // Not while the app is writing. With focus outside the dialog —
+            // a click on the backdrop moves it to the page — this arm does
+            // run, and it closed the import while its inserts carried on with
+            // no progress and no Cancel button.
+            if (!writingRef.current) setOverlay(null);
+          } else if (running) void doCancel();
           else {
             setConnMenu(false);
             setExportMenu(false);
