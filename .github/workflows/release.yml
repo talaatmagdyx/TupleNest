@@ -328,13 +328,21 @@ jobs:
           command -v cargo-cyclonedx >/dev/null || { echo "cargo-cyclonedx did not install"; exit 1; }
           # One .cdx.json per crate, written next to each Cargo.toml.
           cargo cyclonedx --format json --all
-          find . -maxdepth 3 -name '*.cdx.json' -exec cp {} dist/ \;
+          # Depth 4, not 3: the application crate is apps/desktop/src-tauri,
+          # one level deeper than crates/*. At 3 its SBOM — the one that lists
+          # Tauri, the WebView bindings and the updater — was left out.
+          find . -maxdepth 4 -name '*.cdx.json' -not -path './dist/*' -exec cp {} dist/ \;
           cd apps/desktop && npm ci --ignore-scripts && npm sbom --sbom-format cyclonedx > ../../dist/frontend-sbom.cdx.json
           cd ../..
           # Prove it rather than hope: one per workspace crate, plus the frontend.
           count=$(ls dist/*.cdx.json | wc -l)
           echo "SBOMs collected: $count"; ls -1 dist/*.cdx.json
-          [ "$count" -ge 2 ] || { echo "expected at least a Rust and a frontend SBOM"; exit 1; }
+          members=$(cargo metadata --no-deps --format-version 1 | jq '.workspace_members | length')
+          [ "$count" -eq $((members + 1)) ] || {
+            echo "expected $members Rust SBOMs (one per workspace crate) plus the frontend's, found $count"
+            exit 1
+          }
+          ls dist/ | grep -q '^tuplenest-desktop.*\.cdx\.json$' || { echo "the application crate's SBOM is missing"; exit 1; }
 
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
