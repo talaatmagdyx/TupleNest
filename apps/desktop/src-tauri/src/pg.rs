@@ -298,13 +298,48 @@ fn with_profile_policy(app: &crate::AppState, mut params: PgParams) -> PgParams 
     let Ok(profiles) = store.connection_list() else {
         return params;
     };
-    if let Some(p) = profiles.iter().find(|r| profile_matches(r, &params)) {
-        if p.environment.is_some() {
-            params.environment = p.environment.clone();
-        }
-        params.read_only = Some(params.read_only.unwrap_or(false) || p.read_only);
+    // Every profile that is this connection, not the first one found. Two
+    // profiles can point at the same database with different tags, and the
+    // first in the list used to decide: a session opened from the one tagged
+    // prod ran as dev in here — no audit row, its SQL kept in history —
+    // while the window showed PRODUCTION.
+    let matching: Vec<_> = profiles
+        .iter()
+        .filter(|r| profile_matches(r, &params))
+        .collect();
+    if matching.is_empty() {
+        return params;
     }
+    // The most protective tag among the profiles and what was asked for. The
+    // backend cannot tell which of the profiles the window meant, so it takes
+    // the one that protects most; the cost of being wrong that way is an
+    // extra audit row.
+    let strongest = matching
+        .iter()
+        .filter_map(|r| r.environment.as_deref())
+        .chain(params.environment.as_deref())
+        .max_by_key(|e| environment_rank(e))
+        .map(str::to_owned);
+    if strongest.is_some() {
+        params.environment = strongest;
+    }
+    // Read-only holds if it was asked for, or if every profile this could be
+    // is read-only. One writable profile for the same connection is a
+    // legitimate way to connect, and cannot be told apart from here.
+    params.read_only =
+        Some(params.read_only.unwrap_or(false) || matching.iter().all(|r| r.read_only));
     params
+}
+
+/// How much an environment tag protects: prod most, an unknown tag least.
+fn environment_rank(environment: &str) -> u8 {
+    match environment {
+        "prod" => 4,
+        "staging" => 3,
+        "test" => 2,
+        "dev" => 1,
+        _ => 0,
+    }
 }
 
 fn resolve_password(secret_ref: &Option<String>) -> Result<Option<Secret>, String> {
@@ -2713,6 +2748,114 @@ mod tests {
         assert_eq!(
             with_profile_policy(&app, q).environment.as_deref(),
             Some("dev")
+        );
+    }
+
+    #[test]
+    fn two_profiles_for_one_database_take_the_most_protective_tag() {
+        // Found verifying TN-027 in a built app: with a dev profile saved
+        // before a prod one for the same connection, a prod session was
+        // treated as dev — no audit row, SQL text in history.
+        let record = |id: &str, env: Option<&str>, read_only: bool| {
+            tuplenest_workspace_store::ConnectionRecord {
+                id: id.into(),
+                name: id.into(),
+                driver: "postgres".into(),
+                environment: env.map(str::to_owned),
+                color: None,
+                read_only,
+                host: "shared.db".into(),
+                port: 5432,
+                database: "app".into(),
+                username: "svc".into(),
+                secret_ref: None,
+                tls_mode: "verify-full".into(),
+                tls_ca_path: None,
+                ssh_json: None,
+                options_json: None,
+                statement_timeout_ms: 0,
+            }
+        };
+        let app_with = |records: &[tuplenest_workspace_store::ConnectionRecord]| {
+            let store = tuplenest_workspace_store::Store::open_in_memory().unwrap();
+            for r in records {
+                store.connection_upsert(r).unwrap();
+            }
+            crate::AppState {
+                store: std::sync::Mutex::new(store),
+                _log_guard: None,
+            }
+        };
+        let asked = |env: &str, read_only: bool| {
+            let mut p = params("shared.db", None);
+            p.environment = Some(env.into());
+            p.read_only = Some(read_only);
+            p
+        };
+
+        // In either saved order, and whatever the window asked for.
+        for records in [
+            vec![
+                record("a", Some("dev"), false),
+                record("b", Some("prod"), false),
+            ],
+            vec![
+                record("a", Some("prod"), false),
+                record("b", Some("dev"), false),
+            ],
+            vec![
+                record("a", Some("test"), false),
+                record("b", None, false),
+                record("c", Some("prod"), false),
+                record("d", Some("staging"), false),
+            ],
+        ] {
+            let app = app_with(&records);
+            for env in ["dev", "prod", "staging"] {
+                let out = with_profile_policy(&app, asked(env, false));
+                assert_eq!(out.environment.as_deref(), Some("prod"), "asked {env}");
+            }
+        }
+
+        // Staging beats dev and test; what was asked for counts too.
+        let app = app_with(&[
+            record("a", Some("dev"), false),
+            record("b", Some("staging"), false),
+        ]);
+        assert_eq!(
+            with_profile_policy(&app, asked("test", false))
+                .environment
+                .as_deref(),
+            Some("staging")
+        );
+        let app = app_with(&[record("a", Some("dev"), false)]);
+        assert_eq!(
+            with_profile_policy(&app, asked("prod", false))
+                .environment
+                .as_deref(),
+            Some("prod")
+        );
+
+        // Read-only: forced only when every profile it could be is read-only.
+        let app = app_with(&[
+            record("ro", Some("dev"), true),
+            record("rw", Some("dev"), false),
+        ]);
+        assert_eq!(
+            with_profile_policy(&app, asked("dev", false)).read_only,
+            Some(false)
+        );
+        assert_eq!(
+            with_profile_policy(&app, asked("dev", true)).read_only,
+            Some(true)
+        );
+        let app = app_with(&[
+            record("ro1", Some("dev"), true),
+            record("ro2", Some("prod"), true),
+        ]);
+        assert_eq!(
+            with_profile_policy(&app, asked("dev", false)).read_only,
+            Some(true)
         );
     }
 
