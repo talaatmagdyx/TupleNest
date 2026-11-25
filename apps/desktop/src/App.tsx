@@ -1370,7 +1370,7 @@ export default function App() {
           if (overlay) {
             // Not while the app is writing. With focus outside the dialog —
             // a click on the backdrop moves it to the page — this arm does
-            // run, and it closed the import while its INSERTs carried on with
+            // run, and it closed the import while its inserts carried on with
             // no progress and no Cancel button.
             if (!writingRef.current) setOverlay(null);
           } else if (running) void doCancel();

@@ -295,7 +295,7 @@ describe("App — Escape while the app is writing", () => {
   const startImport = async (user: ReturnType<typeof userEvent.setup>) => {
     be.on("pg_query", (a) => {
       // The first INSERT never finishes: the import is in flight for the test.
-      if (/^insert into/i.test(String(a.sql ?? ""))) return new Promise(() => {});
+      if (typeof a.sql === "string" && /^insert into/i.test(a.sql)) return new Promise(() => {});
       return { columns: [], totalRows: 0, storedRows: 0, truncated: false, rowsAffected: 0 };
     });
     await palette(user, "Import CSV");
