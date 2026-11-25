@@ -165,6 +165,32 @@ jobs:
           npm run typecheck
           npm test
 
+      # Compile everything now, before any signing secret is in the
+      # environment. (Audit TN-011.)
+      #
+      # The updater key used to be in the environment of the whole build: the
+      # frontend toolchain (vite and every plugin it loads) and the build
+      # script of every Rust dependency ran with it, and any one of them could
+      # have read it. A release is signed by whoever holds that key.
+      #
+      # So the build is two passes. This one runs the frontend build and
+      # compiles every crate, with no bundle and no secrets. The pass below
+      # has the keys, skips the frontend build (tauri.bundle-only.conf.json
+      # empties `beforeBuildCommand`) and finds every dependency already
+      # compiled, so what runs with the keys is the Tauri bundler and signer.
+      # Checked by hand on macOS: the second pass ran no vite and recompiled
+      # only this repository's own app crate, whose embedded config changed.
+      #
+      # What it does not stop: a dependency whose build script names the key
+      # in `cargo:rerun-if-env-changed` would be re-run in the second pass.
+      # None does today; `cargo deny` and the lockfile are what guard that.
+      #
+      # Must stay above the Apple steps: they put the certificate into
+      # `$GITHUB_ENV`, which every later step inherits.
+      - name: Compile — no signing secrets in the environment
+        working-directory: apps/desktop
+        run: npx tauri build --no-bundle --target ${{ matrix.target }}
+
       # Apple signing is opt-in, and it has to be opt-in by the variable being
       # ABSENT — not empty.
       #
@@ -234,7 +260,8 @@ jobs:
           # signed or notarized, and Gatekeeper warns on first launch.
         with:
           projectPath: apps/desktop
-          args: --target ${{ matrix.target }}
+          # Bundle and sign only: see the compile step above.
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.bundle-only.conf.json
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}-dev', github.run_number) }}
           releaseName: TupleNest ${{ github.ref_type == 'tag' && github.ref_name || 'dev build' }}
           releaseBody: |
