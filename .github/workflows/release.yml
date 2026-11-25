@@ -339,6 +339,29 @@ jobs:
           shasum -a 256 * > SHA256SUMS
           cat SHA256SUMS
 
+      # A dev build is a draft, and a draft cannot be read by the Smoke
+      # workflow's read-only token. So that a dev build can still be installed
+      # and run on real Linux, Windows and Intel Mac machines before anything
+      # is published, the installers Smoke needs are also kept for one day as
+      # a workflow artifact. Only for a dev build: a tagged release is
+      # published, and Smoke reads that directly.
+      #
+      # On a public repository anyone signed in to GitHub can download a
+      # run's artifacts while they exist. These are the same files the draft
+      # holds, for a day.
+      - name: Stage the installers for the Smoke workflow (dev builds only)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: smoke-inputs
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            dist/TupleNest_*_amd64.deb
+            dist/TupleNest_*_x64_en-US.msi
+            dist/TupleNest_*_x64.app.tar.gz
+            dist/SHA256SUMS
+
       # `set -euo pipefail` was here doing nothing: every line that could fail
       # ended in `|| true`, so a broken cargo-cyclonedx produced no SBOM, no
       # error, and a green job — while the README told people a release ships
