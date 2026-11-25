@@ -332,6 +332,47 @@ release, and none is to be published yet.
 - **An Intel Mac.** Only the Rosetta run above.
 - **The keychain clean-up** against the real keychain.
 
+## Fourth verification pass (2026-11-25, night)
+
+What the third pass could not do. Local checks used a build of `main` at
+`0f9e06b`; the platform checks used the dev build of Release run 45682026563
+(`main` at `1ae615a`, draft `v18-dev`).
+
+### On this Mac
+
+| Item | Action | Seen |
+|---|---|---|
+| TN-023, padded codes and blank lines | Import a file with `02134`, `00501` and two empty lines, through the real file picker | Preview types `zip` as text; "Imported 2 rows into public.codes (2 blank lines skipped)"; the table holds `02134` and `00501` in a `text` column |
+| TN-023, encoding | Choose a Latin-1 file | "Could not read that file: … This file is not UTF-8 text. Save it again as UTF-8 …"; nothing offered to import |
+| TN-023, unclosed quote | Choose a file whose third line opens a quote that never closes | "… The quoted value that starts on line 3 is never closed …"; nothing offered to import |
+| TN-026 | Start importing 400,000 rows, click the backdrop, press Escape | The dialog stays, at 21% with "107,000 rows inserted…" and its Cancel button; the import completes with 400,000 rows |
+| Keychain clean-up (pull requests 82, 84) | Type a made-up value into a profile's password box and press Test, so the app itself creates the entry; cancel without saving; quit; start again | The entry is in the keychain while the app is closed and gone within a second of the start; the pending list is empty; the log reads "removed keychain entries no profile owns", swept 1; the window opens; no system prompt |
+
+### On other machines
+
+Pull request 85 lets the Smoke workflow install a dev build from a Release
+run's one-day `smoke-inputs` artifact, and adds a job on an Intel macOS
+runner. Smoke run 45685344068, against Release run 45682026563:
+
+| Machine | What ran | Result |
+|---|---|---|
+| Ubuntu 22.04, x86_64 | The installed `.deb`, driven by WebDriver: shell, editor, plan analyser, then connect, password to the system credential store, query, history and catalog against a live PostgreSQL | 21 tests pass |
+| Windows, x86_64 | The installed `.msi`: the binary is started and must have a window after 25 seconds | pass |
+| macOS on an Intel runner (`uname -m` is `x86_64`, not translated) | The Intel build is started and must be alive with a window after 25 seconds | pass: one window, startup line in its log |
+
+A first Smoke run (45684822484) passed on Linux and the Intel Mac and failed
+on Windows before the app was touched: the checksum line used `shasum`, which
+Git Bash on the Windows runner does not have. Pull request 86 changes it to
+`sha256sum`.
+
+Limits of this evidence: on Windows and on the Intel Mac the app is started
+and seen to open a window; nothing is clicked in it. Only Linux is driven.
+
+### Still resting on tests alone
+
+- **TN-025**, a failed page of rows and a dialog that cannot be loaded. Neither
+  can be made to fail in a real build by hand.
+
 ## What "done" means for the scores
 
 The scores in REPORT.md go up as findings close, but some evidence cannot be
