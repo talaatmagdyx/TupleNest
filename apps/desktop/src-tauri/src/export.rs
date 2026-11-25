@@ -59,6 +59,8 @@ pub fn rows<'a>(
     out: &mut String,
     kind: Kind,
     names: &[String],
+    // Per column: is a string cell a JSON document (a json or jsonb column)?
+    documents: &[bool],
     rows: impl IntoIterator<Item = &'a [Value]>,
     first: bool,
     mode: Mode,
@@ -95,7 +97,16 @@ pub fn rows<'a>(
                     out.push_str(if j == 0 { "\n    " } else { ",\n    " });
                     out.push_str(&serde_json::to_string(k).expect("a string serializes"));
                     out.push_str(": ");
-                    js_json(out, row.get(j).unwrap_or(&Value::Null), Some(4));
+                    match row.get(j) {
+                        // A json or jsonb cell is the server's own text, and
+                        // already JSON: written as it is, so the file holds
+                        // the document and not a string, and nothing in it is
+                        // re-ordered or rounded on the way.
+                        Some(Value::String(doc)) if documents.get(j) == Some(&true) => {
+                            out.push_str(doc)
+                        }
+                        v => js_json(out, v.unwrap_or(&Value::Null), Some(4)),
+                    }
                 }
                 out.push_str(if keys.is_empty() { "}" } else { "\n  }" });
             }
@@ -338,6 +349,7 @@ pub fn document(kind: Kind, names: &[String], all: &[Vec<Value>], mode: Mode) ->
         &mut out,
         kind,
         names,
+        &[],
         all.iter().map(Vec::as_slice),
         true,
         mode,
@@ -514,6 +526,7 @@ mod tests {
                         &mut out,
                         kind,
                         &ns,
+                        &[],
                         chunk.iter().map(Vec::as_slice),
                         k == 0,
                         SpreadsheetSafe,
@@ -524,5 +537,83 @@ mod tests {
             }
         }
         assert_eq!(document(Csv, &ns, &[], SpreadsheetSafe), "id,name");
+    }
+}
+
+// Audit TN-019: a json or jsonb cell is the server's text, and an export
+// must not turn it into a different document.
+#[cfg(test)]
+mod json_document_tests {
+    use super::*;
+    use serde_json::json;
+
+    const DOC: &str = r#"{"b": 1, "a": 12345678901234567890123, "a": 2, "10": null}"#;
+
+    fn export(kind: Kind, documents: &[bool]) -> String {
+        let names = vec!["id".to_string(), "doc".to_string()];
+        let all = [vec![json!(1), json!(DOC)], vec![json!(2), json!("null")]];
+        let mut out = prefix(kind, &names, Mode::Raw);
+        rows(
+            &mut out,
+            kind,
+            &names,
+            documents,
+            all.iter().map(Vec::as_slice),
+            true,
+            Mode::Raw,
+        );
+        out.push_str(suffix(kind, true));
+        out
+    }
+
+    #[test]
+    fn a_json_export_nests_the_document_exactly_as_the_server_sent_it() {
+        let out = export(Kind::Json, &[false, true]);
+        // Verbatim: key order, the duplicated key, and every digit.
+        assert!(out.contains(&format!("\"doc\": {DOC}")), "{out}");
+        // A JSON null document is `null`, which is what it is.
+        assert!(out.contains("\"doc\": null"), "{out}");
+        // And the file as a whole is still JSON.
+        let parsed: Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(parsed[0]["id"], json!(1));
+        assert_eq!(parsed[0]["doc"]["b"], json!(1));
+    }
+
+    #[test]
+    fn a_text_column_holding_json_text_stays_a_string() {
+        // The same cells in a text column: the user stored a string.
+        let out = export(Kind::Json, &[false, false]);
+        let parsed: Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(parsed[0]["doc"], json!(DOC));
+        assert_eq!(parsed[1]["doc"], json!("null"));
+        // A flag list shorter than the row means "not a document".
+        assert_eq!(export(Kind::Json, &[]), out);
+    }
+
+    #[test]
+    fn only_a_string_cell_is_spliced() {
+        // A NULL in a json column is not a document.
+        let names = vec!["doc".to_string()];
+        let all = [vec![Value::Null]];
+        let mut out = prefix(Kind::Json, &names, Mode::Raw);
+        rows(
+            &mut out,
+            Kind::Json,
+            &names,
+            &[true],
+            all.iter().map(Vec::as_slice),
+            true,
+            Mode::Raw,
+        );
+        assert!(out.contains("\"doc\": null"), "{out}");
+    }
+
+    #[test]
+    fn csv_and_markdown_carry_the_text_unchanged() {
+        let csv = export(Kind::Csv, &[false, true]);
+        assert!(csv.contains("12345678901234567890123"), "{csv}");
+        assert!(csv.contains("\"\"a\"\": 2"), "{csv}");
+        let md = export(Kind::Md, &[false, true]);
+        assert!(md.contains("12345678901234567890123"), "{md}");
     }
 }

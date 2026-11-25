@@ -62,6 +62,15 @@ trusting it.
   rolled back with it.
 
 ### Correctness
+- A `json` or `jsonb` value is shown, copied and exported as the text the
+  server sent. It used to be parsed and written back out, three times over
+  (in the driver, by the page, and in the export), and each pass made it a
+  different document: keys re-sorted, one of a duplicated key dropped,
+  `12345678901234567890123` turned into `1.2345678901234568e22`, `1.10` into
+  `1.1`. A JSON `null` now reads `null` and no longer looks like a SQL NULL.
+  `jsonb` cells read as psql shows them (`{"a": 1}`, with the space). A JSON
+  export still nests the document; the cell inspector re-indents it without
+  rewriting it (audit TN-019).
 - CSV import no longer changes or invents data in four cases (audit TN-023).
   A column of zero-padded codes (`007`, `02134`) stays text: it was typed as
   a number and stored as 7 and 2134. A file that is not UTF-8 is refused with

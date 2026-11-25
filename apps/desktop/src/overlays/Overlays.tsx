@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from "react";
 import { enterKey, kbd } from "../lib/platform";
 import { SHORTCUTS } from "../lib/shortcuts";
 import { BrandMark } from "../lib/icons";
+import { prettyJson } from "../lib/text";
 
 /* ---------- shared ---------- */
 
@@ -656,12 +657,8 @@ export function UpdateToast(p: {
 /* ---------- JSON cell inspector ---------- */
 
 export function Inspector(p: { text: string; colName?: string; onClose: () => void }) {
-  let pretty = p.text;
-  try {
-    pretty = JSON.stringify(JSON.parse(p.text), null, 2);
-  } catch {
-    /* keep raw */
-  }
+  // Re-indented, not re-serialized: see `prettyJson`.
+  const pretty = prettyJson(p.text);
   return (
     <Overlay onClose={p.onClose}>
       <div className="modal inspector">

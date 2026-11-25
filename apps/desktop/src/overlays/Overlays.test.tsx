@@ -642,6 +642,16 @@ describe("Inspector", () => {
     expect(screen.getByText(/"a": 1/)).toBeInTheDocument();
   });
 
+  it("shows the document that is in the database, not a re-serialized one", () => {
+    // Audit TN-019.
+    const { container } = render(
+      <Inspector text='{"n": 12345678901234567890123, "a": 1, "a": 2}' onClose={vi.fn()} />,
+    );
+    const shown = container.querySelector(".modal.inspector")?.textContent ?? "";
+    expect(shown).toContain("12345678901234567890123");
+    expect(shown.match(/"a":/g)).toHaveLength(2);
+  });
+
   it("shows non-JSON verbatim rather than erroring", () => {
     render(<Inspector text="not json at all" onClose={vi.fn()} />);
     expect(screen.getByText("not json at all")).toBeInTheDocument();

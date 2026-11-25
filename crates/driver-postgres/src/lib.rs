@@ -2393,17 +2393,11 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
             v.to_string()
         )),
 
-        // Decoded (json's wire form is the text, jsonb's a version byte and
-        // the text) and written straight back out compact, so the cell is
-        // exactly what a `Value` serialized to before — sorted keys, no
-        // whitespace — while the tree lives for this one cell instead of for
-        // every JSON cell of the batch.
-        Type::JSON | Type::JSONB => take!(serde_json::Value, |v: serde_json::Value| {
-            match serde_json::value::to_raw_value(&v) {
-                Ok(text) => CellValue::Json(text),
-                Err(_) => fallback(row, i, ty),
-            }
-        }),
+        Type::JSON | Type::JSONB => match row.try_get::<_, Option<RawRef<'_>>>(i) {
+            Ok(Some(raw)) => json_cell(raw.0, ty),
+            Ok(None) => CellValue::Null,
+            Err(_) => fallback(row, i, ty),
+        },
         Type::BYTEA => take!(Vec<u8>, |v: Vec<u8>| CellValue::Bytes(v.into_boxed_slice())),
         Type::UUID => take!(uuid::Uuid, |v: uuid::Uuid| CellValue::Text(v.to_string())),
         Type::INET | Type::CIDR => take!(std::net::IpAddr, |v: std::net::IpAddr| {
@@ -2423,6 +2417,35 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
         // Enums, domains, ranges, geometry, intervals, money, xml, and anything
         // else the server may have: decoded from the wire rather than refused.
         _ => fallback(row, i, ty),
+    }
+}
+
+/// A `json` or `jsonb` value as the text the server sent.
+///
+/// json's wire form is the document as it was stored; jsonb's is a version
+/// byte and the server's own rendering. Both are what `::text` and psql show.
+///
+/// The value used to be parsed into a `serde_json::Value` and written back
+/// out, which is a different document: object keys re-sorted, the earlier of
+/// a duplicated key dropped (`json` keeps both), and every number that is not
+/// an i64, a u64 or an exact f64 rounded — `12345678901234567890123` came
+/// back as `1.2345678901234568e22`. Checked for validity, never rewritten.
+fn json_cell(raw: &[u8], ty: &Type) -> CellValue {
+    let text = if *ty == Type::JSONB {
+        match raw.split_first() {
+            Some((1, rest)) => rest,
+            // A version this code has never seen: show it raw, not guessed at.
+            _ => return render_raw_bytes(raw, ty),
+        }
+    } else {
+        raw
+    };
+    match std::str::from_utf8(text)
+        .ok()
+        .and_then(|s| serde_json::value::RawValue::from_string(s.to_owned()).ok())
+    {
+        Some(doc) => CellValue::Json(doc),
+        None => render_raw_bytes(raw, ty),
     }
 }
 

@@ -65,3 +65,62 @@ export function errText(e: unknown): string {
   if (e === null || e === undefined) return String(e);
   return text(e);
 }
+
+/**
+ * A JSON document re-indented, with every token left as it was written.
+ *
+ * `JSON.stringify(JSON.parse(text), null, 2)` is shorter and shows a
+ * different document: a number past 2^53 rounded, `1.10` as `1.1`, one of a
+ * duplicated key gone, integer-like keys moved to the front. A viewer for a
+ * database value must not do that, so this only moves whitespace. `JSON.parse`
+ * is used to decide whether the text is JSON at all; its result is discarded.
+ * Text that is not JSON comes back unchanged.
+ */
+export function prettyJson(src: string): string {
+  try {
+    JSON.parse(src);
+  } catch {
+    return src;
+  }
+  let out = "";
+  let depth = 0;
+  const line = () => `\n${"  ".repeat(depth)}`;
+  const space = (ch: string) => ch === " " || ch === "\n" || ch === "\r" || ch === "\t";
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === '"') {
+      // The text is valid JSON, so the string closes.
+      let j = i + 1;
+      while (src[j] !== '"') j += src[j] === "\\" ? 2 : 1;
+      out += src.slice(i, j + 1);
+      i = j + 1;
+    } else if (c === "{" || c === "[") {
+      let j = i + 1;
+      while (space(src[j])) j++;
+      if (src[j] === "}" || src[j] === "]") {
+        out += c + src[j]; // empty: `{}` and `[]` stay on one line
+        i = j + 1;
+      } else {
+        depth++;
+        out += c + line();
+        i++;
+      }
+    } else if (c === "}" || c === "]") {
+      depth--;
+      out += line() + c;
+      i++;
+    } else if (c === ",") {
+      out += `,${line()}`;
+      i++;
+    } else if (c === ":") {
+      out += ": ";
+      i++;
+    } else {
+      if (!space(c)) out += c;
+      i++;
+    }
+  }
+  return out;
+}
+
