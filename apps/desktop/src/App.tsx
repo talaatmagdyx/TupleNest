@@ -1986,6 +1986,7 @@ export default function App() {
       {overlay === "guard" && guardSql && (
         <Guard
           sql={guardSql}
+          env={connectedEnv}
           onCancel={() => {
             setGuardSql(null);
             setOverlay(null);
