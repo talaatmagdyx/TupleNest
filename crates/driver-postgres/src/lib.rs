@@ -9,6 +9,8 @@
 //! - Passwords are not resolved from the keychain yet; local trust/peer auth.
 //! - Type conversion covers common types; the rest render as `Other`.
 
+mod wire;
+
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -2221,6 +2223,13 @@ fn render_raw_bytes(v: &[u8], ty: &Type) -> CellValue {
             return CellValue::Text(s.to_owned());
         }
     }
+    // Types with a fixed layout are decoded from it (see `wire`): an
+    // `interval`, a range, an `infinity` date. That is a decode by layout,
+    // not the guess from printable bytes described above; what `wire` does
+    // not know, or cannot make sense of, still falls through to hex.
+    if let Some(text) = wire::render(ty, v) {
+        return CellValue::Text(text);
+    }
     // Hex doubles the size, so cap the *input* bytes before encoding rather than
     // building a 2 GB string and truncating it. Keep MAX/2 bytes → MAX hex
     // chars, then note the rest. cap_cell would catch the length anyway; this
@@ -2325,38 +2334,6 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
             }
         };
     }
-    /// Render `Vec<Option<T>>` as a Postgres array literal: {a,b,NULL}.
-    macro_rules! take_array {
-        ($t:ty) => {
-            match row.try_get::<_, Option<Vec<Option<$t>>>>(i) {
-                // Written into one string: this was a `String` per element
-                // (twice for quoted ones), a `Vec` of them, then the join.
-                Ok(Some(v)) => {
-                    use std::fmt::Write as _;
-                    let mut out = String::from("{");
-                    let mut text = String::new();
-                    for (k, e) in v.iter().enumerate() {
-                        if k > 0 {
-                            out.push(',');
-                        }
-                        match e {
-                            Some(x) => {
-                                text.clear();
-                                let _ = write!(text, "{x}");
-                                push_array_element(&mut out, &text);
-                            }
-                            None => out.push_str("NULL"),
-                        }
-                    }
-                    out.push('}');
-                    CellValue::Text(out)
-                }
-                Ok(None) => CellValue::Null,
-                Err(_) => fallback(row, i, ty),
-            }
-        };
-    }
-
     match *ty {
         Type::BOOL => take!(bool, CellValue::Bool),
         Type::INT2 => take!(i16, |v: i16| CellValue::Int(v as i64)),
@@ -2375,23 +2352,16 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
         }
         Type::CHAR => take!(i8, |v: i8| CellValue::Int(v as i64)),
 
-        // Dates and times. `timestamp` has no zone, so it must not be rendered
-        // as if it were UTC — NaiveDateTime keeps it as the wall clock the
-        // server stored.
-        Type::TIMESTAMP => take!(chrono::NaiveDateTime, |v: chrono::NaiveDateTime| {
-            CellValue::Text(v.format("%Y-%m-%d %H:%M:%S%.f").to_string())
-        }),
-        Type::TIMESTAMPTZ => take!(chrono::DateTime<chrono::Utc>, |v: chrono::DateTime<
-            chrono::Utc,
-        >| {
-            CellValue::Text(v.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true))
-        }),
-        Type::DATE => take!(chrono::NaiveDate, |v: chrono::NaiveDate| CellValue::Text(
-            v.to_string()
-        )),
-        Type::TIME => take!(chrono::NaiveTime, |v: chrono::NaiveTime| CellValue::Text(
-            v.to_string()
-        )),
+        // Dates and times are decoded from their wire integers (see `wire`),
+        // not through chrono's calendar types. Those have no `infinity`, no
+        // 24:00:00 (it came out as 00:00:00) and no BC era (44 BC came out as
+        // `-0043`), and print fractions padded to three or six digits where
+        // the server prints `.25`. `timestamp` has no zone and is written as
+        // the wall clock the server stored; `timestamptz` in UTC with a `Z`.
+        Type::TIMESTAMP | Type::TIMESTAMPTZ | Type::DATE => fallback(row, i, ty),
+        // Not through `NaiveTime`: it has no 24:00:00, which is a valid
+        // `time`, and read it as 00:00:00.
+        Type::TIME => fallback(row, i, ty),
 
         Type::JSON | Type::JSONB => match row.try_get::<_, Option<RawRef<'_>>>(i) {
             Ok(Some(raw)) => json_cell(raw.0, ty),
@@ -2404,17 +2374,12 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
             CellValue::Text(v.to_string())
         }),
 
-        // Common array types.
-        Type::BOOL_ARRAY => take_array!(bool),
-        Type::INT2_ARRAY => take_array!(i16),
-        Type::INT4_ARRAY => take_array!(i32),
-        Type::INT8_ARRAY => take_array!(i64),
-        Type::FLOAT4_ARRAY => take_array!(f32),
-        Type::FLOAT8_ARRAY => take_array!(f64),
-        Type::TEXT_ARRAY | Type::VARCHAR_ARRAY | Type::NAME_ARRAY => take_array!(String),
-        Type::UUID_ARRAY => take_array!(uuid::Uuid),
-
-        // Enums, domains, ranges, geometry, intervals, money, xml, and anything
+        // Arrays of every element type and shape, ranges, intervals, enums,
+        // domains: decoded from the wire in `wire`. Arrays used to have a
+        // native path for one-dimensional ones of a few types, which dropped
+        // non-default bounds (`[0:1]={7,8}` read `{7,8}`) and wrote booleans
+        // as `true` where the server writes `t`.
+        // Geometry, money, xml, and anything
         // else the server may have: decoded from the wire rather than refused.
         _ => fallback(row, i, ty),
     }
@@ -3293,10 +3258,26 @@ mod render_raw_tests {
     }
 
     #[test]
-    fn interval_with_printable_bytes_is_also_hex() {
+    fn interval_with_printable_bytes_is_decoded_by_layout_not_read_as_text() {
         // Same trap, different type — 16 bytes that happen to be readable.
+        // An interval has a fixed layout, so it is decoded from that: eight
+        // bytes of microseconds, four of days, four of months. What it must
+        // never be is the sixteen characters.
+        let cell = render_raw(RawValue(b"0123456789abcdef".to_vec()), &Type::INTERVAL);
+        let CellValue::Text(text) = cell else {
+            panic!("expected a decoded interval, got {cell:?}");
+        };
+        assert!(!text.contains("0123456789abcdef"), "{text}");
+        assert!(
+            text.contains(" years ") && text.contains(" days "),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_wrong_sized_interval_is_still_hex() {
         assert!(matches!(
-            render_raw(RawValue(b"0123456789abcdef".to_vec()), &Type::INTERVAL),
+            render_raw(RawValue(b"0123456789abcde".to_vec()), &Type::INTERVAL),
             CellValue::Other(_)
         ));
     }
