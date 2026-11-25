@@ -1284,10 +1284,11 @@ mod redact_sql_tests {
         assert!(!redact_sql("... IDENTIFIED BY \"sekret\"").contains("sekret"));
     }
 
-    // Audit TN-013: every spelling PostgreSQL accepts for the literal.
+    // Audit TN-013: every spelling PostgreSQL accepts for the literal. The
+    // values are made up; `planted` is the text that must not survive.
     #[test]
     fn scrubs_the_whole_literal_however_it_is_quoted() {
-        for (sql, secret) in [
+        for (sql, planted) in [
             ("ALTER ROLE app PASSWORD 'it''s-secret-tail'", "secret-tail"),
             ("ALTER ROLE app PASSWORD $$dollar-secret$$", "dollar-secret"),
             (
@@ -1342,7 +1343,7 @@ mod redact_sql_tests {
             ),
         ] {
             let out = redact_sql(sql);
-            assert!(!out.contains(secret), "{sql:?} left {secret:?} in {out:?}");
+            assert!(!out.contains(planted), "{sql:?} left {planted:?} in {out:?}");
             assert!(out.contains("[REDACTED]"), "{sql:?} -> {out:?}");
         }
     }
@@ -1365,7 +1366,7 @@ mod redact_sql_tests {
 
     #[test]
     fn scrubs_secrets_passed_to_crypto_functions() {
-        for (sql, secret) in [
+        for (sql, planted) in [
             ("SELECT crypt('hunter2', gen_salt('bf'))", "hunter2"),
             (
                 "UPDATE u SET pw = crypt ( 'spaced-secret' , pw )",
@@ -1390,7 +1391,7 @@ mod redact_sql_tests {
             ),
         ] {
             let out = redact_sql(sql);
-            assert!(!out.contains(secret), "{sql:?} left {secret:?} in {out:?}");
+            assert!(!out.contains(planted), "{sql:?} left {planted:?} in {out:?}");
         }
         // The call is still recognisable, and what follows it is untouched.
         assert_eq!(
