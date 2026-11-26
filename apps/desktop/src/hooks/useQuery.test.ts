@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
-import { isConnectionLost, statusText, useQuery } from "./useQuery";
+import { announceText, isCancelled, isConnectionLost, statusText, useQuery } from "./useQuery";
 import type { QueryResult } from "../ipc/types";
 
 const invokeMock = vi.mocked(invoke);
@@ -337,5 +337,68 @@ describe("useQuery — one query at a time, and never a stale one", () => {
     expect(out).toEqual({ kind: "blocked", reason: "stale" });
     expect(result.current.result).toBeNull();
     expect(result.current.running).toBe(false);
+  });
+});
+
+describe("announceText", () => {
+  it("counts rows, singular and plural, with separators", () => {
+    expect(announceText({ result: res({ totalRows: 42 }) })).toBe("42 rows");
+    expect(announceText({ result: res({ totalRows: 1 }) })).toBe("1 row");
+    expect(announceText({ result: res({ totalRows: 12345 }) })).toBe("12,345 rows");
+  });
+
+  it("counts rows affected for a statement with no columns", () => {
+    expect(announceText({ result: res({ columns: [], rowsAffected: 3 }) })).toBe("3 rows affected");
+    expect(announceText({ result: res({ columns: [], rowsAffected: 1 }) })).toBe("1 row affected");
+    expect(announceText({ result: res({ columns: [], rowsAffected: null }) })).toBe("0 rows affected");
+  });
+
+  it("gives an error's title line only", () => {
+    expect(announceText({ error: 'relation "nope" does not exist [SQLSTATE 42P01]\nDETAIL: …' })).toBe(
+      'Error: relation "nope" does not exist [SQLSTATE 42P01]',
+    );
+  });
+
+  it("says a cancelled statement was cancelled, not that it failed", () => {
+    expect(announceText({ error: "Query cancelled [SQLSTATE 57014]\nThe operation was cancelled." })).toBe("Cancelled");
+    expect(isCancelled("Error: Query cancelled")).toBe(true);
+    expect(isCancelled("Statement timed out [SQLSTATE 57014]")).toBe(false);
+  });
+});
+
+describe("useQuery — announcement", () => {
+  it("starts silent", () => {
+    const { result } = renderHook(() => useQuery());
+    expect(result.current.announcement).toBeNull();
+  });
+
+  it("announces each run once, with a fresh key even when the words repeat", async () => {
+    const { result } = renderHook(() => useQuery());
+    invokeMock.mockResolvedValueOnce(res({ totalRows: 42 }));
+    await act(async () => void (await result.current.run("select 1", dev)));
+    const first = result.current.announcement!;
+    expect(first.text).toBe("42 rows");
+    invokeMock.mockResolvedValueOnce(res({ totalRows: 42 }));
+    await act(async () => void (await result.current.run("select 1", dev)));
+    expect(result.current.announcement!.text).toBe("42 rows");
+    expect(result.current.announcement!.n).not.toBe(first.n);
+  });
+
+  it("announces an error and a cancellation", async () => {
+    const { result } = renderHook(() => useQuery());
+    failOnce("syntax error at or near \"selec\"\nLINE 1");
+    await act(async () => void (await result.current.run("selec 1", dev)));
+    expect(result.current.announcement!.text).toBe('Error: syntax error at or near "selec"');
+    failOnce("Query cancelled [SQLSTATE 57014]");
+    await act(async () => void (await result.current.run("select pg_sleep(9)", dev)));
+    expect(result.current.announcement!.text).toBe("Cancelled");
+  });
+
+  it("goes quiet on reset, so a new session does not inherit the last outcome", async () => {
+    const { result } = renderHook(() => useQuery());
+    invokeMock.mockResolvedValueOnce(res());
+    await act(async () => void (await result.current.run("select 1", dev)));
+    act(() => result.current.reset());
+    expect(result.current.announcement).toBeNull();
   });
 });

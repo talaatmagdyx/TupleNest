@@ -237,7 +237,7 @@ describe("App — the chart", () => {
   it("sums the numeric column by the text one", async () => {
     const user = await connected();
     await run(user, "select kind, n from t");
-    await user.click(screen.getByRole("button", { name: /^Chart$/ }));
+    await user.click(screen.getByRole("tab", { name: /^Chart$/ }));
     expect(await screen.findByText("sum(n) by kind")).toBeInTheDocument();
     expect(screen.getByText("13,109")).toBeInTheDocument();
   });
@@ -249,7 +249,7 @@ describe("App — exporting", () => {
     await run(user, "select kind, n from t");
     await user.click(screen.getByRole("button", { name: /^Export/ }));
     const menu = document.querySelector(".drop-menu") as HTMLElement;
-    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    await user.click(within(menu).getByRole("menuitem", { name: "CSV .csv" }));
     await waitFor(() => expect(be.sent("export_finish")).toHaveLength(1));
     expect(be.sent("export_result_page")).toEqual([
       { kind: "csv", mode: "spreadsheet-safe", offset: 0, limit: 2, total: 2 },
@@ -271,7 +271,7 @@ describe("App — exporting", () => {
     be.on("export_result_page", () => new Promise<number>((r) => (release = () => r(2))));
     await user.click(screen.getByRole("button", { name: /^Export/ }));
     const menu = document.querySelector(".drop-menu") as HTMLElement;
-    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    await user.click(within(menu).getByRole("menuitem", { name: "CSV .csv" }));
     await waitFor(() => expect(be.sent("export_result_page").length).toBeGreaterThan(0));
     const before = be.sent("pg_query").length;
     await user.click(screen.getByRole("button", { name: /^Run/ }));
@@ -287,7 +287,7 @@ describe("App — exporting", () => {
     await run(user, "select kind, n from t");
     await user.click(screen.getByRole("button", { name: /^Export/ }));
     const menu = document.querySelector(".drop-menu") as HTMLElement;
-    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    await user.click(within(menu).getByRole("menuitem", { name: "CSV .csv" }));
     await waitFor(() => expect(be.sent("export_begin")).toHaveLength(1));
     // No throw, no crash — cancelling is normal.
   });

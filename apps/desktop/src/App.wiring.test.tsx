@@ -45,7 +45,7 @@ describe("App — the chart tab", () => {
   it("plots a label column against a numeric one", async () => {
     const user = await connected();
     await run(user, "select kind, n from t");
-    await user.click(await screen.findByRole("button", { name: /^Chart$/i }));
+    await user.click(await screen.findByRole("tab", { name: /^Chart$/i }));
     await waitFor(() => expect(document.querySelectorAll(".chart-row")).toHaveLength(2));
     const chart = document.querySelector(".chart-pane") as HTMLElement;
     expect(within(chart).getByText("13,109")).toBeInTheDocument();
@@ -64,7 +64,7 @@ describe("App — the chart tab", () => {
     be.on("pg_rows", () => [["x", "y"]]);
     const user = await connected();
     await run(user, "select a, b from t");
-    await user.click(await screen.findByRole("button", { name: /^Chart$/i }));
+    await user.click(await screen.findByRole("tab", { name: /^Chart$/i }));
     expect(await screen.findByText(/Chart needs a result with one text column and one numeric column/i)).toBeInTheDocument();
   });
 
@@ -73,7 +73,7 @@ describe("App — the chart tab", () => {
     be.on("pg_rows", () => []);
     const user = await connected();
     await run(user, "select kind, n from t where false");
-    await user.click(await screen.findByRole("button", { name: /^Chart$/i }));
+    await user.click(await screen.findByRole("tab", { name: /^Chart$/i }));
     expect(be.sent("pg_chart")).toHaveLength(0);
   });
 
@@ -82,13 +82,13 @@ describe("App — the chart tab", () => {
     // would be a pause for no new information.
     const user = await connected();
     await run(user, "select kind, n from t");
-    await user.click(await screen.findByRole("button", { name: /^Chart$/i }));
+    await user.click(await screen.findByRole("tab", { name: /^Chart$/i }));
     await waitFor(() => expect(document.querySelectorAll(".chart-row")).toHaveLength(2));
     expect(be.sent("pg_chart")).toEqual([{ label: 0, value: 1, maxBars: 12 }]);
     // The bars come from the backend; no rows are pulled into the page for it.
     expect(be.sent("pg_rows").filter((a) => (a.limit as number) > 200)).toHaveLength(0);
-    await user.click(screen.getByRole("button", { name: /^Results$/i }));
-    await user.click(screen.getByRole("button", { name: /^Chart$/i }));
+    await user.click(screen.getByRole("tab", { name: /^Results$/i }));
+    await user.click(screen.getByRole("tab", { name: /^Chart$/i }));
     expect(be.sent("pg_chart")).toHaveLength(1);
   });
 });

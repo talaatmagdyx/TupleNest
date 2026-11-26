@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { ModalHead, Overlay } from "./Overlays";
+import { TabList, tabPanelProps } from "../lib/a11y";
 import type {
   IndexHealth,
   IndexHealthItem,
@@ -205,14 +206,21 @@ export default function HealthModal(p: Props) {
         <ModalHead title="Database health" onClose={p.onClose} />
         {/* .rtabs/.rtab are the app's existing tab classes. Inventing new
             names left these as bare <button>s wearing the OS default look. */}
-        <div className="rtabs modal-tabs">
-          {(["indexes", "tables", "queries"] as HealthTab[]).map((t) => (
-            <button key={t} className={`rtab ${p.tab === t ? "on" : ""}`} onClick={() => p.onTab(t)}>
-              {t === "indexes" ? "Indexes" : t === "tables" ? "Vacuum & bloat" : "Top queries"}
-            </button>
-          ))}
-        </div>
-        <div className="modal-body">
+        <TabList
+          className="rtabs modal-tabs"
+          label="Health reports"
+          idBase="health"
+          tabs={
+            [
+              ["indexes", "Indexes"],
+              ["tables", "Vacuum & bloat"],
+              ["queries", "Top queries"],
+            ] as [HealthTab, string][]
+          }
+          active={p.tab}
+          onSelect={p.onTab}
+        />
+        <div className="modal-body" {...tabPanelProps("health", p.tab)}>
           {p.error && <div className="error-box">{p.error}</div>}
           {!p.error && p.tab === "indexes" && <IndexTab data={p.indexes} onOpenScript={p.onOpenScript} />}
           {!p.error && p.tab === "tables" && <TableTab data={p.tables} />}

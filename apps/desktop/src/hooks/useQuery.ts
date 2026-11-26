@@ -57,6 +57,33 @@ export function statusText(r: QueryResult): string {
   return `${r.totalRows.toLocaleString()} row(s) in ${r.elapsedMs}ms${kept}`;
 }
 
+/** The backend titles a cancelled statement this way (SQLSTATE 57014); a
+ *  statement timeout shares the code but has a title of its own. */
+export function isCancelled(message: string): boolean {
+  return /^(Error:\s*)?Query cancelled\b/.test(message);
+}
+
+/**
+ * What a screen reader should hear when a run settles: a count, an error's
+ * title, or that it was cancelled. Short on purpose — the full report is on
+ * screen for anyone who goes to read it.
+ */
+export function announceText(outcome: { result: QueryResult } | { error: string }): string {
+  if ("error" in outcome) {
+    return isCancelled(outcome.error) ? "Cancelled" : `Error: ${firstLine(outcome.error)}`;
+  }
+  const r = outcome.result;
+  if (r.columns.length === 0) {
+    const n = r.rowsAffected ?? 0;
+    return `${n.toLocaleString()} row${n === 1 ? "" : "s"} affected`;
+  }
+  return `${r.totalRows.toLocaleString()} row${r.totalRows === 1 ? "" : "s"}`;
+}
+
+/** `n` changes on every run, so two runs that say the same thing ("42 rows")
+ *  are still two announcements. */
+export type Announcement = { n: number; text: string };
+
 export type Query = {
   running: boolean;
   result: QueryResult | null;
@@ -69,6 +96,8 @@ export type Query = {
   /** Bumped per result, so the grid knows to drop its state. */
   epoch: number;
   status: RunStatus | null;
+  /** The outcome of the latest run, for the polite live region. */
+  announcement: Announcement | null;
   run: (sql: string, opts: RunOptions) => Promise<RunOutcome>;
   cancel: () => Promise<void>;
   reset: () => void;
@@ -82,6 +111,7 @@ export function useQuery(): Query {
   const [ranParams, setRanParams] = useState<unknown[] | undefined>(undefined);
   const [epoch, setEpoch] = useState(0);
   const [status, setStatus] = useState<RunStatus | null>(null);
+  const [announcement, setAnnouncement] = useState<Announcement | null>(null);
 
   /** One query at a time: the backend has one session and one result store. */
   const busy = useRef(false);
@@ -101,6 +131,7 @@ export function useQuery(): Query {
     setResult(null);
     setLastError(null);
     setStatus(null);
+    setAnnouncement(null);
     setRanSql("");
     setRanParams(undefined);
   }, []);
@@ -133,6 +164,7 @@ export function useQuery(): Query {
       setLastError(null);
       setEpoch((n) => n + 1);
       setStatus({ icon: "✓", text: statusText(r), color: "var(--tn-success)" });
+      setAnnouncement({ n: mine, text: announceText({ result: r }) });
       return { kind: "ok", result: r };
     } catch (e) {
       if (mine !== token.current) return { kind: "blocked", reason: "stale" };
@@ -145,6 +177,7 @@ export function useQuery(): Query {
       // is the server's full report (DETAIL, HINT, constraint names). The
       // one-line status bar gets the title; the error box gets everything.
       setStatus({ icon: "✕", text: firstLine(message), color: "var(--tn-danger)" });
+      setAnnouncement({ n: mine, text: announceText({ error: message }) });
       return { kind: "error", message, connectionLost: isConnectionLost(message) };
     } finally {
       if (mine === token.current) {
@@ -158,5 +191,5 @@ export function useQuery(): Query {
     await invoke("pg_cancel").catch(() => {});
   }, []);
 
-  return { running, result, lastError, ranSql, ranParams, epoch, status, run, cancel, reset };
+  return { running, result, lastError, ranSql, ranParams, epoch, status, announcement, run, cancel, reset };
 }

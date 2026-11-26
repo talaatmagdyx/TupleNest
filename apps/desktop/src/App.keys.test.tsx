@@ -129,7 +129,7 @@ describe("App — exporting a plan", () => {
     const modal = document.querySelector(".explain-modal") as HTMLElement;
     await user.click(within(modal).getByRole("button", { name: /^Export/ }));
     const menu = modal.querySelector(".drop-menu") as HTMLElement;
-    await user.click(within(menu).getByRole("button", { name: "JSON .json" }));
+    await user.click(within(menu).getByRole("menuitem", { name: "JSON .json" }));
     await waitFor(() => expect(be.sent("export_save")).toHaveLength(1));
     const args = be.sent("export_save")[0] as { contents: string; extensions: string[] };
     expect(args.extensions).toEqual(["json"]);
@@ -145,7 +145,7 @@ describe("App — exporting a plan", () => {
     const modal = document.querySelector(".explain-modal") as HTMLElement;
     await user.click(within(modal).getByRole("button", { name: /^Export/ }));
     const menu = modal.querySelector(".drop-menu") as HTMLElement;
-    await user.click(within(menu).getByRole("button", { name: /JSON for pev2/ }));
+    await user.click(within(menu).getByRole("menuitem", { name: /JSON for pev2/ }));
     await waitFor(() => expect(write).toHaveBeenCalled());
     expect(String(write.mock.calls[0][0])).toContain("Seq Scan");
   });

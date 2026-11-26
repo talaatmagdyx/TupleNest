@@ -164,7 +164,7 @@ describe("App — connecting", () => {
     await screen.findByText(/in transaction/i);
     await user.click(document.querySelector(".conn-switch > button") as HTMLElement);
     const menu = document.querySelector(".conn-menu") as HTMLElement;
-    await user.click(within(menu).getByRole("button", { name: /prod db/i }));
+    await user.click(within(menu).getByRole("menuitemradio", { name: /prod db/i }));
     expect(await screen.findByText(/commit or roll back/i)).toBeInTheDocument();
     // The switch did not happen.
     expect(be.sent("pg_connect")).toHaveLength(1);
@@ -218,7 +218,7 @@ describe("App — the EXPLAIN plan", () => {
     await user.click(within(modal).getByRole("button", { name: /Export/i }));
     // The menu offers JSON twice: save it, or copy it. This is the save.
     const menu = await waitFor(() => document.querySelector(".drop-menu") as HTMLElement);
-    await user.click(within(menu).getAllByRole("button", { name: /json/i })[0]);
+    await user.click(within(menu).getAllByRole("menuitem", { name: /json/i })[0]);
     expect(await screen.findByText(/Export failed: .*disk full/)).toBeInTheDocument();
   });
 

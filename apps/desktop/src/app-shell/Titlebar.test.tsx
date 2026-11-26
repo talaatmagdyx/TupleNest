@@ -117,8 +117,28 @@ describe("Titlebar", () => {
   it("creates a connection from the menu", async () => {
     const onNewConnection = vi.fn();
     render(<Titlebar {...base} connMenu onNewConnection={onNewConnection} />);
-    await userEvent.click(screen.getByRole("button", { name: /New connection…/ }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /New connection…/ }));
     expect(onNewConnection).toHaveBeenCalled();
+  });
+
+  it("exposes the switcher as a menu button and the profiles as radio items", () => {
+    const { rerender } = render(<Titlebar {...base} />);
+    const trigger = screen.getByRole("button", { name: /customer_analytics/ });
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    rerender(<Titlebar {...base} connMenu saved={[conn(), conn({ id: "c2", name: "warehouse" })]} />);
+    expect(screen.getByRole("menu", { name: "Connections" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Switch connection" })).toBeInTheDocument();
+    const [active, other] = screen.getAllByRole("menuitemradio");
+    expect(active).toHaveAttribute("aria-checked", "true");
+    expect(other).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("closes the menu on Escape", async () => {
+    const onToggleConnMenu = vi.fn();
+    render(<Titlebar {...base} connMenu onToggleConnMenu={onToggleConnMenu} />);
+    await userEvent.keyboard("{Escape}");
+    expect(onToggleConnMenu).toHaveBeenCalledOnce();
   });
 
   it("shows the palette shortcut", () => {

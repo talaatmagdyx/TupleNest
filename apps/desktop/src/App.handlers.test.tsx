@@ -172,7 +172,7 @@ describe("App — the Plan tab", () => {
     await user.click(within(modal()).getByRole("button", { name: /Export/i }));
     const menu = await waitFor(() => document.querySelector(".drop-menu") as HTMLElement);
     // Under "Copy to clipboard", the text-tree option.
-    const copies = within(menu).getAllByRole("button", { name: /text/i });
+    const copies = within(menu).getAllByRole("menuitem", { name: /text/i });
     await user.click(copies[copies.length - 1]);
     await waitFor(() => expect(writeText).toHaveBeenCalled());
     expect(String(writeText.mock.calls[0][0])).toContain("Seq Scan");

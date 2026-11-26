@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { createContext, useContext, useEffect, useId, useRef } from "react";
 import { enterKey, kbd } from "../lib/platform";
 import { SHORTCUTS } from "../lib/shortcuts";
 import { BrandMark } from "../lib/icons";
@@ -7,9 +7,25 @@ import { guardReason } from "../lib/sql";
 
 /* ---------- shared ---------- */
 
-/** Everything focusable inside a container, in tab order. */
-const FOCUSABLE =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+/** Everything Tab can reach inside a container, in tab order. `tabindex="-1"`
+ *  is excluded on every kind, not only the generic one: a roving tablist and
+ *  the palette's listbox park their inactive buttons at -1, and counting those
+ *  as the trap's first or last stop let Tab walk out of the modal past them. */
+const FOCUSABLE = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]",
+]
+  .map((s) => `${s}:not([tabindex="-1"])`)
+  .join(", ");
+
+/** The id of the enclosing dialog's title. `ModalHead` and `DialogTitle` put
+ *  it on their title element and the `Overlay` points `aria-labelledby` at it,
+ *  so every dialog is named by the words already on screen. */
+const TitleId = createContext<string | undefined>(undefined);
 
 /**
  * The shared modal shell.
@@ -30,11 +46,19 @@ export function Overlay(p: {
   children: React.ReactNode;
   onClose: () => void;
   center?: boolean;
-  /** Accessible name. Modals with a `ModalHead` get one from its title; the
-   *  bare dialogs pass their own. */
+  /** Accessible name, for a dialog with no visible title (the palette).
+   *  Everything else is named by its `ModalHead` or `DialogTitle`, through
+   *  `aria-labelledby` — a second, hand-typed name had already drifted from
+   *  the title it was meant to repeat ("Schema intelligence" over a modal
+   *  headed "SQL intelligence"). */
   label?: string;
+  /** A confirmation that interrupts a decision in progress — the transaction
+   *  prompt, the destructive-statement guard. Announced as `alertdialog`, so a
+   *  screen reader reads it out at once rather than waiting to be explored. */
+  alert?: boolean;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  const titleId = useId();
   const restoreTo = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -99,31 +123,51 @@ export function Overlay(p: {
     <div
       ref={ref}
       className={`overlay ${p.center ? "center" : ""}`}
-      role="dialog"
+      role={p.alert ? "alertdialog" : "dialog"}
       aria-modal="true"
       aria-label={p.label}
+      aria-labelledby={p.label ? undefined : titleId}
       onKeyDown={onKeyDown}
       onClick={(e) => {
         if (e.target === e.currentTarget) p.onClose();
       }}
     >
-      {p.children}
+      <TitleId.Provider value={titleId}>{p.children}</TitleId.Provider>
     </div>
   );
 }
 
-export function ModalHead(p: { title: React.ReactNode; actions?: React.ReactNode; onClose: () => void }) {
+/** The title row of a full modal. Its title names the dialog. */
+export function ModalHead(p: {
+  title: React.ReactNode;
+  actions?: React.ReactNode;
+  onClose: () => void;
+  /** For a modal that must not be dismissed mid-operation (an import). */
+  closeDisabled?: boolean;
+}) {
+  const id = useContext(TitleId);
   return (
     <div className="modal-head">
-      <span className="t">{p.title}</span>
+      <span className="t" id={id}>
+        {p.title}
+      </span>
       {/* Commands belong here rather than among a modal's controls: this row
           cannot wrap, so they stay put however many options sit below. */}
       {p.actions && <span className="head-acts">{p.actions}</span>}
       {/* The glyph is decorative — without a label a screen reader announces
           this button as "times". */}
-      <button className="x" onClick={p.onClose} aria-label="Close" title="Close">
+      <button className="x" onClick={p.onClose} aria-label="Close" title="Close" disabled={p.closeDisabled}>
         <span aria-hidden>×</span>
       </button>
+    </div>
+  );
+}
+
+/** The heading of a compact `.modal.dialog` prompt. Its text names the dialog. */
+export function DialogTitle(p: { children: React.ReactNode; style?: React.CSSProperties }) {
+  return (
+    <div className="d-title" id={useContext(TitleId)} style={p.style}>
+      {p.children}
     </div>
   );
 }
@@ -167,16 +211,27 @@ export function Palette(p: {
       if (filtered[idx]) p.onPick(filtered[idx]);
     } else if (e.key === "Escape") p.onClose();
   };
+  // Combobox + listbox: focus never leaves the input, so the highlighted row
+  // is announced through aria-activedescendant rather than by moving focus.
+  const listId = useId();
+  const optId = (i: number) => `${listId}-${i}`;
   return (
-    <Overlay onClose={p.onClose}>
+    <Overlay onClose={p.onClose} label="Command palette">
       <div className="modal palette">
         <div className="pal-input">
-          <span className="muted">⌕</span>
+          <span className="muted" aria-hidden>
+            ⌕
+          </span>
           <input
             ref={inputRef}
             // The ⌕ glyph beside it is decorative, so without this a screen
             // reader announces the palette's only control as "text box".
             aria-label="Search commands and tables"
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={listId}
+            aria-autocomplete="list"
+            aria-activedescendant={filtered[idx] ? optId(idx) : undefined}
             value={p.q}
             placeholder="Type a command or search tables…"
             onChange={(e) => {
@@ -186,16 +241,32 @@ export function Palette(p: {
             onKeyDown={onKey}
           />
         </div>
-        <div className="pal-list">
+        <div className="pal-list" role="listbox" id={listId} aria-label="Commands and tables">
           {filtered.map((x, i) => (
-            <button key={i} className={`pal-item ${i === idx ? "on" : ""}`} onClick={() => p.onPick(x)}>
-              <span className="pic">{x.icon}</span>
+            <button
+              key={i}
+              id={optId(i)}
+              role="option"
+              aria-selected={i === idx}
+              // Out of the tab order: the input is the palette's one stop, and
+              // the arrows move the highlight.
+              tabIndex={-1}
+              className={`pal-item ${i === idx ? "on" : ""}`}
+              onClick={() => p.onPick(x)}
+            >
+              <span className="pic" aria-hidden>
+                {x.icon}
+              </span>
               <span className="plabel">{x.label}</span>
               <span className="ptype">{x.type}</span>
               {x.kbd && <span className="kbd">{x.kbd}</span>}
             </button>
           ))}
-          {filtered.length === 0 && <div className="pal-empty">No matches</div>}
+          {filtered.length === 0 && (
+            <div className="pal-empty" role="option" aria-selected="false" aria-disabled="true">
+              No matches
+            </div>
+          )}
         </div>
         <div className="pal-foot">
           <span>↑↓ navigate</span>
@@ -222,14 +293,14 @@ export function TxPrompt(p: {
 }) {
   const verb = p.closing ? "quit" : "disconnect";
   return (
-    <Overlay onClose={p.onStay} center>
+    <Overlay onClose={p.onStay} center alert>
       <div className="modal dialog">
-        <div className="d-title">
-          <span className="tx-chip">
+        <DialogTitle>
+          <span className="tx-chip" aria-hidden>
             <span className="pulse" /> TX
           </span>
           You have an open transaction
-        </div>
+        </DialogTitle>
         <p>
           {p.closing
             ? "Quitting now will not automatically commit or roll back — the server decides, and it will roll back. Choose what happens to your work."
@@ -263,7 +334,7 @@ export function ParamPrompt(p: {
   return (
     <Overlay onClose={p.onCancel} center>
       <div className="modal dialog" style={{ width: 460 }}>
-        <div className="d-title">Bind query parameters</div>
+        <DialogTitle>Bind query parameters</DialogTitle>
         <p style={{ marginBottom: 12 }}>
           This query has {p.count} placeholder{p.count > 1 ? "s" : ""}. Each value is sent as you type it and
           read by the server for its placeholder&apos;s type, like a quoted literal. Leave a box empty, or type{" "}
@@ -322,7 +393,7 @@ export function NamePrompt(p: {
   return (
     <Overlay onClose={p.onCancel} center>
       <div className="modal dialog" style={{ width: 460 }}>
-        <div className="d-title">{p.title}</div>
+        <DialogTitle>{p.title}</DialogTitle>
         <div className="field">
           <label htmlFor="name-prompt">{p.label}</label>
           <input
@@ -363,11 +434,11 @@ export function Guard(p: { sql: string; env?: string | null; onCancel: () => voi
     why: "It was flagged as one to confirm.",
   };
   return (
-    <Overlay onClose={p.onCancel} center>
+    <Overlay onClose={p.onCancel} center alert>
       <div className="modal dialog">
-        <div className="d-title" style={{ color: "var(--tn-danger)" }}>
-          ⚠ Confirm this {reason.verb} on {staging ? "staging" : "production"}
-        </div>
+        <DialogTitle style={{ color: "var(--tn-danger)" }}>
+          <span aria-hidden>⚠</span> Confirm this {reason.verb} on {staging ? "staging" : "production"}
+        </DialogTitle>
         <p>
           <b style={{ color: "var(--tn-danger)" }}>{reason.why}</b> On a {staging ? "staging" : "production"}{" "}
           connection this cannot be undone.
@@ -390,12 +461,12 @@ export function Guard(p: { sql: string; env?: string | null; onCancel: () => voi
 
 export function ConnLost(p: { detail: string; onReconnect: () => void; onClose: () => void }) {
   return (
-    <Overlay onClose={p.onClose} center>
+    <Overlay onClose={p.onClose} center alert>
       <div className="modal dialog connlost">
-        <div className="icon-wrap">⏻</div>
-        <div className="d-title" style={{ justifyContent: "center" }}>
-          Connection lost
+        <div className="icon-wrap" aria-hidden>
+          ⏻
         </div>
+        <DialogTitle style={{ justifyContent: "center" }}>Connection lost</DialogTitle>
         <p>{p.detail || "The session was closed. Reconnect to continue — nothing was re-run."}</p>
         <div className="d-actions" style={{ justifyContent: "center" }}>
           <button className="btn primary" onClick={p.onReconnect}>
@@ -433,10 +504,18 @@ export function Settings(p: {
               <div className="sd">Dark ships first; light is a token swap.</div>
             </div>
             <div className="seg" style={{ width: 160 }}>
-              <button className={p.theme === "dark" ? "on" : ""} onClick={() => p.onTheme("dark")}>
+              <button
+                className={p.theme === "dark" ? "on" : ""}
+                aria-pressed={p.theme === "dark"}
+                onClick={() => p.onTheme("dark")}
+              >
                 Dark
               </button>
-              <button className={p.theme === "light" ? "on" : ""} onClick={() => p.onTheme("light")}>
+              <button
+                className={p.theme === "light" ? "on" : ""}
+                aria-pressed={p.theme === "light"}
+                onClick={() => p.onTheme("light")}
+              >
                 Light
               </button>
             </div>

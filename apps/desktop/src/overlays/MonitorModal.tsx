@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ModalHead, Overlay } from "./Overlays";
+import { TabList, tabPanelProps } from "../lib/a11y";
 
 type Session = {
   pid: number;
@@ -111,7 +112,9 @@ export default function MonitorModal(p: {
             <span style={{ display: "inline-flex", gap: 10, alignItems: "center" }}>
               <span className="chip" style={{ color: "var(--tn-accent)", background: "var(--tn-as)" }}>
                 MONITOR
-              </span>
+              </span>{" "}
+              {/* The space is for the dialog's name ("MONITOR Server activity");
+                  in this inline-flex row it takes no room. */}
               Server activity
             </span>
           }
@@ -128,12 +131,17 @@ export default function MonitorModal(p: {
             ))}
           </div>
           <div className="form-row" style={{ margin: "6px 0 10px" }}>
-            <button className={`rtab ${tab === "sessions" ? "on" : ""}`} onClick={() => setTab("sessions")}>
-              Sessions {data ? `(${data.sessions.length})` : ""}
-            </button>
-            <button className={`rtab ${tab === "locks" ? "on" : ""}`} onClick={() => setTab("locks")}>
-              Blocking locks {data ? `(${data.locks.length})` : ""}
-            </button>
+            <TabList
+              className="rtab-list"
+              label="Activity views"
+              idBase="monitor"
+              tabs={[
+                ["sessions", `Sessions ${data ? `(${data.sessions.length})` : ""}`],
+                ["locks", `Blocking locks ${data ? `(${data.locks.length})` : ""}`],
+              ]}
+              active={tab}
+              onSelect={setTab}
+            />
             <div style={{ flex: 1 }} />
             <label className="muted" style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 11.5 }}>
               <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> auto-refresh
@@ -144,7 +152,7 @@ export default function MonitorModal(p: {
           </div>
 
           {tab === "sessions" && (
-            <div className="mon-table">
+            <div className="mon-table" {...tabPanelProps("monitor", tab)}>
               <div className="mon-head">
                 <span style={{ width: 60 }}>pid</span>
                 <span style={{ width: 90 }}>state</span>
@@ -190,7 +198,7 @@ export default function MonitorModal(p: {
           )}
 
           {tab === "locks" && (
-            <div className="mon-table">
+            <div className="mon-table" {...tabPanelProps("monitor", tab)}>
               <div className="mon-head">
                 <span style={{ width: 80 }}>pid</span>
                 <span style={{ width: 120 }}>user</span>
@@ -252,7 +260,7 @@ function KillPrompt(p: {
   // number that is actually about to be killed.
   const armed = !prod || typed.trim() === String(p.session.pid);
   return (
-    <Overlay onClose={p.onCancel} center>
+    <Overlay onClose={p.onCancel} center alert>
       <div className="modal" style={{ width: 460 }}>
         <ModalHead title={prod ? "Terminate a PRODUCTION backend" : "Terminate backend"} onClose={p.onCancel} />
         <div className="modal-body">

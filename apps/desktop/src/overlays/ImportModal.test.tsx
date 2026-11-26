@@ -47,6 +47,11 @@ describe("ImportModal — choosing a file", () => {
     expect(screen.getByText(/nothing leaves the app until you press Import/)).toBeInTheDocument();
   });
 
+  it("is a dialog named by its title", () => {
+    render(<ImportModal {...base} />);
+    expect(screen.getByRole("dialog", { name: "Import CSV" })).toHaveAttribute("aria-modal", "true");
+  });
+
   it("reads the header and rows", async () => {
     const { container } = render(<ImportModal {...base} />);
     await choose(container, csv(GOOD));
