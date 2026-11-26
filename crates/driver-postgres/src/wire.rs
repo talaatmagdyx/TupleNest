@@ -5,24 +5,90 @@
 //! to be the bytes in hex: correct, and useless for an `interval` or a range.
 //! This renders the ones whose layout is fixed and whose text does not depend
 //! on a server setting, the way the server's own output function writes them
-//! (`intervalstyle = postgres`, ISO dates). `money` is left out on purpose:
-//! its text depends on `lc_monetary`, which the wire value does not carry.
+//! (`intervalstyle = postgres`, ISO dates).
+//!
+//! `money` is the one exception that needs a server setting. Its wire value is
+//! an int8 count of the smallest currency unit, scaled by the fractional digits
+//! of the server's `lc_monetary` locale (2 for `en_US`, 0 for `ja_JP`, 3 for
+//! `ar_BH`), and the wire value does not carry that scale. The caller asks the
+//! server for it (see [`Money`]) and passes it in; without it money stays hex
+//! rather than being guessed at two decimals.
 //!
 //! Every length read from the wire is checked against the bytes that are
 //! there. Anything that does not fit returns `None`, and the caller shows hex.
 
 use tokio_postgres::types::{FromSql, Kind, Type};
 
+/// How to read a `money` value: the number of fractional digits the server's
+/// `lc_monetary` gives it, or `None` when that is not known, in which case
+/// money is not rendered at all (the caller shows hex).
+///
+/// The digits come from the server itself (`scale('0'::money::numeric)`,
+/// which runs the server's own `cash_numeric` and so applies exactly the
+/// locale and the out-of-range fallback that `cash_out` does), never assumed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Money(Option<u8>);
+
+impl Money {
+    /// Money is not known: it renders as hex.
+    pub(crate) const UNKNOWN: Money = Money(None);
+
+    /// The server's fractional digits for money. PostgreSQL uses 0..=10
+    /// (anything else it replaces with 2 before it gets here); a count
+    /// outside that is not believed.
+    pub(crate) fn with_frac_digits(digits: u8) -> Money {
+        Money((digits <= 10).then_some(digits))
+    }
+
+    /// The value as an exact decimal with the server's fractional digits —
+    /// what `money::numeric` gives: `-1234.56`, `0.05`, `1000` (no digits).
+    /// The currency symbol and digit grouping of the locale are not added:
+    /// they are presentation, and a plain decimal stays a number in a
+    /// spreadsheet.
+    fn render(self, units: i64) -> Option<String> {
+        let digits = u32::from(self.0?);
+        let sign = if units < 0 { "-" } else { "" };
+        let abs = units.unsigned_abs();
+        if digits == 0 {
+            return Some(format!("{sign}{abs}"));
+        }
+        let scale = 10u64.pow(digits);
+        Some(format!(
+            "{sign}{}.{:0width$}",
+            abs / scale,
+            abs % scale,
+            width = digits as usize
+        ))
+    }
+}
+
 /// The value's text, or `None` when this module does not know the type or
 /// the bytes are not a value of it.
+#[cfg(test)]
 pub(crate) fn render(ty: &Type, raw: &[u8]) -> Option<String> {
+    render_with(ty, raw, Money::UNKNOWN)
+}
+
+/// [`render`], with what is known about how the server writes `money`.
+pub(crate) fn render_with(ty: &Type, raw: &[u8], money: Money) -> Option<String> {
     match ty.kind() {
-        Kind::Array(element) => array(element, raw),
-        Kind::Range(subtype) => range(subtype, raw),
-        Kind::Multirange(subtype) => multirange(subtype, raw),
-        Kind::Domain(inner) => render(inner, raw),
+        Kind::Array(element) => array(element, raw, money),
+        Kind::Range(subtype) => range(subtype, raw, money),
+        Kind::Multirange(subtype) => multirange(subtype, raw, money),
+        Kind::Domain(inner) => render_with(inner, raw, money),
         Kind::Enum(_) => std::str::from_utf8(raw).ok().map(str::to_owned),
-        _ => scalar(ty, raw),
+        _ => scalar(ty, raw, money),
+    }
+}
+
+/// Does a value of this type contain `money` anywhere the renderer reaches:
+/// itself, an array of it, a domain over it?
+pub(crate) fn mentions_money(ty: &Type) -> bool {
+    match ty.kind() {
+        Kind::Array(inner) | Kind::Domain(inner) | Kind::Range(inner) | Kind::Multirange(inner) => {
+            mentions_money(inner)
+        }
+        _ => *ty == Type::MONEY,
     }
 }
 
@@ -47,8 +113,9 @@ fn take_bytes<'a>(raw: &mut &'a [u8], len: usize) -> Option<&'a [u8]> {
     Some(head)
 }
 
-fn scalar(ty: &Type, raw: &[u8]) -> Option<String> {
+fn scalar(ty: &Type, raw: &[u8], money: Money) -> Option<String> {
     Some(match *ty {
+        Type::MONEY => money.render(i64::from_be_bytes(be(raw)?))?,
         Type::BOOL => match raw {
             [0] => "f".into(),
             [1] => "t".into(),
@@ -247,7 +314,7 @@ fn interval(micros: i64, days: i32, months: i32) -> String {
 const MAX_DIMENSIONS: usize = 6;
 
 /// An array of any shape: `{1,2}`, `{{1,2},{3,4}}`, `[0:1]={a,b}`.
-fn array(element: &Type, mut raw: &[u8]) -> Option<String> {
+fn array(element: &Type, mut raw: &[u8], money: Money) -> Option<String> {
     let dimensions = usize::try_from(take_i32(&mut raw)?).ok()?;
     let _has_nulls = take_i32(&mut raw)?;
     let _element_oid = take_i32(&mut raw)?;
@@ -280,11 +347,17 @@ fn array(element: &Type, mut raw: &[u8]) -> Option<String> {
     } else {
         format!("{bounds}=")
     };
-    array_level(element, &lengths, &mut raw, &mut out)?;
+    array_level(element, &lengths, &mut raw, &mut out, money)?;
     raw.is_empty().then_some(out)
 }
 
-fn array_level(element: &Type, lengths: &[usize], raw: &mut &[u8], out: &mut String) -> Option<()> {
+fn array_level(
+    element: &Type,
+    lengths: &[usize],
+    raw: &mut &[u8],
+    out: &mut String,
+    money: Money,
+) -> Option<()> {
     let (&len, inner) = lengths.split_first()?;
     out.push('{');
     for k in 0..len {
@@ -296,11 +369,11 @@ fn array_level(element: &Type, lengths: &[usize], raw: &mut &[u8], out: &mut Str
                 -1 => out.push_str("NULL"),
                 n => {
                     let bytes = take_bytes(raw, usize::try_from(n).ok()?)?;
-                    crate::push_array_element(out, &render(element, bytes)?);
+                    crate::push_array_element(out, &render_with(element, bytes, money)?);
                 }
             }
         } else {
-            array_level(element, inner, raw, out)?;
+            array_level(element, inner, raw, out, money)?;
         }
     }
     out.push('}');
@@ -314,13 +387,13 @@ const RANGE_LOWER_INFINITE: u8 = 0x08;
 const RANGE_UPPER_INFINITE: u8 = 0x10;
 
 /// A range: `[1,10)`, `(,5]`, `empty`.
-fn range(subtype: &Type, raw: &[u8]) -> Option<String> {
+fn range(subtype: &Type, raw: &[u8], money: Money) -> Option<String> {
     let mut raw = raw;
-    let out = range_at(subtype, &mut raw)?;
+    let out = range_at(subtype, &mut raw, money)?;
     raw.is_empty().then_some(out)
 }
 
-fn range_at(subtype: &Type, raw: &mut &[u8]) -> Option<String> {
+fn range_at(subtype: &Type, raw: &mut &[u8], money: Money) -> Option<String> {
     let (&flags, rest) = raw.split_first()?;
     *raw = rest;
     if flags & RANGE_EMPTY != 0 {
@@ -331,7 +404,11 @@ fn range_at(subtype: &Type, raw: &mut &[u8]) -> Option<String> {
             return Some(String::new());
         }
         let len = usize::try_from(take_i32(raw)?).ok()?;
-        Some(range_bound(&render(subtype, take_bytes(raw, len)?)?))
+        Some(range_bound(&render_with(
+            subtype,
+            take_bytes(raw, len)?,
+            money,
+        )?))
     };
     let lower = bound(RANGE_LOWER_INFINITE)?;
     let upper = bound(RANGE_UPPER_INFINITE)?;
@@ -372,7 +449,7 @@ fn range_bound(s: &str) -> String {
 }
 
 /// A multirange (PostgreSQL 14+): `{[1,3),[5,8)}`.
-fn multirange(subtype: &Type, mut raw: &[u8]) -> Option<String> {
+fn multirange(subtype: &Type, mut raw: &[u8], money: Money) -> Option<String> {
     let count = usize::try_from(take_i32(&mut raw)?).ok()?;
     if count > raw.len() / 4 {
         return None;
@@ -383,7 +460,7 @@ fn multirange(subtype: &Type, mut raw: &[u8]) -> Option<String> {
             out.push(',');
         }
         let len = usize::try_from(take_i32(&mut raw)?).ok()?;
-        out.push_str(&range(subtype, take_bytes(&mut raw, len)?)?);
+        out.push_str(&range(subtype, take_bytes(&mut raw, len)?, money)?);
     }
     out.push('}');
     raw.is_empty().then_some(out)
@@ -445,6 +522,10 @@ mod tests {
         );
     }
 
+    fn int4s(raw: &[u8]) -> Option<String> {
+        array(&Type::INT4, raw, Money::UNKNOWN)
+    }
+
     fn int4_array(dims: &[(i32, i32)], elements: &[Option<i32>]) -> Vec<u8> {
         let mut raw = Vec::new();
         raw.extend((dims.len() as i32).to_be_bytes());
@@ -468,7 +549,7 @@ mod tests {
 
     #[test]
     fn arrays_of_every_shape() {
-        let a = |dims: &[(i32, i32)], e: &[Option<i32>]| array(&Type::INT4, &int4_array(dims, e));
+        let a = |dims: &[(i32, i32)], e: &[Option<i32>]| int4s(&int4_array(dims, e));
         assert_eq!(a(&[], &[]).unwrap(), "{}");
         assert_eq!(
             a(&[(3, 1)], &[Some(1), None, Some(3)]).unwrap(),
@@ -485,20 +566,17 @@ mod tests {
     fn a_shape_the_bytes_cannot_hold_is_refused_not_looped_over() {
         // Claims 2^31-1 by 2^31-1 elements in a few bytes.
         let raw = int4_array(&[(i32::MAX, 1), (i32::MAX, 1)], &[Some(1)]);
-        assert_eq!(array(&Type::INT4, &raw), None);
+        assert_eq!(int4s(&raw), None);
         // Seven dimensions, one more than the server allows.
-        assert_eq!(
-            array(&Type::INT4, &int4_array(&[(1, 1); 7], &[Some(1)])),
-            None
-        );
+        assert_eq!(int4s(&int4_array(&[(1, 1); 7], &[Some(1)])), None);
         // Trailing bytes, a short element, a negative length.
         let mut extra = int4_array(&[(1, 1)], &[Some(1)]);
         extra.push(0);
-        assert_eq!(array(&Type::INT4, &extra), None);
+        assert_eq!(int4s(&extra), None);
         let mut short = int4_array(&[(1, 1)], &[Some(1)]);
         short.truncate(short.len() - 1);
-        assert_eq!(array(&Type::INT4, &short), None);
-        assert_eq!(array(&Type::INT4, &int4_array(&[(-1, 1)], &[])), None);
+        assert_eq!(int4s(&short), None);
+        assert_eq!(int4s(&int4_array(&[(-1, 1)], &[])), None);
     }
 
     #[test]
@@ -548,7 +626,62 @@ mod tests {
     }
 
     #[test]
-    fn money_is_left_for_hex_because_its_text_depends_on_the_servers_locale() {
+    fn money_is_left_for_hex_while_the_servers_frac_digits_are_unknown() {
         assert_eq!(render(&Type::MONEY, &12_345_i64.to_be_bytes()), None);
+    }
+
+    #[test]
+    fn money_is_an_exact_decimal_at_the_servers_scale() {
+        let m = |digits: u8, units: i64| {
+            render_with(
+                &Type::MONEY,
+                &units.to_be_bytes(),
+                Money::with_frac_digits(digits),
+            )
+        };
+        assert_eq!(m(2, 123_456).as_deref(), Some("1234.56"));
+        assert_eq!(m(2, -123_456).as_deref(), Some("-1234.56"));
+        assert_eq!(m(2, 5).as_deref(), Some("0.05"));
+        assert_eq!(m(2, -5).as_deref(), Some("-0.05"));
+        assert_eq!(m(2, 0).as_deref(), Some("0.00"));
+        // ja_JP has no minor unit; ar_BH has three.
+        assert_eq!(m(0, -1_234).as_deref(), Some("-1234"));
+        assert_eq!(m(3, 1_234_567).as_deref(), Some("1234.567"));
+        // The extremes, exactly: no float on the way.
+        assert_eq!(m(2, i64::MAX).as_deref(), Some("92233720368547758.07"));
+        assert_eq!(m(2, i64::MIN).as_deref(), Some("-92233720368547758.08"));
+        assert_eq!(m(10, i64::MIN).as_deref(), Some("-922337203.6854775808"));
+        // A scale PostgreSQL never uses is not believed.
+        assert_eq!(m(11, 1), None);
+        // Wrong width is not a money value.
+        assert_eq!(
+            render_with(&Type::MONEY, &[0; 4], Money::with_frac_digits(2)),
+            None
+        );
+    }
+
+    #[test]
+    fn money_inside_arrays_uses_the_same_scale() {
+        // money[] of {1.50, NULL, -2.00}.
+        let mut raw = Vec::new();
+        for v in [1i32, 1, Type::MONEY.oid() as i32, 3, 1] {
+            raw.extend_from_slice(&v.to_be_bytes());
+        }
+        for e in [Some(150i64), None, Some(-200)] {
+            match e {
+                Some(v) => {
+                    raw.extend_from_slice(&8i32.to_be_bytes());
+                    raw.extend_from_slice(&v.to_be_bytes());
+                }
+                None => raw.extend_from_slice(&(-1i32).to_be_bytes()),
+            }
+        }
+        assert_eq!(
+            render_with(&Type::MONEY_ARRAY, &raw, Money::with_frac_digits(2)).as_deref(),
+            Some("{1.50,NULL,-2.00}")
+        );
+        assert_eq!(render(&Type::MONEY_ARRAY, &raw), None);
+        assert!(mentions_money(&Type::MONEY_ARRAY));
+        assert!(!mentions_money(&Type::NUMERIC));
     }
 }
