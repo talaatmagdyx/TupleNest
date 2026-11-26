@@ -139,6 +139,10 @@ pub struct PgState {
     connected_env: StdMutex<Option<String>>,
     /// Open SSH tunnel backing the current session, if any.
     tunnel: StdMutex<Option<tuplenest_ssh_core::SshTunnel>>,
+    /// Which session the slot holds. Bumped (under the session lock) by every
+    /// connect and disconnect, so a close watch from an earlier session can
+    /// never clear, or report the loss of, the one that replaced it.
+    generation: std::sync::atomic::AtomicU64,
 }
 
 impl PgState {
@@ -192,8 +196,106 @@ impl PgState {
             result: StdMutex::new(None),
             connected_env: StdMutex::new(None),
             tunnel: StdMutex::new(None),
+            generation: std::sync::atomic::AtomicU64::new(0),
         }
     }
+
+    /// Starts a new generation. Call with the session lock held.
+    fn next_generation(&self) -> u64 {
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1
+    }
+
+    fn current_generation(&self) -> u64 {
+        self.generation.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// Tauri event the WebView listens for: the live session's connection ended
+/// without the app asking (see `watch_session_close`).
+pub const CONNECTION_LOST_EVENT: &str = "pg:connection-lost";
+
+/// Payload of [`CONNECTION_LOST_EVENT`].
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionLostEvent {
+    /// The generation `pg_connect` returned for this session. The WebView
+    /// ignores an event for any other: a reconnect may already be live.
+    pub generation: u64,
+    /// "Connection lost: …" — the same first line the statement path uses,
+    /// so `isConnectionLost` recognises it.
+    pub message: String,
+    pub sqlstate: Option<String>,
+}
+
+/*
+ * The connection of generation `generation` ended. If that is still the live
+ * session, close it the way a network error on a statement does (session,
+ * cancel handle, tunnel — before the slot is released) and say what to tell
+ * the WebView.
+ *
+ * Nothing to report when:
+ * - it ended cleanly (`lost` is None): the app dropped it — disconnect,
+ *   reconnect, quit;
+ * - a connect or disconnect has run since (the generation moved on);
+ * - the slot is already empty: a statement hit the dead socket first, and its
+ *   "Connection lost:" error already told the WebView.
+ *
+ * Waiting for the session lock is short: whatever holds it is talking to the
+ * same dead socket and fails at once.
+ */
+async fn on_session_closed(
+    state: &PgState,
+    generation: u64,
+    lost: Option<tuplenest_driver_postgres::ConnectionLost>,
+) -> Option<ConnectionLostEvent> {
+    let lost = lost?;
+    let mut slot = state.session.lock().await;
+    if state.current_generation() != generation || slot.is_none() {
+        return None;
+    }
+    *slot = None;
+    if let Ok(mut c) = state.cancel.lock() {
+        *c = None;
+    }
+    if let Ok(mut t) = state.tunnel.lock() {
+        *t = None;
+    }
+    drop(slot);
+    tracing::warn!(
+        component = "pg",
+        sqlstate = lost.sqlstate.as_deref().unwrap_or(""),
+        "session connection ended by the server or network"
+    );
+    Some(ConnectionLostEvent {
+        generation,
+        message: format!(
+            "Connection lost: {} — the session was closed. Reconnect to continue; nothing was re-run.",
+            lost.message
+        ),
+        sqlstate: lost.sqlstate,
+    })
+}
+
+/// Waits on the session's connection in the background and tells the WebView
+/// the moment it ends. No query is sent: the driver's connection task already
+/// reads the socket, and the server's FATAL (57P01 on a terminate) or the
+/// close itself is what wakes this. A network that vanishes without a FIN is
+/// caught by the TCP keepalives the driver configures.
+fn watch_session_close(
+    app: tauri::AppHandle,
+    generation: u64,
+    watch: tuplenest_driver_postgres::CloseWatch,
+) {
+    tauri::async_runtime::spawn(async move {
+        use tauri::{Emitter, Manager};
+        let lost = watch.wait().await;
+        let state = app.state::<PgState>();
+        if let Some(event) = on_session_closed(&state, generation, lost).await {
+            let _ = app.emit(CONNECTION_LOST_EVENT, event);
+        }
+    });
 }
 
 /// Stable, secret-free cache identity for a connection target.
@@ -813,10 +915,13 @@ pub async fn pg_test(
 pub struct Connected {
     environment: Option<String>,
     read_only: bool,
+    /// Identifies this session in a later [`CONNECTION_LOST_EVENT`].
+    generation: u64,
 }
 
 #[tauri::command]
 pub async fn pg_connect(
+    handle: tauri::AppHandle,
     app: tauri::State<'_, crate::AppState>,
     state: tauri::State<'_, PgState>,
     params: PgParams,
@@ -844,15 +949,21 @@ pub async fn pg_connect(
         None => (None, params.to_config()?),
     };
 
-    let session = PostgresDriver
+    let mut session = PostgresDriver
         .connect_concrete_with_password(config, password.as_ref().map(|s| s.expose()))
         .await
         .map_err(|e| err_to_string(&e))?;
+    let close_watch = session.take_close_watch();
     // Take the session slot first, then publish the new cancel handle. The
     // other order pointed Cancel at the new, idle backend while the old
     // session's query was still running (and still holding the lock).
     let mut slot = lock_session(&state).await?;
     *slot = Some(session);
+    // Under the lock, so the watch below can only ever act on this session.
+    let generation = state.next_generation();
+    if let Some(watch) = close_watch {
+        watch_session_close(handle, generation, watch);
+    }
     // All of it published before the slot is released: a metadata request
     // queued behind this connect must see the new cache key, not file the
     // new database's schema under the old profile's. The previous result
@@ -885,6 +996,7 @@ pub async fn pg_connect(
     Ok(Connected {
         environment: params.environment.clone(),
         read_only: params.read_only.unwrap_or(false),
+        generation,
     })
 }
 
@@ -892,6 +1004,9 @@ pub async fn pg_connect(
 pub async fn pg_disconnect(state: tauri::State<'_, PgState>) -> Result<(), String> {
     let mut slot = lock_session(&state).await?;
     *slot = None;
+    // An intentional close: whatever the old session's watch sees from here
+    // on is not news.
+    state.next_generation();
     // Cleared while the session slot is still held. After it is released, a
     // reconnect waiting on the lock can install its own cancel handle and
     // tunnel — and a late clear here would drop them.
@@ -2533,6 +2648,128 @@ pub async fn pg_cancel(state: tauri::State<'_, PgState>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn empty_state() -> PgState {
+        PgState::new(tuplenest_metadata_cache::MetadataCache::open_in_memory().unwrap())
+    }
+
+    fn terminated() -> tuplenest_driver_postgres::ConnectionLost {
+        tuplenest_driver_postgres::ConnectionLost {
+            sqlstate: Some("57P01".into()),
+            message: "the server ended this session".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_clean_close_is_never_reported() {
+        let state = empty_state();
+        let g = state.next_generation();
+        assert_eq!(on_session_closed(&state, g, None).await, None);
+    }
+
+    #[tokio::test]
+    async fn a_loss_after_disconnect_or_reconnect_is_not_reported() {
+        let state = empty_state();
+        let old = state.next_generation();
+        state.next_generation(); // disconnect / reconnect since
+        assert_eq!(
+            on_session_closed(&state, old, Some(terminated())).await,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn a_loss_a_statement_already_reported_is_not_reported_twice() {
+        // `lost_or_error` emptied the slot and its error said "Connection lost:".
+        let state = empty_state();
+        let g = state.next_generation();
+        assert_eq!(on_session_closed(&state, g, Some(terminated())).await, None);
+    }
+
+    fn live_config() -> tuplenest_driver_api::ConnectionConfig {
+        let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.into());
+        tuplenest_driver_api::ConnectionConfig {
+            driver_id: "postgres".into(),
+            name: "t".into(),
+            environment: tuplenest_driver_api::Environment::Dev,
+            read_only: false,
+            host: env("TUPLENEST_TEST_PG_HOST", "localhost"),
+            port: env("TUPLENEST_TEST_PG_PORT", "5432").parse().unwrap(),
+            database: env("TUPLENEST_TEST_PG_DB", "postgres"),
+            username: std::env::var("TUPLENEST_TEST_PG_USER")
+                .or_else(|_| std::env::var("USER"))
+                .unwrap_or_else(|_| "postgres".into()),
+            secret_ref: None,
+            tls_mode: tuplenest_driver_api::TlsMode::Disabled,
+            tls_ca_path: None,
+            options: Default::default(),
+            default_statement_timeout_ms: 0,
+        }
+    }
+
+    /// The whole backend path against a real server: terminate the idle live
+    /// session from a second connection, and the close watch — not a failed
+    /// statement — closes the slot and produces the event the WebView reads.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "requires live PostgreSQL (TUPLENEST_TEST_PG_*)"]
+    async fn a_terminated_idle_session_is_closed_and_reported() {
+        let pw = std::env::var("TUPLENEST_TEST_PG_PASSWORD").ok();
+        let connect = || async {
+            tuplenest_driver_postgres::PostgresDriver
+                .connect_concrete_with_password(live_config(), pw.as_deref())
+                .await
+                .unwrap()
+        };
+        let mut session = connect().await;
+        let killer = connect().await;
+        let watch = session.take_close_watch().unwrap();
+        let pid: i32 = {
+            struct FirstText(StdMutex<Option<String>>);
+            #[async_trait]
+            impl BatchSink for FirstText {
+                async fn deliver(&self, batch: RowBatch) -> Result<(), Box<DriverError>> {
+                    if let Some(CellValue::Text(t)) = batch.rows.first().and_then(|r| r.first()) {
+                        *self.0.lock().unwrap() = Some(t.clone());
+                    }
+                    Ok(())
+                }
+            }
+            let sink = FirstText(StdMutex::new(None));
+            session
+                .execute(
+                    QueryRequest {
+                        execution_id: ExecutionId::new(),
+                        sql: "SELECT pg_backend_pid()::text".into(),
+                        params: vec![],
+                        row_limit: 0,
+                        timeout_ms: 0,
+                    },
+                    &sink,
+                )
+                .await
+                .unwrap();
+            let pid = sink.0.lock().unwrap().clone().unwrap();
+            pid.parse().unwrap()
+        };
+        // An open transaction, as in the audit case: the server rolls it back.
+        session
+            .begin(tuplenest_driver_api::TransactionOptions::default())
+            .await
+            .unwrap();
+        let state = empty_state();
+        *state.session.lock().await = Some(session);
+        let g = state.next_generation();
+
+        assert!(killer.admin_backend(pid, true).await.unwrap());
+        let lost = tokio::time::timeout(std::time::Duration::from_secs(5), watch.wait())
+            .await
+            .unwrap();
+        let event = on_session_closed(&state, g, lost).await.expect("reported");
+        assert_eq!(event.generation, g);
+        assert_eq!(event.sqlstate.as_deref(), Some("57P01"));
+        assert!(event.message.starts_with("Connection lost: "), "{event:?}");
+        assert!(state.session.lock().await.is_none(), "slot closed");
+    }
 
     /// Disconnect used to wait for a running query to finish by itself, since
     /// `pg_query` holds the session lock throughout. It must cancel instead.

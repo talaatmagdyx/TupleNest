@@ -40,6 +40,9 @@ export type Connection = {
   /** The server dropped us. Same forgetting, but nothing is sent — there is
    *  nobody left to say goodbye to. */
   markLost: () => void;
+  /** Is `generation` (from a `pg:connection-lost` event) the session on
+   *  screen? False after a disconnect, a loss, or a reconnect. */
+  isLive: (generation: number) => boolean;
   test: (params: PgParams) => Promise<void>;
   /** Drop a finished test report, so the editor doesn't reopen showing the
    *  result of a probe against whatever host was in the form last time. */
@@ -63,6 +66,10 @@ export function useConnection(): Connection {
   const [stages, setStages] = useState<TestStage[] | null>(null);
   const [testing, setTesting] = useState(false);
   const [testSummary, setTestSummary] = useState("");
+  // The backend's id for the live session (`pg_connect`'s `generation`). A
+  // ref, not state: it is read from an event listener, and only ever to
+  // decide whether an event is about the session still on screen.
+  const generation = useRef<number | null>(null);
 
   // Pending stage-reveal timers, so a second test — or an unmount — cannot be
   // interrupted by the first test's stages still arriving.
@@ -95,7 +102,11 @@ export function useConnection(): Connection {
         // be more protective than the one asked for: two saved profiles for
         // one database, one tagged prod. The window follows the backend, so
         // the banner and the statement guard match the audit log.
-        const settled = await invoke<{ environment?: string | null } | null | undefined>("pg_connect", { params });
+        const settled = await invoke<{ environment?: string | null; generation?: number } | null | undefined>(
+          "pg_connect",
+          { params },
+        );
+        generation.current = settled?.generation ?? null;
         setConnected(true);
         setConnectedEnv(settled?.environment ?? environment);
         setConnectedTo({
@@ -120,6 +131,7 @@ export function useConnection(): Connection {
   );
 
   const forget = useCallback((why: string) => {
+    generation.current = null;
     setConnected(false);
     setConnectedEnv(null);
     setConnectedTo(null);
@@ -130,11 +142,17 @@ export function useConnection(): Connection {
   const disconnect = useCallback(async () => {
     // The failure is ignored on purpose: the session being unreachable is the
     // usual reason to be here, and the local state must come down either way.
+    // The session stops being live before the backend is asked: a lost-
+    // connection event racing this disconnect describes a session the user
+    // is already closing, and must not pop up "Connection lost".
+    generation.current = null;
     await invoke("pg_disconnect").catch(() => {});
     forget("Disconnected");
   }, [forget]);
 
   const markLost = useCallback(() => forget("Connection lost"), [forget]);
+
+  const isLive = useCallback((g: number) => generation.current !== null && generation.current === g, []);
 
   const clearTest = useCallback(() => {
     clearTimers();
@@ -204,6 +222,7 @@ export function useConnection(): Connection {
     connect,
     disconnect,
     markLost,
+    isLive,
     test,
     clearTest,
   };

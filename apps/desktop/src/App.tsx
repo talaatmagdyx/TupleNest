@@ -47,6 +47,7 @@ import { matchShortcut } from "./lib/shortcuts";
 import { isConnectionLost, useQuery } from "./hooks/useQuery";
 import { defaultSearchPath } from "./lib/nodes";
 import { useTransaction } from "./hooks/useTransaction";
+import { lostDetail, useConnectionLost } from "./hooks/useConnectionLost";
 import { useExplain } from "./hooks/useExplain";
 import { useRowEdits } from "./hooks/useRowEdits";
 import { useHistory } from "./hooks/useHistory";
@@ -811,12 +812,17 @@ export default function App() {
       if (!isConnectionLost(message)) return false;
       session.markLost();
       tx.forget(); // no server left to hold a transaction open
-      setConnLostDetail(message);
+      setConnLostDetail(lostDetail(message, tx.inTx));
       setOverlay("connLost");
       return true;
     },
     [session, tx],
   );
+
+  /* The backend noticed the socket end by itself — a terminated backend, a
+     restart — so an idle window stops showing a live session at once rather
+     than on the next statement. */
+  useConnectionLost(session.isLive, noticeLost);
 
   const doRun = useCallback(
     async (force = false, boundParams?: unknown[], sqlOverride?: string) => {
