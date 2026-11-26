@@ -2,6 +2,7 @@ import type { ConnectionRecord } from "../ipc/types";
 import { kbd } from "../lib/platform";
 import { envMeta } from "../lib/sql";
 import { GearIcon, SidebarIcon, BrandMark } from "../lib/icons";
+import { Menu, MenuGroup } from "../lib/a11y";
 
 type Props = {
   theme: "dark" | "light";
@@ -34,7 +35,7 @@ export default function Titlebar(p: Props) {
         <span className="brand-word">TupleNest</span>
       </div>
       <div className="conn-switch">
-        <button onClick={p.onToggleConnMenu}>
+        <button onClick={p.onToggleConnMenu} aria-haspopup="menu" aria-expanded={p.connMenu}>
           <span
             className="dot"
             style={{
@@ -49,16 +50,20 @@ export default function Titlebar(p: Props) {
               {p.activeEnv}
             </span>
           )}
-          <span style={{ fontSize: 9, color: "var(--tn-tm)" }}>▾</span>
+          <span style={{ fontSize: 9, color: "var(--tn-tm)" }} aria-hidden>
+            ▾
+          </span>
         </button>
         {p.connMenu && (
-          <div className="conn-menu">
-            <div className="menu-label">Switch connection</div>
+          <Menu className="conn-menu" label="Connections" onClose={p.onToggleConnMenu}>
+            <MenuGroup id="conn-switch" label="Switch connection">
             {p.saved.map((c) => {
               const m = envMeta(c.environment);
               return (
                 <button
                   key={c.id}
+                  role="menuitemradio"
+                  aria-checked={c.id === p.activeId}
                   className={`row ${c.id === p.activeId ? "active" : ""}`}
                   onClick={() => p.onSelectProfile(c)}
                 >
@@ -78,11 +83,12 @@ export default function Titlebar(p: Props) {
                 </button>
               );
             })}
-            <div className="divider" />
-            <button className="new-conn" onClick={p.onNewConnection}>
+            </MenuGroup>
+            <div className="divider" role="separator" />
+            <button className="new-conn" role="menuitem" onClick={p.onNewConnection}>
               ＋ New connection…
             </button>
-          </div>
+          </Menu>
         )}
       </div>
       <div style={{ flex: 1 }} />

@@ -276,7 +276,7 @@ describe("App — rename from find usages", () => {
     await user.clear(ta);
     await user.type(ta, "select * from orders");
     // Go back to the first tab, so the jump has somewhere to take us.
-    await user.click(screen.getAllByRole("button", { name: /untitled-1/ })[0]);
+    await user.click(screen.getAllByRole("tab", { name: /untitled-1/ })[0]);
 
     await palette(user, "Find usages");
     const modal = await waitFor(() => document.querySelector(".modal") as HTMLElement);

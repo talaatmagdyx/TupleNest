@@ -237,7 +237,7 @@ describe("App — the titlebar palette button", () => {
 
 describe("App — the History tab", () => {
   const historyTab = async (user: ReturnType<typeof userEvent.setup>) => {
-    await user.click(await screen.findByRole("button", { name: /^History$/i }));
+    await user.click(await screen.findByRole("tab", { name: /^History$/i }));
     await screen.findByText("select 1");
   };
 

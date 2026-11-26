@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import TabsBar from "./TabsBar";
+import TabsBar, { QUERY_PANEL_ID, queryTabId } from "./TabsBar";
 // The hint tracks the keyboard; this test is about the button, not the glyph.
 // Overlays.test.tsx is where the labels themselves are pinned per platform.
 import { kbd } from "../lib/platform";
@@ -66,5 +66,59 @@ describe("TabsBar", () => {
     const { container } = render(<TabsBar {...base} tabs={[]} />);
     expect(container.querySelectorAll(".qtab")).toHaveLength(0);
     expect(screen.getByTitle(`New tab (${kbd("mod", "T")})`)).toBeInTheDocument();
+  });
+});
+
+describe("TabsBar — tab semantics", () => {
+  it("is a tablist of tabs, the active one selected and controlling the query panel", () => {
+    render(<TabsBar {...base} />);
+    expect(screen.getByRole("tablist", { name: "Query tabs" })).toBeInTheDocument();
+    const a = screen.getByRole("tab", { name: "a.sql" });
+    expect(a).toHaveAttribute("aria-selected", "true");
+    expect(a).toHaveAttribute("aria-controls", QUERY_PANEL_ID);
+    expect(a).toHaveAttribute("id", queryTabId(tabs[0]));
+    expect(screen.getByRole("tab", { name: /b\.sql/ })).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("says a tab has unsaved changes in words, and keeps the close glyph out of its name", () => {
+    render(<TabsBar {...base} />);
+    expect(screen.getByRole("tab", { name: "b.sql, unsaved changes" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "a.sql" })).toBeInTheDocument();
+  });
+
+  it("leaves the new-tab button outside the tablist, with a name", () => {
+    render(<TabsBar {...base} />);
+    const list = screen.getByRole("tablist");
+    expect(list).not.toContainElement(screen.getByRole("button", { name: "New tab" }));
+  });
+
+  it("selects the next and previous tab with the arrows", async () => {
+    const onSelect = vi.fn();
+    render(<TabsBar {...base} onSelect={onSelect} />);
+    screen.getByRole("tab", { name: "a.sql" }).focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(onSelect).toHaveBeenLastCalledWith(1);
+    // Focus followed to b.sql, so Left comes back to a.sql.
+    expect(screen.getByRole("tab", { name: /b\.sql/ })).toHaveFocus();
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(onSelect).toHaveBeenLastCalledWith(0);
+  });
+
+  it("closes the focused tab with Delete", async () => {
+    const onClose = vi.fn();
+    render(<TabsBar {...base} onClose={onClose} />);
+    screen.getByRole("tab", { name: "a.sql" }).focus();
+    await userEvent.keyboard("{Delete}");
+    expect(onClose).toHaveBeenCalledWith(0);
+  });
+
+  it("ignores other keys", async () => {
+    const onClose = vi.fn();
+    const onSelect = vi.fn();
+    render(<TabsBar {...base} onClose={onClose} onSelect={onSelect} />);
+    screen.getByRole("tab", { name: "a.sql" }).focus();
+    await userEvent.keyboard("q");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });

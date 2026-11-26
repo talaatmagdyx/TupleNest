@@ -26,8 +26,10 @@ import { ModalHead, Overlay } from "./Overlays";
 /** Shown in place of a modal that could not be loaded or threw. */
 function ModalFailed(p: { error: Error; onClose: () => void }) {
   return (
-    <Overlay onClose={p.onClose} center>
-      <div className="modal dialog" role="alert">
+    // alertdialog rather than a role="alert" inside a plain dialog: it is the
+    // dialog itself that has to be read out at once.
+    <Overlay onClose={p.onClose} center alert>
+      <div className="modal dialog">
         <ModalHead title="This panel could not be opened" onClose={p.onClose} />
         <p>The rest of the app is unaffected, and nothing was sent to the database. Close this and try again.</p>
         <pre className="modal-error">{p.error.message}</pre>

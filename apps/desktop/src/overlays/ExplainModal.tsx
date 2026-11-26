@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ModalHead, Overlay } from "./Overlays";
+import { Menu, MenuGroup } from "../lib/a11y";
 import PlanView from "./PlanView";
 import type { PlanNode, PlanStats } from "./PlanView";
 import {
@@ -63,7 +64,7 @@ export default function ExplainModal(p: Props) {
             <span style={{ display: "inline-flex", gap: 9, alignItems: "center" }}>
               <span className="chip" style={{ color: "var(--tn-accent)", background: "var(--tn-as)" }}>
                 {explainLabel(p.options)}
-              </span>
+              </span>{" "}
               <span className="mono" style={{ fontSize: 12, color: "var(--tn-tm)" }}>
                 {p.title}
               </span>
@@ -72,30 +73,38 @@ export default function ExplainModal(p: Props) {
           actions={
             <>
               <div className="menu-wrap">
-                <button className="btn" disabled={!p.nodes && !p.error} onClick={() => setMenu((m) => !m)}>
-                  Export ▾
+                <button
+                  className="btn"
+                  disabled={!p.nodes && !p.error}
+                  onClick={() => setMenu((m) => !m)}
+                  aria-haspopup="menu"
+                  aria-expanded={menu}
+                >
+                  Export <span aria-hidden>▾</span>
                 </button>
                 {menu && (
-                  <div className="drop-menu">
-                    <div className="menu-label">Save plan as</div>
-                    <button onClick={() => { setMenu(false); p.onExport("json"); }}>
-                      JSON <span>.json</span>
-                    </button>
-                    <button onClick={() => { setMenu(false); p.onExport("txt"); }}>
-                      Text tree <span>.txt</span>
-                    </button>
-                    <button onClick={() => { setMenu(false); p.onExport("md"); }}>
-                      Markdown <span>.md</span>
-                    </button>
-                    <div className="divider" />
-                    <div className="menu-label">Copy to clipboard</div>
-                    <button onClick={() => { setMenu(false); p.onCopy("json"); }}>
-                      JSON <span>for pev2 / depesz</span>
-                    </button>
-                    <button onClick={() => { setMenu(false); p.onCopy("txt"); }}>
-                      Text tree
-                    </button>
-                  </div>
+                  <Menu className="drop-menu" label="Export plan" onClose={() => setMenu(false)}>
+                    <MenuGroup id="plan-save" label="Save plan as">
+                      <button role="menuitem" onClick={() => { setMenu(false); p.onExport("json"); }}>
+                        JSON <span>.json</span>
+                      </button>
+                      <button role="menuitem" onClick={() => { setMenu(false); p.onExport("txt"); }}>
+                        Text tree <span>.txt</span>
+                      </button>
+                      <button role="menuitem" onClick={() => { setMenu(false); p.onExport("md"); }}>
+                        Markdown <span>.md</span>
+                      </button>
+                    </MenuGroup>
+                    <div className="divider" role="separator" />
+                    <MenuGroup id="plan-copy" label="Copy to clipboard">
+                      <button role="menuitem" onClick={() => { setMenu(false); p.onCopy("json"); }}>
+                        JSON <span>for pev2 / depesz</span>
+                      </button>
+                      <button role="menuitem" onClick={() => { setMenu(false); p.onCopy("txt"); }}>
+                        Text tree
+                      </button>
+                    </MenuGroup>
+                  </Menu>
                 )}
               </div>
               <button className="btn primary" onClick={p.onRerun} disabled={p.busy || errors.length > 0}>

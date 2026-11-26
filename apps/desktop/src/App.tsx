@@ -16,7 +16,7 @@ import HistoryPanel from "./history/HistoryPanel";
 import SavedList from "./connections/SavedList";
 import ConnectionForm from "./connections/ConnectionForm";
 import ExplorerTree from "./explorer/ExplorerTree";
-import TabsBar from "./editor/TabsBar";
+import TabsBar, { queryTabId } from "./editor/TabsBar";
 import QueryPanel, { type ChartDatum, type ResultTab } from "./editor/QueryPanel";
 import {
   About,
@@ -1698,6 +1698,7 @@ export default function App() {
             </div>
           ) : (
             <QueryPanel
+              tabId={tabs[activeTab] ? queryTabId(tabs[activeTab]) : undefined}
               sql={currentSql}
               onSqlChange={(s) => setActiveSql(s)}
               connected={connected}
@@ -1786,6 +1787,14 @@ export default function App() {
           often skip a region that appears already holding its message. */}
       <div role="status" aria-live="polite" className="toast-live">
         {toast && <div className="toast">{toast}</div>}
+      </div>
+
+      {/* Query outcomes get a region of their own, separate from the toast: the
+          grid appearing says nothing to a screen reader, and a toast can be
+          replaced before it is read. Keyed by run, so a second "42 rows" is a
+          new node and is announced again rather than ignored as unchanged. */}
+      <div role="status" aria-live="polite" aria-atomic="true" aria-label="Query result" className="sr-only">
+        {query.announcement && <span key={query.announcement.n}>{query.announcement.text}</span>}
       </div>
 
       {/* A running export gets its own persistent strip rather than the toast:

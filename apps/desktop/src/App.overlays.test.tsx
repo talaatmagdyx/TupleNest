@@ -78,7 +78,7 @@ describe("App — overlays that need no connection", () => {
   it("opens Compare EXPLAIN plans on the plan-compare pane", async () => {
     const user = await mount();
     await palette(user, "Compare EXPLAIN plans");
-    expect(await screen.findByRole("button", { name: /Plan compare/ })).toHaveClass("on");
+    expect(await screen.findByRole("tab", { name: /Plan compare/ })).toHaveClass("on");
   });
 
   it("closes an overlay again", async () => {
@@ -163,7 +163,7 @@ describe("App — overlays that need a session", () => {
       return { payload: [], cached: false };
     });
     await palette(user, "Index health");
-    expect(await screen.findByRole("button", { name: /indexes/i })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: /indexes/i })).toBeInTheDocument();
   });
 
   it("opens global search", async () => {

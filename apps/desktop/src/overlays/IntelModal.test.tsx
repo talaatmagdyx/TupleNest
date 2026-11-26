@@ -35,15 +35,24 @@ const base = {
 describe("IntelModal — shell", () => {
   it("offers all three panes and marks the active one", () => {
     render(<IntelModal {...base} />);
-    expect(screen.getByRole("button", { name: /Find usages & rename/ })).toHaveClass("on");
-    expect(screen.getByRole("button", { name: /Schema diff/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Plan compare/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Find usages & rename/ })).toHaveClass("on");
+    expect(screen.getByRole("tab", { name: /Schema diff/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Plan compare/ })).toBeInTheDocument();
   });
 
   it("switches pane", async () => {
     render(<IntelModal {...base} />);
-    await userEvent.click(screen.getByRole("button", { name: /Schema diff/ }));
-    expect(screen.getByRole("button", { name: /Schema diff/ })).toHaveClass("on");
+    await userEvent.click(screen.getByRole("tab", { name: /Schema diff/ }));
+    expect(screen.getByRole("tab", { name: /Schema diff/ })).toHaveClass("on");
+  });
+
+  it("is named by its visible title, not a second hand-typed one", () => {
+    // It used to carry label="Schema intelligence" over a head reading
+    // "SQL intelligence" — two names for one dialog.
+    render(<IntelModal {...base} />);
+    expect(screen.getByRole("dialog", { name: "SQL intelligence" })).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "Intelligence tools" })).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Find usages & rename" })).toBeInTheDocument();
   });
 
   it("closes from the labelled button", async () => {
@@ -114,7 +123,7 @@ describe("IntelModal — find usages", () => {
 describe("IntelModal — schema diff", () => {
   const openDiff = async () => {
     render(<IntelModal {...base} />);
-    await userEvent.click(screen.getByRole("button", { name: /Schema diff/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /Schema diff/ }));
   };
 
   it("defaults to two different schemas so compare is usable at once", async () => {
@@ -141,7 +150,7 @@ describe("IntelModal — schema diff", () => {
 describe("IntelModal — plan compare", () => {
   const openPlans = async (plans: ReturnType<typeof plan>[]) => {
     render(<IntelModal {...base} plans={plans} />);
-    await userEvent.click(screen.getByRole("button", { name: /Plan compare/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /Plan compare/ }));
   };
 
   it("needs two plans before it can compare anything", async () => {
@@ -185,7 +194,7 @@ describe("IntelModal — schema diff", () => {
 
   const openDiff = async () => {
     render(<IntelModal {...base} />);
-    await userEvent.click(screen.getByRole("button", { name: "Schema diff" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Schema diff" }));
   };
 
   /** The two selects already default to different schemas, so this just runs. */
@@ -308,7 +317,7 @@ describe("IntelModal — generated migration", () => {
   const openDiff = async () => {
     mockTwoSchemas();
     render(<IntelModal {...base} />);
-    await userEvent.click(screen.getByRole("button", { name: /Schema diff/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /Schema diff/ }));
     await userEvent.click(screen.getByRole("button", { name: "Compare" }));
     await userEvent.click(await screen.findByRole("button", { name: "Generate migration" }));
   };
@@ -316,7 +325,7 @@ describe("IntelModal — generated migration", () => {
   it("promises up front that nothing will be run", async () => {
     mockTwoSchemas();
     render(<IntelModal {...base} />);
-    await userEvent.click(screen.getByRole("button", { name: /Schema diff/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /Schema diff/ }));
     await userEvent.click(screen.getByRole("button", { name: "Compare" }));
     expect(await screen.findByText(/TupleNest never runs it/)).toBeInTheDocument();
   });
@@ -359,7 +368,7 @@ describe("IntelModal — generated migration", () => {
       };
     });
     render(<IntelModal {...base} />);
-    await userEvent.click(screen.getByRole("button", { name: /Schema diff/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /Schema diff/ }));
     await userEvent.click(screen.getByRole("button", { name: "Compare" }));
     await userEvent.click(await screen.findByRole("button", { name: "Generate migration" }));
 
@@ -418,7 +427,7 @@ describe("IntelModal — node-by-node plan diff", () => {
 
   const openWith = async (plans: unknown[]) => {
     render(<IntelModal {...base} plans={plans as ReturnType<typeof plan>[]} />);
-    await userEvent.click(screen.getByRole("button", { name: /Plan compare/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /Plan compare/ }));
   };
 
   it("names the node that slowed down and the one that sped up", async () => {

@@ -72,21 +72,37 @@ describe("HealthModal — shell", () => {
   it("shows the three tabs", () => {
     render(<HealthModal {...base} />);
     for (const t of ["Indexes", "Vacuum & bloat", "Top queries"]) {
-      expect(screen.getByRole("button", { name: t })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: t })).toBeInTheDocument();
     }
   });
 
   it("marks the active tab", () => {
     render(<HealthModal {...base} tab="tables" />);
-    expect(screen.getByRole("button", { name: "Vacuum & bloat" })).toHaveClass("on");
-    expect(screen.getByRole("button", { name: "Indexes" })).not.toHaveClass("on");
+    expect(screen.getByRole("tab", { name: "Vacuum & bloat" })).toHaveClass("on");
+    expect(screen.getByRole("tab", { name: "Indexes" })).not.toHaveClass("on");
   });
 
   it("asks for a tab when one is clicked", async () => {
     const onTab = vi.fn();
     render(<HealthModal {...base} onTab={onTab} />);
-    await userEvent.click(screen.getByRole("button", { name: "Top queries" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Top queries" }));
     expect(onTab).toHaveBeenCalledWith("queries");
+  });
+
+  it("is a named dialog whose report tabs control a labelled panel", () => {
+    render(<HealthModal {...base} tab="tables" />);
+    expect(screen.getByRole("dialog", { name: "Database health" })).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "Health reports" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Vacuum & bloat" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "Vacuum & bloat" })).toBeInTheDocument();
+  });
+
+  it("moves to the next report with the arrow key", async () => {
+    const onTab = vi.fn();
+    render(<HealthModal {...base} onTab={onTab} />);
+    screen.getByRole("tab", { name: "Indexes" }).focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(onTab).toHaveBeenCalledWith("tables");
   });
 
   it("shows an error instead of a table when the query failed", () => {

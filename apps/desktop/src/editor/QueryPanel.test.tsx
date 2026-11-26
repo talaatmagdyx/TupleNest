@@ -240,13 +240,13 @@ describe("QueryPanel — result tabs", () => {
   it("switches tab", async () => {
     const onResultTab = vi.fn();
     render(<QueryPanel {...base} onResultTab={onResultTab} />);
-    await userEvent.click(screen.getByRole("button", { name: "Messages" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Messages" }));
     expect(onResultTab).toHaveBeenCalledWith("messages");
   });
 
   it("marks the active tab", () => {
     render(<QueryPanel {...base} resultTab="history" />);
-    expect(screen.getByRole("button", { name: "History" })).toHaveClass("on");
+    expect(screen.getByRole("tab", { name: "History" })).toHaveClass("on");
   });
 
   it("shows history on its tab", () => {
@@ -273,5 +273,71 @@ describe("QueryPanel — result tabs", () => {
   it("explains an unchartable result rather than drawing nothing", () => {
     render(<QueryPanel {...base} resultTab="chart" chart={null} />);
     expect(screen.queryByText("Rows by day")).not.toBeInTheDocument();
+  });
+});
+
+describe("QueryPanel — accessibility", () => {
+  it("is the tabpanel of the editor tab it belongs to", () => {
+    render(
+      <>
+        <span id="qtab-x">a.sql</span>
+        <QueryPanel {...base} tabId="qtab-x" />
+      </>
+    );
+    expect(screen.getByRole("tabpanel", { name: "a.sql" })).toHaveAttribute("id", "query-tabpanel");
+  });
+
+  it("puts the result views in a tablist, with Plan beside it as an action", () => {
+    render(<QueryPanel {...base} resultTab="messages" />);
+    const list = screen.getByRole("tablist", { name: "Result views" });
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Results", "Chart", "Messages", "History"]);
+    expect(screen.getByRole("tab", { name: "Messages" })).toHaveAttribute("aria-selected", "true");
+    expect(list).not.toContainElement(screen.getByRole("button", { name: "Plan" }));
+    expect(screen.getByRole("tabpanel", { name: "Messages" })).toHaveClass("results-zone");
+  });
+
+  it("moves between result views with the arrow keys", async () => {
+    const onResultTab = vi.fn();
+    render(<QueryPanel {...base} onResultTab={onResultTab} />);
+    screen.getByRole("tab", { name: "Results" }).focus();
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(onResultTab).toHaveBeenCalledWith("history");
+  });
+
+  it("says the export button opens a menu, and whether it is open", () => {
+    const { rerender } = render(<QueryPanel {...base} />);
+    const btn = screen.getByRole("button", { name: /Export/ });
+    expect(btn).toHaveAttribute("aria-haspopup", "menu");
+    expect(btn).toHaveAttribute("aria-expanded", "false");
+    rerender(<QueryPanel {...base} exportMenu />);
+    expect(screen.getByRole("button", { name: /Export/ })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("is a menu of grouped items, and the CSV-safe option is a checkable item", async () => {
+    const onCsvSafe = vi.fn();
+    render(<QueryPanel {...base} exportMenu onCopyResult={vi.fn()} onCsvSafe={onCsvSafe} />);
+    expect(screen.getByRole("menu", { name: "Export result" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Save result as" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Copy to clipboard" })).toBeInTheDocument();
+    // Focus lands on the first item when the menu opens.
+    expect(screen.getByRole("menuitem", { name: "CSV .csv" })).toHaveFocus();
+
+    const safe = screen.getByRole("menuitemcheckbox", { name: "Spreadsheet-safe CSV" });
+    expect(safe).toHaveAttribute("aria-checked", "true");
+    await userEvent.click(safe);
+    expect(onCsvSafe).toHaveBeenLastCalledWith(false);
+    safe.focus();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard(" ");
+    expect(onCsvSafe).toHaveBeenCalledTimes(3);
+    await userEvent.keyboard("x");
+    expect(onCsvSafe).toHaveBeenCalledTimes(3);
+  });
+
+  it("closes the menu on Escape", async () => {
+    const onToggleExport = vi.fn();
+    render(<QueryPanel {...base} exportMenu onToggleExport={onToggleExport} />);
+    await userEvent.keyboard("{Escape}");
+    expect(onToggleExport).toHaveBeenCalledOnce();
   });
 });

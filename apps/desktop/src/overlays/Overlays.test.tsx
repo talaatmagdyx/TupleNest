@@ -212,7 +212,7 @@ describe("Palette", () => {
     const onQ = vi.fn();
     const onIdx = vi.fn();
     render(<Palette {...base} onQ={onQ} onIdx={onIdx} />);
-    await userEvent.type(screen.getByRole("textbox"), "u");
+    await userEvent.type(screen.getByRole("combobox"), "u");
     expect(onQ).toHaveBeenCalledWith("u");
     expect(onIdx).toHaveBeenCalledWith(0);
   });

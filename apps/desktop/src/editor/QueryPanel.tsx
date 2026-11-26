@@ -6,6 +6,8 @@ import Grid from "../results/Grid";
 import HistoryPanel, { type HistoryPanelProps } from "../history/HistoryPanel";
 import SqlEditor from "./SqlEditor";
 import { PlayIcon } from "../lib/icons";
+import { Menu, MenuGroup, TabList, tabPanelProps } from "../lib/a11y";
+import { QUERY_PANEL_ID } from "./TabsBar";
 
 export type ResultTab = "results" | "chart" | "messages" | "history";
 export type ChartDatum = { label: string; v: number };
@@ -54,6 +56,8 @@ type Props = {
   // Taken from the panel rather than restated: the two copies had already
   // drifted, and this one still claimed the actions were synchronous.
   history: HistoryPanelProps;
+  /** Id of the editor tab this panel belongs to, which names it. */
+  tabId?: string;
 };
 
 export default function QueryPanel(p: Props) {
@@ -76,7 +80,9 @@ export default function QueryPanel(p: Props) {
   ];
 
   return (
-    <>
+    // The panel the editor tab strip controls. A box rather than a fragment so
+    // it can carry the role; it lays out exactly as .main-col did.
+    <div className="query-tabpanel" role="tabpanel" id={QUERY_PANEL_ID} aria-labelledby={p.tabId}>
       <div className="toolbar">
         <button className="btn primary" onClick={p.onRun} disabled={!p.connected || p.running}>
           {p.running ? <span className="spin" /> : <PlayIcon />} {p.running ? "Running" : "Run"}{" "}
@@ -115,39 +121,63 @@ export default function QueryPanel(p: Props) {
           Format
         </button>
         <div className="menu-wrap">
-          <button className="btn" onClick={p.onToggleExport} disabled={!r || r.columns.length === 0}>
-            Export ▾
+          <button
+            className="btn"
+            onClick={p.onToggleExport}
+            disabled={!r || r.columns.length === 0}
+            aria-haspopup="menu"
+            aria-expanded={p.exportMenu}
+          >
+            Export <span aria-hidden>▾</span>
           </button>
           {p.exportMenu && (
-            <div className="drop-menu">
-              <div className="menu-label">Save result as</div>
-              <button onClick={() => p.onExport("csv")}>
-                CSV <span>.csv</span>
-              </button>
-              <button onClick={() => p.onExport("json")}>
-                JSON <span>.json</span>
-              </button>
-              <button onClick={() => p.onExport("md")}>
-                Markdown <span>.md</span>
-              </button>
-              <div className="divider" />
-              <label className="menu-check" title="Prefixes cells starting with = + - @ so spreadsheets treat them as text, not formulas">
-                <input
-                  type="checkbox"
-                  checked={p.csvSafe}
-                  onChange={(e) => p.onCsvSafe(e.target.checked)}
-                />
+            <Menu className="drop-menu" label="Export result" onClose={p.onToggleExport}>
+              <MenuGroup id="export-save" label="Save result as">
+                <button role="menuitem" onClick={() => p.onExport("csv")}>
+                  CSV <span>.csv</span>
+                </button>
+                <button role="menuitem" onClick={() => p.onExport("json")}>
+                  JSON <span>.json</span>
+                </button>
+                <button role="menuitem" onClick={() => p.onExport("md")}>
+                  Markdown <span>.md</span>
+                </button>
+              </MenuGroup>
+              <div className="divider" role="separator" />
+              {/* A menuitemcheckbox, not a checkbox in a label: a menu may only
+                  own menu items, and the arrows have to be able to land here.
+                  The native box stays as the visual, hidden from the tree. */}
+              <div
+                className="menu-check"
+                role="menuitemcheckbox"
+                aria-checked={p.csvSafe}
+                tabIndex={-1}
+                title="Prefixes cells starting with = + - @ so spreadsheets treat them as text, not formulas"
+                onClick={() => p.onCsvSafe(!p.csvSafe)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    p.onCsvSafe(!p.csvSafe);
+                  }
+                }}
+              >
+                <input type="checkbox" checked={p.csvSafe} readOnly tabIndex={-1} aria-hidden />
                 <span>Spreadsheet-safe CSV</span>
-              </label>
+              </div>
               {p.onCopyResult && (
                 <>
-                  <div className="divider" />
-                  <div className="menu-label">Copy to clipboard</div>
-                  <button onClick={() => p.onCopyResult!("csv")}>CSV</button>
-                  <button onClick={() => p.onCopyResult!("md")}>Markdown</button>
+                  <div className="divider" role="separator" />
+                  <MenuGroup id="export-copy" label="Copy to clipboard">
+                    <button role="menuitem" onClick={() => p.onCopyResult!("csv")}>
+                      CSV
+                    </button>
+                    <button role="menuitem" onClick={() => p.onCopyResult!("md")}>
+                      Markdown
+                    </button>
+                  </MenuGroup>
                 </>
               )}
-            </div>
+            </Menu>
           )}
         </div>
       </div>
@@ -181,11 +211,16 @@ export default function QueryPanel(p: Props) {
       </div>
 
       <div className="rtabs">
-        {tabs.map(([id, label]) => (
-          <button key={id} className={`rtab ${p.resultTab === id ? "on" : ""}`} onClick={() => p.onResultTab(id)}>
-            {label}
-          </button>
-        ))}
+        {/* Plan runs EXPLAIN and opens a modal: it is an action, not a view,
+            so it sits beside the tablist rather than in it. */}
+        <TabList
+          className="rtab-list"
+          label="Result views"
+          idBase="results"
+          tabs={tabs}
+          active={p.resultTab}
+          onSelect={p.onResultTab}
+        />
         <button className="rtab" onClick={() => p.onExplain()} title="Run EXPLAIN and show the plan">
           Plan
         </button>
@@ -229,7 +264,7 @@ export default function QueryPanel(p: Props) {
         </div>
       )}
 
-      <div className="results-zone">
+      <div className="results-zone" {...tabPanelProps("results", p.resultTab)}>
         {p.resultTab === "results" && (
           <>
             {p.lastError && <div className="error-box">{p.lastError}</div>}
@@ -321,6 +356,6 @@ export default function QueryPanel(p: Props) {
         )}
         {p.resultTab === "history" && <HistoryPanel {...p.history} />}
       </div>
-    </>
+    </div>
   );
 }

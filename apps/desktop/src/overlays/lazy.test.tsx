@@ -35,6 +35,7 @@ describe("lazyModal", () => {
       </div>,
     );
     expect(await screen.findByText("This panel could not be opened")).toBeInTheDocument();
+    expect(screen.getByRole("alertdialog", { name: "This panel could not be opened" })).toBeInTheDocument();
     expect(screen.getByText("Its code could not be loaded (Failed to fetch chunk).")).toBeInTheDocument();
     expect(screen.getByText("the app")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Close" }));

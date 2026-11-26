@@ -62,7 +62,7 @@ describe("App — copying the result", () => {
     const menu = await exportMenu(user);
     // "CSV .csv" saves a file; the bare "CSV" under "Copy to clipboard" is
     // the one meant here.
-    const csv = within(menu).getAllByRole("button", { name: /^CSV/ });
+    const csv = within(menu).getAllByRole("menuitem", { name: /^CSV/ });
     await user.click(csv[csv.length - 1]);
     expect(await screen.findByText("CSV copied — 2 rows")).toBeInTheDocument();
     expect(be.sent("copy_result_text")).toEqual([{ kind: "csv", mode: "spreadsheet-safe", limit: 2 }]);
@@ -72,7 +72,7 @@ describe("App — copying the result", () => {
     const user = await connected();
     await run(user);
     const menu = await exportMenu(user);
-    const md = within(menu).getAllByRole("button", { name: /^Markdown/ });
+    const md = within(menu).getAllByRole("menuitem", { name: /^Markdown/ });
     await user.click(md[md.length - 1]);
     expect(await screen.findByText(/MD copied/)).toBeInTheDocument();
     expect(be.sent("copy_result_text")[0]).toMatchObject({ kind: "md" });
@@ -96,7 +96,7 @@ describe("App — exporting the result", () => {
     const user = await connected();
     await run(user);
     const menu = await exportMenu(user);
-    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    await user.click(within(menu).getByRole("menuitem", { name: "CSV .csv" }));
     // Two places say it now, and both should: the toast at export time, and
     // the footer, which is the number someone reads to decide whether they
     // have seen everything. `findAllBy` rather than `findBy` for that reason.
@@ -108,7 +108,7 @@ describe("App — exporting the result", () => {
     const user = await connected();
     await run(user);
     const menu = await exportMenu(user);
-    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    await user.click(within(menu).getByRole("menuitem", { name: "CSV .csv" }));
     expect(await screen.findByText(/— 2 rows/)).toBeInTheDocument();
   });
 
@@ -119,7 +119,7 @@ describe("App — exporting the result", () => {
     const user = await connected();
     await run(user);
     const menu = await exportMenu(user);
-    await user.click(within(menu).getByRole("button", { name: "JSON .json" }));
+    await user.click(within(menu).getByRole("menuitem", { name: "JSON .json" }));
     expect(await screen.findByText(/Export failed/)).toBeInTheDocument();
   });
 
@@ -132,7 +132,7 @@ describe("App — exporting the result", () => {
     const user = await connected();
     await run(user);
     const menu = await exportMenu(user);
-    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    await user.click(within(menu).getByRole("menuitem", { name: "CSV .csv" }));
     await waitFor(() => expect(be.sent("export_abort")).toHaveLength(1));
     expect(be.sent("export_finish")).toHaveLength(0);
   });
@@ -141,7 +141,7 @@ describe("App — exporting the result", () => {
     const user = await connected();
     await run(user);
     const menu = await exportMenu(user);
-    await user.click(within(menu).getByRole("button", { name: "Markdown .md" }));
+    await user.click(within(menu).getByRole("menuitem", { name: "Markdown .md" }));
     await waitFor(() => expect(be.sent("export_finish")).toHaveLength(1));
     const begun = be.sent("export_begin")[0] as { extensions: string[] };
     expect(begun.extensions).toEqual(["md"]);
@@ -157,7 +157,7 @@ describe("App — exporting the result", () => {
     // The grid fetches its own visible window, so only calls made from here on
     // belong to the export.
     const before = be.calls().length;
-    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    await user.click(within(menu).getByRole("menuitem", { name: "CSV .csv" }));
     await waitFor(() => expect(be.sent("export_finish")).toHaveLength(1));
     const order = be.calls().slice(before).filter((c) => c.startsWith("export_"));
     expect(order[0]).toBe("export_begin");
@@ -186,7 +186,7 @@ describe("App — exporting the result", () => {
     const user = await connected();
     await run(user);
     const menu = await exportMenu(user);
-    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    await user.click(within(menu).getByRole("menuitem", { name: "CSV .csv" }));
 
     await user.click(await screen.findByRole("button", { name: "Cancel export" }));
     await waitFor(() => expect(be.sent("export_abort")).toHaveLength(1));
@@ -202,7 +202,7 @@ describe("App — exporting the result", () => {
     const user = await connected();
     await run(user);
     const menu = await exportMenu(user);
-    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    await user.click(within(menu).getByRole("menuitem", { name: "CSV .csv" }));
     expect(await screen.findByText(/Exporting [\d,]+ of 9,000 rows/)).toBeInTheDocument();
     // Let it finish before the test ends. Testing-library unmounts the tree
     // between tests but cannot stop an in-flight promise chain, and a nine-page
@@ -215,7 +215,7 @@ describe("App — exporting the result", () => {
     const user = await connected();
     await run(user);
     const menu = await exportMenu(user);
-    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    await user.click(within(menu).getByRole("menuitem", { name: "CSV .csv" }));
     await waitFor(() => expect(be.sent("export_finish")).toHaveLength(1));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Cancel export" })).toBeNull());
   });
@@ -225,7 +225,7 @@ describe("App — exporting the result", () => {
     const user = await connected();
     await run(user);
     const menu = await exportMenu(user);
-    await user.click(within(menu).getByRole("button", { name: "CSV .csv" }));
+    await user.click(within(menu).getByRole("menuitem", { name: "CSV .csv" }));
     await waitFor(() => expect(be.sent("export_begin")).toHaveLength(1));
     expect(be.sent("export_result_page")).toHaveLength(0);
     expect(be.sent("export_finish")).toHaveLength(0);

@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { serverInTransaction } from "../lib/tx";
-import { Overlay } from "./Overlays";
+import { ModalHead, Overlay } from "./Overlays";
 import type { QueryResult } from "../ipc/types";
 import {
   batchRows,
@@ -255,23 +255,12 @@ export default function ImportModal(p: Props) {
     // The shared Overlay: focus trap, role="dialog", and an Escape that stops
     // here — the global Escape handler used to close this mid-import and leave
     // the import running with no UI. While busy, closing is refused outright.
-    <Overlay center label="Import CSV" onClose={busy ? () => {} : p.onClose}>
+    <Overlay center onClose={busy ? () => {} : p.onClose}>
       <div className="modal import" onClick={(e) => e.stopPropagation()}>
-        {/* Fourth copy of ModalHead in this codebase; all four had lost the
-            close button's accessible label. This one also has to refuse to
-            close mid-import, so it keeps its own disabled state. */}
-        <div className="modal-head">
-          <span className="t">Import CSV</span>
-          <button
-            className="x"
-            aria-label="Close"
-            title="Close"
-            onClick={p.onClose}
-            disabled={busy}
-          >
-            <span aria-hidden>×</span>
-          </button>
-        </div>
+        {/* Was the fourth hand-rolled copy of ModalHead, kept because the close
+            button has to refuse mid-import. ModalHead now takes that, and its
+            title is what names this dialog. */}
+        <ModalHead title="Import CSV" onClose={p.onClose} closeDisabled={busy} />
 
         <div className="modal-body">
           {!table && (

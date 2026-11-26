@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { DbColumn, DbObject, MetadataOut } from "../ipc/types";
 import type { Catalog } from "../lib/complete";
 import { ModalHead, Overlay } from "./Overlays";
+import { TabList, tabPanelProps } from "../lib/a11y";
 import {
   comparePlans,
   diffPlanTrees,
@@ -131,27 +132,28 @@ export default function IntelModal(p: Props) {
   const num = (v: number | null, unit = "") => (v === null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(2)}${unit}`);
 
   return (
-    <Overlay center label="Schema intelligence" onClose={p.onClose}>
+    <Overlay center onClose={p.onClose}>
       <div className="modal intel" onClick={(e) => e.stopPropagation()}>
         {/* Third hand-rolled copy of ModalHead in this codebase, and the third
             to be missing the close button's accessible label. Use the real one. */}
         <ModalHead title="SQL intelligence" onClose={p.onClose} />
 
-        <div className="intel-tabs">
-          {(
+        <TabList
+          className="intel-tabs"
+          label="Intelligence tools"
+          idBase="intel"
+          tabs={
             [
               ["usages", "Find usages & rename"],
               ["diff", "Schema diff"],
               ["plans", "Plan compare"],
             ] as [Pane, string][]
-          ).map(([id, label]) => (
-            <button key={id} className={`rtab ${pane === id ? "on" : ""}`} onClick={() => setPane(id)}>
-              {label}
-            </button>
-          ))}
-        </div>
+          }
+          active={pane}
+          onSelect={setPane}
+        />
 
-        <div className="modal-body">
+        <div className="modal-body" {...tabPanelProps("intel", pane)}>
           {pane === "usages" && (
             <>
               <div className="intel-row">

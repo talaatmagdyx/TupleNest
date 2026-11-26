@@ -142,6 +142,16 @@ describe("MonitorModal — sessions", () => {
     expect(invokeMock).not.toHaveBeenCalledWith("pg_admin_backend", expect.anything());
   });
 
+  it("asks through a named alertdialog inside the named monitor dialog", async () => {
+    serve(activity(), true);
+    render(<MonitorModal {...base} />);
+    expect(screen.getByRole("dialog", { name: "MONITOR Server activity" })).toBeInTheDocument();
+    expect(await screen.findByRole("tablist", { name: "Activity views" })).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: /Sessions/ })).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "Kill" }));
+    expect(screen.getByRole("alertdialog", { name: /Terminate/ })).toHaveAttribute("aria-modal", "true");
+  });
+
   it("names the backend it is about to kill, not just the pid", async () => {
     // "Are you sure?" about a bare number is not something anyone can check.
     serve(activity(), true);
@@ -232,7 +242,7 @@ describe("MonitorModal — locks", () => {
   it("shows the lock detail on its tab", async () => {
     serve(locked);
     render(<MonitorModal {...base} />);
-    await userEvent.click(await screen.findByRole("button", { name: /Blocking locks/ }));
+    await userEvent.click(await screen.findByRole("tab", { name: /Blocking locks/ }));
     expect(screen.getByText("99")).toBeInTheDocument();
     expect(screen.getByText("ShareLock")).toBeInTheDocument();
     expect(screen.getByText("public.users")).toBeInTheDocument();
@@ -240,22 +250,22 @@ describe("MonitorModal — locks", () => {
 
   it("calls no locks healthy rather than just empty", async () => {
     render(<MonitorModal {...base} />);
-    await userEvent.click(await screen.findByRole("button", { name: /Blocking locks/ }));
+    await userEvent.click(await screen.findByRole("tab", { name: /Blocking locks/ }));
     expect(screen.getByText("No blocking locks — healthy.")).toBeInTheDocument();
   });
 
   it("dashes an unknown user and mode", async () => {
     serve(activity({ locks: [{ blockedPid: 1, blockedUser: null, lockType: "relation", mode: null, object: "t" }] }));
     render(<MonitorModal {...base} />);
-    await userEvent.click(await screen.findByRole("button", { name: /Blocking locks/ }));
+    await userEvent.click(await screen.findByRole("tab", { name: /Blocking locks/ }));
     expect(screen.getAllByText("—").length).toBe(2);
   });
 
   it("switches back to sessions", async () => {
     render(<MonitorModal {...base} />);
-    await userEvent.click(await screen.findByRole("button", { name: /Blocking locks/ }));
-    await userEvent.click(screen.getByRole("button", { name: /Sessions/ }));
-    expect(screen.getByRole("button", { name: /Sessions/ })).toHaveClass("on");
+    await userEvent.click(await screen.findByRole("tab", { name: /Blocking locks/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /Sessions/ }));
+    expect(screen.getByRole("tab", { name: /Sessions/ })).toHaveClass("on");
   });
 });
 
