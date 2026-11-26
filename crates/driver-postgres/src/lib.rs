@@ -518,6 +518,40 @@ impl PostgresSession {
         Ok(row.get::<_, bool>(0))
     }
 
+    /*
+     * How many fractional digits `money` has on this session, right now.
+     *
+     * A `money` value arrives as an int8 of the smallest currency unit, and
+     * how many digits of it are the fraction is the server's `lc_monetary`
+     * locale: 2 for `en_US`, 0 for `ja_JP`, 3 for `ar_BH`. Assuming 2 would
+     * silently show ¥1234 as 12.34. Results come back in binary for every
+     * column (tokio-postgres has no per-column text format), so the server is
+     * asked: `cash_numeric` scales by exactly the digits `cash_out` uses,
+     * fallback for a strange locale included, so the scale of the numeric it
+     * returns is the answer.
+     *
+     * Asked per result that has a money column, not once at connect:
+     * `SET lc_monetary` can change it at any point, and `SET LOCAL` or a
+     * function's `SET` clause can change it back. It is a plain read and
+     * costs one round trip only where money is shown. If it fails, money is
+     * shown as hex — unfriendly, but never a guessed wrong value.
+     */
+    async fn money_frac_digits(&self) -> wire::Money {
+        let Ok(msgs) = self
+            .client
+            .simple_query("SELECT scale('0'::money::numeric)")
+            .await
+        else {
+            return wire::Money::UNKNOWN;
+        };
+        msgs.iter()
+            .find_map(|m| match m {
+                tokio_postgres::SimpleQueryMessage::Row(r) => r.get(0)?.parse::<u8>().ok(),
+                _ => None,
+            })
+            .map_or(wire::Money::UNKNOWN, wire::Money::with_frac_digits)
+    }
+
     pub fn cancel_handle(&self) -> PgCancelHandle {
         PgCancelHandle {
             token: self.cancel_token.clone(),
@@ -710,9 +744,27 @@ impl DatabaseSession for PostgresSession {
         let refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
             bound.iter().map(|b| b.as_ref() as _).collect();
 
+        // Prepared first (what `query_raw` with a string does anyway) so the
+        // result's column types are known before any row arrives: a result
+        // with a `money` column needs the server's fractional digits, and
+        // they cannot be asked for once the rows are streaming.
+        let statement = self
+            .client
+            .prepare(request.sql.as_str())
+            .await
+            .map_err(normalize_error)?;
+        let money = if statement
+            .columns()
+            .iter()
+            .any(|c| wire::mentions_money(c.type_()))
+        {
+            self.money_frac_digits().await
+        } else {
+            wire::Money::UNKNOWN
+        };
         let stream = self
             .client
-            .query_raw(request.sql.as_str(), refs)
+            .query_raw(&statement, refs)
             .await
             .map_err(normalize_error)?;
         tokio::pin!(stream);
@@ -743,7 +795,7 @@ impl DatabaseSession for PostgresSession {
                 continue;
             }
             batch_bytes += row_wire_bytes(&row);
-            buffer.push(convert_row(&row));
+            buffer.push(convert_row(&row, money));
             if buffer.len() >= BATCH_SIZE || batch_bytes >= BATCH_BYTES {
                 batch_bytes = 0;
                 sink.deliver(RowBatch {
@@ -2048,8 +2100,10 @@ fn row_wire_bytes(row: &Row) -> usize {
     (0..row.len()).map(|i| raw_len(row, i)).sum()
 }
 
-fn convert_row(row: &Row) -> Vec<CellValue> {
-    (0..row.len()).map(|i| convert_cell(row, i)).collect()
+fn convert_row(row: &Row, money: wire::Money) -> Vec<CellValue> {
+    (0..row.len())
+        .map(|i| convert_cell(row, i, money))
+        .collect()
 }
 
 /// An exact `numeric`, decoded straight from the binary wire format.
@@ -2230,7 +2284,7 @@ fn binary_is_text(ty: &Type) -> bool {
 /// unfriendly.
 #[cfg(test)]
 fn render_raw(v: RawValue, ty: &Type) -> CellValue {
-    render_raw_bytes(&v.0, ty)
+    render_raw_bytes(&v.0, ty, wire::Money::UNKNOWN)
 }
 
 /// A value's wire bytes, borrowed from the row: the fallback path renders
@@ -2246,7 +2300,7 @@ impl<'a> FromSql<'a> for RawRef<'a> {
     }
 }
 
-fn render_raw_bytes(v: &[u8], ty: &Type) -> CellValue {
+fn render_raw_bytes(v: &[u8], ty: &Type, money: wire::Money) -> CellValue {
     if binary_is_text(ty) {
         if let Ok(s) = std::str::from_utf8(v) {
             return CellValue::Text(s.to_owned());
@@ -2255,8 +2309,9 @@ fn render_raw_bytes(v: &[u8], ty: &Type) -> CellValue {
     // Types with a fixed layout are decoded from it (see `wire`): an
     // `interval`, a range, an `infinity` date. That is a decode by layout,
     // not the guess from printable bytes described above; what `wire` does
-    // not know, or cannot make sense of, still falls through to hex.
-    if let Some(text) = wire::render(ty, v) {
+    // not know, or cannot make sense of, still falls through to hex — and
+    // so does `money` when the server's fractional digits are not known.
+    if let Some(text) = wire::render_with(ty, v, money) {
         return CellValue::Text(text);
     }
     // Hex doubles the size, so cap the *input* bytes before encoding rather than
@@ -2321,7 +2376,7 @@ fn cap_cell(c: CellValue) -> CellValue {
     }
 }
 
-fn convert_cell(row: &Row, i: usize) -> CellValue {
+fn convert_cell(row: &Row, i: usize, money: wire::Money) -> CellValue {
     // Text is the common case and the one that can be huge: borrow it from the
     // row and cap while copying, so an over-long value is never held whole as
     // an owned String (and then copied again to truncate it).
@@ -2333,10 +2388,10 @@ fn convert_cell(row: &Row, i: usize) -> CellValue {
             return v.map_or(CellValue::Null, |s| CellValue::Text(cap_str(s)));
         }
     }
-    cap_cell(convert_cell_inner(row, i))
+    cap_cell(convert_cell_inner(row, i, money))
 }
 
-fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
+fn convert_cell_inner(row: &Row, i: usize, money: wire::Money) -> CellValue {
     // Borrowed, not cloned: this runs once per cell.
     let ty = row.columns()[i].type_();
     // Text is capped after rendering; bytea and json used to be decoded whole
@@ -2359,7 +2414,7 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
             match row.try_get::<_, Option<$t>>(i) {
                 Ok(Some(v)) => $wrap(v),
                 Ok(None) => CellValue::Null,
-                Err(_) => fallback(row, i, ty),
+                Err(_) => fallback(row, i, ty, money),
             }
         };
     }
@@ -2387,15 +2442,15 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
         // `-0043`), and print fractions padded to three or six digits where
         // the server prints `.25`. `timestamp` has no zone and is written as
         // the wall clock the server stored; `timestamptz` in UTC with a `Z`.
-        Type::TIMESTAMP | Type::TIMESTAMPTZ | Type::DATE => fallback(row, i, ty),
+        Type::TIMESTAMP | Type::TIMESTAMPTZ | Type::DATE => fallback(row, i, ty, money),
         // Not through `NaiveTime`: it has no 24:00:00, which is a valid
         // `time`, and read it as 00:00:00.
-        Type::TIME => fallback(row, i, ty),
+        Type::TIME => fallback(row, i, ty, money),
 
         Type::JSON | Type::JSONB => match row.try_get::<_, Option<RawRef<'_>>>(i) {
             Ok(Some(raw)) => json_cell(raw.0, ty),
             Ok(None) => CellValue::Null,
-            Err(_) => fallback(row, i, ty),
+            Err(_) => fallback(row, i, ty, money),
         },
         Type::BYTEA => take!(Vec<u8>, |v: Vec<u8>| CellValue::Bytes(v.into_boxed_slice())),
         Type::UUID => take!(uuid::Uuid, |v: uuid::Uuid| CellValue::Text(v.to_string())),
@@ -2408,9 +2463,10 @@ fn convert_cell_inner(row: &Row, i: usize) -> CellValue {
         // native path for one-dimensional ones of a few types, which dropped
         // non-default bounds (`[0:1]={7,8}` read `{7,8}`) and wrote booleans
         // as `true` where the server writes `t`.
-        // Geometry, money, xml, and anything
-        // else the server may have: decoded from the wire rather than refused.
-        _ => fallback(row, i, ty),
+        // `money` at the server's own scale (see `money_frac_digits`).
+        // Geometry, xml, and anything else the server may have: decoded from
+        // the wire rather than refused.
+        _ => fallback(row, i, ty, money),
     }
 }
 
@@ -2429,7 +2485,7 @@ fn json_cell(raw: &[u8], ty: &Type) -> CellValue {
         match raw.split_first() {
             Some((1, rest)) => rest,
             // A version this code has never seen: show it raw, not guessed at.
-            _ => return render_raw_bytes(raw, ty),
+            _ => return render_raw_bytes(raw, ty, wire::Money::UNKNOWN),
         }
     } else {
         raw
@@ -2439,16 +2495,16 @@ fn json_cell(raw: &[u8], ty: &Type) -> CellValue {
         .and_then(|s| serde_json::value::RawValue::from_string(s.to_owned()).ok())
     {
         Some(doc) => CellValue::Json(doc),
-        None => render_raw_bytes(raw, ty),
+        None => render_raw_bytes(raw, ty, wire::Money::UNKNOWN),
     }
 }
 
 /// Last resort for a type with no dedicated mapping. Never returns
 /// "unsupported" — a database client that cannot show you your own data is
 /// not doing its job.
-fn fallback(row: &Row, i: usize, ty: &Type) -> CellValue {
+fn fallback(row: &Row, i: usize, ty: &Type, money: wire::Money) -> CellValue {
     match row.try_get::<_, Option<RawRef<'_>>>(i) {
-        Ok(Some(v)) => render_raw_bytes(v.0, ty),
+        Ok(Some(v)) => render_raw_bytes(v.0, ty, money),
         Ok(None) => CellValue::Null,
         Err(e) => CellValue::other(format!("<decode error: {e}>"), ty.name().to_string()),
     }
@@ -3408,6 +3464,38 @@ mod render_raw_tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn money_with_the_servers_scale_is_its_exact_value_not_its_bytes() {
+        // The same printable bytes, now decoded as the int8 they are, at the
+        // scale the server reported — and only then.
+        let units = i64::from_be_bytes(*b"12345678");
+        let two = wire::Money::with_frac_digits(2);
+        assert_eq!(
+            render_raw_bytes(b"12345678", &Type::MONEY, two),
+            CellValue::Text("35449521560180631.60".into())
+        );
+        assert_eq!(units, 3_544_952_156_018_063_160);
+        // A domain over money follows it.
+        assert_eq!(
+            render_raw_bytes(&(-150_i64).to_be_bytes(), &domain_over(Type::MONEY), two),
+            CellValue::Text("-1.50".into())
+        );
+        // Zero fractional digits (a yen locale): no point, no guessed cents.
+        assert_eq!(
+            render_raw_bytes(
+                &1_234_i64.to_be_bytes(),
+                &Type::MONEY,
+                wire::Money::with_frac_digits(0)
+            ),
+            CellValue::Text("1234".into())
+        );
+        // Scale unknown: hex, never a guess at two decimals.
+        assert!(matches!(
+            render_raw_bytes(&150_i64.to_be_bytes(), &Type::MONEY, wire::Money::UNKNOWN),
+            CellValue::Other(_)
+        ));
     }
 
     #[test]
