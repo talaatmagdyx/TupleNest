@@ -432,14 +432,19 @@ export default function Grid(p: Props) {
     cancelEdit: () => setEditing(null),
   }));
 
-  // The rows in view — and the row being edited, wherever the view has gone:
-  // dropping it unmounts the editor, and with it the focus and the caret.
-  // It is drawn in place, one row between two spacers, rather than by
-  // stretching the window to reach it, which could be 100,000 rows.
-  const indices: number[] = [];
-  if (editing && editing.r < first) indices.push(editing.r);
+  // The rows in view — and the row being edited, and the row holding the
+  // selected cell, wherever the view has gone: dropping either unmounts the
+  // element that has the focus (the editor, or the cell the arrows move from),
+  // and focus falls to <body>, where the grid's keys no longer reach. Each is
+  // drawn in place, one row between two spacers, rather than by stretching
+  // the window to reach it, which could be 100,000 rows.
+  const pinned = new Set<number>();
+  if (editing) pinned.add(editing.r);
+  if (selCell && selCell.r < p.storedRows) pinned.add(selCell.r);
+  const pins = [...pinned].sort((a, b) => a - b);
+  const indices: number[] = pins.filter((r) => r < first);
   for (let i = first; i < last; i++) indices.push(i);
-  if (editing && editing.r >= last) indices.push(editing.r);
+  for (const r of pins) if (r >= last) indices.push(r);
 
   /** Column widths and their running left edges (`offs[n]` is the full width). */
   const layout = useMemo(() => {
@@ -469,6 +474,19 @@ export default function Grid(p: Props) {
     if (i > next) body.push(<div key={`gap${next}`} style={{ height: (i - next) * ROW_H }} />);
     const sel = selCell?.r === i ? selCell.c : null;
     const ed = editing?.r === i ? editing.c : null;
+    // The edited row's columns reach as far as its editor, and the selected
+    // row's as far as its selected cell — for the same reason as the rows
+    // above; one row of extra cells, not a screen of them. Without the
+    // second, End on a wide result selected a column the window had not
+    // reached yet: the new cell was not drawn, so it could not take the
+    // focus, and the scroll that followed unmounted the cell that had it.
+    let r0 = c0;
+    let r1 = c1;
+    for (const c of [ed, sel]) {
+      if (c === null || c >= nCols) continue;
+      r0 = Math.min(r0, c);
+      r1 = Math.max(r1, c + 1);
+    }
     body.push(
       <Row
         key={i}
@@ -477,10 +495,8 @@ export default function Grid(p: Props) {
         columns={p.columns}
         widths={widths}
         offs={offs}
-        // The edited row's columns reach as far as its editor, for the same
-        // reason; one row of extra cells, not a screen of them.
-        c0={ed === null ? c0 : Math.min(c0, ed)}
-        c1={ed === null ? c1 : Math.max(c1, ed + 1)}
+        c0={r0}
+        c1={r1}
         selected={i === selRow}
         selCol={sel}
         editCol={ed}

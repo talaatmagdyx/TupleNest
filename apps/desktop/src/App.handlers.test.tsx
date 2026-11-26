@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
-import { CONNECTION, LOST, PLAN, RESULT, backend, type Backend } from "./test/backend";
+import { CONNECTION, LOST, RESULT, backend, type Backend } from "./test/backend";
 
 /** The handlers that are only reachable by clicking the thing itself. */
 
@@ -157,14 +157,6 @@ describe("App — the explorer's other groups", () => {
 
 describe("App — the Plan tab", () => {
   it("runs EXPLAIN from the result tabs", async () => {
-    be.on("pg_query", () => ({
-      columns: [{ name: "QUERY PLAN", dbType: "json" }],
-      totalRows: 1,
-      storedRows: 1,
-      truncated: false,
-      rowsAffected: null,
-    }));
-    be.on("pg_rows", () => [[JSON.stringify(PLAN)]]);
     const user = await connected();
     await user.click(screen.getByRole("button", { name: /^Plan$/ }));
     await waitFor(() => expect(document.querySelector(".modal")).toBeInTheDocument());
@@ -172,14 +164,6 @@ describe("App — the Plan tab", () => {
   });
 
   it("copies the plan as text", async () => {
-    be.on("pg_query", () => ({
-      columns: [{ name: "QUERY PLAN", dbType: "json" }],
-      totalRows: 1,
-      storedRows: 1,
-      truncated: false,
-      rowsAffected: null,
-    }));
-    be.on("pg_rows", () => [[JSON.stringify(PLAN)]]);
     const user = await connected();
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });

@@ -1228,6 +1228,10 @@ pub struct QueryResultOut {
     truncated: bool,
     rows_affected: Option<u64>,
     elapsed_ms: u64,
+    /// A detached run's rows (the first page of them), handed back inline
+    /// because they were never put where `pg_rows` could page them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rows: Option<Box<serde_json::value::RawValue>>,
 }
 
 #[derive(serde::Serialize)]
@@ -1776,13 +1780,19 @@ fn record_history(
 
 /// Runs SQL on the active session. Rows stream into the backend store;
 /// the WebView pages them with `pg_rows`.
+///
+/// `detached`: the statement's rows are returned inline (first page) and the
+/// stored result the grid is paging is left alone. EXPLAIN runs this way, so
+/// looking at a plan does not wipe the result it was asked about.
 #[tauri::command]
 pub async fn pg_query(
     app: tauri::AppHandle,
     state: tauri::State<'_, PgState>,
     sql: String,
     params: Option<Vec<serde_json::Value>>,
+    detached: Option<bool>,
 ) -> Result<QueryResultOut, String> {
+    let detached = detached.unwrap_or(false);
     // The previous result is kept until a new row set replaces it. Clearing
     // it up front freed memory a little sooner, but every statement — a row
     // edit's UPDATE, a SAVEPOINT, an import's INSERT, a failed EXPLAIN — then
@@ -1820,7 +1830,7 @@ pub async fn pg_query(
         .map_err(|e| format!("Not run: the audit log write did not complete ({e})."))??;
     }
 
-    let sink = StoreSink::new(Some(&state.result));
+    let sink = StoreSink::new(if detached { None } else { Some(&state.result) });
     // JSON param values from the WebView → typed ParamValue. Text is the
     // safe default; the server casts as needed for the placeholder's type.
     let bound: Vec<tuplenest_driver_api::ParamValue> = params
@@ -1917,7 +1927,18 @@ pub async fn pg_query(
         truncated: stored.store.truncated() || summary.rows_returned > stored.store.stored() as u64,
         rows_affected: summary.rows_affected,
         elapsed_ms: summary.duration_ms,
+        rows: None,
     };
+    if detached {
+        // The grid's result stays where it is; this one is handed back and
+        // dropped with `stored`.
+        let n = stored.store.stored();
+        let rows = page(&mut stored, 0, n.max(1), None)?;
+        return Ok(QueryResultOut {
+            rows: Some(rows),
+            ..out
+        });
+    }
     if !stored.columns.is_empty() {
         // Normally empty: the sink took the old result with the first rows.
         // Not if a long first sort held its lock through every batch.

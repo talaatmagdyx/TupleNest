@@ -15,11 +15,13 @@ const PLAN = [
   },
 ];
 
-/** Answer pg_query with a row count, then pg_rows with the payload. */
+/** Answer a detached pg_query with the payload inline, as pg.rs does. Any
+ *  other command — pg_rows above all — would mean the grid's stored result
+ *  was touched, so it is an error here. */
 const serve = (cell: unknown, storedRows = 1) => {
   invokeMock.mockImplementation(async (cmd: string) => {
-    if (cmd === "pg_query") return { columns: [], storedRows } as never;
-    if (cmd === "pg_rows") return (Array.isArray(cell) && storedRows > 1 ? cell : [[cell]]) as never;
+    const rows = Array.isArray(cell) && storedRows > 1 ? cell : [[cell]];
+    if (cmd === "pg_query") return { columns: [], storedRows, rows } as never;
     throw new Error(`unexpected ${cmd}`);
   });
 };
@@ -80,7 +82,7 @@ describe("useExplain — ANALYZE is not chosen on the user's behalf", () => {
   it("turns ANALYZE on for a plain SELECT", async () => {
     const { result } = renderHook(() => useExplain());
     await run(result, { sql: "select * from users" });
-    expect(invokeMock).toHaveBeenCalledWith("pg_query", { sql: expect.stringContaining("ANALYZE") });
+    expect(invokeMock).toHaveBeenCalledWith("pg_query", { detached: true, sql: expect.stringContaining("ANALYZE") });
   });
 
   it.each([
@@ -94,7 +96,7 @@ describe("useExplain — ANALYZE is not chosen on the user's behalf", () => {
     // an explain becomes a deletion.
     const { result } = renderHook(() => useExplain());
     await run(result, { sql });
-    expect(invokeMock).toHaveBeenCalledWith("pg_query", { sql: expect.not.stringContaining("ANALYZE") });
+    expect(invokeMock).toHaveBeenCalledWith("pg_query", { detached: true, sql: expect.not.stringContaining("ANALYZE") });
     expect(result.current.opts.analyze).toBe(false);
   });
 
@@ -110,7 +112,7 @@ describe("useExplain — ANALYZE is not chosen on the user's behalf", () => {
   ])("leaves ANALYZE off for a query that writes: %s", async (sql) => {
     const { result } = renderHook(() => useExplain());
     await run(result, { sql });
-    expect(invokeMock).toHaveBeenCalledWith("pg_query", { sql: expect.not.stringContaining("ANALYZE") });
+    expect(invokeMock).toHaveBeenCalledWith("pg_query", { detached: true, sql: expect.not.stringContaining("ANALYZE") });
     expect(result.current.opts.analyze).toBe(false);
   });
 
@@ -127,7 +129,7 @@ describe("useExplain — ANALYZE is not chosen on the user's behalf", () => {
     // off in the user's head, and an untimed plan is the lesser product.
     const { result } = renderHook(() => useExplain());
     await run(result, { sql });
-    expect(invokeMock).toHaveBeenCalledWith("pg_query", { sql: expect.stringContaining("ANALYZE") });
+    expect(invokeMock).toHaveBeenCalledWith("pg_query", { detached: true, sql: expect.stringContaining("ANALYZE") });
   });
 
   it("refuses an explicit ANALYZE the guard would stop on a guarded connection", async () => {
@@ -157,20 +159,20 @@ describe("useExplain — ANALYZE is not chosen on the user's behalf", () => {
     const { result } = renderHook(() => useExplain());
     const out = await run(result, { sql: "delete from users", env: "prod" });
     expect(out.kind).toBe("ok");
-    expect(invokeMock).toHaveBeenCalledWith("pg_query", { sql: expect.not.stringContaining("ANALYZE") });
+    expect(invokeMock).toHaveBeenCalledWith("pg_query", { detached: true, sql: expect.not.stringContaining("ANALYZE") });
   });
 
   it("does not guard a plain SELECT on prod", async () => {
     const { result } = renderHook(() => useExplain());
     const out = await run(result, { sql: "select * from users", env: "prod" });
     expect(out.kind).toBe("ok");
-    expect(invokeMock).toHaveBeenCalledWith("pg_query", { sql: expect.stringContaining("ANALYZE") });
+    expect(invokeMock).toHaveBeenCalledWith("pg_query", { detached: true, sql: expect.stringContaining("ANALYZE") });
   });
 
   it("still obeys an explicit ANALYZE on a DELETE — it was asked for", async () => {
     const { result } = renderHook(() => useExplain());
     await run(result, { sql: "delete from users", override: opts({ analyze: true }) });
-    expect(invokeMock).toHaveBeenCalledWith("pg_query", { sql: expect.stringContaining("ANALYZE") });
+    expect(invokeMock).toHaveBeenCalledWith("pg_query", { detached: true, sql: expect.stringContaining("ANALYZE") });
   });
 
   it("ignores a MouseEvent handed over by onClick", async () => {
@@ -191,10 +193,10 @@ describe("useExplain — onStart", () => {
     const seen: string[] = [];
     invokeMock.mockImplementation(async (cmd: string) => {
       seen.push(cmd);
-      return (cmd === "pg_query" ? { columns: [], storedRows: 1 } : [[JSON.stringify(PLAN)]]) as never;
+      return { columns: [], storedRows: 1, rows: [[JSON.stringify(PLAN)]] } as never;
     });
     await run(result, { onStart: () => seen.push("onStart") });
-    expect(seen).toEqual(["onStart", "pg_query", "pg_rows"]);
+    expect(seen).toEqual(["onStart", "pg_query"]);
   });
 
   it("does not fire for a run that never started", async () => {
@@ -237,21 +239,30 @@ describe("useExplain — the plan", () => {
     expect(result.current.explain?.statement).toBe(sent.sql);
   });
 
-  it("asks for every row of a FORMAT TEXT plan", async () => {
-    // 295 rows for a real query here — one row per line. Asking for one row
+  it("keeps every row of a FORMAT TEXT plan", async () => {
+    // 295 rows for a real query here — one row per line. Keeping one row
     // would keep the first line and silently drop the plan.
     const { result } = renderHook(() => useExplain());
     serve([["Seq Scan on users"], ["  Filter: (id = 1)"]], 2);
     await run(result, { override: opts({ format: "text" }) });
-    expect(invokeMock).toHaveBeenCalledWith("pg_rows", { offset: 0, limit: 2 });
     expect(result.current.explain?.raw).toBe("Seq Scan on users\n  Filter: (id = 1)");
   });
 
-  it("asks for at least one row when the server reports none", async () => {
+  it("runs detached, leaving the grid's stored result alone", async () => {
+    // EXPLAIN used to replace the backend row store, so the app had to clear
+    // the grid and the last Run's rows were gone just for looking at a plan.
     const { result } = renderHook(() => useExplain());
-    serve(JSON.stringify(PLAN), 0);
     await run(result);
-    expect(invokeMock).toHaveBeenCalledWith("pg_rows", { offset: 0, limit: 1 });
+    expect(invokeMock).toHaveBeenCalledWith("pg_query", expect.objectContaining({ detached: true }));
+    expect(invokeMock).not.toHaveBeenCalledWith("pg_rows", expect.anything());
+  });
+
+  it("copes with a detached answer that carries no rows", async () => {
+    const { result } = renderHook(() => useExplain());
+    invokeMock.mockImplementation(async () => ({ columns: [], storedRows: 0 }) as never);
+    const out = await run(result, { override: opts({ format: "text" }) });
+    expect(out).toEqual({ kind: "ok", root: null });
+    expect(result.current.explain?.raw).toBe("");
   });
 
   it("does not pretend a non-JSON format has a tree", async () => {

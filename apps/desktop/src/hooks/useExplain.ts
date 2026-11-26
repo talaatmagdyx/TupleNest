@@ -126,10 +126,13 @@ export function useExplain(serverMajor?: number): Explain {
       onStart?.();
 
       try {
-        const qr = await invoke<QueryResult>("pg_query", { sql: statement });
-        // FORMAT TEXT returns one row per *line* of the plan, so ask for all of
-        // them — fetching a single row would silently keep only the first line.
-        const rows = await invoke<unknown[][]>("pg_rows", { offset: 0, limit: Math.max(1, qr.storedRows) });
+        // Detached: the plan comes back inline and the result the grid is
+        // showing stays in the backend store. Running EXPLAIN used to replace
+        // that store, so the grid had to be cleared and the last Run's rows
+        // were lost just for looking at a plan. FORMAT TEXT is one row per
+        // *line* of the plan; a detached run returns all of them.
+        const qr = await invoke<QueryResult>("pg_query", { sql: statement, detached: true });
+        const rows = qr.rows ?? [];
         const raw = readPlanPayload(rows, o.format);
 
         // Only FORMAT JSON can be walked into a tree; the rest are shown raw.

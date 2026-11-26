@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
-import { CONNECTION, PROD, PLAN, backend, type Backend } from "./test/backend";
+import { CONNECTION, PROD, backend, type Backend } from "./test/backend";
 
 /** Every overlay can be dismissed, and the handlers that hang off the shell. */
 
@@ -199,14 +199,6 @@ describe("App — the offline catalog", () => {
 
 describe("App — the EXPLAIN plan", () => {
   const explained = async () => {
-    be.on("pg_query", () => ({
-      columns: [{ name: "QUERY PLAN", dbType: "json" }],
-      totalRows: 1,
-      storedRows: 1,
-      truncated: false,
-      rowsAffected: null,
-    }));
-    be.on("pg_rows", () => [[JSON.stringify(PLAN)]]);
     const user = await connected();
     await palette(user, "Show EXPLAIN plan");
     // The node name appears on the plan tree and again in the raw JSON tab.
