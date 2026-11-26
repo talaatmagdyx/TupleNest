@@ -455,6 +455,73 @@ describe("Grid — wide results, right edge", () => {
   });
 });
 
+describe("Grid — the focus survives End on a wide result", () => {
+  // End selected the last column before the window had scrolled to it: that
+  // cell was not drawn, so the focus stayed on the old one, and the scroll
+  // that followed unmounted it. Focus fell to <body> and the arrows did nothing.
+  const wide: GridColumn[] = [...Array(60)].map((_, i) => ({ name: `c${i}`, dbType: "text" }));
+  const selected = () => screen.getAllByRole("gridcell").find((c) => c.getAttribute("aria-selected") === "true");
+
+  it("keeps the focus on the grid, on the selected cell, and the arrows still move it", async () => {
+    invokeMock.mockResolvedValue([wide.map((_, i) => `v${i}`), wide.map((_, i) => `w${i}`)]);
+    const user = userEvent.setup();
+    const { container } = render(<Grid {...base} columns={wide} storedRows={2} />);
+    const view = container.querySelector(".vgrid") as HTMLElement;
+    Object.defineProperty(view, "clientWidth", { configurable: true, value: 56 + 300 });
+    await user.click(await screen.findByText("v0"));
+
+    await user.keyboard("{End}");
+    // Drawn and focused at once, before the scroll has moved the window.
+    const last = screen.getByText("v59");
+    expect(document.activeElement).toBe(last);
+    // And brought into view: its right edge on the viewport's.
+    expect(view.scrollLeft).toBe(150 * 60 - 300);
+
+    // The scroll lands and the window moves right; v0 is gone.
+    fireEvent.scroll(view);
+    await waitFor(() => expect(screen.queryByText("v0")).toBeNull());
+    expect(document.activeElement).toBe(last);
+    expect(view.contains(document.activeElement)).toBe(true);
+
+    await user.keyboard("{ArrowLeft}");
+    expect(selected()).toHaveTextContent("v58");
+    expect(document.activeElement).toBe(screen.getByText("v58"));
+    await user.keyboard("{ArrowDown}");
+    expect(selected()).toHaveTextContent("w58");
+    expect(document.activeElement).toBe(screen.getByText("w58"));
+  });
+
+  it("draws the selected cell only on its own row", async () => {
+    invokeMock.mockResolvedValue([wide.map((_, i) => `v${i}`), wide.map((_, i) => `w${i}`)]);
+    const user = userEvent.setup();
+    const { container } = render(<Grid {...base} columns={wide} storedRows={2} />);
+    const view = container.querySelector(".vgrid") as HTMLElement;
+    Object.defineProperty(view, "clientWidth", { configurable: true, value: 56 + 300 });
+    await user.click(await screen.findByText("v0"));
+    await user.keyboard("{End}");
+    expect(screen.getByText("v59")).toBeInTheDocument();
+    expect(screen.queryByText("w59")).toBeNull();
+  });
+
+  it("keeps the selected row drawn when the view scrolls away from it", async () => {
+    invokeMock.mockImplementation((_cmd, args) => {
+      const { offset } = args as { offset: number };
+      return Promise.resolve([...Array(200)].map((_, i) => [offset + i, `u${offset + i}@x.com`, null, true]));
+    });
+    const user = userEvent.setup();
+    const { container } = render(<Grid {...base} storedRows={2000} />);
+    const view = container.querySelector(".vgrid") as HTMLElement;
+    await user.click(await screen.findByText("u0@x.com"));
+    const cell = screen.getByText("u0@x.com");
+    view.scrollTop = 24 * 150;
+    fireEvent.scroll(view);
+    await screen.findByText("u150@x.com");
+    expect(document.activeElement).toBe(cell);
+    await user.keyboard("{ArrowDown}");
+    expect(selected()).toHaveTextContent("u1@x.com");
+  });
+});
+
 describe("Grid — an open editor survives scrolling", () => {
   const scrollTo = (view: HTMLElement, top: number, left = 0) => {
     view.scrollTop = top;

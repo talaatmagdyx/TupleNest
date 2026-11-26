@@ -98,6 +98,16 @@ export const PLAN = [
   },
 ];
 
+/** What a detached `pg_query` of an EXPLAIN (FORMAT JSON) answers. */
+export const PLAN_RESULT: QueryResult = {
+  columns: [{ name: "QUERY PLAN", dbType: "json" }],
+  totalRows: 1,
+  storedRows: 1,
+  truncated: false,
+  rowsAffected: null,
+  rows: [[JSON.stringify(PLAN)]],
+} as unknown as QueryResult;
+
 const defaults = (): Record<string, (args: Record<string, unknown>) => unknown> => ({
   app_get_info: () => ({ version: "0.1.0", os: "macos" }),
   settings_get: () => null,
@@ -149,7 +159,9 @@ const defaults = (): Record<string, (args: Record<string, unknown>) => unknown> 
   }),
   pg_admin_backend: () => true,
   audit_list: () => [],
-  pg_query: () => RESULT,
+  // A detached run is EXPLAIN's: its rows come back inline and the stored
+  // result (what pg_rows pages) is left as it was, as in pg.rs.
+  pg_query: (a) => (a.detached ? PLAN_RESULT : RESULT),
   pg_rows: () => ROWS,
   // The backend formats and writes the page itself; it says how many rows.
   export_result_page: (a) => Math.max(0, Math.min(a.limit as number, (a.total as number) - (a.offset as number))),

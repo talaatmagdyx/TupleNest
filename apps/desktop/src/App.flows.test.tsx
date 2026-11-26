@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
-import { CONNECTION, LOST, PLAN, backend, type Backend } from "./test/backend";
+import { CONNECTION, LOST, backend, type Backend } from "./test/backend";
 
 let be: Backend;
 beforeEach(() => {
@@ -152,10 +152,24 @@ describe("App — a session that goes away", () => {
 
 describe("App — EXPLAIN", () => {
   const explain = async (user: ReturnType<typeof userEvent.setup>) => {
-    be.on("pg_query", () => ({ columns: [{ name: "QUERY PLAN", dbType: "json" }], totalRows: 1, storedRows: 1, truncated: false, rowsAffected: null }));
-    be.on("pg_rows", () => [[JSON.stringify(PLAN)]]);
     await user.click(screen.getByRole("button", { name: /^Explain$/ }));
   };
+
+  it("leaves the last Run's rows on the grid", async () => {
+    // EXPLAIN used to replace the backend row store, so the app cleared the
+    // grid: looking at a plan threw away the result it was asked about.
+    const user = await connected();
+    await run(user, "select kind, n from t");
+    expect(await screen.findByText("13109")).toBeInTheDocument();
+    await explain(user);
+    await screen.findAllByText(/Seq Scan on pg_class/);
+    const q = be.sent("pg_query");
+    expect(q[q.length - 1]).toMatchObject({ detached: true });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(document.querySelector(".modal")).not.toBeInTheDocument());
+    expect(screen.getByRole("grid", { name: "Query results" })).toBeInTheDocument();
+    expect(screen.getByText("13109")).toBeInTheDocument();
+  });
 
   it("walks the plan onto the screen", async () => {
     const user = await connected();
