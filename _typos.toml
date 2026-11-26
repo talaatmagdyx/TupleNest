@@ -38,3 +38,6 @@ SELEC = "SELEC"
 # whole assertion is that a typo is *not* guessed into `false` and silently
 # written to someone's database, so the typo is the subject of the test.
 ture = "ture"
+
+# openssl's `-passin` option (release.yml reads the .p12 password with it).
+passin = "passin"
