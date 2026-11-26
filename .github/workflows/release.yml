@@ -228,7 +228,7 @@ jobs:
             echo "APPLE_CERTIFICATE_PASSWORD=$S_APPLE_CERTIFICATE_PASSWORD"
             echo "APPLE_SIGNING_IDENTITY=$S_APPLE_SIGNING_IDENTITY"
           } >> "$GITHUB_ENV"
-          echo "Apple certificate present — bundles will be Developer ID signed."
+          echo "Signing certificate present — macOS bundles will be signed as $S_APPLE_SIGNING_IDENTITY (Developer ID, or the self-signed one from scripts/make-macos-cert.sh)."
 
       # Notarization is a second, independent thing: it needs an Apple ID as
       # well as a certificate, and asking for it without one hangs or errors
@@ -257,7 +257,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # APPLE_* deliberately absent here — see the two steps above. Without
           # an Apple Developer account the macOS bundles are not Developer ID
-          # signed or notarized, and Gatekeeper warns on first launch.
+          # signed or notarized, and Gatekeeper warns on first launch. A
+          # self-signed certificate (scripts/make-macos-cert.sh) still gives
+          # every build one identity, so the keychain stops asking after updates.
         with:
           projectPath: apps/desktop
           # Bundle and sign only: see the compile step above.
