@@ -62,9 +62,9 @@ export function tokenizeLines(sql: string): React.ReactNode[][] {
  *
  * A result the backend truncated holds fewer rows than the query matched, and
  * a file written from it is a subset with nothing on its face to say so. The
- * grid shows a banner; the .csv on disk cannot. So the count says it: "100,000
- * of 4,213,662 rows (truncated)" rather than a confident "100,000 rows" beside
- * a file that is missing 98% of the answer.
+ * grid shows a banner; the .csv on disk cannot. So the count says it: "20,000
+ * of 4,213,662 rows (truncated)" rather than a confident "20,000 rows" beside
+ * a file that is missing more than 99% of the answer.
  */
 export function rowCountNote(written: number, result: { totalRows: number; truncated: boolean }): string {
   // The test is "did we write everything", not "did the store overflow". A

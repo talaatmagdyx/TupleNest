@@ -1736,8 +1736,8 @@ export default function App() {
               onToast={showToast}
               onVisibleRows={(a, b) =>
                 // `totalRows`, not `storedRows`. The grid keeps the first
-                // 100,000; the query may have matched five million. Counting
-                // "of 100,000" turns the cap into the answer and hides that
+                // 20,000; the query may have matched five million. Counting
+                // "of 20,000" turns the cap into the answer and hides that
                 // there is anything else — the one number a person reads to
                 // decide whether they have seen it all.
                 setRowsInfo(result ? `rows ${a.toLocaleString()}–${b.toLocaleString()} of ${rowCountNote(result.storedRows, result)}` : "")
