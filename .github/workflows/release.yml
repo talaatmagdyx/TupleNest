@@ -211,6 +211,19 @@ jobs:
       # `$GITHUB_ENV` is the only way to set a variable conditionally: an `env:`
       # key always exists. HAS_APPLE_CERT is computed at job level because the
       # `secrets` context is not available in a step-level `if:`.
+      # The certificate goes into a keychain made here, and Tauri is given only
+      # its name (APPLE_SIGNING_IDENTITY). Handing Tauri APPLE_CERTIFICATE
+      # instead makes it import the .p12 itself and then look the identity up
+      # by Apple's name prefixes ("Developer ID Application:", "Apple
+      # Development:" …), so the self-signed certificate from
+      # scripts/make-macos-cert.sh is never found: "failed to resolve signing
+      # identity" (dev builds 45909287798 and 45911996838). With only the name
+      # set, Tauri runs `codesign -s <name>` against the keychain search list,
+      # which works for a Developer ID and a self-signed certificate alike.
+      #
+      # The certificate is also trusted for code signing on this throwaway
+      # runner, which an untrusted self-signed identity needs to count as
+      # valid; a Developer ID is already trusted, so that is a no-op for one.
       - name: Apple signing — only when a certificate actually exists
         if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
         # Secrets arrive as environment variables, never interpolated into the
@@ -221,35 +234,25 @@ jobs:
           S_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           S_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          {
-            echo "APPLE_CERTIFICATE<<__TN_EOF__"
-            echo "$S_APPLE_CERTIFICATE"
-            echo "__TN_EOF__"
-            echo "APPLE_CERTIFICATE_PASSWORD=$S_APPLE_CERTIFICATE_PASSWORD"
-            echo "APPLE_SIGNING_IDENTITY=$S_APPLE_SIGNING_IDENTITY"
-          } >> "$GITHUB_ENV"
-          echo "Signing certificate present — macOS bundles will be signed as $S_APPLE_SIGNING_IDENTITY (Developer ID, or the self-signed one from scripts/make-macos-cert.sh)."
-
-      # Tauri picks the identity from `security find-identity -v -p codesigning`,
-      # which lists only identities macOS trusts. A Developer ID chains to
-      # Apple's root and is listed; a self-signed certificate is not, and the
-      # bundle step fails with "failed to resolve signing identity". Trusting
-      # this one certificate for code signing, on this throwaway runner only,
-      # puts it in the list. A Developer ID is already trusted, so this is a
-      # no-op for one.
-      - name: Trust the signing certificate on this runner
-        if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
-        run: |
-          cert="$RUNNER_TEMP/signing.cer"
-          printf %s "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/signing.p12"
-          openssl pkcs12 -in "$RUNNER_TEMP/signing.p12" -nokeys -clcerts \
-            -passin env:APPLE_CERTIFICATE_PASSWORD -legacy 2>/dev/null > "$cert" \
-            || openssl pkcs12 -in "$RUNNER_TEMP/signing.p12" -nokeys -clcerts \
-                 -passin env:APPLE_CERTIFICATE_PASSWORD > "$cert"
-          rm -f "$RUNNER_TEMP/signing.p12"
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          p12="$RUNNER_TEMP/signing.p12"
+          cer="$RUNNER_TEMP/signing.cer"
+          kp="$(openssl rand -hex 24)"
+          printf %s "$S_APPLE_CERTIFICATE" | base64 --decode > "$p12"
+          security create-keychain -p "$kp" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kp" "$kc"
+          security import "$p12" -k "$kc" -f pkcs12 -P "$S_APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kp" "$kc" >/dev/null
+          # shellcheck disable=SC2046 # the existing list, one path per word
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          security find-certificate -c "$S_APPLE_SIGNING_IDENTITY" -p "$kc" > "$cer"
           sudo security add-trusted-cert -d -r trustRoot -p codeSign \
-            -k /Library/Keychains/System.keychain "$cert"
-          rm -f "$cert"
+            -k /Library/Keychains/System.keychain "$cer"
+          rm -f "$p12" "$cer"
+          security find-identity -v -p codesigning "$kc"
+          echo "APPLE_SIGNING_IDENTITY=$S_APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          echo "macOS bundles will be signed as $S_APPLE_SIGNING_IDENTITY."
 
       # Notarization is a second, independent thing: it needs an Apple ID as
       # well as a certificate, and asking for it without one hangs or errors
