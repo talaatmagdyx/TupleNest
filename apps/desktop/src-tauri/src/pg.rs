@@ -43,8 +43,9 @@ pub struct PgParams {
     pub ssh: Option<SshParams>,
 }
 
-/// SSH tunnel parameters (E1.2). Key-file auth; passphrase-less keys or
-/// agent-managed keys for now. No secrets are stored here.
+/// SSH tunnel parameters (E1.2). Key-file auth; the key may be encrypted.
+/// No secrets are stored here: an encrypted key's passphrase lives in the OS
+/// keychain, and only its opaque ref is kept, exactly as for the password.
 #[derive(serde::Deserialize, serde::Serialize, Clone, PartialEq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct SshParams {
@@ -55,13 +56,38 @@ pub struct SshParams {
     /// Pinned SHA-256 host key fingerprint. Empty → known_hosts policy.
     #[serde(default)]
     pub fingerprint: String,
+    /// Keychain ref of the key's passphrase (from `pg_secret_save`), when the
+    /// key is encrypted. Absent in profiles saved before passphrases existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passphrase_ref: Option<String>,
 }
 
 impl SshParams {
+    /// The passphrase ref, if there is a usable one.
+    pub fn passphrase_key(&self) -> Option<&str> {
+        self.passphrase_ref.as_deref().filter(|k| !k.is_empty())
+    }
+
+    /// Do `a` and `b` describe the same tunnel — the same bastion, user, key
+    /// and host-key policy? Which keychain entry holds the passphrase does not
+    /// change where the connection goes, so it is left out: entering the
+    /// passphrase again must not make a saved profile look like a different
+    /// connection (its prod tag and read-only flag follow `profile_matches`).
+    pub fn same_hop(a: Option<&SshParams>, b: Option<&SshParams>) -> bool {
+        let hop = |s: Option<&SshParams>| {
+            s.map(|s| SshParams {
+                passphrase_ref: None,
+                ..s.clone()
+            })
+        };
+        hop(a) == hop(b)
+    }
+
     fn tunnel_config(
         &self,
         target_host: &str,
         target_port: u16,
+        passphrase: Option<String>,
     ) -> tuplenest_ssh_core::SshTunnelConfig {
         tuplenest_ssh_core::SshTunnelConfig {
             ssh_host: self.host.clone(),
@@ -69,7 +95,7 @@ impl SshParams {
             username: self.username.clone(),
             auth: tuplenest_ssh_core::SshAuth::KeyFile {
                 path: self.key_path.clone(),
-                passphrase: None,
+                passphrase,
             },
             host_key: if self.fingerprint.trim().is_empty() {
                 tuplenest_ssh_core::HostKeyPolicy::KnownHosts
@@ -220,21 +246,50 @@ pub fn cache_key(username: &str, host: &str, port: u16, database: &str) -> Strin
  * Editing a saved profile's host without re-entering its password therefore
  * asks for the password again, which is exactly the case being prevented.
  */
+/*
+ * The SSH key passphrase is held to the same rule. It never leaves this
+ * machine — it only decrypts the key file — but a saved profile's passphrase
+ * would otherwise let a compromised WebView sign in with the user's key to an
+ * SSH server of its choosing.
+ */
 fn authorize_secret(
     app: &crate::AppState,
     state: &PgState,
     params: &PgParams,
 ) -> Result<(), String> {
-    let Some(key) = params.secret_ref.as_deref() else {
-        return Ok(());
-    };
+    if let Some(key) = params.secret_ref.as_deref() {
+        if !may_use_secret(app, state, params, key, |r| {
+            r.secret_ref.as_deref() == Some(key)
+        })? {
+            return Err("The saved password belongs to a different server or user. Enter the password again to use it here.".into());
+        }
+    }
+    if let Some(key) = params.ssh.as_ref().and_then(SshParams::passphrase_key) {
+        if !may_use_secret(app, state, params, key, |r| {
+            saved_ssh(r).as_ref().and_then(SshParams::passphrase_key) == Some(key)
+        })? {
+            return Err("The saved SSH key passphrase belongs to a different connection. Enter the passphrase again to use it here.".into());
+        }
+    }
+    Ok(())
+}
+
+/// Was `key` written this session, or does a saved profile that is exactly
+/// this connection own it (`owns`)?
+fn may_use_secret(
+    app: &crate::AppState,
+    state: &PgState,
+    params: &PgParams,
+    key: &str,
+    owns: impl Fn(&tuplenest_workspace_store::ConnectionRecord) -> bool,
+) -> Result<bool, String> {
     if state
         .fresh_secrets
         .lock()
         .map_err(|_| "secret lock poisoned")?
         .contains(key)
     {
-        return Ok(());
+        return Ok(true);
     }
     let profiles = app
         .store
@@ -242,14 +297,24 @@ fn authorize_secret(
         .map_err(|_| "store lock poisoned")?
         .connection_list()
         .map_err(|e| e.to_string())?;
-    let owned = profiles
+    Ok(profiles
         .iter()
-        .any(|r| r.secret_ref.as_deref() == Some(key) && profile_matches(r, params));
-    if owned {
-        Ok(())
-    } else {
-        Err("The saved password belongs to a different server or user. Enter the password again to use it here.".into())
-    }
+        .any(|r| owns(r) && profile_matches(r, params)))
+}
+
+/// A saved profile's SSH settings, or None (none, or a row that does not parse).
+pub fn saved_ssh(r: &tuplenest_workspace_store::ConnectionRecord) -> Option<SshParams> {
+    r.ssh_json
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .and_then(|s| serde_json::from_str(s).ok())
+}
+
+/// Does this saved profile refer to the keychain entry `key` — as its
+/// password, or as its SSH key's passphrase?
+pub fn profile_owns_secret(r: &tuplenest_workspace_store::ConnectionRecord, key: &str) -> bool {
+    r.secret_ref.as_deref() == Some(key)
+        || saved_ssh(r).as_ref().and_then(SshParams::passphrase_key) == Some(key)
 }
 
 /*
@@ -268,18 +333,13 @@ pub fn profile_matches(r: &tuplenest_workspace_store::ConnectionRecord, p: &PgPa
             .to_string()
     };
     let ca = |c: Option<&str>| c.filter(|c| !c.trim().is_empty()).map(str::to_string);
-    let saved_ssh: Option<SshParams> = r
-        .ssh_json
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-        .and_then(|s| serde_json::from_str(s).ok());
     r.host == p.host
         && r.port == p.port
         && r.database == p.database
         && r.username == p.username
         && tls(Some(&r.tls_mode)) == tls(p.tls_mode.as_deref())
         && ca(r.tls_ca_path.as_deref()) == ca(p.tls_ca_path.as_deref())
-        && saved_ssh == p.ssh
+        && SshParams::same_hop(saved_ssh(r).as_ref(), p.ssh.as_ref())
 }
 
 /*
@@ -350,6 +410,16 @@ fn resolve_password(secret_ref: &Option<String>) -> Result<Option<Secret>, Strin
             .map(Some)
             .map_err(|e| e.to_string()),
     }
+}
+
+/// The SSH key's passphrase from the keychain, if the profile has one. Off
+/// the async workers, like the password: the keychain can stop on a prompt.
+async fn resolve_passphrase(ssh: &SshParams) -> Result<Option<String>, String> {
+    let key = ssh.passphrase_key().map(str::to_owned);
+    let secret = tokio::task::spawn_blocking(move || resolve_password(&key))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(secret.map(|s| s.expose().to_owned()))
 }
 
 /// Flatten a DriverError into the string the frontend shows.
@@ -528,8 +598,9 @@ mod err_to_string_tests {
     }
 }
 
-/// Stores a password in the OS keychain; returns the opaque reference key.
-/// This is the ONLY command that ever sees a secret, and it does not log it.
+/// Stores a password — or an SSH key's passphrase — in the OS keychain;
+/// returns the opaque reference key. Besides `connection_save`, the ONLY
+/// command that ever sees a secret, and it does not log it.
 #[tauri::command]
 pub fn pg_secret_save(
     app: tauri::State<'_, crate::AppState>,
@@ -625,11 +696,7 @@ pub fn sweep_pending_secrets(
         };
         pending
             .into_iter()
-            .filter(|key| {
-                !profiles
-                    .iter()
-                    .any(|p| p.secret_ref.as_deref() == Some(key))
-            })
+            .filter(|key| !profiles.iter().any(|p| profile_owns_secret(p, key)))
             .collect()
     };
 
@@ -654,10 +721,7 @@ pub fn sweep_pending_secrets(
     let keep: Vec<String> = pending
         .into_iter()
         .filter(|key| {
-            !deleted.contains(key)
-                && !profiles
-                    .iter()
-                    .any(|p| p.secret_ref.as_deref() == Some(key))
+            !deleted.contains(key) && !profiles.iter().any(|p| profile_owns_secret(p, key))
         })
         .collect();
     if let Err(e) = store.setting_set(PENDING_SECRETS, &keep) {
@@ -748,8 +812,15 @@ pub async fn pg_test(
     // Optional SSH stage: open a throwaway tunnel, timed.
     let mut tunnel = None;
     if let Some(ssh) = &params.ssh {
+        let passphrase = resolve_passphrase(ssh).await?;
         let started = std::time::Instant::now();
-        match tuplenest_ssh_core::open_tunnel(ssh.tunnel_config(&params.host, params.port)).await {
+        match tuplenest_ssh_core::open_tunnel(ssh.tunnel_config(
+            &params.host,
+            params.port,
+            passphrase,
+        ))
+        .await
+        {
             Ok(t) => {
                 stages.push(TestStageOut {
                     name: "ssh".into(),
@@ -834,10 +905,14 @@ pub async fn pg_connect(
     // driver at its local end. The tunnel lives as long as the session.
     let (tunnel, config) = match &params.ssh {
         Some(ssh) => {
-            let tunnel =
-                tuplenest_ssh_core::open_tunnel(ssh.tunnel_config(&params.host, params.port))
-                    .await
-                    .map_err(|e| format!("SSH tunnel: {e}"))?;
+            let passphrase = resolve_passphrase(ssh).await?;
+            let tunnel = tuplenest_ssh_core::open_tunnel(ssh.tunnel_config(
+                &params.host,
+                params.port,
+                passphrase,
+            ))
+            .await
+            .map_err(|e| format!("SSH tunnel: {e}"))?;
             let config = params.to_config_endpoint("127.0.0.1", tunnel.local_port())?;
             (Some(tunnel), config)
         }
@@ -2654,6 +2729,7 @@ mod tests {
             username: "x".into(),
             key_path: "~/.ssh/id_ed25519".into(),
             fingerprint: "SHA256:attacker".into(),
+            passphrase_ref: None,
         });
         assert!(
             authorize_secret(&app, &pg, &via_bastion).is_err(),
@@ -2668,6 +2744,132 @@ mod tests {
         // Once its profile is saved, a fresh ref is bound like any other.
         pg.bind_secret("tn-secret-new");
         assert!(authorize_secret(&app, &pg, &params("new.db", Some("tn-secret-new"))).is_err());
+    }
+
+    fn bastion(passphrase_ref: Option<&str>) -> SshParams {
+        SshParams {
+            host: "bastion.internal".into(),
+            port: 22,
+            username: "deploy".into(),
+            key_path: "/home/u/.ssh/id_ed25519".into(),
+            fingerprint: "SHA256:bastion".into(),
+            passphrase_ref: passphrase_ref.map(str::to_owned),
+        }
+    }
+
+    /// A tunnelled prod profile whose key is encrypted.
+    fn app_with_tunnelled_profile() -> crate::AppState {
+        let app = app_with_profile();
+        app.store
+            .lock()
+            .unwrap()
+            .connection_upsert(&tuplenest_workspace_store::ConnectionRecord {
+                id: "p2".into(),
+                name: "prod via bastion".into(),
+                driver: "postgres".into(),
+                environment: Some("prod".into()),
+                color: None,
+                read_only: true,
+                host: "10.0.0.5".into(),
+                port: 5432,
+                database: "app".into(),
+                username: "svc".into(),
+                secret_ref: None,
+                tls_mode: "verify-full".into(),
+                tls_ca_path: None,
+                ssh_json: Some(serde_json::to_string(&bastion(Some("tn-pp-prod"))).unwrap()),
+                options_json: None,
+                statement_timeout_ms: 0,
+            })
+            .unwrap();
+        app
+    }
+
+    fn tunnelled(ssh: SshParams) -> PgParams {
+        let mut p = params("10.0.0.5", None);
+        p.ssh = Some(ssh);
+        p
+    }
+
+    #[test]
+    fn a_saved_passphrase_only_opens_its_own_tunnel() {
+        let app = app_with_tunnelled_profile();
+        let pg = PgState::new(tuplenest_metadata_cache::MetadataCache::open_in_memory().unwrap());
+        // Its own connection: allowed.
+        assert!(authorize_secret(&app, &pg, &tunnelled(bastion(Some("tn-pp-prod")))).is_ok());
+        // The same passphrase through a bastion of the WebView's choosing.
+        let mut elsewhere = bastion(Some("tn-pp-prod"));
+        elsewhere.host = "attacker.example".into();
+        let err = authorize_secret(&app, &pg, &tunnelled(elsewhere)).unwrap_err();
+        assert!(err.contains("passphrase"), "{err}");
+        // …or with a different key file.
+        let mut other_key = bastion(Some("tn-pp-prod"));
+        other_key.key_path = "/tmp/other".into();
+        assert!(authorize_secret(&app, &pg, &tunnelled(other_key)).is_err());
+        // A ref no profile owns, not typed this session.
+        assert!(authorize_secret(&app, &pg, &tunnelled(bastion(Some("tn-unknown")))).is_err());
+        // A passphrase typed this session may be tried anywhere.
+        pg.fresh_secrets.lock().unwrap().insert("tn-pp-new".into());
+        let mut new_hop = bastion(Some("tn-pp-new"));
+        new_hop.host = "new-bastion".into();
+        assert!(authorize_secret(&app, &pg, &tunnelled(new_hop)).is_ok());
+        // An empty ref is no ref.
+        assert!(authorize_secret(&app, &pg, &tunnelled(bastion(Some("")))).is_ok());
+    }
+
+    /// Entering the passphrase again gives the form a fresh ref. That must not
+    /// make the profile look like a different connection: its prod tag and
+    /// read-only flag would silently stop applying.
+    #[test]
+    fn a_new_passphrase_ref_is_still_the_same_connection() {
+        let app = app_with_tunnelled_profile();
+        let saved = app
+            .store
+            .lock()
+            .unwrap()
+            .connection_get("p2")
+            .unwrap()
+            .unwrap();
+        assert!(profile_matches(
+            &saved,
+            &tunnelled(bastion(Some("tn-pp-fresh")))
+        ));
+        assert!(profile_matches(&saved, &tunnelled(bastion(None))));
+        let p = with_profile_policy(&app, tunnelled(bastion(Some("tn-pp-fresh"))));
+        assert_eq!(p.environment.as_deref(), Some("prod"));
+        assert_eq!(p.read_only, Some(true));
+        // A real change of hop is still a different connection.
+        let mut moved = bastion(Some("tn-pp-prod"));
+        moved.username = "root".into();
+        assert!(!profile_matches(&saved, &tunnelled(moved)));
+    }
+
+    #[test]
+    fn ssh_json_without_a_passphrase_ref_still_parses_and_round_trips() {
+        let old = r#"{"host":"b","port":22,"username":"u","keyPath":"/k","fingerprint":""}"#;
+        let ssh: SshParams = serde_json::from_str(old).unwrap();
+        assert_eq!(ssh.passphrase_ref, None);
+        // Nothing new is written for a key without a passphrase.
+        assert!(!serde_json::to_string(&ssh).unwrap().contains("passphrase"));
+        let with = serde_json::to_string(&bastion(Some("tn-pp"))).unwrap();
+        assert!(with.contains(r#""passphraseRef":"tn-pp""#), "{with}");
+    }
+
+    #[test]
+    fn the_tunnel_gets_the_resolved_passphrase() {
+        let cfg = bastion(Some("tn-pp")).tunnel_config("db", 5432, Some("s3cret".into()));
+        assert!(matches!(
+            cfg.auth,
+            tuplenest_ssh_core::SshAuth::KeyFile { passphrase: Some(ref p), .. } if p == "s3cret"
+        ));
+        let cfg = bastion(None).tunnel_config("db", 5432, None);
+        assert!(matches!(
+            cfg.auth,
+            tuplenest_ssh_core::SshAuth::KeyFile {
+                passphrase: None,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -3678,6 +3880,29 @@ mod pending_secret_tests {
     }
     fn note(store: &StdMutex<Store>, key: &str) {
         remember_pending_secret(&store.lock().unwrap(), key);
+    }
+
+    #[test]
+    fn a_passphrase_a_profile_adopted_is_kept_and_an_unsaved_one_removed() {
+        let store = StdMutex::new(Store::open_in_memory().unwrap());
+        let keychain = FakeKeychain::with(&["tn-pp-saved", "tn-pp-tested"]);
+        // Two passphrases were typed and tested; one profile was saved.
+        note(&store, "tn-pp-saved");
+        note(&store, "tn-pp-tested");
+        let mut p = profile("p1", None);
+        p.ssh_json = Some(
+            r#"{"host":"b","port":22,"username":"u","keyPath":"/k","fingerprint":"","passphraseRef":"tn-pp-saved"}"#
+                .into(),
+        );
+        store.lock().unwrap().connection_upsert(&p).unwrap();
+
+        assert_eq!(sweep_pending_secrets(&store, &keychain), 1);
+        assert!(
+            keychain.has("tn-pp-saved"),
+            "an adopted passphrase was swept"
+        );
+        assert!(!keychain.has("tn-pp-tested"));
+        assert!(pending(&store).is_empty());
     }
 
     #[test]

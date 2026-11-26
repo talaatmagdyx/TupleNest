@@ -42,7 +42,7 @@ import type { ObjectDetails } from "./overlays/DetailsModal";
 import { useQueryTabs } from "./hooks/useQueryTabs";
 import { useSearch } from "./hooks/useSearch";
 import { useHealth } from "./hooks/useHealth";
-import { useConnectionForm, timeoutMs } from "./hooks/useConnectionForm";
+import { useConnectionForm, timeoutMs, parseSsh } from "./hooks/useConnectionForm";
 import { matchShortcut } from "./lib/shortcuts";
 import { isConnectionLost, useQuery } from "./hooks/useQuery";
 import { defaultSearchPath } from "./lib/nodes";
@@ -137,6 +137,7 @@ export default function App() {
   const {
     host, port, database, username, password, secretRef, tlsMode, tlsCaPath,
     sshEnabled, sshHost, sshPort, sshUser, sshKeyPath, sshFingerprint,
+    sshPassphrase, sshPassphraseRef,
     profileId, profileName, environment,
   } = form;
 
@@ -348,12 +349,27 @@ export default function App() {
     return ref;
   }, [password, secretRef, form]);
 
-  /** Params for the backend, saving the password to the keychain first if the
-   *  user typed a new one. The shape itself is the hook's business. */
+  /** The SSH key passphrase, exactly as the password: into the keychain via
+   *  the same command, reusing the form's ref, and the box cleared. */
+  const savePassphrase = useCallback(async () => {
+    if (!sshPassphrase) return null;
+    const ref = await invoke<string>("pg_secret_save", {
+      password: sshPassphrase,
+      reuseRef: sshPassphraseRef,
+    });
+    form.set("sshPassphrase", "");
+    form.set("sshPassphraseRef", ref);
+    return ref;
+  }, [sshPassphrase, sshPassphraseRef, form]);
+
+  /** Params for the backend, saving the password and SSH key passphrase to
+   *  the keychain first if the user typed new ones. The shape itself is the
+   *  hook's business. */
   const withSecret = useCallback(async (): Promise<PgParams> => {
     const ref = password ? await savePassword() : secretRef;
-    return form.toParams(ref);
-  }, [password, savePassword, secretRef, form]);
+    const passphraseRef = sshPassphrase ? await savePassphrase() : sshPassphraseRef;
+    return form.toParams(ref, passphraseRef);
+  }, [password, savePassword, secretRef, sshPassphrase, savePassphrase, sshPassphraseRef, form]);
 
   const metaFetch = useCallback(
     async (request: Record<string, unknown>): Promise<MetadataOut<unknown> | null> => {
@@ -558,7 +574,10 @@ export default function App() {
           secretRef: password ? null : secretRef,
           tlsMode,
           tlsCaPath: tlsCaPath || null,
-          sshJson: form.ssh() ? JSON.stringify(form.ssh()) : null,
+          // The passphrase as the password: typed → sent once, consumed by the
+          // backend; otherwise the ref from a prior Test, to be adopted.
+          sshJson: form.ssh() ? JSON.stringify(form.ssh(sshPassphrase ? null : sshPassphraseRef)) : null,
+          sshPassphrase: sshPassphrase || null,
           statementTimeoutMs: timeoutMs(form.statementTimeoutSec),
         },
       });
@@ -566,6 +585,8 @@ export default function App() {
       form.set("profileId", rec.id);
       form.set("profileName", rec.name);
       form.set("secretRef", rec.secretRef);
+      form.set("sshPassphrase", "");
+      form.set("sshPassphraseRef", parseSsh(rec.sshJson)?.passphraseRef || null);
       setStatus(`Saved "${rec.name}"`);
       await refreshSaved();
       return rec;
@@ -573,7 +594,7 @@ export default function App() {
       setStatus(`Save error: ${errText(e)}`);
       return null;
     }
-  }, [profileId, profileName, environment, host, port, database, username, password, secretRef, tlsMode, tlsCaPath, form, refreshSaved, setStatus]);
+  }, [profileId, profileName, environment, host, port, database, username, password, secretRef, sshPassphrase, sshPassphraseRef, tlsMode, tlsCaPath, form, refreshSaved, setStatus]);
 
   const saveAndConnect = useCallback(async () => {
     const rec = await doSaveProfile();
@@ -598,6 +619,8 @@ export default function App() {
     form.set("sshUser", "");
     form.set("sshKeyPath", "");
     form.set("sshFingerprint", "");
+    form.set("sshPassphrase", "");
+    form.set("sshPassphraseRef", null);
     session.clearTest();
     setStatus("");
     setOverlay("connEditor");
@@ -1848,6 +1871,9 @@ export default function App() {
           sshUser={sshUser}
           sshKeyPath={sshKeyPath}
           sshFingerprint={sshFingerprint}
+          sshPassphrase={sshPassphrase}
+          hasSshPassphrase={sshPassphraseRef !== null}
+          onSshPassphrase={(v) => form.set("sshPassphrase", v)}
           onSshEnabled={(v) => form.set("sshEnabled", v)}
           onSshHost={(v) => form.set("sshHost", v)}
           onSshPort={(v) => form.set("sshPort", v)}

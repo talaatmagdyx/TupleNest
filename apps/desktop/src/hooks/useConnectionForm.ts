@@ -25,6 +25,10 @@ export const BLANK = {
   sshUser: "",
   sshKeyPath: "",
   sshFingerprint: "",
+  // An encrypted key's passphrase, exactly like the password: typed here
+  // once, then only ever held as a keychain ref.
+  sshPassphrase: "",
+  sshPassphraseRef: null as string | null,
   // Seconds in the UI, milliseconds on the wire: nobody thinks about a query
   // ceiling in milliseconds. 0 means no limit, as PostgreSQL does.
   statementTimeoutSec: 0,
@@ -38,11 +42,14 @@ export type ConnectionForm = ConnectionFormState & {
   load: (c: ConnectionRecord) => void;
   /** Back to a blank new-connection form. */
   reset: () => void;
-  /** The SSH block, or null when there is no usable tunnel configured. */
-  ssh: () => SshParams | null;
-  /** Connection params for the backend. `secretRef` is supplied by the caller
-   *  because only it knows whether the password was just re-saved. */
-  toParams: (secretRef: string | null) => PgParams;
+  /** The SSH block, or null when there is no usable tunnel configured.
+   *  `passphraseRef` overrides the form's when the caller has just saved a
+   *  newly typed passphrase. */
+  ssh: (passphraseRef?: string | null) => SshParams | null;
+  /** Connection params for the backend. `secretRef` (and `passphraseRef`,
+   *  when given) are supplied by the caller because only it knows whether
+   *  the password or passphrase was just re-saved. */
+  toParams: (secretRef: string | null, passphraseRef?: string | null) => PgParams;
 };
 
 /** Seconds in the form to milliseconds on the wire.
@@ -100,25 +107,34 @@ export function useConnectionForm(initial: Partial<ConnectionFormState> = {}): C
       sshUser: ssh?.username ?? "",
       sshKeyPath: ssh?.keyPath ?? "",
       sshFingerprint: ssh?.fingerprint ?? "",
+      // As with the password: the ref, never the value.
+      sshPassphrase: "",
+      sshPassphraseRef: ssh?.passphraseRef || null,
       statementTimeoutSec: Math.round((c.statementTimeoutMs ?? 0) / 1000),
     });
   }, []);
 
-  const ssh = useCallback((): SshParams | null => {
-    // A tunnel toggled on but never filled in is not a tunnel. Sending a
-    // half-built one would fail at connect time with a worse message.
-    if (!state.sshEnabled || !state.sshHost) return null;
-    return {
-      host: state.sshHost,
-      port: state.sshPort,
-      username: state.sshUser,
-      keyPath: state.sshKeyPath,
-      fingerprint: state.sshFingerprint,
-    };
-  }, [state]);
+  const ssh = useCallback(
+    (passphraseRef?: string | null): SshParams | null => {
+      // A tunnel toggled on but never filled in is not a tunnel. Sending a
+      // half-built one would fail at connect time with a worse message.
+      if (!state.sshEnabled || !state.sshHost) return null;
+      const ref = passphraseRef === undefined ? state.sshPassphraseRef : passphraseRef;
+      return {
+        host: state.sshHost,
+        port: state.sshPort,
+        username: state.sshUser,
+        keyPath: state.sshKeyPath,
+        fingerprint: state.sshFingerprint,
+        // Left out for a key without one, so the saved JSON is unchanged.
+        ...(ref ? { passphraseRef: ref } : {}),
+      };
+    },
+    [state],
+  );
 
   const toParams = useCallback(
-    (secretRef: string | null): PgParams => ({
+    (secretRef: string | null, passphraseRef?: string | null): PgParams => ({
       host: state.host,
       port: state.port,
       database: state.database,
@@ -130,7 +146,7 @@ export function useConnectionForm(initial: Partial<ConnectionFormState> = {}): C
       environment: state.environment,
       readOnly: state.readOnly,
       statementTimeoutMs: timeoutMs(state.statementTimeoutSec),
-      ssh: ssh(),
+      ssh: ssh(passphraseRef),
     }),
     [state, ssh],
   );

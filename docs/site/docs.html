@@ -92,9 +92,10 @@
 
       <h2 id="ssh">SSH tunnels</h2>
       <p>To reach a database behind a bastion, enable the SSH section and provide the host, user, and private key path. Host keys are verified; a changed key is rejected rather than silently trusted.</p>
+      <p>If the private key is protected by a passphrase, enter it in the <b>Key passphrase</b> field. It is stored in the OS keychain like the database password, never in the profile. Leave the field empty for a key without one. A missing or wrong passphrase is reported straight away, before the SSH server is contacted.</p>
 
       <h2 id="credentials">Password storage</h2>
-      <p>Passwords are stored in the macOS Keychain, Windows Credential Manager, or the Linux Secret Service — never in a config file, and never returned to the UI layer. Details on the <a href="security.html#credentials">Security page</a>.</p>
+      <p>Passwords and SSH key passphrases are stored in the macOS Keychain, Windows Credential Manager, or the Linux Secret Service — never in a config file, and never returned to the UI layer. Details on the <a href="security.html#credentials">Security page</a>.</p>
 
       <h2 id="editor">SQL editor</h2>
       <p>Schema-aware completion, formatting, multiple tabs, query history, snippets, and parameter binding. The editor understands PostgreSQL literals (dollar-quoting, nested comments), which is what makes the safety guard reliable.</p>

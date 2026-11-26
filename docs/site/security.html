@@ -109,7 +109,7 @@
         <li>A changed host key is rejected, not silently accepted</li>
         <li>No silent trust-on-first-use — the fingerprint is recorded and enforced</li>
       </ul></div>
-      <div class="card"><h4>Key handling</h4><p>Private keys are read from the path you configure and used to authenticate the tunnel. TupleNest does not enable agent forwarding. The SSH host is one of only three network destinations the app ever contacts.</p></div>
+      <div class="card"><h4>Key handling</h4><p>Private keys are read from the path you configure and used to authenticate the tunnel. A passphrase-protected key is supported: its passphrase is kept in the OS keychain like a password, and is only used for the tunnel it was saved with. TupleNest does not enable agent forwarding. The SSH host is one of only three network destinations the app ever contacts.</p></div>
     </div>
   </div>
 </section>
@@ -138,7 +138,7 @@
     <h2>What's stored, and where</h2>
     <table style="margin-top:8px">
       <tr><th>Data</th><th>Storage</th></tr>
-      <tr><td>Passwords</td><td class="how">OS keychain</td></tr>
+      <tr><td>Passwords and SSH key passphrases</td><td class="how">OS keychain</td></tr>
       <tr><td>Connection metadata</td><td class="how">Local SQLite (owner-only on Unix)</td></tr>
       <tr><td>Query history</td><td class="how">Local SQLite, newest 1,000 statements; secret literals scrubbed (best-effort)</td></tr>
       <tr><td>Production SQL history</td><td class="how">A <code class="inline">-- tuplenest:no-history</code> directive drops a row; a production audit log records a redacted entry</td></tr>

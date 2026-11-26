@@ -121,6 +121,54 @@ describe("App — the connection form", () => {
     });
   });
 
+  /** Fill in a tunnel whose key is encrypted, and type its passphrase. */
+  const encryptedTunnel = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole("switch", { name: /SSH tunnel/i }));
+    await user.type(screen.getByLabelText("SSH host"), "bastion.internal");
+    await user.type(screen.getByLabelText("SSH user"), "deploy");
+    await user.type(screen.getByLabelText("Private key path"), "/keys/id_ed25519");
+    const pass = screen.getByLabelText("Key passphrase");
+    expect(pass).toHaveAttribute("type", "password");
+    await user.type(pass, "open sesame");
+  };
+
+  it("hands a typed key passphrase to the save once, and never inside the tunnel json", async () => {
+    const user = await mount();
+    await openForm(user);
+    await encryptedTunnel(user);
+    await user.click(screen.getByRole("button", { name: /^Save & Connect$/ }));
+
+    await waitFor(() => expect(be.sent("connection_save")).toHaveLength(1));
+    const input = be.sent("connection_save")[0].input as { sshJson: string; sshPassphrase: string };
+    expect(input.sshPassphrase).toBe("open sesame");
+    expect(input.sshJson).not.toContain("open sesame");
+    expect(JSON.parse(input.sshJson).passphraseRef).toBeUndefined();
+  });
+
+  it("puts a typed key passphrase in the keychain before a test, and sends only the ref", async () => {
+    be.on("pg_secret_save", (a) => (a.password === "open sesame" ? "tn-pp-1" : "ref-1"));
+    const user = await mount();
+    await openForm(user);
+    await encryptedTunnel(user);
+    await user.click(screen.getByRole("button", { name: /^Test$/ }));
+
+    await waitFor(() => expect(be.sent("pg_test")).toHaveLength(1));
+    expect(be.sent("pg_secret_save")).toContainEqual({ password: "open sesame", reuseRef: null });
+    const params = be.sent("pg_test")[0].params as { ssh: { passphraseRef: string } };
+    expect(params.ssh.passphraseRef).toBe("tn-pp-1");
+    expect(JSON.stringify(params)).not.toContain("open sesame");
+    // The box is cleared and says the passphrase is saved.
+    expect(screen.getByLabelText("Key passphrase")).toHaveValue("");
+    expect(screen.getByPlaceholderText("passphrase saved in keychain")).toBeInTheDocument();
+
+    // Saving afterwards adopts the tested entry rather than sending it again.
+    await user.click(screen.getByRole("button", { name: /^Save$/ }));
+    await waitFor(() => expect(be.sent("connection_save")).toHaveLength(1));
+    const input = be.sent("connection_save")[0].input as { sshJson: string; sshPassphrase: string | null };
+    expect(input.sshPassphrase).toBeNull();
+    expect(JSON.parse(input.sshJson).passphraseRef).toBe("tn-pp-1");
+  });
+
   it("takes a CA file for verify-full", async () => {
     const user = await mount();
     await openForm(user);

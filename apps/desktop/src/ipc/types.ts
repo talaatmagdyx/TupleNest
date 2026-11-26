@@ -10,6 +10,9 @@ export type SshParams = {
   keyPath: string;
   /** Pinned SHA-256 host key fingerprint; empty → known_hosts policy. */
   fingerprint: string;
+  /** Keychain ref of an encrypted key's passphrase — never the passphrase.
+   *  Absent when the key has none. */
+  passphraseRef?: string | null;
 };
 
 export type PgParams = {

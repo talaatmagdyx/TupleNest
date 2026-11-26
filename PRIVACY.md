@@ -18,8 +18,8 @@ Windows, `~/.local/share/app.tuplenest.desktop` on Linux.
 
 | What | Where | Notes |
 |---|---|---|
-| **Passwords** | OS keychain | Keychain / Credential Manager / Secret Service. Never in the files below — the SQLite table has no password column, only an opaque reference. |
-| **Connection profiles** | `<data>` SQLite | Host, port, database, username, TLS mode, SSH settings. Not the password. |
+| **Passwords and SSH key passphrases** | OS keychain | Keychain / Credential Manager / Secret Service. Never in the files below — the SQLite table has no password or passphrase column, only opaque references. |
+| **Connection profiles** | `<data>` SQLite | Host, port, database, username, TLS mode, SSH settings (including the key file's path, not the key). Not the password or the key's passphrase. |
 | **Query history** | `<data>` SQLite | Newest 1,000. **On prod-tagged connections the SQL text is not recorded** — only timing, row counts, and status. On other environments the SQL is stored with a best-effort scrub of secret literals (`PASSWORD '…'`, `IDENTIFIED BY '…'`, `key=…`, connection-string URLs → `[REDACTED]`). Add a `-- tuplenest:no-history` comment to a statement to skip its history row entirely. When a query fails, only a reduced error is stored (title, SQLSTATE, category); the server's DETAIL/HINT — which can quote row values like `Key (email)=(…)` — is shown on screen but **not** written to disk. |
 | **Production audit log** | `<data>` SQLite | Separate from history and deliberately the opposite trade: on prod-tagged connections the SQL is **retained in full** (secret literals still scrubbed) so there is a record of what was run against production. This is an accountability record: `-- tuplenest:no-history` does **not** suppress it. If you do not want it, do not tag the connection prod. Each row is written before its statement is sent, so it records what was submitted, including statements that then failed or were cut off; if the row cannot be written, the statement is not sent. |
 | **Cached schema** | `<data>` SQLite | The shape of the database, so the explorer works offline: schema, table, column, constraint, type and routine names, with what describes them (column types and defaults, comments, enum labels, partition bounds). Not row data, and not query text: health figures, server activity, index usage, object sizes and search terms are live-only and are never stored. |
@@ -76,9 +76,9 @@ TupleNest makes exactly these connections:
 ## Deleting your data
 
 - **Profiles, history, audit log, cache** — delete the `<data>` directory.
-- **Passwords** — these are the keychain's, not ours; remove entries named
-  `tn-secret-*` in Keychain Access, Credential Manager, or Seahorse. Deleting a
-  profile in the app removes its keychain entry too.
+- **Passwords and SSH key passphrases** — these are the keychain's, not ours;
+  remove entries named `tn-secret-*` in Keychain Access, Credential Manager, or
+  Seahorse. Deleting a profile in the app removes its keychain entries too.
 - **Logs** — delete `<data>/logs` (older than 14 days are deleted automatically).
 - **Crash reports** — delete `<data>/crashes`.
 
