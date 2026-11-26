@@ -87,7 +87,7 @@ Still open: TN-005 and TN-010 (rows above), and part of the P3 list.
 | Two roadmaps that contradict each other | Open, a decision: `docs/ROADMAP.md` plans other engines and an assistant; the site lists them as not planned |
 | Release assets are mutable | Open: a repository setting for the owner |
 | A killed backend is not recognised until the next statement | Open |
-| SSH supports only unencrypted key files | Open: needs a passphrase prompt |
+| SSH supports only unencrypted key files | Fixed: a passphrase field in the SSH settings; the passphrase is kept in the OS keychain behind an opaque ref, under the same rules as the password (fresh-or-owned, pending sweep, removed with the profile). A missing or wrong passphrase is reported at once. No ssh-agent support yet |
 | Accessibility gaps | Open |
 | Grid loses keyboard focus after End on wide results | Open |
 | Stale numbers in docs and comments | Open |

@@ -174,6 +174,15 @@ trusting it.
   numeric.
 
 ### Security
+- SSH tunnels accept passphrase-protected private keys (OpenSSH, PEM and
+  PuTTY formats). The connection form has a masked "Key passphrase" field;
+  the passphrase goes to the OS keychain exactly as the password does, and
+  only its opaque reference is saved with the profile. It may only be used
+  for the tunnel it was saved for, an unsaved one is swept at the next start,
+  and deleting the profile deletes it. A key that needs a passphrase and has
+  none, or has the wrong one, now fails at once with a message that says so,
+  before the SSH server is contacted. Until now an encrypted key could not be
+  used at all, so it had to be stored unencrypted.
 - A password that was typed and tested but whose profile was never saved no
   longer stays in the keychain for good. The entry is noted when it is made,
   and after the next start any entry no saved profile refers to is deleted,

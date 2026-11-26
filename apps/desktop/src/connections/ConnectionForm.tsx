@@ -59,6 +59,11 @@ type Props = {
   sshUser: string;
   sshKeyPath: string;
   sshFingerprint: string;
+  /** Passphrase for an encrypted key: typed once, then held as a keychain ref. */
+  sshPassphrase: string;
+  /** A passphrase for this key is already in the keychain. */
+  hasSshPassphrase: boolean;
+  onSshPassphrase: (v: string) => void;
   onSshEnabled: (v: boolean) => void;
   onSshHost: (v: string) => void;
   onSshPort: (v: number) => void;
@@ -275,6 +280,17 @@ export default function ConnectionForm(p: Props) {
                   <label htmlFor={f("sshkey")}>Private key path</label>
                   <input id={f("sshkey")} className="mono" {...IDENT} placeholder="~/.ssh/id_ed25519" value={p.sshKeyPath} onChange={(e) => p.onSshKeyPath(e.target.value)} />
                 </div>
+              </div>
+              <div className="field">
+                <label htmlFor={f("sshpass")}>Key passphrase</label>
+                <input id={f("sshpass")}
+                  type="password"
+                  autoComplete="off"
+                  placeholder={p.hasSshPassphrase ? "passphrase saved in keychain" : "only if the key is encrypted"}
+                  value={p.sshPassphrase}
+                  onChange={(e) => p.onSshPassphrase(e.target.value)}
+                />
+                <div className="hint">🔒 Stored in the OS keychain, like the password. Leave empty for a key without one.</div>
               </div>
               <div className="field">
                 <label htmlFor={f("sshfp")}>Host-key SHA256 fingerprint</label>

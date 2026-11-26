@@ -31,6 +31,9 @@ const base = {
   sshUser: "",
   sshKeyPath: "",
   sshFingerprint: "",
+  sshPassphrase: "",
+  hasSshPassphrase: false,
+  onSshPassphrase: vi.fn(),
   onSshEnabled: vi.fn(),
   onSshHost: vi.fn(),
   onSshPort: vi.fn(),
@@ -199,6 +202,39 @@ describe("ConnectionForm — SSH", () => {
     render(<ConnectionForm {...base} sshEnabled onSshHost={onSshHost} />);
     await userEvent.type(screen.getByPlaceholderText("bastion.internal"), "b");
     expect(onSshHost).toHaveBeenCalledWith("b");
+  });
+});
+
+describe("ConnectionForm — SSH key passphrase", () => {
+  it("is part of the tunnel, not shown without one", () => {
+    render(<ConnectionForm {...base} />);
+    expect(screen.queryByLabelText("Key passphrase")).not.toBeInTheDocument();
+  });
+
+  it("is masked, like the password", () => {
+    render(<ConnectionForm {...base} sshEnabled sshPassphrase="open sesame" />);
+    const box = screen.getByLabelText("Key passphrase");
+    expect(box).toHaveAttribute("type", "password");
+    expect(box).toHaveValue("open sesame");
+    expect(screen.queryByText("open sesame")).not.toBeInTheDocument();
+  });
+
+  it("says it is only needed for an encrypted key", () => {
+    render(<ConnectionForm {...base} sshEnabled />);
+    expect(screen.getByPlaceholderText("only if the key is encrypted")).toBeInTheDocument();
+  });
+
+  it("says a saved passphrase is in the keychain rather than looking empty", () => {
+    render(<ConnectionForm {...base} sshEnabled hasSshPassphrase />);
+    expect(screen.getByPlaceholderText("passphrase saved in keychain")).toBeInTheDocument();
+    expect(screen.getByText(/Stored in the OS keychain, like the password/)).toBeInTheDocument();
+  });
+
+  it("reports what is typed", async () => {
+    const onSshPassphrase = vi.fn();
+    render(<ConnectionForm {...base} sshEnabled onSshPassphrase={onSshPassphrase} />);
+    await userEvent.type(screen.getByLabelText("Key passphrase"), "x");
+    expect(onSshPassphrase).toHaveBeenCalledWith("x");
   });
 });
 

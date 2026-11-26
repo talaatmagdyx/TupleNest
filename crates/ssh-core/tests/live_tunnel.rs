@@ -82,6 +82,72 @@ async fn wrong_host_fingerprint_fails_closed() {
     );
 }
 
+/// A passphrase-protected copy of the dev client key, in a temp file that is
+/// removed when the test ends. The passphrase is test-only.
+fn encrypted_client_key(passphrase: &str) -> tempfile::NamedTempFile {
+    use russh::keys::ssh_key::{Cipher, Kdf, LineEnding, PrivateKey};
+    use std::io::Write;
+    let plain = std::fs::read_to_string(format!("{}/client_ed25519", dev_dir()))
+        .expect("dev sshd client key");
+    let encrypted = PrivateKey::from_openssh(plain)
+        .expect("parse client key")
+        .encrypt_with(
+            Cipher::Aes256Ctr,
+            Kdf::Bcrypt {
+                salt: vec![3u8; 16],
+                rounds: 16,
+            },
+            0x0bad_cafe,
+            passphrase,
+        )
+        .expect("encrypt client key")
+        .to_openssh(LineEnding::LF)
+        .expect("encode client key");
+    let mut f = tempfile::NamedTempFile::new().unwrap();
+    f.write_all(encrypted.as_bytes()).unwrap();
+    f
+}
+
+#[tokio::test]
+#[ignore]
+async fn a_passphrase_protected_key_opens_the_tunnel_with_its_passphrase() {
+    let pass = "tuplenest-test-only-passphrase";
+    let key = encrypted_client_key(pass);
+    let with = |passphrase: Option<&str>| {
+        let mut cfg = config(host_fingerprint());
+        cfg.auth = SshAuth::KeyFile {
+            path: key.path().to_str().unwrap().into(),
+            passphrase: passphrase.map(str::to_string),
+        };
+        cfg
+    };
+
+    let tunnel = open_tunnel(with(Some(pass))).await.unwrap();
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", tunnel.local_port()))
+        .await
+        .unwrap();
+    let mut request = Vec::new();
+    request.extend_from_slice(&8i32.to_be_bytes());
+    request.extend_from_slice(&80877103i32.to_be_bytes());
+    stream.write_all(&request).await.unwrap();
+    let mut answer = [0u8; 1];
+    stream.read_exact(&mut answer).await.unwrap();
+    assert!(answer[0] == b'S' || answer[0] == b'N');
+    tunnel.close();
+
+    let err = open_tunnel(with(None)).await.err().expect("must fail");
+    assert!(matches!(err, TunnelError::KeyEncrypted { .. }), "{err}");
+
+    // A wrong passphrase is an answer, not a hang.
+    let started = std::time::Instant::now();
+    let err = open_tunnel(with(Some("wrong")))
+        .await
+        .err()
+        .expect("must fail");
+    assert!(matches!(err, TunnelError::WrongPassphrase { .. }), "{err}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+}
+
 #[tokio::test]
 #[ignore]
 async fn unknown_host_key_fails_closed_via_known_hosts_policy() {

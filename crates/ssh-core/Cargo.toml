@@ -15,3 +15,5 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["net", "io-util", "macros", "rt", "time"] }
+# Already in the lock (workspace-store, result-stream, …): test key files.
+tempfile = "3"

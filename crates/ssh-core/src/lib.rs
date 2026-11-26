@@ -5,6 +5,11 @@
 //! as seen from the SSH server. Host key verification fails closed:
 //! either a pinned SHA-256 fingerprint matches, or the key must already
 //! be present in the user's known_hosts.
+//!
+//! Key files may be passphrase-protected (OpenSSH, PKCS#5/PKCS#8 PEM and
+//! PuTTY formats). The caller resolves the passphrase from the credential
+//! store; a key that needs one and has none, or has the wrong one, fails at
+//! once with its own error, before any network traffic.
 
 use std::sync::Arc;
 
@@ -20,6 +25,14 @@ pub enum TunnelError {
         path: String,
         source: russh::keys::Error,
     },
+    /// The key file is encrypted and no passphrase was given.
+    #[error(
+        "the SSH key {path} is protected by a passphrase. Enter it in the connection's SSH settings"
+    )]
+    KeyEncrypted { path: String },
+    /// A passphrase was given and it does not decrypt the key.
+    #[error("the passphrase for the SSH key {path} is wrong")]
+    WrongPassphrase { path: String },
     #[error("SSH host key rejected: {0}")]
     HostKeyRejected(String),
     #[error("SSH authentication failed for user `{0}`")]
@@ -128,6 +141,88 @@ impl client::Handler for HostKeyChecker {
     }
 }
 
+/// Does the private key file at `path` need a passphrase?
+///
+/// Reads the file but runs no KDF, so it is quick even for a key with many
+/// bcrypt rounds.
+pub fn key_is_encrypted(path: &str) -> Result<bool, TunnelError> {
+    let text = read_key(path)?;
+    match russh::keys::decode_secret_key(&text, None) {
+        Ok(_) => Ok(false),
+        Err(e) if is_encrypted(&text, &e) => Ok(true),
+        Err(e) => Err(TunnelError::KeyLoad {
+            path: path.to_string(),
+            source: e,
+        }),
+    }
+}
+
+/// Loads a private key, decrypting it with `passphrase` when it is encrypted.
+/// An empty passphrase counts as none.
+pub fn load_key(
+    path: &str,
+    passphrase: Option<&str>,
+) -> Result<russh::keys::PrivateKey, TunnelError> {
+    decode_key(path, &read_key(path)?, passphrase)
+}
+
+fn read_key(path: &str) -> Result<String, TunnelError> {
+    std::fs::read_to_string(path).map_err(|e| TunnelError::KeyLoad {
+        path: path.to_string(),
+        source: e.into(),
+    })
+}
+
+fn decode_key(
+    path: &str,
+    text: &str,
+    passphrase: Option<&str>,
+) -> Result<russh::keys::PrivateKey, TunnelError> {
+    let passphrase = passphrase.filter(|p| !p.is_empty());
+    // Without a passphrase first: that tells an encrypted key from a broken
+    // one, so a damaged file is never reported as a wrong passphrase.
+    match russh::keys::decode_secret_key(text, None) {
+        Ok(key) => Ok(key),
+        Err(e) if is_encrypted(text, &e) => match passphrase {
+            None => Err(TunnelError::KeyEncrypted {
+                path: path.to_string(),
+            }),
+            // Whatever the format's own failure is (a checkint mismatch, bad
+            // padding, a MAC), the key is known to be encrypted: the
+            // passphrase did not open it.
+            Some(p) => russh::keys::decode_secret_key(text, Some(p)).map_err(|_| {
+                TunnelError::WrongPassphrase {
+                    path: path.to_string(),
+                }
+            }),
+        },
+        Err(e) => Err(TunnelError::KeyLoad {
+            path: path.to_string(),
+            source: e,
+        }),
+    }
+}
+
+/// Did decoding without a passphrase fail because the key is encrypted?
+///
+/// OpenSSH and PKCS#5 keys say so (`KeyIsEncrypted`); an encrypted PKCS#8 or
+/// PuTTY key fails with a format error instead, so their headers are checked.
+fn is_encrypted(text: &str, err: &russh::keys::Error) -> bool {
+    if matches!(
+        err,
+        russh::keys::Error::KeyIsEncrypted
+            | russh::keys::Error::SshKey(russh::keys::ssh_key::Error::Encrypted)
+    ) {
+        return true;
+    }
+    text.lines().any(|l| {
+        let l = l.trim();
+        l == "-----BEGIN ENCRYPTED PRIVATE KEY-----"
+            || l == "Proc-Type: 4,ENCRYPTED"
+            || (l.starts_with("Encryption:") && l != "Encryption: none")
+    })
+}
+
 /// How long the SSH handshake and authentication may take together.
 ///
 /// There was no limit. A host that accepts the TCP connection and then says
@@ -158,6 +253,25 @@ async fn open_tunnel_within(
 }
 
 async fn open_tunnel_unbounded(config: SshTunnelConfig) -> Result<SshTunnel, TunnelError> {
+    // The key first: a missing file, an encrypted key with no passphrase and
+    // a wrong passphrase are local problems, and are reported as such before
+    // anything is sent to the server. A file read plus, for an encrypted key,
+    // a deliberately slow KDF: blocking work, so it runs off the async workers.
+    enum Credential {
+        Key(Arc<russh::keys::PrivateKey>),
+        Password(String),
+    }
+    let credential = match &config.auth {
+        SshAuth::KeyFile { path, passphrase } => {
+            let (key_path, key_pass) = (path.clone(), passphrase.clone());
+            let key = tokio::task::spawn_blocking(move || load_key(&key_path, key_pass.as_deref()))
+                .await
+                .map_err(|e| TunnelError::Io(std::io::Error::other(e)))??;
+            Credential::Key(Arc::new(key))
+        }
+        SshAuth::Password(password) => Credential::Password(password.clone()),
+    };
+
     let checker = HostKeyChecker {
         policy: config.host_key,
         ssh_host: config.ssh_host.clone(),
@@ -181,31 +295,19 @@ async fn open_tunnel_unbounded(config: SshTunnelConfig) -> Result<SshTunnel, Tun
         other => TunnelError::Ssh(other),
     })?;
 
-    let auth_result = match &config.auth {
-        SshAuth::KeyFile { path, passphrase } => {
-            // A file read plus, for an encrypted key, a deliberately slow KDF:
-            // blocking work, so it runs off the async workers.
-            let (key_path, key_pass) = (path.clone(), passphrase.clone());
-            let key = tokio::task::spawn_blocking(move || {
-                russh::keys::load_secret_key(&key_path, key_pass.as_deref())
-            })
-            .await
-            .map_err(|e| TunnelError::Io(std::io::Error::other(e)))?
-            .map_err(|e| TunnelError::KeyLoad {
-                path: path.clone(),
-                source: e,
-            })?;
+    let auth_result = match credential {
+        Credential::Key(key) => {
             let hash_alg = session.best_supported_rsa_hash().await?.flatten();
             session
                 .authenticate_publickey(
                     config.username.clone(),
-                    PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
+                    PrivateKeyWithHashAlg::new(key, hash_alg),
                 )
                 .await?
         }
-        SshAuth::Password(password) => {
+        Credential::Password(password) => {
             session
-                .authenticate_password(config.username.clone(), password.clone())
+                .authenticate_password(config.username.clone(), password)
                 .await?
         }
     };
@@ -338,5 +440,168 @@ mod open_timeout_tests {
     #[test]
     fn the_limit_is_longer_than_the_postgres_connect_timeout() {
         assert!(OPEN_TIMEOUT >= Duration::from_secs(15));
+    }
+}
+
+/// Passphrase-protected keys. Every key here is generated in the test from a
+/// fixed seed and exists only in a temporary file: TEST-ONLY, never a real key.
+#[cfg(test)]
+mod key_passphrase_tests {
+    use super::*;
+    use russh::keys::ssh_key::private::{Ed25519Keypair, KeypairData};
+    use russh::keys::ssh_key::{Cipher, Kdf, LineEnding, PrivateKey};
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+
+    const PASSPHRASE: &str = "correct horse battery staple";
+
+    fn plain_key() -> PrivateKey {
+        let pair = Ed25519Keypair::from_seed(&[7u8; 32]);
+        PrivateKey::new(KeypairData::Ed25519(pair), "tuplenest-test-only").unwrap()
+    }
+
+    /// OpenSSH format, bcrypt KDF, AES-256-CTR: what `ssh-keygen -N` writes.
+    fn encrypted_openssh() -> String {
+        plain_key()
+            .encrypt_with(
+                Cipher::Aes256Ctr,
+                Kdf::Bcrypt {
+                    salt: vec![1u8; 16],
+                    rounds: 16,
+                },
+                0x5eed_5eed,
+                PASSPHRASE,
+            )
+            .unwrap()
+            .to_openssh(LineEnding::LF)
+            .unwrap()
+            .to_string()
+    }
+
+    fn file_with(text: &str) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(text.as_bytes()).unwrap();
+        f
+    }
+
+    fn path(f: &tempfile::NamedTempFile) -> String {
+        f.path().to_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn an_encrypted_key_is_detected_as_such() {
+        let enc = file_with(&encrypted_openssh());
+        assert!(key_is_encrypted(&path(&enc)).unwrap());
+        let plain = file_with(&plain_key().to_openssh(LineEnding::LF).unwrap());
+        assert!(!key_is_encrypted(&path(&plain)).unwrap());
+    }
+
+    #[test]
+    fn the_right_passphrase_opens_the_key() {
+        let enc = file_with(&encrypted_openssh());
+        let key = load_key(&path(&enc), Some(PASSPHRASE)).unwrap();
+        assert_eq!(
+            key.public_key().key_data(),
+            plain_key().public_key().key_data()
+        );
+    }
+
+    #[test]
+    fn no_passphrase_for_an_encrypted_key_says_one_is_needed() {
+        let enc = file_with(&encrypted_openssh());
+        for missing in [None, Some("")] {
+            let err = load_key(&path(&enc), missing).unwrap_err();
+            assert!(matches!(err, TunnelError::KeyEncrypted { .. }), "{err}");
+            assert!(
+                err.to_string().contains("protected by a passphrase"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wrong_passphrase_fails_at_once_and_says_so() {
+        let enc = file_with(&encrypted_openssh());
+        let started = Instant::now();
+        let err = load_key(&path(&enc), Some("not it")).unwrap_err();
+        assert!(matches!(err, TunnelError::WrongPassphrase { .. }), "{err}");
+        assert!(err.to_string().contains("passphrase"), "{err}");
+        assert!(err.to_string().contains("is wrong"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn the_error_never_contains_the_passphrase() {
+        let enc = file_with(&encrypted_openssh());
+        let err = load_key(&path(&enc), Some("hunter2-secret")).unwrap_err();
+        assert!(!err.to_string().contains("hunter2-secret"));
+        assert!(!format!("{err:?}").contains("hunter2-secret"));
+    }
+
+    #[test]
+    fn an_unencrypted_key_ignores_a_passphrase() {
+        let plain = file_with(&plain_key().to_openssh(LineEnding::LF).unwrap());
+        assert!(load_key(&path(&plain), None).is_ok());
+        assert!(load_key(&path(&plain), Some("anything")).is_ok());
+    }
+
+    #[test]
+    fn a_damaged_key_is_not_reported_as_a_wrong_passphrase() {
+        let junk = file_with(
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n",
+        );
+        let err = load_key(&path(&junk), Some(PASSPHRASE)).unwrap_err();
+        assert!(matches!(err, TunnelError::KeyLoad { .. }), "{err}");
+    }
+
+    #[test]
+    fn an_encrypted_pkcs8_key_is_detected_and_opened() {
+        let mut pem = Vec::new();
+        russh::keys::encode_pkcs8_pem_encrypted(&plain_key(), PASSPHRASE.as_bytes(), 16, &mut pem)
+            .unwrap();
+        let enc = file_with(std::str::from_utf8(&pem).unwrap());
+        assert!(key_is_encrypted(&path(&enc)).unwrap());
+        assert!(matches!(
+            load_key(&path(&enc), None).unwrap_err(),
+            TunnelError::KeyEncrypted { .. }
+        ));
+        assert!(matches!(
+            load_key(&path(&enc), Some("not it")).unwrap_err(),
+            TunnelError::WrongPassphrase { .. }
+        ));
+        assert!(load_key(&path(&enc), Some(PASSPHRASE)).is_ok());
+    }
+
+    /// The key is checked before the network: with nothing listening, a
+    /// missing passphrase is still what the tunnel reports.
+    #[tokio::test]
+    async fn the_tunnel_reports_the_key_problem_before_dialling() {
+        let enc = file_with(&encrypted_openssh());
+        let port = {
+            let l = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let config = |passphrase: Option<&str>| SshTunnelConfig {
+            ssh_host: "127.0.0.1".into(),
+            ssh_port: port,
+            username: "nobody".into(),
+            auth: SshAuth::KeyFile {
+                path: path(&enc),
+                passphrase: passphrase.map(str::to_string),
+            },
+            host_key: HostKeyPolicy::KnownHosts,
+            target_host: "127.0.0.1".into(),
+            target_port: 5432,
+        };
+        let err = open_tunnel(config(None)).await.err().unwrap();
+        assert!(matches!(err, TunnelError::KeyEncrypted { .. }), "{err}");
+        let err = open_tunnel(config(Some("not it"))).await.err().unwrap();
+        assert!(matches!(err, TunnelError::WrongPassphrase { .. }), "{err}");
+        // The right one gets as far as the (absent) server.
+        let err = open_tunnel(config(Some(PASSPHRASE))).await.err().unwrap();
+        assert!(
+            matches!(err, TunnelError::Ssh(_) | TunnelError::Io(_)),
+            "{err}"
+        );
     }
 }

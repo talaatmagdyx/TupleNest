@@ -249,6 +249,54 @@ describe("useConnectionForm — toParams", () => {
   });
 });
 
+describe("useConnectionForm — SSH key passphrase", () => {
+  const encrypted = { ...ssh, passphraseRef: "tn-pp" };
+
+  it("loads the ref of a saved passphrase, never the passphrase", () => {
+    const { result } = renderHook(() => useConnectionForm());
+    act(() => result.current.set("sshPassphrase", "left over"));
+    act(() => result.current.load(rec({ sshJson: JSON.stringify(encrypted) })));
+    expect(result.current.sshPassphraseRef).toBe("tn-pp");
+    expect(result.current.sshPassphrase).toBe("");
+  });
+
+  it("carries the saved ref with the tunnel", () => {
+    const { result } = renderHook(() => useConnectionForm());
+    act(() => result.current.load(rec({ sshJson: JSON.stringify(encrypted) })));
+    expect(result.current.ssh()).toEqual(encrypted);
+    expect(result.current.toParams(null).ssh).toEqual(encrypted);
+  });
+
+  it("takes the caller's ref when it has just saved a typed passphrase", () => {
+    const { result } = renderHook(() => useConnectionForm());
+    act(() => result.current.load(rec({ sshJson: JSON.stringify(encrypted) })));
+    expect(result.current.toParams(null, "tn-pp-new").ssh?.passphraseRef).toBe("tn-pp-new");
+    // null: the caller says there is none to send.
+    expect(result.current.ssh(null)).toEqual(ssh);
+  });
+
+  it("leaves the field out for a key without one", () => {
+    const { result } = renderHook(() => useConnectionForm());
+    act(() => result.current.load(rec({ sshJson: JSON.stringify(ssh) })));
+    expect(result.current.sshPassphraseRef).toBeNull();
+    expect(JSON.stringify(result.current.ssh())).not.toContain("passphrase");
+  });
+
+  it("never sends the passphrase itself", () => {
+    const { result } = renderHook(() => useConnectionForm());
+    act(() => result.current.load(rec({ sshJson: JSON.stringify(ssh) })));
+    act(() => result.current.set("sshPassphrase", "open sesame"));
+    expect(JSON.stringify(result.current.toParams("ref"))).not.toContain("open sesame");
+  });
+
+  it("is dropped by reset", () => {
+    const { result } = renderHook(() => useConnectionForm());
+    act(() => result.current.load(rec({ sshJson: JSON.stringify(encrypted) })));
+    act(() => result.current.reset());
+    expect(result.current.sshPassphraseRef).toBeNull();
+  });
+});
+
 /* The driver has honoured `statement_timeout` since Phase 0 and has a live
    test for it, but the value was hard-coded to 0 on the way through, so the
    ceiling could never actually be set. These cover the path that was missing:
