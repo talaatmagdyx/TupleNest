@@ -49,6 +49,7 @@ older distros.
 | `TAURI_SIGNING_PRIVATE_KEY` | updater artifacts, every platform | the build fails **after** producing the installers |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | as above | the build fails at signing — the key is passphrase-protected, so this is **not** optional |
 | `APPLE_*` (see below) | notarizing the macOS builds | mac builds are not Developer ID signed or notarized; Gatekeeper warns |
+| `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` | one stable signing identity for macOS builds (Developer ID, or self-signed: `scripts/make-macos-cert.sh`) | mac builds are ad-hoc signed, each with a new identity, and macOS asks for the login password to reach saved passwords after every update |
 
 ### Keep the signing key behind an approval
 
@@ -106,6 +107,28 @@ and neither replaces the other:
 | Without it | "unidentified developer" warning | updates are refused |
 
 ## 1. Apple code signing + notarization
+
+### Without a Developer account: a self-signed certificate
+
+An ad-hoc signed build gets a new signature every time. The keychain
+remembers which app saved each password by its signature, so after every
+update macOS asks: *TupleNest wants to use your confidential information
+stored in "app.tuplenest.desktop"*, and wants the login password.
+
+`scripts/make-macos-cert.sh` makes one self-signed code-signing certificate,
+imports it for local builds, and sets the three `APPLE_*` certificate secrets on
+the `release` environment. Every build signed with it has the same designated
+requirement (bundle id plus that certificate), so after one last
+**Always Allow** the prompt does not come back. Keep the `.p12` and its
+password: a new certificate is a new identity, and one more prompt for
+everyone.
+
+It does not stop Gatekeeper warning on first launch, and nothing is
+notarized; that still needs the Developer ID below. Local signed build:
+
+```sh
+APPLE_SIGNING_IDENTITY="TupleNest Self-Signed" npm run build:app
+```
 
 **This is the part that needs your Apple Developer account.** Nothing else can
 remove the Gatekeeper warning — not a workaround, not a config flag. An unsigned
