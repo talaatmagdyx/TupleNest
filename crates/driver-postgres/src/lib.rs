@@ -23,26 +23,107 @@ use tokio_postgres::{CancelToken, Client, NoTls, Row};
 mod tls;
 pub use tls::TlsSetup;
 
+/// How a session's connection ended, when it was not the app that ended it.
+///
+/// The server terminating the backend (`pg_terminate_backend`, a shutdown, an
+/// idle timeout), a restart, or a dead network all end the socket under an
+/// idle session. Without this the app found out on the next statement, and
+/// until then showed a live session — and an open transaction the server had
+/// already rolled back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionLost {
+    /// The SQLSTATE of the FATAL the server sent before closing, when it sent
+    /// one (`57P01` for a terminate). A plain socket close has none.
+    pub sqlstate: Option<String>,
+    /// One sentence for the user. No credentials: built from the SQLSTATE
+    /// and the server's message, or tokio-postgres's description of the
+    /// socket failure.
+    pub message: String,
+}
+
+impl ConnectionLost {
+    fn from_error(e: &tokio_postgres::Error) -> Self {
+        match e.as_db_error() {
+            Some(db) => {
+                let code = db.code().code().to_owned();
+                Self {
+                    message: lost_sentence(&code, db.message()),
+                    sqlstate: Some(code),
+                }
+            }
+            None => Self {
+                sqlstate: None,
+                message: format!("the connection to the server closed ({e})"),
+            },
+        }
+    }
+}
+
+/// What a FATAL that closes the session means, in words.
+fn lost_sentence(code: &str, server_message: &str) -> String {
+    let why = match code {
+        "57P01" => "the server ended this session (an administrator terminated it, or the server is shutting down)",
+        "57P02" => "the server is restarting after a crash",
+        "57P03" => "the server is not accepting connections right now",
+        "57P05" => "the server closed this session after it sat idle (idle_session_timeout)",
+        "25P03" => "the server closed this session after a transaction sat idle (idle_in_transaction_session_timeout)",
+        _ => "the server closed this session",
+    };
+    format!("{why}: {server_message} [SQLSTATE {code}]")
+}
+
+/// Resolves when the session's connection ends; see
+/// [`PostgresSession::take_close_watch`].
+pub struct CloseWatch(tokio::sync::oneshot::Receiver<Option<ConnectionLost>>);
+
+impl CloseWatch {
+    /// `Some` when the server or the network ended the connection; `None` when
+    /// the session was dropped on purpose (disconnect, reconnect, shutdown).
+    ///
+    /// tokio-postgres's connection future returns `Ok` only once every
+    /// `Client` handle is gone and it has closed the socket itself. Anything
+    /// else — an ErrorResponse with no request waiting for it, or the socket
+    /// ending while the client is still alive — is an `Err`.
+    pub async fn wait(self) -> Option<ConnectionLost> {
+        self.0.await.ok().flatten()
+    }
+}
+
+/// Drives a connection future to its end and reports how it ended. Generic
+/// over the error so the mapping can be tested without a server
+/// (tokio-postgres's errors cannot be built outside the crate).
+fn spawn_connection<F, E>(
+    connection: F,
+    lost: fn(&E) -> ConnectionLost,
+) -> (tokio::task::JoinHandle<()>, CloseWatch)
+where
+    F: std::future::Future<Output = Result<(), E>> + Send + 'static,
+    E: Send + 'static,
+{
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let handle = tokio::spawn(async move {
+        let end = connection.await;
+        let _ = tx.send(end.err().map(|e| lost(&e)));
+    });
+    (handle, CloseWatch(rx))
+}
+
 /// Connects with the right TLS posture; returns the client plus the spawned
-/// connection task handle.
+/// connection task handle and the watch on its end.
 async fn connect_client(
     pgcfg: &tokio_postgres::Config,
     setup: &TlsSetup,
-) -> Result<(Client, tokio::task::JoinHandle<()>), tokio_postgres::Error> {
+) -> Result<(Client, tokio::task::JoinHandle<()>, CloseWatch), tokio_postgres::Error> {
     match setup.make() {
         None => {
             let (client, connection) = pgcfg.connect(NoTls).await?;
-            let handle = tokio::spawn(async move {
-                let _ = connection.await;
-            });
-            Ok((client, handle))
+            let (handle, watch) = spawn_connection(connection, ConnectionLost::from_error);
+            Ok((client, handle, watch))
         }
         Some(mk) => {
             let (client, connection) = pgcfg.connect(mk).await?;
-            let handle = tokio::spawn(async move {
-                let _ = connection.await;
-            });
-            Ok((client, handle))
+            let (handle, watch) = spawn_connection(connection, ConnectionLost::from_error);
+            Ok((client, handle, watch))
         }
     }
 }
@@ -225,7 +306,7 @@ impl PostgresDriver {
         let result = connect_client(&Self::pg_config(config, password), &setup).await;
         let elapsed = started.elapsed().as_millis() as u64;
         match result {
-            Ok((client, handle)) => {
+            Ok((client, handle, _)) => {
                 stages.push(TestStage {
                     name: "connect".into(),
                     status: TestStageStatus::Passed,
@@ -331,6 +412,8 @@ pub struct PostgresSession {
     cancel_token: Arc<AsyncMutex<CancelToken>>,
     tls: TlsSetup,
     _conn_task: tokio::task::JoinHandle<()>,
+    /// Taken once by whoever wants to hear about the connection ending.
+    close_watch: Option<CloseWatch>,
     in_transaction: Option<TransactionId>,
     /// The profile is read-only: every statement is checked against the
     /// server's own transaction state first (see `ensure_read_only`).
@@ -518,6 +601,16 @@ impl PostgresSession {
         Ok(row.get::<_, bool>(0))
     }
 
+    /// A future that resolves when this session's connection ends, saying
+    /// whether the server or the network ended it (see [`CloseWatch::wait`]).
+    ///
+    /// Nothing is sent to the server to find out: the connection task is
+    /// already reading the socket, and it sees the server's FATAL or the
+    /// close the moment it arrives. `None` after the first call.
+    pub fn take_close_watch(&mut self) -> Option<CloseWatch> {
+        self.close_watch.take()
+    }
+
     pub fn cancel_handle(&self) -> PgCancelHandle {
         PgCancelHandle {
             token: self.cancel_token.clone(),
@@ -543,9 +636,10 @@ impl PostgresDriver {
         password: Option<&str>,
     ) -> Result<PostgresSession, Box<DriverError>> {
         let setup = tls::build(&config)?;
-        let (client, conn_task) = connect_client(&Self::pg_config(&config, password), &setup)
-            .await
-            .map_err(normalize_error)?;
+        let (client, conn_task, close_watch) =
+            connect_client(&Self::pg_config(&config, password), &setup)
+                .await
+                .map_err(normalize_error)?;
 
         /*
          * Refuse a server too old to serve, rather than half-working.
@@ -632,6 +726,7 @@ impl PostgresDriver {
             cancel_token: Arc::new(AsyncMutex::new(cancel_token)),
             tls: setup,
             _conn_task: conn_task,
+            close_watch: Some(close_watch),
             in_transaction: None,
             read_only: config.read_only,
         })
@@ -3481,5 +3576,62 @@ mod render_raw_tests {
             render_raw(RawValue(Vec::new()), &enum_type()),
             CellValue::Text(String::new())
         );
+    }
+}
+
+#[cfg(test)]
+mod close_watch_tests {
+    use super::*;
+
+    fn lost_from_str(e: &&'static str) -> ConnectionLost {
+        ConnectionLost {
+            sqlstate: None,
+            message: (*e).to_owned(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_connection_that_ends_cleanly_is_not_reported_lost() {
+        // Ok is what tokio-postgres returns once the client was dropped on
+        // purpose: a disconnect must not read as a lost connection.
+        let (_h, watch) = spawn_connection(async { Ok::<(), &'static str>(()) }, lost_from_str);
+        assert_eq!(watch.wait().await, None);
+    }
+
+    #[tokio::test]
+    async fn a_connection_that_errors_is_reported_lost() {
+        let (_h, watch) = spawn_connection(async { Err::<(), _>("socket closed") }, lost_from_str);
+        assert_eq!(
+            watch.wait().await,
+            Some(ConnectionLost {
+                sqlstate: None,
+                message: "socket closed".into()
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn an_aborted_connection_task_is_not_reported_lost() {
+        // Runtime shutdown aborts the task; nobody is left to tell.
+        let (h, watch) = spawn_connection(
+            std::future::pending::<Result<(), &'static str>>(),
+            lost_from_str,
+        );
+        h.abort();
+        assert_eq!(watch.wait().await, None);
+    }
+
+    #[test]
+    fn terminate_and_timeouts_are_named() {
+        let s = lost_sentence(
+            "57P01",
+            "terminating connection due to administrator command",
+        );
+        assert!(s.starts_with("the server ended this session"), "{s}");
+        assert!(s.ends_with("[SQLSTATE 57P01]"), "{s}");
+        assert!(lost_sentence("25P03", "x").contains("idle_in_transaction_session_timeout"));
+        assert!(lost_sentence("57P05", "x").contains("idle_session_timeout"));
+        assert!(lost_sentence("57P02", "x").contains("crash"));
+        assert!(lost_sentence("XX000", "boom").starts_with("the server closed this session: boom"));
     }
 }

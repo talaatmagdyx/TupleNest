@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import App from "./App";
 import { CONNECTION, backend, type Backend } from "./test/backend";
 
@@ -224,5 +225,61 @@ describe("App — a transaction opened by typing BEGIN", () => {
     const before = be.sent("pg_disconnect").length;
     await palette(user, "Disconnect");
     await waitFor(() => expect(be.sent("pg_disconnect").length).toBeGreaterThan(before));
+  });
+});
+
+// Audit P3: a killed backend used to go unnoticed until the next statement.
+describe("App — the server ends the session while the window is idle", () => {
+  const LOST_EVENT =
+    "Connection lost: the server ended this session (an administrator terminated it, or the server is " +
+    "shutting down): terminating connection due to administrator command [SQLSTATE 57P01] — the session " +
+    "was closed. Reconnect to continue; nothing was re-run.";
+
+  /** What pg.rs emits; delivered to whatever App registered. */
+  const serverEndsSession = async (generation: number) => {
+    const calls = vi.mocked(listen).mock.calls.filter(([name]) => name === "pg:connection-lost");
+    expect(calls.length).toBeGreaterThan(0);
+    const cb = calls[calls.length - 1][1] as (e: unknown) => void;
+    await act(async () =>
+      cb({ event: "pg:connection-lost", id: 1, payload: { generation, message: LOST_EVENT, sqlstate: "57P01" } }),
+    );
+  };
+
+  it("shows the connection as lost, with Reconnect, without running anything", async () => {
+    be.on("pg_connect", () => ({ environment: "dev", readOnly: false, generation: 5 }));
+    const user = await connected();
+    const sentBefore = be.calls().length;
+    await serverEndsSession(5);
+    const dialog = (await screen.findByRole("button", { name: "Reconnect" })).closest(".connlost") as HTMLElement;
+    expect(within(dialog).getByText(/terminating connection due to administrator command/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/rolled back by the server/)).not.toBeInTheDocument();
+    expect(screen.getAllByText("Not connected").length).toBeGreaterThan(0);
+    // No query was sent to find out, and nothing was disconnected: the backend
+    // already closed the slot.
+    expect(be.calls().slice(sentBefore)).not.toContain("pg_query");
+    expect(be.calls().slice(sentBefore)).not.toContain("pg_disconnect");
+    await user.click(within(dialog).getByRole("button", { name: "Reconnect" }));
+    await waitFor(() => expect(be.sent("pg_connect")).toHaveLength(2));
+  });
+
+  it("says the open transaction was rolled back, and drops the transaction", async () => {
+    be.on("pg_connect", () => ({ environment: "dev", readOnly: false, generation: 6 }));
+    const user = await connected();
+    await user.click(screen.getByRole("button", { name: /begin transaction/i }));
+    await screen.findByText("IN TRANSACTION");
+    await serverEndsSession(6);
+    expect(await screen.findByText(/open transaction was rolled back by the server/)).toBeInTheDocument();
+    expect(screen.queryByText("IN TRANSACTION")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Commit" })).not.toBeInTheDocument();
+  });
+
+  it("stays quiet about a session the user disconnected", async () => {
+    be.on("pg_connect", () => ({ environment: "dev", readOnly: false, generation: 7 }));
+    const user = await connected();
+    const before = be.sent("pg_disconnect").length;
+    await palette(user, "Disconnect");
+    await waitFor(() => expect(be.sent("pg_disconnect").length).toBeGreaterThan(before));
+    await serverEndsSession(7);
+    expect(screen.queryByRole("button", { name: "Reconnect" })).not.toBeInTheDocument();
   });
 });

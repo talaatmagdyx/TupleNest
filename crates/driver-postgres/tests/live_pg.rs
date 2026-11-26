@@ -914,6 +914,58 @@ async fn killed_backend_yields_network_error_and_broken_session() {
     assert!(victim.execute(req("select 2"), &NullSink).await.is_err());
 }
 
+/// An idle session whose backend is terminated says so by itself — no
+/// statement has to fail first — and a session dropped on purpose does not.
+#[tokio::test]
+#[ignore]
+async fn terminated_idle_backend_fires_the_close_watch_without_a_statement() {
+    let mut victim = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    let killer = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    let watch = victim.take_close_watch().expect("first take");
+    assert!(victim.take_close_watch().is_none(), "taken once");
+
+    // An open transaction: what the server rolls back when it kills us.
+    victim.begin(TransactionOptions::default()).await.unwrap();
+    let sink = FirstCellSink(Mutex::new(None));
+    victim
+        .execute(req("select pg_backend_pid()::text"), &sink)
+        .await
+        .unwrap();
+    let pid: i32 = sink.0.lock().unwrap().clone().unwrap().parse().unwrap();
+
+    assert!(killer.admin_backend(pid, true).await.unwrap());
+
+    // Nothing is sent on the victim; the watch alone must notice.
+    let lost = tokio::time::timeout(Duration::from_secs(5), watch.wait())
+        .await
+        .expect("the watch fires promptly")
+        .expect("a terminate is a lost connection, not a clean close");
+    assert_eq!(lost.sqlstate.as_deref(), Some("57P01"), "{lost:?}");
+    assert!(lost.message.contains("ended this session"), "{lost:?}");
+
+    // The server really did roll it back: the backend is gone.
+    let still_there = killer.admin_backend(pid, false).await.unwrap();
+    assert!(!still_there, "pid {pid} should no longer exist");
+
+    // An intentional close: dropping the session ends the connection cleanly.
+    let mut other = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    let watch = other.take_close_watch().unwrap();
+    drop(other);
+    let end = tokio::time::timeout(Duration::from_secs(5), watch.wait())
+        .await
+        .expect("the watch resolves on drop");
+    assert_eq!(end, None, "a dropped session is not a lost one");
+}
+
 // --- Monitoring (Phase 6) ---------------------------------------------------
 
 #[tokio::test]
