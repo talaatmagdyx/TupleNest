@@ -230,6 +230,27 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "Signing certificate present — macOS bundles will be signed as $S_APPLE_SIGNING_IDENTITY (Developer ID, or the self-signed one from scripts/make-macos-cert.sh)."
 
+      # Tauri picks the identity from `security find-identity -v -p codesigning`,
+      # which lists only identities macOS trusts. A Developer ID chains to
+      # Apple's root and is listed; a self-signed certificate is not, and the
+      # bundle step fails with "failed to resolve signing identity". Trusting
+      # this one certificate for code signing, on this throwaway runner only,
+      # puts it in the list. A Developer ID is already trusted, so this is a
+      # no-op for one.
+      - name: Trust the signing certificate on this runner
+        if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
+        run: |
+          cert="$RUNNER_TEMP/signing.cer"
+          printf %s "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          openssl pkcs12 -in "$RUNNER_TEMP/signing.p12" -nokeys -clcerts \
+            -passin env:APPLE_CERTIFICATE_PASSWORD -legacy 2>/dev/null > "$cert" \
+            || openssl pkcs12 -in "$RUNNER_TEMP/signing.p12" -nokeys -clcerts \
+                 -passin env:APPLE_CERTIFICATE_PASSWORD > "$cert"
+          rm -f "$RUNNER_TEMP/signing.p12"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign \
+            -k /Library/Keychains/System.keychain "$cert"
+          rm -f "$cert"
+
       # Notarization is a second, independent thing: it needs an Apple ID as
       # well as a certificate, and asking for it without one hangs or errors
       # rather than skipping.
