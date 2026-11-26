@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
-import { CONNECTION, PLAN, backend, type Backend } from "./test/backend";
+import { CONNECTION, backend, type Backend } from "./test/backend";
 
 /** Keyboard shortcuts, the transaction close prompt, and plan export. */
 
@@ -118,14 +118,6 @@ describe("App — closing a transaction from the prompt", () => {
 
 describe("App — exporting a plan", () => {
   const explain = async (user: ReturnType<typeof userEvent.setup>) => {
-    be.on("pg_query", () => ({
-      columns: [{ name: "QUERY PLAN", dbType: "json" }],
-      totalRows: 1,
-      storedRows: 1,
-      truncated: false,
-      rowsAffected: null,
-    }));
-    be.on("pg_rows", () => [[JSON.stringify(PLAN)]]);
     await type(user, "select * from pg_class");
     await user.click(screen.getByRole("button", { name: /^Explain$/ }));
     await screen.findAllByText(/Seq Scan on pg_class/);

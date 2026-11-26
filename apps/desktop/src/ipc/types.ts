@@ -168,6 +168,9 @@ export type QueryResult = {
   truncated: boolean;
   rowsAffected: number | null;
   elapsedMs: number;
+  /** Only on a `detached` run: its rows, inline, since the stored result
+   *  `pg_rows` pages is left as it was. */
+  rows?: unknown[][];
 };
 
 // --- Health, search and partitions -----------------------------------------

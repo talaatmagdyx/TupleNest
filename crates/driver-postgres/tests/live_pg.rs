@@ -292,6 +292,74 @@ async fn renders_interval_money_and_xml_via_fallback() {
     );
 }
 
+/// `money` is shown as the exact decimal the server means, at the fractional
+/// digits of the session's `lc_monetary` — the same value as `money::numeric`
+/// — not as hex and not at an assumed two decimals.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn money_is_its_exact_value_at_the_servers_scale() {
+    let mut session = PostgresDriver.connect(test_config()).await.unwrap();
+
+    // Whatever this server's locale is, the cell must agree with the server's
+    // own numeric conversion of the same value, digit for digit.
+    let sink = CollectSink::default();
+    session
+        .execute(
+            req(
+                "select '1234.56'::money, '-1234.56'::money, '0.05'::money, null::money, \
+                 array['1.50'::money, null, '-2'::money], \
+                 ('1234.56'::money)::numeric::text, ('-1234.56'::money)::numeric::text, \
+                 ('0.05'::money)::numeric::text, null::text, \
+                 (array['1.50'::money, null, '-2'::money])::numeric[]::text",
+            ),
+            &sink,
+        )
+        .await
+        .unwrap();
+    let row = sink.rows.lock().unwrap()[0].clone();
+    for cell in [0, 1, 2, 4] {
+        assert!(
+            matches!(row[cell], CellValue::Text(_)),
+            "money must be text, got {:?}",
+            row[cell]
+        );
+        assert_eq!(text_of(&row[cell]), text_of(&row[cell + 5]));
+    }
+    assert!(matches!(row[3], CellValue::Null));
+
+    // Under a locale with known digits, the literal values. `C` sets no
+    // currency fraction, so PostgreSQL uses 2. Asked per result, so the SET
+    // is seen at once.
+    session
+        .execute(req("set lc_monetary = 'C'"), &NullSink)
+        .await
+        .unwrap();
+    let sink = CollectSink::default();
+    session
+        .execute(
+            req(
+                "select '1234.56'::money, '-1234.56'::money, '0.05'::money, '-7'::money, \
+                 '-92233720368547758.08'::money, '92233720368547758.07'::money",
+            ),
+            &sink,
+        )
+        .await
+        .unwrap();
+    let row = sink.rows.lock().unwrap()[0].clone();
+    let texts: Vec<String> = row.iter().map(text_of).collect();
+    assert_eq!(
+        texts,
+        [
+            "1234.56",
+            "-1234.56",
+            "0.05",
+            "-7.00",
+            "-92233720368547758.08",
+            "92233720368547758.07"
+        ]
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires live PostgreSQL"]
 async fn nulls_of_exotic_types_are_null_not_rendered() {
@@ -2054,14 +2122,18 @@ async fn unknown_types_render_from_the_type_not_from_a_guess() {
          reported and binary_is_text needs another way to recognise enums"
     );
 
-    // ...and money must never be mistaken for text, whatever its bytes.
+    // ...and money must never be mistaken for text, whatever its bytes: it
+    // is decoded as the int8 it is, at the server's scale, and so agrees with
+    // the server's own conversion of it.
     let sink = CollectSink::default();
-    s.execute(req("SELECT 1.00::money"), &sink).await.unwrap();
-    let cell = sink.rows.lock().unwrap()[0][0].clone();
-    assert!(
-        matches!(cell, CellValue::Other(_)),
-        "money must not be rendered as text, got {cell:?}"
-    );
+    s.execute(
+        req("SELECT 1.00::money, (1.00::money)::numeric::text"),
+        &sink,
+    )
+    .await
+    .unwrap();
+    let row = sink.rows.lock().unwrap()[0].clone();
+    assert_eq!(row[0], row[1], "money must be its value, got {:?}", row[0]);
 
     s.execute(req("DROP TYPE IF EXISTS tn_mood CASCADE"), &NullSink)
         .await
@@ -2637,16 +2709,14 @@ async fn multiranges_and_tstz_ranges() {
     }
 }
 
-/// `money` is written by the server according to `lc_monetary`, which the
-/// wire value does not carry: it stays visibly raw rather than guessed.
+/// `money`'s scale is `lc_monetary`'s, which the wire value does not carry:
+/// it is asked of the server, so the value is the server's, never a guess.
 #[tokio::test]
 #[ignore = "requires live PostgreSQL"]
-async fn money_stays_raw() {
-    let row = first_row("SELECT 12.34::money").await;
-    assert!(
-        matches!(&row[0], CellValue::Other(o) if o.db_type == "money"),
-        "{row:?}"
-    );
+async fn money_is_decoded_at_the_scale_the_server_reports() {
+    let row = first_row("SELECT 12.34::money, (12.34::money)::numeric::text").await;
+    assert!(matches!(&row[0], CellValue::Text(_)), "{row:?}");
+    assert_eq!(row[0], row[1]);
 }
 
 /// Audit TN-018: a text parameter binds to a placeholder of any type, and

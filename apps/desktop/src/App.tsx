@@ -1047,16 +1047,14 @@ export default function App() {
    *
    * The hook owns the statement and the plan; this decides what the rest of
    * the app does about it — open the modal (on start, so a slow ANALYZE shows
-   * a spinner rather than nothing), keep the summary for comparison, and drop
-   * the backend row store, which EXPLAIN has just overwritten with its output.
+   * a spinner rather than nothing) and keep the summary for comparison.
+   *
+   * The result grid is not touched. EXPLAIN runs detached (see useExplain):
+   * the backend keeps the last Run's rows, so the grid behind the plan still
+   * pages them, and an export in progress can keep reading them.
    */
   const runExplain = useCallback(
     async (override?: unknown) => {
-      // EXPLAIN replaces the backend row store too (see below).
-      if (exportingRef.current) {
-        showToast("Wait for the export to finish — it is still reading this result");
-        return;
-      }
       if (writingRef.current) {
         showToast("Wait — the app is writing in its own transaction, and this would run inside it");
         return;
@@ -1077,7 +1075,6 @@ export default function App() {
         showToast("ANALYZE would run this for real — untick it, or run EXPLAIN ANALYZE from the editor to confirm");
       }
       if (out.kind !== "ok") return;
-      query.reset(); // EXPLAIN replaced the backend row store
       // Phase 3: keep the last few summaries so two runs can be compared.
       if (out.root) {
         const { summarizePlan } = await import("./lib/intel");
@@ -1087,7 +1084,7 @@ export default function App() {
         );
       }
     },
-    [tabs, activeTab, connected, connectedEnv, runExplainRaw, query, catalog, showToast],
+    [tabs, activeTab, connected, connectedEnv, runExplainRaw, catalog, showToast],
   );
 
   /** Everything the exporters need from the current plan. */
@@ -1742,8 +1739,8 @@ export default function App() {
               onToast={showToast}
               onVisibleRows={(a, b) =>
                 // `totalRows`, not `storedRows`. The grid keeps the first
-                // 100,000; the query may have matched five million. Counting
-                // "of 100,000" turns the cap into the answer and hides that
+                // 20,000; the query may have matched five million. Counting
+                // "of 20,000" turns the cap into the answer and hides that
                 // there is anything else — the one number a person reads to
                 // decide whether they have seen it all.
                 setRowsInfo(result ? `rows ${a.toLocaleString()}–${b.toLocaleString()} of ${rowCountNote(result.storedRows, result)}` : "")

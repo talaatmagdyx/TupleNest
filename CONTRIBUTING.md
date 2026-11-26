@@ -37,6 +37,14 @@ You'll need **Rust** (stable), **Node 22**, **npm**, and the
 (Xcode Command Line Tools on macOS; MSVC + WebView2 on Windows; webkit2gtk +
 build-essential on Linux).
 
+Two toolchain traps:
+
+- **Node older than 22** fails the build and the tests with an opaque
+  `ERR_INVALID_ARG_VALUE … styleText` error from the bundler. Check `node --version`.
+- **Rust:** CI uses the newest stable. Run `rustup update stable` first; a clippy
+  failure you cannot reproduce usually means your stable is older than CI's. A
+  Homebrew `rustc` ignores `rust-toolchain.toml`, so prefer rustup.
+
 ```bash
 git clone https://github.com/talaatmagdyx/TupleNest
 cd TupleNest/apps/desktop
