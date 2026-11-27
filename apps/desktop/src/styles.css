@@ -1999,7 +1999,9 @@ select.intel-input { font-family: var(--tn-sans); }
 
 /* ===== Title bar ===== */
 .titlebar { height: 46px; padding: 0 10px; gap: 12px; }
-[data-tn-os="macos"] .titlebar { padding-left: 70px; }
+/* The window buttons sit at x 22 (tauri.conf.json trafficLightPosition),
+   inside this island; 84px clears them with a gap. */
+[data-tn-os="macos"] .titlebar { padding-left: 84px; }
 .brand { gap: 8px; }
 .brand-word {
   font-family: var(--tn-display); font-size: 16px; font-weight: 700; letter-spacing: -.02em;
