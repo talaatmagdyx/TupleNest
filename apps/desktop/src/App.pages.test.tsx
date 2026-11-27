@@ -64,6 +64,17 @@ describe("App — pages", () => {
     expect(screen.queryByRole("region", { name: "Dashboards" })).not.toBeInTheDocument();
   });
 
+  it("opens dashboards and notebooks from the rail, and the same button closes them", async () => {
+    const user = await mount();
+    await user.click(screen.getByRole("button", { name: "Dashboards" }));
+    expect(await screen.findByRole("region", { name: "Dashboards" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Notebooks" }));
+    expect(await screen.findByRole("region", { name: "Notebooks" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Dashboards" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Notebooks" }));
+    expect(screen.queryByRole("region", { name: "Notebooks" })).not.toBeInTheDocument();
+  });
+
   it("opens notebooks", async () => {
     const user = await mount();
     await palette(user, "Open notebooks");

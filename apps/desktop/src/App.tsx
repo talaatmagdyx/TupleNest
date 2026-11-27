@@ -1722,6 +1722,8 @@ export default function App() {
           onPastePlan={() => setOverlay("pastePlan")}
           onDiagram={() => setOverlay("diagram")}
           onSettings={() => setOverlay("settings")}
+          page={page}
+          onPage={(next) => setPage((cur) => (cur === next ? null : next))}
         />
         <aside
           className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}

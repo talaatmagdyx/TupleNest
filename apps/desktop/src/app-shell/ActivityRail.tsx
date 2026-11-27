@@ -1,14 +1,18 @@
 import {
+  DashboardRailIcon,
   DiagramRailIcon,
   ExplorerRailIcon,
   GearIcon,
   HistoryRailIcon,
   MonitorRailIcon,
+  NotebookRailIcon,
   PastePlanRailIcon,
 } from "../lib/icons";
 import { kbd } from "../lib/platform";
 
 export type RailView = "explorer" | "history";
+/** Pages the rail opens in place of the editor. */
+export type RailPage = "dashboards" | "notebooks";
 
 type Props = {
   view: RailView;
@@ -19,6 +23,9 @@ type Props = {
   onDiagram: () => void;
   onPastePlan: () => void;
   onSettings: () => void;
+  /** The page open in the main area, if it is one of the rail's. */
+  page?: string | null;
+  onPage?: (page: RailPage) => void;
 };
 
 /**
@@ -76,6 +83,14 @@ export default function ActivityRail(p: Props) {
         </Item>
         <Item title="ER diagram" disabled={!p.connected} onClick={p.onDiagram}>
           <DiagramRailIcon />
+        </Item>
+        {/* Open with no session too: each page says what it needs, and a
+            saved notebook can be read offline. */}
+        <Item title="Dashboards" active={p.page === "dashboards"} onClick={() => p.onPage?.("dashboards")}>
+          <DashboardRailIcon />
+        </Item>
+        <Item title="Notebooks" active={p.page === "notebooks"} onClick={() => p.onPage?.("notebooks")}>
+          <NotebookRailIcon />
         </Item>
         {/* Deliberately not gated on `connected`: the whole point is analysing
             a plan from somewhere this app cannot reach. */}
