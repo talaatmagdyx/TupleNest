@@ -2685,6 +2685,33 @@ pub async fn pg_admin_backend(
         .map_err(|e| err_to_string(&e))
 }
 
+/// Roles for the users-and-roles page. Read-only: nothing here changes a
+/// grant; the page shows GRANT/REVOKE text to copy.
+#[tauri::command]
+pub async fn pg_roles(state: tauri::State<'_, PgState>) -> Result<serde_json::Value, String> {
+    let mut guard = state.session.lock().await;
+    let session = guard.as_ref().ok_or("not connected")?;
+    match session.list_roles().await {
+        Ok(v) => Ok(v),
+        Err(e) => Err(lost_or_error(&state, &mut guard, &e)),
+    }
+}
+
+/// One role's table privileges in `schema` (the current schema when None).
+#[tauri::command]
+pub async fn pg_role_privileges(
+    state: tauri::State<'_, PgState>,
+    role: String,
+    schema: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mut guard = state.session.lock().await;
+    let session = guard.as_ref().ok_or("not connected")?;
+    match session.role_privileges(&role, schema.as_deref()).await {
+        Ok(v) => Ok(v),
+        Err(e) => Err(lost_or_error(&state, &mut guard, &e)),
+    }
+}
+
 /// The schema digest the assistant may send: names and types of the live
 /// session's database, from the metadata cache, at most `cap` characters.
 /// Empty when no session is live. See `assistant::context` for what is read.

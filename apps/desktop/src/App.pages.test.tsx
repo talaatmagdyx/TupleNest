@@ -49,4 +49,10 @@ describe("App — pages", () => {
     expect(await screen.findByRole("region", { name: "Backup and restore" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Back up…" })).toBeEnabled();
   });
+
+  it("opens users and roles, which needs a PostgreSQL session", async () => {
+    const user = await mount();
+    await palette(user, "Users and roles");
+    expect(await screen.findByText(/Connect to a PostgreSQL database to see its roles/)).toBeInTheDocument();
+  });
 });

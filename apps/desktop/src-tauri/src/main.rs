@@ -710,6 +710,8 @@ fn main() {
             pg::pg_activity,
             pg::pg_relationships,
             pg::pg_admin_backend,
+            pg::pg_roles,
+            pg::pg_role_privileges,
             pg::pg_begin,
             pg::pg_in_transaction,
             pg::pg_commit,

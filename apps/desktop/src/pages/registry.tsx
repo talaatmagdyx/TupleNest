@@ -10,17 +10,19 @@ import type { PaletteItem } from "../overlays/Overlays";
 import BackupPage from "./BackupPage";
 import DashboardsPage from "./DashboardsPage";
 import NotebooksPage from "./NotebooksPage";
+import RolesPage from "./RolesPage";
 import type { PageContext } from "./context";
 
 export type { PageContext } from "./context";
 export { isPostgres } from "./context";
 
-export type Page = "dashboards" | "notebooks" | "backup";
+export type Page = "dashboards" | "notebooks" | "backup" | "roles";
 
 export const PAGE_TITLES: Record<Page, string> = {
   dashboards: "Dashboards",
   notebooks: "Notebooks",
   backup: "Backup and restore",
+  roles: "Users and roles",
 };
 
 /** Palette entries. Every page is PostgreSQL-only; one opened with no session
@@ -30,6 +32,7 @@ export function pageCommands(open: (page: Page) => void): PaletteItem[] {
     { icon: "▦", label: "Open dashboards", type: "Action", exec: () => open("dashboards") },
     { icon: "▤", label: "Open notebooks", type: "Action", exec: () => open("notebooks") },
     { icon: "⇩", label: "Backup and restore (pg_dump)…", type: "Action", exec: () => open("backup") },
+    { icon: "☺", label: "Users and roles…", type: "Action", exec: () => open("roles") },
   ];
 }
 
@@ -47,6 +50,7 @@ export function PageHost(p: { page: Page; ctx: PageContext; onClose: () => void 
       {p.page === "dashboards" && <DashboardsPage ctx={p.ctx} />}
       {p.page === "notebooks" && <NotebooksPage ctx={p.ctx} />}
       {p.page === "backup" && <BackupPage ctx={p.ctx} />}
+      {p.page === "roles" && <RolesPage ctx={p.ctx} />}
     </main>
   );
 }
