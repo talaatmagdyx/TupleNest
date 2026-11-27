@@ -26,6 +26,12 @@ use tuplenest_result_stream::RowStore;
 const ROW_CAP: usize = 20_000;
 const BYTE_CAP: usize = 128 * 1024 * 1024;
 
+/// CI runs this crate's ignored tests against a database without the
+/// benchmark dataset, so the benchmarks also need an explicit opt-in.
+fn enabled() -> bool {
+    std::env::var_os("TUPLENEST_BENCH_PG").is_some()
+}
+
 fn config() -> ConnectionConfig {
     ConnectionConfig {
         driver_id: "postgres".into(),
@@ -174,8 +180,11 @@ impl BatchSink for StoreSink {
 }
 
 #[tokio::test]
-#[ignore = "benchmark: requires live PostgreSQL with the benchmark dataset"]
+#[ignore = "benchmark: requires TUPLENEST_BENCH_PG and the benchmark dataset"]
 async fn bench_pg_connect() {
+    if !enabled() {
+        return;
+    }
     let mut t = vec![];
     for i in 0..=runs() {
         let started = Instant::now();
@@ -189,8 +198,11 @@ async fn bench_pg_connect() {
 }
 
 #[tokio::test]
-#[ignore = "benchmark: requires live PostgreSQL with the benchmark dataset"]
+#[ignore = "benchmark: requires TUPLENEST_BENCH_PG and the benchmark dataset"]
 async fn bench_pg_result_streaming() {
+    if !enabled() {
+        return;
+    }
     let mut s = PostgresDriver.connect_concrete(config()).await.unwrap();
 
     // 1. Exactly 20,000 rows, every row read, decoded and counted.
@@ -267,8 +279,11 @@ async fn bench_pg_result_streaming() {
 }
 
 #[tokio::test]
-#[ignore = "benchmark: requires live PostgreSQL with the benchmark dataset"]
+#[ignore = "benchmark: requires TUPLENEST_BENCH_PG and the benchmark dataset"]
 async fn bench_pg_schema_discovery() {
+    if !enabled() {
+        return;
+    }
     let s = PostgresDriver.connect_concrete(config()).await.unwrap();
     let mut walk = vec![];
     let mut counts = (0, 0);
@@ -351,8 +366,11 @@ async fn bench_pg_schema_discovery() {
 }
 
 #[tokio::test]
-#[ignore = "benchmark: requires live PostgreSQL with the benchmark dataset"]
+#[ignore = "benchmark: requires TUPLENEST_BENCH_PG and the benchmark dataset"]
 async fn bench_pg_cancel_latency() {
+    if !enabled() {
+        return;
+    }
     let mut s = PostgresDriver.connect_concrete(config()).await.unwrap();
     let mut latency = vec![];
     for i in 0..=runs() {

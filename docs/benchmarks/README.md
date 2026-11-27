@@ -279,7 +279,7 @@ mkdir -p /tmp/tn-bench-home
 /tmp/startup-probe <path to tuplenest-desktop> /tmp/tn-bench-home 7 30
 
 # PostgreSQL driver: connect, streaming, schema discovery, cancel.
-TUPLENEST_TEST_PG_USER=<pg user> TUPLENEST_TEST_PG_DB=shop TUPLENEST_BENCH_RUNS=20 \
+TUPLENEST_BENCH_PG=1 TUPLENEST_TEST_PG_USER=<pg user> TUPLENEST_TEST_PG_DB=shop TUPLENEST_BENCH_RUNS=20 \
   cargo test --release -p tuplenest-driver-postgres --test bench_pg \
   -- --ignored --nocapture --test-threads=1
 

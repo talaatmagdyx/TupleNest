@@ -41,7 +41,7 @@ else
 fi
 
 echo "== PostgreSQL driver (database $TUPLENEST_TEST_PG_DB)"
-(cd "$repo" && cargo test --release -q -p tuplenest-driver-postgres --test bench_pg \
+(cd "$repo" && TUPLENEST_BENCH_PG=1 cargo test --release -q -p tuplenest-driver-postgres --test bench_pg \
   -- --ignored --nocapture --test-threads=1 2>&1 | grep -oE '(BENCH|INFO)[[:space:]].*|panicked.*|FAILED.*')
 echo "load:     $(uptime | sed 's/.*load averages*: //')"
 echo
