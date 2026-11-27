@@ -120,7 +120,7 @@ export const TOUR_STEPS: { title: string; heading: string; points: string[] }[] 
     title: "Connect",
     heading: "Start with a connection",
     points: [
-      "Add a PostgreSQL connection and tag it dev, test, staging or prod.",
+      "Add a PostgreSQL server or a SQLite file, and tag it dev, test, staging or prod.",
       "Passwords go to the system keychain, never to a file. TLS is verified by default, and an SSH tunnel is one switch away.",
       "Test a connection before saving it: each step is checked and shown.",
     ],

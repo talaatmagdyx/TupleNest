@@ -1,7 +1,7 @@
 import { useId } from "react";
 import type { TestStage } from "../ipc/types";
 import { ModalHead, Overlay } from "../overlays/Overlays";
-import { ENGINE_CHOICES, STATUS_LABEL, type Engine } from "../lib/engine";
+import { ENGINE_CHOICES, type Engine } from "../lib/engine";
 
 /**
  * Attributes for every field holding a machine identifier — hostname, database,
@@ -112,9 +112,8 @@ export default function ConnectionForm(p: Props) {
       <div className="modal" style={{ width: 620 }}>
         <ModalHead title={p.isEdit ? "Edit connection" : "New connection"} onClose={p.onClose} />
         <div className="modal-body">
-          {/* The design's "Choose a database engine": every engine gets the
-              same safety rules, and the ones still to come say so instead of
-              being clickable and failing. */}
+          {/* The design's "Choose a database engine": PostgreSQL or SQLite,
+              and every engine gets the same safety rules. */}
           <div className="field">
             <label id={f("engine")}>Database engine</label>
             <div className="engine-grid" role="group" aria-labelledby={f("engine")}>
@@ -126,15 +125,15 @@ export default function ConnectionForm(p: Props) {
                     type="button"
                     className={`engine-card ${on ? "on" : ""}`}
                     aria-pressed={on}
-                    disabled={!c.engine || !p.onEngine}
-                    onClick={() => c.engine && p.onEngine?.(c.engine)}
+                    disabled={!p.onEngine}
+                    onClick={() => p.onEngine?.(c.engine)}
                   >
                     <span className={`engine-badge engine-${c.code.toLowerCase()}`} aria-hidden>
                       {c.code}
                     </span>
                     <span className="engine-meta">
                       <span className="engine-name">{c.name}</span>
-                      <span className={`engine-status ${c.status}`}>{STATUS_LABEL[c.status]}</span>
+                      <span className="engine-status">{c.detail}</span>
                     </span>
                   </button>
                 );

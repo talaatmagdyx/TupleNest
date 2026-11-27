@@ -42,10 +42,9 @@ describe("engine", () => {
     expect(engineBadge("sqlite")).toBe("SQ");
   });
 
-  it("only engines with a driver can be picked", () => {
-    const pickable = ENGINE_CHOICES.filter((c) => c.engine).map((c) => c.engine);
-    expect(pickable).toEqual(["postgres", "sqlite"]);
-    expect(ENGINE_CHOICES.filter((c) => !c.engine).every((c) => c.status !== "available")).toBe(true);
+  it("the picker offers PostgreSQL and SQLite, and nothing else", () => {
+    expect(ENGINE_CHOICES.map((c) => c.engine)).toEqual(["postgres", "sqlite"]);
+    expect(ENGINE_CHOICES.map((c) => c.name)).toEqual(["PostgreSQL", "SQLite"]);
   });
 
   it("PostgreSQL lacks nothing; SQLite says why for each thing it lacks", () => {

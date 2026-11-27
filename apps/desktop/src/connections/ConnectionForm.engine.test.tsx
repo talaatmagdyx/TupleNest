@@ -58,21 +58,14 @@ const base = {
 const picker = () => within(screen.getByRole("group", { name: "Database engine" }));
 
 describe("ConnectionForm — engine picker", () => {
-  it("offers PostgreSQL and SQLite; the rest say when, and cannot be picked", () => {
+  it("offers PostgreSQL and SQLite only, both pickable", () => {
     render(<ConnectionForm {...base} onEngine={vi.fn()} />);
     const cards = picker().getAllByRole("button");
-    expect(cards.map((c) => c.textContent)).toEqual([
-      "PGPostgreSQLAvailable",
-      "SQSQLiteAvailable",
-      "MYMySQL / MariaDBComing next",
-      "MSSQL ServerPlanned",
-      "MGMongoDBPlanned",
-      "RDRedisPlanned",
-    ]);
-    expect(cards.filter((c) => !(c as HTMLButtonElement).disabled).map((c) => c.textContent)).toEqual([
-      "PGPostgreSQLAvailable",
-      "SQSQLiteAvailable",
-    ]);
+    expect(cards.map((c) => c.textContent)).toEqual(["PGPostgreSQLA server", "SQSQLiteA file on this machine"]);
+    expect(cards.every((c) => !(c as HTMLButtonElement).disabled)).toBe(true);
+    for (const gone of [/MySQL/, /MariaDB/, /SQL Server/, /MongoDB/, /Redis/, /Coming next/, /Planned/]) {
+      expect(screen.queryByText(gone)).not.toBeInTheDocument();
+    }
   });
 
   it("marks the chosen engine, PostgreSQL by default", () => {
@@ -81,13 +74,13 @@ describe("ConnectionForm — engine picker", () => {
     expect(picker().getByRole("button", { name: /SQLite/ })).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("switches engine on a click, and never to one still to come", async () => {
+  it("switches engine on a click", async () => {
     const onEngine = vi.fn();
     render(<ConnectionForm {...base} onEngine={onEngine} />);
     await userEvent.click(picker().getByRole("button", { name: /SQLite/ }));
     expect(onEngine).toHaveBeenCalledWith("sqlite");
-    await userEvent.click(picker().getByRole("button", { name: /MySQL/ }));
-    expect(onEngine).toHaveBeenCalledTimes(1);
+    await userEvent.click(picker().getByRole("button", { name: /PostgreSQL/ }));
+    expect(onEngine).toHaveBeenLastCalledWith("postgres");
   });
 
   it("without a handler the picker shows the engine and cannot change it", () => {
