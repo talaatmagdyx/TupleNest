@@ -43,10 +43,19 @@ uuid = { workspace = true }
 # localeCompare does. Shares its data crates with icu_normalizer (via url).
 icu_collator = "2"
 tauri-plugin-opener = "2.5.4"
+# The assistant's HTTP client (Anthropic API, Ollama). Both were already in
+# the tree for the updater, with these features and the same ring provider,
+# so naming them here adds no crate to the build. The WebView never makes a
+# network request itself; every assistant call goes out from Rust.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+futures-util = { version = "0.3", default-features = false }
 
 [dev-dependencies]
-# MemoryStore: the MCP tests must never touch the real keychain.
+# MemoryStore: the MCP and assistant tests must never touch the real keychain.
 tuplenest-credential-store = { path = "../../../crates/credential-store", features = ["test-support"] }
 # To make the audit write fail on purpose (a trigger on audit_log).
 rusqlite = { workspace = true }
 tempfile = "3"
+# A loopback mock HTTP server for the assistant's provider tests: no real network.
+tokio = { workspace = true, features = ["net", "io-util"] }

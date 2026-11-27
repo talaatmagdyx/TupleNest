@@ -21,6 +21,9 @@ type Props = {
   onOpenPalette: () => void;
   onToggleTheme: () => void;
   onOpenSettings: () => void;
+  /** The assistant panel's toggle. Absent, no button is drawn. */
+  assistantOpen?: boolean;
+  onToggleAssistant?: () => void;
 };
 
 /** The environments whose badge is a solid block rather than a tint: the two
@@ -116,6 +119,16 @@ export default function Titlebar(p: Props) {
           <span className="kbd">{kbd("mod", "K")}</span>
         </button>
       </div>
+      {p.onToggleAssistant && (
+        <button
+          className={`btn xs tb-assistant ${p.assistantOpen ? "on" : ""}`}
+          aria-pressed={!!p.assistantOpen}
+          title={`Assistant (${kbd("mod", "J")})`}
+          onClick={p.onToggleAssistant}
+        >
+          <span aria-hidden>✦</span> Assistant
+        </button>
+      )}
       <button className="icon-btn outlined" title="Toggle theme" onClick={p.onToggleTheme}>
         {p.theme === "dark" ? "☾" : "☀"}
       </button>

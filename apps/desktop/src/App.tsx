@@ -45,6 +45,8 @@ import { useSearch } from "./hooks/useSearch";
 import { useHealth } from "./hooks/useHealth";
 import { useConnectionForm, timeoutMs, parseSsh } from "./hooks/useConnectionForm";
 import { matchShortcut } from "./lib/shortcuts";
+import AssistantPanel, { type AssistantRequest } from "./assistant/AssistantPanel";
+import AssistantSettings from "./settings/AssistantSettings";
 import { isConnectionLost, useQuery } from "./hooks/useQuery";
 import { defaultSearchPath } from "./lib/nodes";
 import { useTransaction } from "./hooks/useTransaction";
@@ -187,6 +189,14 @@ export default function App() {
   if (welcome && (connected || !pristine)) setWelcome(false);
   const showWelcome = welcome && !connected && pristine;
   const [overlay, setOverlay] = useState<OverlayKind>(null);
+  // The assistant: a right-hand island panel. Everything it produces lands in
+  // the editor only on the user's click, and runs only on the user's Run.
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantReq, setAssistantReq] = useState<AssistantRequest | null>(null);
+  const [assistantReload, setAssistantReload] = useState(0);
+  const [settingsAssistant, setSettingsAssistant] = useState(false);
+  /** The statement a Fix was asked for, so applying it replaces just that. */
+  const fixTarget = useRef("");
   /** Three palette commands share the SQL-intelligence modal; this is which of
    *  its panes the chosen command meant. */
   const [intelPane, setIntelPane] = useState<IntelPane>("usages");
@@ -838,6 +848,45 @@ export default function App() {
 
   const currentSql = tabs[activeTab]?.sql ?? "";
 
+  /** "Insert into editor": appended to the active tab (or a new one). Never
+   *  run — the toast says so, because a read-only suggestion looks runnable. */
+  const insertFromAssistant = useCallback(
+    (sql: string) => {
+      if (tabs.length === 0) newTab({ name: "assistant.sql", sql, dirty: true });
+      else {
+        // Behind the welcome screen the tab holds only its starter text,
+        // which nobody has seen: replace it rather than append to it.
+        const cur = showWelcome ? "" : (tabs[activeTab]?.sql ?? "");
+        setActiveSql(cur.trim() ? `${cur.replace(/\s+$/, "")}\n\n${sql}` : sql);
+      }
+      showToast("Inserted into the editor — nothing runs until you press Run");
+    },
+    [tabs, activeTab, newTab, setActiveSql, showToast, showWelcome],
+  );
+
+  /** "Apply the fix": replaces the statement the fix was for — just that
+   *  statement when the editor holds more, else the whole text. Never run. */
+  const applyFromAssistant = useCallback(
+    (sql: string) => {
+      if (tabs.length === 0) {
+        newTab({ name: "assistant.sql", sql, dirty: true });
+      } else {
+        const cur = tabs[activeTab]?.sql ?? "";
+        const target = fixTarget.current;
+        setActiveSql(target && cur !== target && cur.includes(target) ? cur.replace(target, sql) : sql);
+      }
+      showToast("Applied the fix in the editor — nothing runs until you press Run");
+    },
+    [tabs, activeTab, newTab, setActiveSql, showToast],
+  );
+
+  const fixWithAssistant = useCallback(() => {
+    const sql = ranSql.trim() ? ranSql : currentSql;
+    fixTarget.current = sql;
+    setAssistantOpen(true);
+    setAssistantReq((r) => ({ n: (r?.n ?? 0) + 1, action: "fix", sql, error: lastError }));
+  }, [ranSql, currentSql, lastError]);
+
   /** The backend says the session is gone ("Connection lost: …"). Run was
    *  the only path that noticed; Begin, Commit, Apply and Import failures left
    *  the app showing a live session and an open transaction. */
@@ -1410,6 +1459,10 @@ export default function App() {
           e.preventDefault();
           setOverlay("cheatsheet");
           break;
+        case "assistant":
+          e.preventDefault();
+          setAssistantOpen((v) => !v);
+          break;
         case "escape":
           // Overlay handles Escape itself and stops propagation, so this arm
           // rarely runs for a dialog. It stays because the other two cases
@@ -1622,6 +1675,8 @@ export default function App() {
         }}
         onToggleTheme={() => applyTheme(theme === "dark" ? "light" : "dark")}
         onOpenSettings={() => setOverlay("settings")}
+        assistantOpen={assistantOpen}
+        onToggleAssistant={() => setAssistantOpen((v) => !v)}
       />
       {isProd && (
         <div className="prod-banner">
@@ -1757,6 +1812,7 @@ export default function App() {
               status={query.status}
               result={result}
               lastError={lastError}
+              onFix={fixWithAssistant}
               queryEpoch={queryEpoch}
               resultTab={resultTab}
               onResultTab={pickResultTab}
@@ -1817,6 +1873,22 @@ export default function App() {
             />
           )}
         </main>
+        {assistantOpen && (
+          <AssistantPanel
+            sql={currentSql}
+            env={connected ? connectedEnv ?? "dev" : null}
+            request={assistantReq}
+            reloadKey={assistantReload}
+            onInsert={insertFromAssistant}
+            onApply={applyFromAssistant}
+            onOpenSettings={() => {
+              setSettingsAssistant(true);
+              setOverlay("settings");
+            }}
+            onClose={() => setAssistantOpen(false)}
+            onToast={showToast}
+          />
+        )}
       </div>
       <StatusBar
         connected={connected}
@@ -2078,8 +2150,13 @@ export default function App() {
           onTelemetry={applyTelemetry}
           onAbout={() => setOverlay("about")}
           mcp={<McpSection />}
-          onClose={() => setOverlay(null)}
-        />
+          onClose={() => {
+            setSettingsAssistant(false);
+            setOverlay(null);
+          }}
+        >
+          <AssistantSettings focus={settingsAssistant} onChanged={() => setAssistantReload((n) => n + 1)} />
+        </Settings>
       )}
       {overlay === "params" && (
         <ParamPrompt

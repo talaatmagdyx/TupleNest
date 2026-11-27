@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use tauri::Manager;
 use tuplenest_workspace_store::Store;
 
+mod assistant;
 mod connections;
 mod export;
 mod guard;
@@ -41,11 +42,28 @@ fn app_get_info(app: tauri::AppHandle) -> AppInfo {
     }
 }
 
+/// Settings rows the generic commands must not touch.
+///
+/// The assistant's row holds the keychain reference of the Anthropic key.
+/// Were the WebView able to write it, it could point the reference at any
+/// other keychain entry — a database password — and the next question would
+/// send that to api.anthropic.com in the `x-api-key` header. Only the
+/// `assistant_*` commands read or write it.
+fn reserved_setting(key: &str) -> Result<(), String> {
+    if key == assistant::config::SETTINGS_KEY {
+        return Err(format!(
+            "the `{key}` setting is managed by its own commands"
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn settings_get(
     state: tauri::State<'_, AppState>,
     key: String,
 ) -> Result<Option<serde_json::Value>, String> {
+    reserved_setting(&key)?;
     state
         .store
         .lock()
@@ -60,6 +78,7 @@ fn settings_set(
     key: String,
     value: serde_json::Value,
 ) -> Result<(), String> {
+    reserved_setting(&key)?;
     state
         .store
         .lock()
@@ -631,6 +650,7 @@ fn main() {
                 }
             });
             app.manage(ExportState::default());
+            app.manage(assistant::AssistantState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -674,7 +694,16 @@ fn main() {
             pg::pg_in_transaction,
             pg::pg_commit,
             pg::pg_rollback,
-            pg::pg_cancel
+            pg::pg_cancel,
+            assistant::assistant_settings_get,
+            assistant::assistant_settings_set,
+            assistant::assistant_key_save,
+            assistant::assistant_key_remove,
+            assistant::assistant_anthropic_test,
+            assistant::assistant_ollama_test,
+            assistant::assistant_models,
+            assistant::assistant_ask,
+            assistant::assistant_cancel
         ])
         // Nothing here handles window close, deliberately.
         //
@@ -724,6 +753,15 @@ mod limit_tests {
             let failed: Result<(), String> = off_runtime(|| Err("no result".into())).await;
             assert_eq!(failed, Err("no result".into()));
         });
+    }
+}
+
+#[cfg(test)]
+mod reserved_setting_tests {
+    #[test]
+    fn the_assistant_row_is_closed_to_the_generic_commands() {
+        assert!(super::reserved_setting("assistant").is_err());
+        assert!(super::reserved_setting("theme").is_ok());
     }
 }
 

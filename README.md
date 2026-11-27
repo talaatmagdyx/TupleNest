@@ -157,6 +157,42 @@ editability hole, and the zero-row concurrent write.
 
 <br/>
 
+## ✦ The assistant
+
+Ask about the query in the editor or the tables in your database, have it
+**explain** a slow query, **fix** a failed one from the error view (the fix
+comes back as a diff), or **write SQL** from a plain-English request. Open it
+with the **Assistant** button in the title bar or <kbd>⌘J</kbd>.
+
+Two providers, chosen per request from the panel's model picker — set them up
+in **Settings › Assistant**:
+
+- **Claude, with your own Anthropic API key.** Sonnet 5.5 by default; Opus 5.5
+  and Haiku 5.5 on offer. The key is kept in the OS keychain exactly like a
+  database password; removing the provider deletes it.
+- **A local model through [Ollama](https://ollama.com).** `http://localhost:11434`
+  by default. A URL on another computer is refused unless you turn on *Allow a
+  server on another computer* — the point of a local model is that nothing
+  leaves the machine.
+
+**What is sent:** your message (and the earlier turns of that panel
+conversation), the editor's SQL when the action uses it, the error's message
+and SQLSTATE for a Fix — with the server's `DETAIL`/`CONTEXT` lines, which can
+quote row values, removed — and the **names and types** of the connected
+database's schemas, tables and columns, capped in size.
+**What is never sent:** row data or result cells, query history, the
+connection's host, user or password, or anything about other connections.
+The rule is enforced in the Rust core, which makes every request; the window
+never touches the network or the key. [PRIVACY.md](PRIVACY.md#the-assistant)
+has the full list.
+
+**Nothing it writes runs by itself.** Each SQL suggestion is a card that says
+whether it reads or writes, with **Insert into editor** (or **Apply the fix**)
+and **Copy**. It runs only when you press Run — through the same read-only
+check, production guard and audit log as anything you type.
+
+<br/>
+
 ## 🤖 Use TupleNest from AI tools (MCP)
 
 TupleNest is also an [MCP](https://modelcontextprotocol.io) server, so an AI
@@ -223,7 +259,7 @@ Press <kbd>?</kbd> anywhere for the in-app cheatsheet. <kbd>⌘</kbd> = <kbd>Ctr
 |---|---|---|---|
 | <kbd>⌘↵</kbd> Run | <kbd>Esc</kbd> Cancel / close | <kbd>⌘K</kbd> Command palette | <kbd>⌘P</kbd> Object search |
 | <kbd>⌘T</kbd> New tab | <kbd>⌘O</kbd> Connections | <kbd>⌘B</kbd> Sidebar | <kbd>⇧⌘F</kbd> Format SQL |
-| <kbd>⇧⌘L</kbd> Dark ↔ light | <kbd>⌘C</kbd> Copy cell | | |
+| <kbd>⇧⌘L</kbd> Dark ↔ light | <kbd>⌘C</kbd> Copy cell | <kbd>⌘J</kbd> Assistant | |
 
 Full keyboard grid navigation with real `role="grid"` semantics · every modal
 is a real `role="dialog"` with a focus trap · `prefers-reduced-motion`

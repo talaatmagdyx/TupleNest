@@ -519,6 +519,9 @@ export function Settings(p: {
   /** Optional: the palette can reach About directly, so Settings offers it
    *  rather than owning it — this is just where people look for it. */
   onAbout?: () => void;
+  /** Settings › Assistant (settings/AssistantSettings), below the general
+   *  sections. A slot, like `mcp`, so this dialog makes no backend calls. */
+  children?: React.ReactNode;
   /** The MCP server section (settings/McpSection). A slot rather than a
    *  child component so this dialog stays free of backend calls. */
   mcp?: React.ReactNode;
@@ -526,7 +529,7 @@ export function Settings(p: {
 }) {
   return (
     <Overlay onClose={p.onClose}>
-      <div className="modal" style={{ width: 520 }}>
+      <div className="modal settings-modal" style={{ width: p.children ? 620 : 520 }}>
         <ModalHead title="Settings" onClose={p.onClose} />
         <div className="modal-body">
           <div className="section-row" style={{ borderTop: "none" }}>
@@ -586,6 +589,7 @@ export function Settings(p: {
               <span className="knob" aria-hidden />
             </button>
           </div>
+          {p.children}
           {p.mcp}
           {p.onAbout && (
             <div className="section-row">

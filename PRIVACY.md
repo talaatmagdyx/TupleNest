@@ -1,11 +1,14 @@
 # Privacy
 
 **Nothing you do in TupleNest leaves your computer, except to the databases you
-connect to and one update check.** There is no account, no sign-in, no
-analytics endpoint, and no server run by this project. The app talks to two
-things: the databases you point it at, and — once, at startup — GitHub, to ask
-whether a newer release exists. That check sends no data about you or your
-work, and it currently cannot be turned off.
+connect to, one update check, and — only if you set it up and then ask it
+something — the assistant's model.** There is no account, no sign-in, no
+analytics endpoint, and no server run by this project. The app talks to the
+databases you point it at, and — once, at startup — GitHub, to ask whether a
+newer release exists. That check sends no data about you or your work, and it
+currently cannot be turned off. The assistant is off until you add a provider
+in Settings › Assistant; what it sends, and when, is spelled out under
+[The assistant](#the-assistant).
 
 This document says where things are kept so you can go and look, or delete
 them.
@@ -18,6 +21,8 @@ Windows, `~/.local/share/app.tuplenest.desktop` on Linux.
 
 | What | Where | Notes |
 |---|---|---|
+| **Anthropic API key** (if you add one) | OS keychain | Stored the same way as database passwords: the value in the keychain, an opaque `tn-secret-*` reference in the SQLite settings. The window never receives the key or the reference back. Removing the provider in Settings › Assistant deletes the keychain entry. |
+| **Assistant settings** | `<data>` SQLite | Whether Ollama is on, its URL, whether a non-local Ollama is allowed, the default model. **Assistant conversations are not stored** — they live in the panel until you clear it or close the app. |
 | **Passwords and SSH key passphrases** | OS keychain | Keychain / Credential Manager / Secret Service. Never in the files below — the SQLite table has no password or passphrase column, only opaque references. |
 | **Connection profiles** | `<data>` SQLite | Host, port, database, username, TLS mode, SSH settings (including the key file's path, not the key). Not the password or the key's passphrase. |
 | **Query history** | `<data>` SQLite | Newest 1,000. **On prod-tagged connections the SQL text is not recorded** — only timing, row counts, and status. On other environments the SQL is stored with a best-effort scrub of secret literals (`PASSWORD '…'`, `IDENTIFIED BY '…'`, `key=…`, connection-string URLs → `[REDACTED]`). Add a `-- tuplenest:no-history` comment to a statement to skip its history row entirely. When a query fails, only a reduced error is stored (title, SQLSTATE, category); the server's DETAIL/HINT — which can quote row values like `Key (email)=(…)` — is shown on screen but **not** written to disk. |
@@ -70,15 +75,67 @@ TupleNest makes exactly these connections:
    update. This is an unauthenticated GET; GitHub will see your IP address, as
    any web request would. It does not include an install id or any identifier
    from this app. If the check fails, nothing happens and you are not nagged.
-3. **Nothing else.** Following a link in the About box hands the URL to your
+3. **The assistant's model, only when you ask it something** (or press Test
+   in Settings › Assistant). Either `api.anthropic.com`, over HTTPS with your
+   own key, or the Ollama server whose URL you set — `http://localhost:11434`
+   by default, which never leaves this computer. See below.
+4. **Nothing else.** Following a link in the About box hands the URL to your
    browser and is the only other outbound traffic, and only if you click it.
+
+## The assistant
+
+The assistant does nothing until you add a provider in Settings › Assistant,
+and sends nothing until you send a message, press Explain, press Fix with the
+assistant, or press Test. Every request is made by the app's Rust core; the
+window never makes one itself and never holds your key.
+
+**What a request contains — and nothing else:**
+
+- the message you typed, and the earlier messages and answers of the same panel
+  conversation (the last six, each capped);
+- the SQL in the active editor tab, for Ask, Explain and Fix (not for Write
+  SQL), capped at 20,000 characters;
+- for Fix only: the error's title, SQLSTATE and the server's message, hint and
+  the names of the objects involved. The server's `DETAIL` and `CONTEXT`
+  lines are **removed first**, because they can quote row values
+  (`Key (email)=(…) already exists`);
+- the names of the schemas, tables and views of the database you are
+  connected to, with their column names and types, from the explorer's
+  cache. Capped at 12,000 characters; tables your query names go first.
+  Comments, index definitions, sizes and row estimates are not included.
+  Nothing is sent about a database you are not connected to.
+
+**Never sent:** row data or any result cell, query history, the audit log,
+the connection's host, port, user name or password, SSH settings, other
+connections' schemas, or anything from another tab.
+
+**When it goes:**
+
+| Provider | Destination | Sent when |
+|---|---|---|
+| Claude (Anthropic API) | `https://api.anthropic.com/v1/messages`, with your key in the `x-api-key` header | You send a message, press Explain or Fix; Test sends a one-word request with no data of yours |
+| Ollama | The URL you set: `http://localhost:11434` unless you change it | You send a message, press Explain or Fix; Test lists the models (`/api/tags`) |
+
+The Ollama URL must be on this computer (`localhost`, `127.0.0.0/8` or `::1`)
+unless you turn on **Allow a server on another computer**; with it on, your
+questions, the query and the table names go to that server. Redirects are
+never followed, so a local server cannot pass the request on elsewhere.
+Anthropic's handling of what you send is governed by your agreement with
+Anthropic, not by this project.
+
+Nothing the assistant suggests runs by itself. A suggestion goes into the
+editor only when you press Insert into editor or Apply the fix, and runs only
+when you press Run — through the same read-only check, production guard and
+audit log as anything you type.
 
 ## Deleting your data
 
 - **Profiles, history, audit log, cache** — delete the `<data>` directory.
 - **Passwords and SSH key passphrases** — these are the keychain's, not ours;
   remove entries named `tn-secret-*` in Keychain Access, Credential Manager, or
-  Seahorse. Deleting a profile in the app removes its keychain entries too.
+  Seahorse. Deleting a profile in the app removes its keychain entries too,
+  and removing the Anthropic provider in Settings › Assistant removes the
+  key's.
 - **Logs** — delete `<data>/logs` (older than 14 days are deleted automatically).
 - **Crash reports** — delete `<data>/crashes`.
 

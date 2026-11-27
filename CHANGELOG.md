@@ -5,6 +5,24 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **The assistant.** A panel beside the editor (title-bar **Assistant**
+  button, <kbd>⌘J</kbd>) that answers questions about the query and schema,
+  explains a query, writes SQL from a plain-English request, and fixes a
+  failed statement from the error view, showing the fix as a diff. Providers:
+  Claude through your own Anthropic API key (Sonnet 5.5 by default, Opus 5.5
+  and Haiku 5.5 on offer), and a local model through Ollama, picked per
+  request. Settings › Assistant adds and tests the key (stored in the OS
+  keychain like a database password, deleted when the provider is removed),
+  the Ollama URL (local only unless you allow another computer), and the
+  default model. Requests are made by the Rust core and stream back; Stop
+  cancels. Sent: your message, the editor's SQL, a failed statement's error
+  with its `DETAIL`/`CONTEXT` lines removed, and the connected database's
+  schema, table and column names and types, capped. Never sent: row data,
+  history, connection details, other connections. Suggestions go into the
+  editor only on Insert or Apply and run only on Run, through the existing
+  guard and audit paths. See README "The assistant" and PRIVACY.md.
+
 From a second audit, which re-tested every fix in 0.1.1-beta.12 rather than
 trusting it.
 

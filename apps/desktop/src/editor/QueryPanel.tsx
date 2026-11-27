@@ -59,6 +59,8 @@ type Props = {
   history: HistoryPanelProps;
   /** Id of the editor tab this panel belongs to, which names it. */
   tabId?: string;
+  /** Ask the assistant to fix the failed statement. Absent, no button. */
+  onFix?: () => void;
 };
 
 export default function QueryPanel(p: Props) {
@@ -276,6 +278,14 @@ export default function QueryPanel(p: Props) {
           {p.resultTab === "results" && (
             <>
               {p.lastError && <div className="error-box">{p.lastError}</div>}
+              {p.lastError && p.onFix && (
+                <div className="error-acts">
+                  <button className="btn primary xs" onClick={p.onFix}>
+                    Fix with the assistant
+                  </button>
+                  <span className="muted">Changes only the editor, and only when you apply it.</span>
+                </div>
+              )}
               {!p.lastError && !r && !p.connected && (
                 <div className="center-note">
                   <div className="big">Not connected</div>

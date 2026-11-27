@@ -156,6 +156,11 @@ pub struct PgState {
     cache: StdMutex<tuplenest_metadata_cache::MetadataCache>,
     /// Cache key of the currently connected session.
     cache_key: StdMutex<Option<String>>,
+    /// The same key, but only while a session is live: set by `pg_connect`,
+    /// cleared on every way a session ends. `cache_key` is deliberately kept
+    /// after a disconnect (offline browsing); the assistant must not send the
+    /// last database's schema once the user has left it.
+    live_key: StdMutex<Option<String>>,
     /// Secret refs written by `pg_secret_save` in this app session — the
     /// password the user just typed into the form. See `authorize_secret`.
     fresh_secrets: StdMutex<std::collections::HashSet<String>>,
@@ -218,6 +223,7 @@ impl PgState {
             cancel: StdMutex::new(None),
             cache: StdMutex::new(cache),
             cache_key: StdMutex::new(None),
+            live_key: StdMutex::new(None),
             fresh_secrets: StdMutex::new(Default::default()),
             result: StdMutex::new(None),
             connected_env: StdMutex::new(None),
@@ -287,6 +293,9 @@ async fn on_session_closed(
     }
     if let Ok(mut t) = state.tunnel.lock() {
         *t = None;
+    }
+    if let Ok(mut k) = state.live_key.lock() {
+        *k = None;
     }
     drop(slot);
     tracing::warn!(
@@ -552,6 +561,9 @@ fn lost_or_error(state: &PgState, slot: &mut Option<PostgresSession>, e: &Driver
     }
     if let Ok(mut t) = state.tunnel.lock() {
         *t = None;
+    }
+    if let Ok(mut k) = state.live_key.lock() {
+        *k = None;
     }
     tracing::warn!(
         component = "pg",
@@ -1047,6 +1059,7 @@ pub async fn pg_connect(
         slot.as_ref().map(|s| s.cancel_handle());
     *state.tunnel.lock().map_err(|_| "tunnel lock poisoned")? = tunnel;
     *state.cache_key.lock().map_err(|_| "key lock poisoned")? = Some(cache_key_of(&params));
+    *state.live_key.lock().map_err(|_| "key lock poisoned")? = Some(cache_key_of(&params));
     *state
         .connected_env
         .lock()
@@ -1093,6 +1106,7 @@ pub async fn pg_disconnect(state: tauri::State<'_, PgState>) -> Result<(), Strin
         .take();
     // Dropping the tunnel closes the SSH session.
     *state.tunnel.lock().map_err(|_| "tunnel lock poisoned")? = None;
+    *state.live_key.lock().map_err(|_| "key lock poisoned")? = None;
     drop(slot);
     if let Some(old) = old {
         drop(old);
@@ -2621,6 +2635,47 @@ pub async fn pg_admin_backend(
         .admin_backend(pid, terminate)
         .await
         .map_err(|e| err_to_string(&e))
+}
+
+/// The schema digest the assistant may send: names and types of the live
+/// session's database, from the metadata cache, at most `cap` characters.
+/// Empty when no session is live. See `assistant::context` for what is read.
+pub fn assistant_schema(state: &PgState, sql_hint: &str, cap: usize) -> String {
+    let Some(key) = state.live_key.lock().ok().and_then(|k| k.clone()) else {
+        return String::new();
+    };
+    let Ok(cache) = state.cache.lock() else {
+        return String::new();
+    };
+    let objects = crate::assistant::context::read_schema(&cache, &key);
+    crate::assistant::context::schema_digest(&objects, sql_hint, cap)
+}
+
+#[cfg(test)]
+mod assistant_schema_tests {
+    use super::*;
+
+    #[test]
+    fn nothing_is_read_without_a_live_session() {
+        let mut cache = tuplenest_metadata_cache::MetadataCache::open_in_memory().unwrap();
+        cache
+            .replace_list("k", "schema", "", &[("public".into(), "\"public\"".into())])
+            .unwrap();
+        cache
+            .replace_list(
+                "k",
+                "object",
+                "public",
+                &[("t".into(), r#"{"name":"t","kind":"table"}"#.into())],
+            )
+            .unwrap();
+        let state = PgState::new(cache);
+        // Offline browsing keeps cache_key; the assistant must not use it.
+        *state.cache_key.lock().unwrap() = Some("k".into());
+        assert_eq!(assistant_schema(&state, "", 1000), "");
+        *state.live_key.lock().unwrap() = Some("k".into());
+        assert_eq!(assistant_schema(&state, "", 1000), "table public.t\n");
+    }
 }
 
 /// Cache-only metadata: renders the explorer for a saved profile before —
