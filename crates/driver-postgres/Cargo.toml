@@ -26,6 +26,8 @@ uuid = { workspace = true }
 tuplenest-driver-api = { path = "../driver-api" }
 
 [dev-dependencies]
+# Only for tests/bench_*.rs: stores rows the way the desktop app does.
+tuplenest-result-stream = { path = "../result-stream" }
 hex = "0.4"
 tokio = { workspace = true }
 # Synthesises a CA and leaf certificates in-process so the VerifyCa verifier

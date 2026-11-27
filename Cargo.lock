@@ -6504,6 +6504,7 @@ dependencies = [
  "tokio-postgres",
  "tokio-postgres-rustls",
  "tuplenest-driver-api",
+ "tuplenest-result-stream",
  "uuid",
 ]
 
@@ -6517,6 +6518,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tuplenest-driver-api",
+ "tuplenest-result-stream",
 ]
 
 [[package]]

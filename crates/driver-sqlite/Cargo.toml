@@ -17,5 +17,7 @@ rusqlite = { workspace = true, features = ["column_decltype"] }
 tuplenest-driver-api = { path = "../driver-api" }
 
 [dev-dependencies]
+# Only for tests/bench_*.rs: stores rows the way the desktop app does.
+tuplenest-result-stream = { path = "../result-stream" }
 tempfile = "3"
 tokio = { workspace = true }

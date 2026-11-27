@@ -46,3 +46,6 @@ ture = "ture"
 
 # openssl's `-passin` option (release.yml reads the .p12 password with it).
 passin = "passin"
+
+# mach_timebase_info_data_t's field (numer/denom), in scripts/bench/startup.swift.
+numer = "numer"
