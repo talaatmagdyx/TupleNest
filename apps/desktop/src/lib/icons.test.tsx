@@ -26,20 +26,25 @@ describe("icons", () => {
     expect(container.querySelector("svg")).toHaveAttribute("aria-hidden");
   });
 
-  it.each(all)("%s honours an explicit size", (_name, Icon) => {
+  // The brand mark sizes its tile, not the glyph inside it — tested below.
+  it.each(all.filter(([n]) => n !== "BrandMark"))("%s honours an explicit size", (_name, Icon) => {
     const { container } = render(<Icon size={41} />);
     expect(container.querySelector("svg")).toHaveAttribute("width", "41");
     expect(container.querySelector("svg")).toHaveAttribute("height", "41");
   });
 
-  it("BrandMark defaults to 18px when no size is given", () => {
+  it("BrandMark defaults to an 18px tile when no size is given", () => {
     const { container } = render(<icons.BrandMark />);
-    expect(container.querySelector("svg")).toHaveAttribute("width", "18");
+    const tile = container.querySelector(".brand-mark") as HTMLElement;
+    expect(tile.style.width).toBe("18px");
+    expect(tile).toHaveAttribute("aria-hidden");
   });
 
-  it("BrandMark paints its layers from the amber→coral gradient", () => {
-    const { container } = render(<icons.BrandMark />);
-    expect(container.querySelector("linearGradient")).toBeInTheDocument();
-    expect(container.querySelectorAll("rect[fill^='url(']").length).toBeGreaterThan(0);
+  it("BrandMark draws three lines in the on-accent colour, with no hard-coded fill", () => {
+    const { container } = render(<icons.BrandMark size={24} />);
+    const svg = container.querySelector("svg")!;
+    expect(svg).toHaveAttribute("stroke", "currentColor");
+    expect(container.querySelector("path")!.getAttribute("d")).toBe("M4 7h16M4 12h10M4 17h6");
+    expect(container.querySelector("linearGradient")).toBeNull();
   });
 });

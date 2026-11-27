@@ -42,7 +42,7 @@ export default function DiagramModal(p: { schema: string; onClose: () => void })
         <ModalHead
           title={
             <span style={{ display: "inline-flex", gap: 9, alignItems: "center" }}>
-              <span className="chip" style={{ color: "var(--tn-purple)", background: "rgba(157,123,255,.14)" }}>
+              <span className="chip" style={{ color: "var(--tn-purple)", background: "var(--tn-purple-tint)" }}>
                 ER
               </span>
               Relationships · <span className="mono">{p.schema}</span>

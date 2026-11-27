@@ -12,6 +12,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import Titlebar from "./app-shell/Titlebar";
 import StatusBar from "./app-shell/StatusBar";
 import ActivityRail, { type RailView } from "./app-shell/ActivityRail";
+import Welcome from "./app-shell/Welcome";
 import HistoryPanel from "./history/HistoryPanel";
 import SavedList from "./connections/SavedList";
 import ConnectionForm from "./connections/ConnectionForm";
@@ -39,7 +40,7 @@ import { FILTERS, abortSave, baseName, beginSave, finishSave, saveText } from ".
 import { MAX_BARS, chartSubtitle, chartTitle, pickChartColumns } from "./lib/chart";
 import type { Pane as IntelPane } from "./overlays/IntelModal";
 import type { ObjectDetails } from "./overlays/DetailsModal";
-import { useQueryTabs } from "./hooks/useQueryTabs";
+import { FIRST_TAB, useQueryTabs } from "./hooks/useQueryTabs";
 import { useSearch } from "./hooks/useSearch";
 import { useHealth } from "./hooks/useHealth";
 import { useConnectionForm, timeoutMs, parseSsh } from "./hooks/useConnectionForm";
@@ -176,6 +177,15 @@ export default function App() {
   // Tabs live in a hook so their invariants (valid active index, dirty means
   // "user edited", never zero tabs) are stated and tested in one place.
   const { tabs, activeTab, setActiveTab, setActiveSql, newTab, closeTab, setTabs } = useQueryTabs();
+  /* The welcome screen holds the main area until there is something to work
+     on: a first connection, or a tab the user opened, picked or edited. Once
+     gone it stays gone for the session — a dropped connection must not hide
+     the SQL that was being written. Adjusted during render, not in an effect,
+     so the editor never flashes in first. */
+  const [welcome, setWelcome] = useState(true);
+  const pristine = tabs.length === 1 && tabs[0].id === FIRST_TAB.id && !tabs[0].dirty;
+  if (welcome && (connected || !pristine)) setWelcome(false);
+  const showWelcome = welcome && !connected && pristine;
   const [overlay, setOverlay] = useState<OverlayKind>(null);
   /** Three palette commands share the SQL-intelligence modal; this is which of
    *  its panes the chosen command meant. */
@@ -1699,8 +1709,19 @@ export default function App() {
           />
         )}
         <main className="main-col">
-          <TabsBar tabs={tabs} active={activeTab} onSelect={setActiveTab} onClose={closeTab} onNew={() => newTab()} />
-          {tabs.length === 0 ? (
+          <TabsBar
+            tabs={tabs}
+            active={activeTab}
+            onSelect={(i) => {
+              setWelcome(false);
+              setActiveTab(i);
+            }}
+            onClose={closeTab}
+            onNew={() => newTab()}
+          />
+          {showWelcome ? (
+            <Welcome saved={saved} onNew={newProfile} onOpen={editProfile} />
+          ) : tabs.length === 0 ? (
             <div className="onboard">
               <div className="card">
                 <div className="onboard-glyph">

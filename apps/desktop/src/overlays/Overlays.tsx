@@ -1,9 +1,9 @@
-import React, { createContext, useContext, useEffect, useId, useRef } from "react";
+import React, { createContext, useContext, useEffect, useId, useRef, useState } from "react";
 import { enterKey, kbd } from "../lib/platform";
 import { SHORTCUTS } from "../lib/shortcuts";
-import { BrandMark } from "../lib/icons";
+import { BrandMark, OfflineIcon, WarnIcon } from "../lib/icons";
 import { prettyJson } from "../lib/text";
-import { guardReason } from "../lib/sql";
+import { guardReason, guardTarget } from "../lib/sql";
 
 /* ---------- shared ---------- */
 
@@ -429,26 +429,54 @@ export function Guard(p: { sql: string; env?: string | null; onCancel: () => voi
   // every row" for whatever it was asked about: a DROP TABLE, a DO block, a
   // DELETE inside EXPLAIN ANALYZE.
   const staging = p.env === "staging";
+  const where = staging ? "staging" : "production";
   const reason = guardReason(p.sql, staging ? "staging" : "prod") ?? {
     verb: "statement",
     why: "It was flagged as one to confirm.",
   };
+  // The worst cases on production — every row, or the object itself — want
+  // the name typed back before the button wakes up. A click is a reflex;
+  // typing `orders` is a decision about `orders`.
+  const target = guardTarget(p.sql, staging ? "staging" : "prod");
+  const [typed, setTyped] = useState("");
+  const confirmed = !target || typed.trim() === target.name;
   return (
     <Overlay onClose={p.onCancel} center alert>
-      <div className="modal dialog">
-        <DialogTitle style={{ color: "var(--tn-danger)" }}>
-          <span aria-hidden>⚠</span> Confirm this {reason.verb} on {staging ? "staging" : "production"}
-        </DialogTitle>
+      <div className="modal dialog guard">
+        <div className="danger-strip" aria-hidden />
+        <div className="d-head">
+          <span className="d-icon danger" aria-hidden>
+            <WarnIcon size={20} />
+          </span>
+          <DialogTitle>
+            Confirm this {reason.verb} on {where}
+          </DialogTitle>
+        </div>
         <p>
-          <b style={{ color: "var(--tn-danger)" }}>{reason.why}</b> On a {staging ? "staging" : "production"}{" "}
-          connection this cannot be undone.
+          <b className="d-why">{reason.why}</b> On a {where} connection this cannot be undone.
         </p>
-        <pre>{p.sql.trim().slice(0, 400)}</pre>
-        <div className="d-actions">
-          <button className="btn" onClick={p.onCancel}>
-            Cancel
+        <pre className="d-code">{p.sql.trim().slice(0, 400)}</pre>
+        {target && (
+          <label className="d-confirm">
+            <span>
+              Type <b className="mono">{target.name}</b> to confirm
+            </span>
+            <input
+              className="mono"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+              autoCapitalize="off"
+            />
+          </label>
+        )}
+        <div className="d-actions end">
+          {/* The way out is the default: focused on open, so Enter backs out. */}
+          <button className="btn primary" autoFocus onClick={p.onCancel}>
+            Don&apos;t run it
           </button>
-          <button className="btn danger" onClick={p.onRun}>
+          <button className="btn danger outline" disabled={!confirmed} onClick={p.onRun}>
             Run anyway
           </button>
         </div>
@@ -463,17 +491,17 @@ export function ConnLost(p: { detail: string; onReconnect: () => void; onClose: 
   return (
     <Overlay onClose={p.onClose} center alert>
       <div className="modal dialog connlost">
-        <div className="icon-wrap" aria-hidden>
-          ⏻
-        </div>
-        <DialogTitle style={{ justifyContent: "center" }}>Connection lost</DialogTitle>
+        <span className="d-icon warn" aria-hidden>
+          <OfflineIcon size={22} />
+        </span>
+        <DialogTitle>Connection lost</DialogTitle>
         <p>{p.detail || "The session was closed. Reconnect to continue — nothing was re-run."}</p>
-        <div className="d-actions" style={{ justifyContent: "center" }}>
-          <button className="btn primary" onClick={p.onReconnect}>
-            Reconnect
-          </button>
+        <div className="d-actions end">
           <button className="btn" onClick={p.onClose}>
             Dismiss
+          </button>
+          <button className="btn primary" autoFocus onClick={p.onReconnect}>
+            Reconnect
           </button>
         </div>
       </div>

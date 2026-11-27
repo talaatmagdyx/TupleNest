@@ -32,10 +32,10 @@ export function compact(n: number): string {
 }
 
 function kindColors(kind: string, hot: boolean): { color: string; bg: string } {
-  if (hot) return { color: "var(--tn-danger)", bg: "rgba(239,77,77,.14)" };
-  if (/sort|limit|aggregate|agg/i.test(kind)) return { color: "var(--tn-warning)", bg: "rgba(224,161,58,.14)" };
-  if (/join|hash|merge|nested/i.test(kind)) return { color: "var(--tn-accent)", bg: "rgba(77,141,255,.14)" };
-  if (/index/i.test(kind)) return { color: "var(--tn-success)", bg: "rgba(63,185,80,.14)" };
+  if (hot) return { color: "var(--tn-danger)", bg: "var(--tn-danger-tint)" };
+  if (/sort|limit|aggregate|agg/i.test(kind)) return { color: "var(--tn-warning)", bg: "var(--tn-warn-tint)" };
+  if (/join|hash|merge|nested/i.test(kind)) return { color: "var(--tn-accent)", bg: "var(--tn-as)" };
+  if (/index/i.test(kind)) return { color: "var(--tn-success)", bg: "var(--tn-success-tint)" };
   return { color: "var(--tn-ts)", bg: "var(--tn-s2)" };
 }
 

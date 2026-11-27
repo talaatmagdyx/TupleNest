@@ -15,7 +15,7 @@ beforeEach(() => {
 const connected = async () => {
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByText(CONNECTION.name);
+  await screen.findAllByText(CONNECTION.name);
   await user.keyboard("{Meta>}k{/Meta}");
   await user.type(await screen.findByPlaceholderText(/type a command/i), "Connect to local dev");
   await user.keyboard("{Enter}");

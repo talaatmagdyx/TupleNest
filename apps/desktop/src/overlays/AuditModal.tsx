@@ -36,7 +36,7 @@ export default function AuditModal(p: { onClose: () => void }) {
         <ModalHead
           title={
             <span style={{ display: "inline-flex", gap: 9, alignItems: "center" }}>
-              <span className="chip" style={{ color: "var(--tn-danger)", background: "rgba(239,77,77,.14)" }}>
+              <span className="chip" style={{ color: "var(--tn-danger)", background: "var(--tn-danger-tint)" }}>
                 AUDIT
               </span>
               Production statement log

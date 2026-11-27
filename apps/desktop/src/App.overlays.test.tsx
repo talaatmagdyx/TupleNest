@@ -20,7 +20,7 @@ beforeEach(() => {
 const mount = async () => {
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByText(CONNECTION.name);
+  await screen.findAllByText(CONNECTION.name);
   return user;
 };
 

@@ -1,6 +1,6 @@
 # Third-party components
 
-TupleNest is [MIT licensed](LICENSE). It ships two components that are not: the fonts below.
+TupleNest is [MIT licensed](LICENSE). It ships three components that are not: the fonts below.
 
 These notices used to live at the bottom of `LICENSE`, which had a cost worth
 recording: GitHub identifies a licence by matching the whole file against known
@@ -28,6 +28,16 @@ detection.
 - **Copyright:** 2020 The Space Grotesk Project Authors
 - **Licence:** SIL Open Font License 1.1 — full text at
   [`apps/desktop/src/assets/fonts/OFL-SpaceGrotesk.txt`](apps/desktop/src/assets/fonts/OFL-SpaceGrotesk.txt).
+
+## Inter
+
+- **Files:** `apps/desktop/src/assets/fonts/Inter-latin-var.woff2`,
+  `apps/desktop/src/assets/fonts/Inter-latin-ext-var.woff2` (the Latin and
+  Latin Extended subsets of the variable font, as published by Fontsource,
+  `@fontsource-variable/inter` 5.3.0)
+- **Copyright:** 2016 The Inter Project Authors
+- **Licence:** SIL Open Font License 1.1 — full text at
+  [`apps/desktop/src/assets/fonts/OFL-Inter.txt`](apps/desktop/src/assets/fonts/OFL-Inter.txt).
 
 The OFL covers the font files only. It asks that the fonts not be sold on their
 own and that this notice travel with them; it places no condition on the rest

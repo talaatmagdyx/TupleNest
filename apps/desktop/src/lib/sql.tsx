@@ -224,7 +224,7 @@ export function dmlWithoutWhere(masked: string): string | null {
  * as a WHERE. Only the obvious spellings are recognised; `WHERE id = id` and
  * `WHERE now() > '2000-01-01'` are as unbounded and are not caught.
  */
-function unboundedDml(masked: string): { verb: string; trivial: boolean } | null {
+function unboundedDml(masked: string): { verb: string; trivial: boolean; at: number } | null {
   const re = /\b(update|delete)\b/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(masked))) {
@@ -256,8 +256,8 @@ function unboundedDml(masked: string): { verb: string; trivial: boolean } | null
     }
     const verb = m[1].toLowerCase();
     const where = /\bwhere\b/i.exec(own);
-    if (!where) return { verb, trivial: false };
-    if (alwaysTrue(masked.slice(at[where.index] + where[0].length, end))) return { verb, trivial: true };
+    if (!where) return { verb, trivial: false, at: m.index };
+    if (alwaysTrue(masked.slice(at[where.index] + where[0].length, end))) return { verb, trivial: true, at: m.index };
   }
   return null;
 }
@@ -274,6 +274,60 @@ function alwaysTrue(condition: string): boolean {
     // also flags `'a' = 'b'`, which matches nothing — asking is the safe side.
     return c === "true" || c === "notfalse" || c === "1" || /^(\d+)=\1$/.test(c) || /^('')?=('')?$/.test(c);
   });
+}
+
+/** One name: plain or double-quoted, optionally schema-qualified. */
+const NAME = String.raw`(?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*)(?:\s*\.\s*(?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_$]*))*`;
+/** A comma-separated list of names, as `DROP TABLE a, b` and `TRUNCATE a, b` take. */
+const NAME_LIST = new RegExp(String.raw`${NAME}(?:\s*,\s*${NAME})*`, "y");
+
+/** The names written at `from` in the original text, or null. The keywords
+ *  before it were matched on masked text; the names are read from the
+ *  original, where a quoted identifier still has its letters. */
+function namesAt(sql: string, from: number): string | null {
+  NAME_LIST.lastIndex = from;
+  const m = NAME_LIST.exec(sql);
+  return m ? m[0] : null;
+}
+
+/**
+ * The object a prod statement destroys outright, which the guard asks to be
+ * typed back before it will run it — or null when the statement is not one of
+ * the worst cases, or the connection is not production.
+ *
+ * The worst cases are the ones with no undo short of a restore: DELETE or
+ * UPDATE with no WHERE (or an always-true one), DROP, and TRUNCATE. The other
+ * guarded statements (ALTER, DO, COPY …) still ask, but one click answers.
+ * Staging asks without the typing: a rehearsal should not be a chore.
+ */
+export function guardTarget(sql: string, env: string | null): { verb: string; name: string } | null {
+  if (env !== "prod") return null;
+  const masked = maskLiterals(sql);
+  const verb = firstKeyword(sql);
+  if (!verb) return null;
+  if (verb === "explain") {
+    const head = /^\s*explain\s*(?:\(([^)]*)\)|((?:\s*\b(?:analyze|analyse|verbose)\b)*))/i.exec(masked);
+    if (!head || !guardReason(sql, env)) return null;
+    return guardTarget(sql.slice(head[0].length), env);
+  }
+  if (verb === "drop" || verb === "truncate") {
+    const re =
+      verb === "drop"
+        ? /^\s*drop\s+(?:(?:materialized|foreign)\s+)?[a-z]+\s+(?:by\s+)?(?:concurrently\s+)?(?:if\s+exists\s+)?/yi
+        : /^\s*truncate\s+(?:table\s+)?(?:only\s+)?/yi;
+    const m = re.exec(masked);
+    if (!m) return null;
+    const name = namesAt(sql, m[0].length);
+    return name ? { verb: verb.toUpperCase(), name } : null;
+  }
+  const u = unboundedDml(masked);
+  if (!u) return null;
+  const re = u.verb === "delete" ? /delete\s+from\s+(?:only\s+)?/yi : /update\s+(?:only\s+)?/yi;
+  re.lastIndex = u.at;
+  const m = re.exec(masked);
+  if (!m) return null;
+  const name = namesAt(sql, u.at + m[0].length);
+  return name ? { verb: u.verb.toUpperCase(), name } : null;
 }
 
 /** Destructive-statement guard for prod/staging. See `guardReason`. */
@@ -384,11 +438,14 @@ export function coerceParam(raw: string): string | null {
   return raw;
 }
 
+/** Environment badge colours, as theme tokens so the badge follows the light
+ *  and dark palettes. Each pair is text on its own tint over an island, held
+ *  to 4.5:1 by styles.contrast.test.ts. */
 export const ENV_COLORS: Record<string, { color: string; bg: string }> = {
-  dev: { color: "#3fb950", bg: "rgba(63,185,80,.14)" },
-  test: { color: "#9aa0a9", bg: "rgba(154,160,169,.14)" },
-  staging: { color: "#e0a13a", bg: "rgba(224,161,58,.14)" },
-  prod: { color: "#ef4d4d", bg: "rgba(239,77,77,.16)" },
+  dev: { color: "var(--tn-success)", bg: "var(--tn-success-tint)" },
+  test: { color: "var(--tn-ts)", bg: "var(--tn-s2)" },
+  staging: { color: "var(--tn-warning)", bg: "var(--tn-warn-tint)" },
+  prod: { color: "var(--tn-danger)", bg: "var(--tn-danger-tint)" },
 };
 
 export function envMeta(env: string | null | undefined) {

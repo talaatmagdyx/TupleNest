@@ -43,7 +43,7 @@ export default function Titlebar(p: Props) {
         <SidebarIcon />
       </button>
       <div className="brand">
-        <BrandMark size={18} />
+        <BrandMark size={22} />
         <span className="brand-word">TupleNest</span>
       </div>
       <div className="conn-switch">
