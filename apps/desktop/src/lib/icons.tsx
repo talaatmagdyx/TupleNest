@@ -4,18 +4,16 @@
  *  on-accent colour. Both come from the theme tokens, so the mark follows the
  *  light and dark palettes. Decorative: it always sits beside the wordmark. */
 export const BrandMark = ({ size = 18 }: { size?: number }) => (
-  <span className="brand-mark" style={{ width: size, height: size, borderRadius: Math.round(size * 0.29) }} aria-hidden>
-    <svg
-      width={Math.round(size * 0.58)}
-      height={Math.round(size * 0.58)}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2.6}
-      strokeLinecap="round"
-      aria-hidden
-    >
-      <path d="M4 7h16M4 12h10M4 17h6" />
+  <span className="brand-mark" style={{ width: size, height: size, borderRadius: Math.round(size * 0.24) }} aria-hidden>
+    {/* The TupleNest logo: a hexagon in two strokes around a table with a header row. */}
+    <svg width={Math.round(size * 0.82)} height={Math.round(size * 0.82)} viewBox="0 0 120 120" aria-hidden>
+      <path d="M16 80 V36 L60 10.5 L98 32.5" fill="none" stroke="var(--tn-brand-blue)" strokeWidth={11} strokeLinejoin="round" strokeLinecap="round" />
+      <path d="M104 44 V84 L60 109.5 L22 87.5" fill="none" stroke="var(--tn-brand-navy)" strokeWidth={11} strokeLinejoin="round" strokeLinecap="round" />
+      {[40, 54, 68].flatMap((y) =>
+        [34, 52.5, 71].map((x) => (
+          <rect key={`${x}-${y}`} x={x} y={y} width={15} height={10} rx={2} fill={y === 40 ? "var(--tn-brand-head)" : "var(--tn-brand-cell)"} />
+        )),
+      )}
     </svg>
   </span>
 );

@@ -40,11 +40,15 @@ describe("icons", () => {
     expect(tile).toHaveAttribute("aria-hidden");
   });
 
-  it("BrandMark draws three lines in the on-accent colour, with no hard-coded fill", () => {
+  it("BrandMark draws the hexagon logo in brand tokens, with no hard-coded colours", () => {
     const { container } = render(<icons.BrandMark size={24} />);
-    const svg = container.querySelector("svg")!;
-    expect(svg).toHaveAttribute("stroke", "currentColor");
-    expect(container.querySelector("path")!.getAttribute("d")).toBe("M4 7h16M4 12h10M4 17h6");
-    expect(container.querySelector("linearGradient")).toBeNull();
+    const paths = container.querySelectorAll("path");
+    expect(paths).toHaveLength(2);
+    expect(paths[0]).toHaveAttribute("stroke", "var(--tn-brand-blue)");
+    expect(paths[1]).toHaveAttribute("stroke", "var(--tn-brand-navy)");
+    const cells = container.querySelectorAll("rect");
+    expect(cells).toHaveLength(9);
+    expect([...cells].filter((r) => r.getAttribute("fill") === "var(--tn-brand-head)")).toHaveLength(3);
+    expect(container.innerHTML).not.toMatch(/#[0-9a-f]{3,6}/i);
   });
 });

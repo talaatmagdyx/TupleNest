@@ -4,23 +4,28 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TupleNest — the PostgreSQL and SQLite IDE that asks before it writes</title>
-<meta name="description" content="A local-first, open-source IDE for PostgreSQL and SQLite, for engineers who take production safety seriously. Streaming results, schema-aware autocomplete, TLS that fails closed, credentials in your OS keychain. Free, MIT, no cloud, no telemetry.">
+<meta name="description" content="TupleNest is an open-source desktop IDE for PostgreSQL and SQLite. Server-enforced read-only profiles, a destructive-statement guard on production, passwords in the OS keychain, an optional assistant that never sees your rows, and an MCP server that is off until you turn it on. MIT, no account, no telemetry.">
 <meta property="og:title" content="TupleNest — the PostgreSQL and SQLite IDE that asks before it writes">
-<meta property="og:description" content="Local-first PostgreSQL and SQLite IDE. Streaming results, schema-aware autocomplete, read-only production mode, TLS that fails closed. Rust + Tauri. MIT. No accounts, no cloud, no telemetry.">
-<meta property="og:image" content="https://talaatmagdyx.github.io/TupleNest/shots/hero.png">
+<meta property="og:description" content="Open-source desktop IDE for PostgreSQL and SQLite. Production-aware safety, local-first, MIT. No account, no telemetry.">
+<meta property="og:image" content="https://talaatmagdyx.github.io/TupleNest/shots/screen-query-3.jpg">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://talaatmagdyx.github.io/TupleNest/">
 <meta name="twitter:card" content="summary_large_image">
-<link rel="icon" href="logo.png">
+<meta name="theme-color" content="#060a14" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5f7fc" media="(prefers-color-scheme: light)">
+<link rel="icon" href="mark.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/SpaceGrotesk-latin-var.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="site.css">
+<script>document.documentElement.classList.add("js")</script>
 </head>
 <body>
 
+<a class="skip" href="#main">Skip to content</a>
 <header class="nav">
   <div class="wrap">
-    <a class="brand" href="index.html"><img src="logo.png" alt=""><b>TupleNest</b></a>
-    <nav>
-      <a class="link active" href="index.html">Home</a>
+    <a class="brand" href="index.html" aria-label="TupleNest home"><img src="icon.svg" alt="" width="34" height="34"><span class="wm">Tuple<span>Nest</span></span></a>
+    <nav aria-label="Main">
+      <a class="link active" href="index.html" aria-current="page">Home</a>
       <a class="link" href="features.html">Features</a>
       <a class="link" href="security.html">Security</a>
       <a class="link" href="download.html">Download</a>
@@ -31,9 +36,9 @@
       <a class="ghostbtn" href="https://github.com/talaatmagdyx/TupleNest"><span class="stars hidden" data-stars></span>GitHub</a>
       <a class="navbtn" href="download.html">Download</a>
     </nav>
-    <button class="menu-toggle" aria-label="Open menu">☰</button>
+    <button class="menu-toggle" aria-label="Menu" aria-controls="mobile-menu">☰</button>
   </div>
-  <div class="mobile-menu">
+  <div class="mobile-menu" id="mobile-menu">
     <a href="index.html">Home</a><a href="features.html">Features</a><a href="security.html">Security</a>
     <a href="download.html">Download</a><a href="docs.html">Docs</a><a href="roadmap.html">Roadmap</a>
     <a href="blog.html">Blog</a><a href="changelog.html">Changelog</a>
@@ -41,329 +46,234 @@
   </div>
 </header>
 
-<!-- 2. HERO -->
+<main id="main">
+
+<!-- HERO -->
 <section class="hero">
-  <div class="glow g1"></div><div class="glow g2"></div>
+  <div class="glow g1" aria-hidden="true"></div><div class="glow g2" aria-hidden="true"></div>
   <div class="wrap">
-    <span class="tagpill"><span class="dot"></span> v0.1.0-beta.11 · Public Beta</span>
-    <h1>The PostgreSQL IDE<br>that <em>asks before it writes.</em></h1>
-    <p class="sub">A local-first, open-source IDE for PostgreSQL — and SQLite files — built for engineers who work with real data and take production safety seriously.</p>
+    <img class="hero-mark" src="icon.svg" alt="" width="84" height="84">
+    <span class="tagpill"><span class="dot" aria-hidden="true"></span> PostgreSQL · SQLite · Open source, MIT</span>
+    <h1>The database IDE that<br><em>asks before it writes.</em></h1>
+    <p class="sub">A careful desktop IDE for PostgreSQL and SQLite. Production is treated as production, passwords stay in your OS keychain, and nothing of ours sits between you and your data.</p>
     <div class="cta">
-      <a class="btn primary" data-download href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Download</a>
-      <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest">View on GitHub</a>
+      <a class="btn primary" href="https://github.com/talaatmagdyx/TupleNest/releases">Download from GitHub Releases</a>
+      <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest">View the source</a>
     </div>
     <div class="trustline">
-      <span><b>✓</b> Free forever</span><span><b>✓</b> MIT licensed</span><span><b>✓</b> No account</span>
-      <span><b>✓</b> No cloud</span><span><b>✓</b> No telemetry</span><span><b>✓</b> Built with Rust</span>
+      <span><b>✓</b> No account</span><span><b>✓</b> No telemetry</span><span><b>✓</b> OS keychain</span>
+      <span><b>✓</b> macOS · Windows · Linux</span><span><b>✓</b> Rust + Tauri 2</span>
     </div>
-    <div class="shot reveal">
-      <div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>TupleNest — production · read-only</span></div>
-      <img src="shots/hero.png" alt="TupleNest showing a production connection in read-only mode: SQL editor, schema explorer, and result grid.">
+    <div class="shot">
+      <div class="bar" aria-hidden="true"><i class="r"></i><i class="y"></i><i class="g"></i><span>TupleNest</span></div>
+      <img src="shots/hero.gif" width="1100" height="648" alt="TupleNest in use: the welcome screen, schema-aware autocomplete in the editor, running a query, the results grid with value bars, then the same result as a chart.">
     </div>
-    <p class="honest"><b>Public beta.</b> Real engineers are using it, but nobody has lived with it for years yet. macOS builds are not notarized and Windows installers are unsigned, so first launch needs one extra click — every file is checksummed and every one except the macOS <code class="inline">.dmg</code> carries a minisign signature, so you can verify the bytes yourself.</p>
+    <p class="honest"><b>Beta software.</b> Releases are pre-releases and the installers are not code-signed yet, so your OS warns once on first launch. Every release carries SHA-256 checksums and GitHub build attestations you can check yourself — see <a href="download.html">Download</a>.</p>
   </div>
 </section>
 
-<!-- 3. TRUST STRIP -->
-<section class="tight">
-  <div class="wrap">
-    <div class="trust reveal">
-      <div class="t"><div class="ico">🖥️</div><h4>100% local-first</h4><p>The app talks to your database, GitHub once for an update check, and the assistant's model only if you set one up. No backend of ours sits in the middle.</p></div>
-      <div class="t"><div class="ico">🛡️</div><h4>PostgreSQL-enforced safety</h4><p>Read-only mode uses a real Postgres session characteristic — the server refuses writes, not just the UI.</p></div>
-      <div class="t"><div class="ico">🔑</div><h4>Credentials in the OS keychain</h4><p>Passwords live in the macOS Keychain, Windows Credential Manager, or the Secret Service — never in a config file.</p></div>
-      <div class="t"><div class="ico">✍️</div><h4>Signed releases</h4><p>Every file except the macOS <code class="inline">.dmg</code> ships with a minisign signature, plus SHA-256 checksums, an SBOM, and GitHub build provenance.</p></div>
-      <div class="t"><div class="ico">🚫</div><h4>No telemetry</h4><p>No analytics SDK, no phone-home, no crash upload. Even a pasted query plan is analysed locally, never uploaded.</p></div>
-      <div class="t"><div class="ico">⚙️</div><h4>Native Rust backend</h4><p>A Rust core over the PostgreSQL wire protocol, in a Tauri shell. Streaming, bounded memory, fast start.</p></div>
-    </div>
-  </div>
-</section>
-
-<!-- 4. WHY -->
+<!-- WHY -->
 <section>
   <div class="wrap">
     <div class="kicker">Why TupleNest</div>
-    <h2>Most database tools try to support everything.<br>TupleNest supports two engines.</h2>
-    <p class="lede">PostgreSQL in depth, and SQLite files with the same safety model — no others are planned. Built around the work engineers do every day: writing queries, exploring schemas, inspecting production data, and avoiding expensive mistakes.</p>
-    <div class="grid3">
-      <div class="card reveal"><div class="ico">🛡️</div><h3>Safety first</h3>
-        <ul><li>Read-only profiles, enforced by the server</li><li>Destructive-statement warnings</li><li>Clear environment labels</li><li>Production-aware workflows</li></ul></div>
-      <div class="card reveal"><div class="ico">⚡</div><h3>Built for speed</h3>
-        <ul><li>Native Rust backend</li><li>Streaming result sets</li><li>Virtualized data grid</li><li>Bounded memory overhead</li></ul></div>
-      <div class="card reveal"><div class="ico">⌨️</div><h3>Designed for developers</h3>
-        <ul><li>Keyboard-first navigation</li><li>Modern SQL editor</li><li>Clear visual hierarchy</li><li>No admin-suite bloat</li></ul></div>
+    <h2>Built around the mistake<br>you only make once.</h2>
+    <p class="lede">Two engines, one safety model, and a clear answer to "where does my data go?".</p>
+    <div class="grid4">
+      <div class="card reveal">
+        <div class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
+        <h3>Production-aware</h3><p>Tag a connection prod or staging and risky statements stop and ask. On prod, the worst ones make you type the table name.</p></div>
+      <div class="card reveal">
+        <div class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></div>
+        <h3>Enforced, not hoped</h3><p>Read-only profiles are set on the PostgreSQL session and re-checked before every statement; SQLite opens the file read-only.</p></div>
+      <div class="card reveal">
+        <div class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div>
+        <h3>Local-first</h3><p>No account and no telemetry. Passwords in the OS keychain. Prod query text never written to history.</p></div>
+      <div class="card reveal">
+        <div class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="5"/></svg></div>
+        <h3>AI on your terms</h3><p>Your own Anthropic key or a local Ollama model. It never sees result rows and never runs anything by itself.</p></div>
     </div>
   </div>
 </section>
 
-<!-- 5. PRODUCT EVIDENCE -->
-<section>
-  <div class="wrap center">
-    <div class="kicker">Evidence, not adjectives</div>
-    <h2>Every claim is checkable.</h2>
-    <p class="lede">No invented adoption numbers. These are things you can verify in the repository or a release.</p>
-    <div class="evband">
-      <div class="ev reveal"><div class="n">2,100+</div><div class="l">automated tests (2,100+ frontend · 250 Rust)</div></div>
-      <div class="ev reveal"><div class="n">0</div><div class="l">telemetry events sent, ever</div></div>
-      <div class="ev reveal"><div class="n">100%</div><div class="l">local-first — no cloud dependency</div></div>
-      <div class="ev reveal"><div class="n">3</div><div class="l">platforms: macOS, Windows, Linux</div></div>
-      <div class="ev reveal"><div class="n">SBOM</div><div class="l">generated &amp; attached to each release</div></div>
-      <div class="ev reveal"><div class="n">Signed</div><div class="l">minisign + SHA-256 + build provenance</div></div>
-    </div>
-  </div>
-</section>
-
-<!-- 6. MAIN FEATURE GRID -->
-<section>
+<!-- FEATURE GRID -->
+<section id="features">
   <div class="wrap">
     <div class="kicker">The feature set</div>
-    <h2>Everything you need.<br>Nothing you don't.</h2>
-    <p class="lede">A focused environment for PostgreSQL and SQLite — not a database administration suite trying to do everything for every engine.</p>
+    <h2>Everything for the daily loop.<br>Nothing you have to babysit.</h2>
+    <p class="lede">Write, run, read the result, and keep going — with the pages you reach for around it.</p>
     <div class="grid3">
-      <div class="fcard reveal"><div class="cap"><img src="shots/complete.png" alt="Schema-aware autocomplete popup in the SQL editor"></div>
-        <div class="body"><h3>Smart SQL editor</h3><ul><li>Schema-aware completion</li><li>Syntax highlighting &amp; formatting</li><li>Multiple tabs</li><li>Query history</li><li>Snippets &amp; parameters</li></ul></div></div>
-      <div class="fcard reveal"><div class="cap"><img src="shots/connection.png" alt="Connection editor with environment labels and TLS modes"></div>
-        <div class="body"><h3>Production safety</h3><ul><li>Environment labels</li><li>Read-only sessions</li><li>Dangerous-statement warnings</li><li>Confirmation flows</li><li>Safe defaults</li></ul></div></div>
-      <div class="fcard reveal"><div class="cap"><img src="shots/er-diagram.png" alt="ER diagram of foreign-key relationships"></div>
-        <div class="body"><h3>Visual schema</h3><ul><li>ER diagrams</li><li>Relationship exploration</li><li>Tables, views, indexes, constraints</li><li>Schema search</li></ul></div></div>
-      <div class="fcard reveal"><div class="cap"><img src="shots/monitor.png" alt="Result grid and server monitoring"></div>
-        <div class="body"><h3>Fast results</h3><ul><li>Streaming rows</li><li>Virtualized grid</li><li>Sort by any column</li><li>Copy &amp; export</li><li>Result metadata</li></ul></div></div>
-      <div class="fcard reveal"><div class="cap"><img src="shots/explorer.png" alt="Schema explorer tree"></div>
-        <div class="body"><h3>Secure by design</h3><ul><li>OS keychain credentials</li><li>TLS verification</li><li>SSH host-key verification</li><li>Signed updates</li><li>No telemetry</li></ul></div></div>
-      <div class="fcard reveal"><div class="cap"><img src="shots/index-advisor.png" alt="Candidate CREATE INDEX statements generated from a query plan"></div>
-        <div class="body"><h3>Query plans</h3><ul><li><b>Candidate <code class="inline">CREATE INDEX</code> statements</b></li><li>Self-time bottleneck, disk sorts, spills</li><li>Or paste a plan — psql text or JSON</li><li>No connection required to read one</li><li>Analysed locally — never uploaded</li></ul></div></div>
+      <div class="fcard reveal"><div class="cap"><img src="shots/screen-query-3.jpg" width="1400" height="824" loading="lazy" decoding="async" alt="A query on a production connection with the results grid showing value bars on numeric columns."></div>
+        <div class="body"><h3>Editor and results</h3><ul><li>Schema-aware autocomplete, format, find and replace</li><li>Run and cancel, transactions owned by a tab</li><li>Streamed, virtualized grid; stops at 20,000 rows</li><li>Row editing with a review of the exact <code class="inline">UPDATE</code></li></ul></div></div>
+      <div class="fcard reveal"><div class="cap"><img src="shots/screen-query-4-chart.jpg" width="1400" height="824" loading="lazy" decoding="async" alt="A query result drawn as a chart in the results panel."></div>
+        <div class="body"><h3>Charts and plans</h3><ul><li>Draw a result as a chart in one tab</li><li>Explain with a plan view that finds the costly node</li><li>Candidate <code class="inline">CREATE INDEX</code> statements to copy</li><li>Export to CSV, JSON or Markdown</li></ul></div></div>
+      <div class="fcard reveal"><div class="cap"><img src="shots/screen-dashboard.jpg" width="1400" height="824" loading="lazy" decoding="async" alt="A dashboard with a bar chart of revenue by month."></div>
+        <div class="body"><h3>Dashboards and notebooks</h3><ul><li>Saved queries pinned as bar, line or number charts</li><li>Refresh on open or every 1, 5 or 15 minutes</li><li>Notebooks: text, SQL and chart cells</li><li>A cell runs only on its own Run</li></ul></div></div>
+      <div class="fcard reveal"><div class="cap"><img src="shots/screen-history.jpg" width="1400" height="824" loading="lazy" decoding="async" alt="The History page on production: every entry reads 'query text hidden — prod'."></div>
+        <div class="body"><h3>History and saved queries</h3><ul><li>Search, filters, the sender of each statement</li><li>Prod query text is never stored</li><li>Saved queries with tags, reusable snippets</li><li>Command palette on <span class="kbd">⌘K</span></li></ul></div></div>
+      <div class="fcard reveal"><div class="cap"><img src="shots/screen-sqlite.jpg" width="1400" height="824" loading="lazy" decoding="async" alt="A SQLite file open in TupleNest with a query stopped at the 20,000-row limit."></div>
+        <div class="body"><h3>SQLite files</h3><ul><li>A profile is a file path</li><li>Read-only enforced by SQLite itself</li><li>Explorer, ER diagram, row editing by key or rowid</li><li>Same guard, tags and audit log as PostgreSQL</li></ul></div></div>
+      <div class="fcard reveal"><div class="cap"><img src="shots/screen-connection-form.jpg" width="1400" height="824" loading="lazy" decoding="async" alt="The connection form: engine picker, environment tag, read-only switch, TLS mode and SSH tunnel."></div>
+        <div class="body"><h3>Operate PostgreSQL</h3><ul><li>Backup and restore with your own <code class="inline">pg_dump</code></li><li>Users and roles: who can write what</li><li>Server monitor, ER diagram, schema diff</li><li>TLS <code class="inline">verify-full</code> by default, SSH tunnels</li></ul></div></div>
     </div>
   </div>
 </section>
 
-<!-- 6b. NEW -->
-<section>
-  <div class="wrap">
-    <div class="kicker">New in the next release</div>
-    <h2>More than an editor.<br>Still one window.</h2>
-    <p class="lede">Each of these goes through the same read-only checks, guard and audit log as a query you type.</p>
-    <div class="grid3">
-      <div class="card reveal"><h3>SQLite</h3><p>A file on this machine, beside your PostgreSQL connections. Read-only is enforced by SQLite itself; the guard, environment tags and audit log apply as they do for PostgreSQL.</p></div>
-      <div class="card reveal"><h3>The assistant</h3><p>Ask, explain, fix or write SQL with your own Anthropic key or a local Ollama model. It sends your question, the query and schema names only — <b>never row data</b> — and nothing it writes runs until you press Run.</p></div>
-      <div class="card reveal"><h3>MCP server</h3><p>Let Claude Desktop, Claude Code or Cursor query the connections you choose. Every connection starts off; read-only is server-enforced; prod and staging are read-only at most, and audited.</p></div>
-      <div class="card reveal"><h3>Dashboards &amp; notebooks</h3><p>Pin saved queries that read as charts, refreshed on open or on a timer. Keep notes, SQL and charts in a notebook; a cell runs only when you press its Run.</p></div>
-      <div class="card reveal"><h3>Backup &amp; restore</h3><p>Your own <code class="inline">pg_dump</code> and <code class="inline">pg_restore</code>, no shell, no password on the command line. Restoring into prod or staging asks you to type the database name.</p></div>
-      <div class="card reveal"><h3>Users &amp; roles</h3><p>What each PostgreSQL role may do to each table, with a warning when a "read-only" role can write. It changes nothing; the fix is SQL to copy.</p></div>
-    </div>
-  </div>
-</section>
-
-<!-- 7. REAL WORKFLOW -->
-<section>
-  <div class="wrap">
-    <div class="kicker">The workflow</div>
-    <h2>From connection to insight.<br>All in one place.</h2>
-    <p class="lede">Five steps, one window — the loop you actually run all day.</p>
-    <div class="flow">
-      <div class="step reveal"><div class="num">1</div><h4>Connect</h4><ul><li>PostgreSQL server or SQLite file</li><li>TLS settings</li><li>SSH tunnel</li><li>Environment class</li></ul></div>
-      <div class="step reveal"><div class="num">2</div><h4>Explore</h4><ul><li>Databases &amp; schemas</li><li>Tables &amp; views</li><li>Functions</li><li>Indexes</li></ul></div>
-      <div class="step reveal"><div class="num">3</div><h4>Write</h4><ul><li>Autocomplete</li><li>Formatting</li><li>Multiple tabs</li><li>History &amp; shortcuts</li></ul></div>
-      <div class="step reveal"><div class="num">4</div><h4>Execute</h4><ul><li>Query timing</li><li>Notices &amp; errors</li><li>Row count</li><li>Cancellation</li></ul></div>
-      <div class="step reveal"><div class="num">5</div><h4>Understand</h4><ul><li>Results</li><li>Query plans</li><li>Schema graph</li><li>Relation navigation</li></ul></div>
-    </div>
-  </div>
-</section>
-
-<!-- 8. PRODUCTION SAFETY SPOTLIGHT -->
-<section>
+<!-- SAFETY -->
+<section id="safety">
   <div class="wrap">
     <div class="feature">
-      <div class="fimg"><img src="shots/connection.png" alt="A production connection shown in read-only mode with a distinct badge."></div>
+      <div class="fimg"><img src="shots/guard.gif" width="1100" height="648" loading="lazy" decoding="async" alt="A DELETE without a WHERE clause on a production connection opens a confirmation dialog; Run anyway stays disabled until the table name is typed."></div>
       <div>
-        <div class="fnum">PRODUCTION SAFETY</div>
-        <h3>Production safety is not a warning color. It is a workflow.</h3>
-        <p>Connections are classified as development, staging, or production, and production connections are visually distinct — you always know where a query is about to run.</p>
+        <div class="fnum">THE SAFETY MODEL</div>
+        <h3>Production safety is a workflow, not a warning colour.</h3>
+        <p>Each protection names what actually enforces it.</p>
         <ul>
-          <li>Read-only mode issues a real PostgreSQL read-only session characteristic</li>
-          <li>Destructive statements require explicit confirmation</li>
-          <li>The open transaction is owned by a tab, so you can't commit another tab's work</li>
+          <li><b>Read-only</b> set on the PostgreSQL session and re-checked before every statement; SQLite files opened read-only</li>
+          <li><b>Statement guard</b> on prod and staging: no-<code class="inline">WHERE</code> writes, <code class="inline">DROP</code>, <code class="inline">TRUNCATE</code>, <code class="inline">ALTER</code> and more ask first</li>
+          <li><b>Type the name</b> for an unbounded write, a <code class="inline">DROP</code> or a <code class="inline">TRUNCATE</code> on prod</li>
+          <li><b>Audit before run</b> on prod: if the audit row can't be written, the statement isn't sent</li>
+          <li><b>No prod SQL in history</b>, and a 20,000-row stop at the limit</li>
+          <li><b>TLS <code class="inline">verify-full</code></b> by default; SSH host keys verified, passphrase keys supported</li>
         </ul>
-        <div class="callout">TupleNest reduces accidental risk. <b>A database role without write privileges remains the strongest security boundary</b> — the app is a guardrail, not the final authority.</div>
+        <div class="callout">The guard is a seatbelt light, not the seatbelt. <b>A database role without write privileges is the hard boundary</b> — use one for production data that must not change.</div>
+        <a class="btn ghost sm" href="security.html">Read the full security model →</a>
       </div>
     </div>
   </div>
 </section>
 
-<!-- 9. SQL EDITOR SPOTLIGHT -->
-<section>
+<!-- ASSISTANT + MCP -->
+<section id="ai">
   <div class="wrap">
     <div class="feature flip">
-      <div class="fimg"><img src="shots/complete.png" alt="Autocomplete popup suggesting tables, columns and functions."></div>
+      <div class="fimg"><img src="shots/assistant.gif" width="1100" height="648" loading="lazy" decoding="async" alt="The assistant panel explaining the query in the editor, answered by a local model through Ollama."></div>
       <div>
-        <div class="fnum">SQL EDITOR</div>
-        <h3>An editor that understands PostgreSQL.</h3>
-        <p>Schema-aware completion for tables, columns, and functions; PostgreSQL-correct literal masking (dollar-quoting, nested comments) so the destructive-statement guard reads the real query, not raw text.</p>
-        <ul><li>Formatting that leaves strings and comments alone</li><li>Multiple tabs with unsaved-change indicators</li><li>Query history &amp; snippets</li></ul>
-        <div class="keys" style="margin-top:22px">
-          <div class="key"><span class="kbd">⌘↵</span><span class="kl">Run query</span></div>
-          <div class="key"><span class="kbd">⇧⌘F</span><span class="kl">Format SQL</span></div>
-          <div class="key"><span class="kbd">⌘K</span><span class="kl">Command palette</span></div>
-          <div class="key"><span class="kbd">⌘C</span><span class="kl">Copy the selected cell</span></div>
-          <div class="key"><span class="kbd">⌘T</span><span class="kl">New tab</span></div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- 10. RESULTS & PERFORMANCE -->
-<section>
-  <div class="wrap">
-    <div class="feature">
-      <div class="fimg"><img src="shots/monitor.png" alt="A large result grid with row count and duration."></div>
-      <div>
-        <div class="fnum">RESULTS &amp; PERFORMANCE</div>
-        <h3>Large results without losing control.</h3>
-        <p>Rows stream from a bounded store and render through a virtualized grid, so a wide or long result stays responsive instead of freezing the window.</p>
+        <div class="fnum">THE ASSISTANT</div>
+        <h3>Explain, fix and write SQL — without sending your rows.</h3>
+        <p>Use Claude with your own Anthropic API key, or a local model through Ollama. Requests are made by the Rust core; the window never holds your key.</p>
         <ul>
-          <li>Backend row and byte budgets, with clear truncation indicators</li>
-          <li>Per-cell size limit so one giant value can't spike memory</li>
-          <li>Query cancellation, execution duration, and an honest row count</li>
+          <li><b>Sent:</b> your message, the editor's SQL, error text with row-quoting lines removed, schema names and types</li>
+          <li><b>Never sent:</b> result rows, history, the connection's host, user or password</li>
+          <li>Ollama cloud models are labelled and refused until you opt in</li>
+          <li>Nothing runs by itself: suggestions go through Run, the guard and the audit log</li>
         </ul>
-        <div class="callout info">The grid caps rows <em>and</em> bytes. A plain read stops at the 20,000-row cap on the server instead of streaming the rest only to count it, so the footer says <em>"20,000+ rows (stopped at the limit)"</em> rather than presenting the cap as the total. We don't publish throughput numbers we haven't benchmarked.</div>
       </div>
     </div>
-  </div>
-</section>
 
-<!-- 11. SCHEMA & RELATIONSHIPS -->
-<section>
-  <div class="wrap">
-    <div class="feature flip">
-      <div class="fimg"><img src="shots/er-diagram.png" alt="ER diagram with foreign-key links between tables."></div>
+    <div class="kicker" style="margin-top:24px">MCP server</div>
+    <h2>Let your AI tools in — one connection at a time.</h2>
+    <p class="lede">Claude Desktop, Claude Code or Cursor can query your saved connections through TupleNest's rules. The app's own binary serves MCP on stdio: <code class="inline">tuplenest-desktop mcp</code>.</p>
+    <div class="access">
+      <div><b>Off</b><p>The default for every connection. It is not listed, and naming it gets the same answer as a name that does not exist.</p></div>
+      <div><b>Read only</b><p>A server-enforced read-only session plus the read allowlist. The most prod and staging can ever get.</p></div>
+      <div><b>Read and write</b><p>Writes run, but anything the guard would ask about is refused with the reason — no one is there to confirm.</p></div>
+    </div>
+    <div class="grid2">
       <div>
-        <div class="fnum">SCHEMA &amp; RELATIONSHIPS</div>
-        <h3>Understand the database, not just its tables.</h3>
-        <p>A lazy schema tree plus an ER diagram built from real foreign keys. Follow relationships, inspect indexes and constraints, and jump straight into the editor.</p>
-        <ul><li>Foreign-key map generated from the catalog</li><li>Tables, views, indexes, constraints, partitions</li><li>Global object search</li></ul>
+        <p style="color:var(--dim);font-size:14px;margin-bottom:8px">Claude Desktop / Cursor</p>
+<pre tabindex="0" aria-label="MCP configuration for Claude Desktop or Cursor"><span class="c">// claude_desktop_config.json or ~/.cursor/mcp.json</span>
+{
+  "mcpServers": {
+    "tuplenest": {
+      "command": <span class="s">"/Applications/TupleNest.app/Contents/MacOS/tuplenest-desktop"</span>,
+      "args": [<span class="s">"mcp"</span>]
+    }
+  }
+}</pre>
       </div>
-    </div>
-
-    <div class="feature" style="margin-top:56px">
-      <div class="fimg"><img src="shots/index-advisor.png" alt="Query plan with a Seq Scan flagged as the bottleneck and three runnable CREATE INDEX statements beside it."></div>
       <div>
-        <div class="fnum">QUERY PERFORMANCE</div>
-        <h3>A plan that ends in a statement, not a shrug.</h3>
-        <p>The plan view finds the node that actually costs you time — then writes the <code class="inline">CREATE INDEX</code> that fixes it, with a copy button. Equality columns first, then one range column: the only ordering a btree can seek on.</p>
-        <ul><li>Expression indexes too, decided from the column's real type</li><li>Silent on an <code class="inline">OR</code>, a join condition, or anything PostgreSQL would refuse to index</li><li>Every suggestion round-tripped against a live server before shipping</li></ul>
+        <p style="color:var(--dim);font-size:14px;margin-bottom:8px">Claude Code</p>
+<pre tabindex="0" aria-label="Command to add TupleNest to Claude Code">claude mcp add tuplenest -- \
+  <span class="s">"/Applications/TupleNest.app/Contents/MacOS/tuplenest-desktop"</span> mcp</pre>
+        <div class="callout info">The path is a macOS placeholder — <b>Settings › MCP server</b> shows the one for your install. Statements on prod and staging are audited before they run, recorded as <code class="inline">MCP · &lt;client&gt;</code>. What a query returns goes to that AI tool.</div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- 12. SECURITY SUMMARY -->
+<!-- NETWORK -->
 <section>
   <div class="wrap">
-    <div class="kicker">Security</div>
-    <h2>Your data stays yours.</h2>
-    <p class="lede">Security is the foundation, not a feature bolt-on. Here's the short version — the full model is on the Security page.</p>
-    <div class="grid4">
-      <div class="card reveal"><h4>Local-first</h4><p>No backend of ours between you and your database.</p></div>
-      <div class="card reveal"><h4>No telemetry</h4><p>No analytics, no phone-home, no crash upload.</p></div>
-      <div class="card reveal"><h4>OS keychain</h4><p>Passwords never touch a config file.</p></div>
-      <div class="card reveal"><h4>TLS verification</h4><p>verify-full requires TLS and checks the hostname.</p></div>
-      <div class="card reveal"><h4>SSH host verification</h4><p>Changed host keys are rejected, not silently trusted.</p></div>
-      <div class="card reveal"><h4>Signed updates</h4><p>Artifacts are signed; the app refuses a downgrade below its floor.</p></div>
-      <div class="card reveal"><h4>Open source</h4><p>MIT, public issues, public security policy.</p></div>
-      <div class="card reveal"><h4>Verifiable releases</h4><p>Checksums, SBOM, and build provenance per release.</p></div>
-    </div>
-    <div class="cta" style="justify-content:flex-start;margin-top:34px"><a class="btn ghost" href="security.html">Read the full security model →</a></div>
-  </div>
-</section>
-
-<!-- 13. OPEN SOURCE -->
-<section>
-  <div class="wrap center">
-    <div class="kicker">Open source</div>
-    <h2>Built in public. Auditable by anyone.</h2>
-    <p class="lede">MIT-licensed, developed in the open, with the supply-chain controls you'd want from something touching production databases.</p>
-    <div class="chips" style="justify-content:center;margin-bottom:30px">
-      <span class="chip">MIT license</span><span class="chip">Public source</span><span class="chip">Public issues</span>
-      <span class="chip">Security policy</span><span class="chip">Contribution guide</span><span class="chip">Release checksums</span>
-      <span class="chip">SBOM</span><span class="chip">Build provenance</span>
-    </div>
-    <div class="cta" style="justify-content:center">
-      <a class="btn primary" href="https://github.com/talaatmagdyx/TupleNest">Explore the repository</a>
-      <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Read the contribution guide</a>
+    <div class="kicker">What leaves your machine</div>
+    <h2>Every destination, in one table.</h2>
+    <p class="lede">The complete list lives in <a href="https://github.com/talaatmagdyx/TupleNest/blob/main/PRIVACY.md">PRIVACY.md</a>.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th scope="col">Path</th><th scope="col">Where</th><th scope="col">When</th></tr></thead>
+        <tbody>
+          <tr><td>Your databases</td><td class="how">The hosts you configure, directly or through your SSH tunnel</td><td class="how">When you connect and run</td></tr>
+          <tr><td>Assistant</td><td class="how"><code class="inline">api.anthropic.com</code> with your key, or your Ollama URL (local by default). No result rows</td><td class="how">Only when you send, Explain, Fix or Test</td></tr>
+          <tr><td>MCP server</td><td class="how">The AI tool that started it, over stdio — including the rows its queries return</td><td class="how">Only for connections you turned on</td></tr>
+          <tr><td>Update check</td><td class="how"><code class="inline">github.com</code>, an unauthenticated request with no identifier</td><td class="how">Once at startup</td></tr>
+          <tr><td>Telemetry</td><td class="how">Nowhere. The setting is off and no code sends anything</td><td class="how">Never</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 </section>
 
-<!-- 14. DOWNLOAD -->
-<section>
+<!-- GALLERY -->
+<section id="gallery">
   <div class="wrap">
-    <div class="kicker">Download</div>
-    <h2>Download TupleNest. Free forever.</h2>
-    <p class="lede">macOS, Windows, and Linux. Every asset is on the GitHub Releases page alongside its checksum and signature.</p>
-    <div class="oscards">
-      <div class="oscard hl"><div class="osico">🍎</div><h3>macOS</h3><div class="meta">Apple Silicon &amp; Intel · macOS 10.15+</div>
-        <ul><li>Apple Silicon and Intel .dmg</li><li>Unsigned — one command on first launch</li><li>Signed in-app updates (not yet exercised: every release so far is a pre-release)</li></ul>
-        <a class="btn primary" data-download data-download-label="Download for %OS%" href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Download for macOS</a></div>
-      <div class="oscard"><div class="osico">🪟</div><h3>Windows</h3><div class="meta">64-bit · Windows 10+ (WebView2)</div>
-        <ul><li>.msi and .exe installers</li><li>Unsigned — SmartScreen warns once</li><li>Verify with the published SHA-256</li></ul>
-        <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Download for Windows</a></div>
-      <div class="oscard"><div class="osico">🐧</div><h3>Linux</h3><div class="meta">x86_64 · webkit2gtk (Ubuntu 22.04+)</div>
-        <ul><li>AppImage &amp; .deb</li><li><code class="inline">chmod +x</code> the AppImage</li><li>Verify with the published SHA-256</li></ul>
-        <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Download for Linux</a></div>
+    <div class="kicker">Screenshots</div>
+    <h2>A closer look.</h2>
+    <p class="lede">Captured from the app, in the dark and light themes.</p>
+    <div class="gallery">
+      <figure class="reveal"><img src="shots/screen-welcome.jpg" width="1400" height="824" loading="lazy" decoding="async" alt="The welcome screen: Connect to a database, a New connection card, and saved connections tagged dev, prod and staging."><figcaption><b>Welcome</b>Pick a saved connection or add one. Nothing runs until you press Run.</figcaption></figure>
+      <figure class="reveal"><img src="shots/screen-connection-form.jpg" width="1400" height="824" loading="lazy" decoding="async" alt="The connection form: PostgreSQL or SQLite, an environment tag, the read-only switch, a query timeout, a password kept in the OS keychain, TLS mode and SSH tunnel."><figcaption><b>Connections</b>PostgreSQL or SQLite, with an environment tag.</figcaption></figure>
+      <figure class="reveal"><img src="shots/screen-guard-2.jpg" width="1400" height="824" loading="lazy" decoding="async" alt="The destructive-statement confirmation dialog on production."><figcaption><b>The guard</b>Type the table name before Run anyway wakes up.</figcaption></figure>
+      <figure class="reveal"><img src="shots/screen-assist-2.jpg" width="1400" height="824" loading="lazy" decoding="async" alt="The assistant panel beside the editor."><figcaption><b>Assistant</b>Answers beside the editor; suggestions are cards you insert.</figcaption></figure>
+      <figure class="reveal"><img src="shots/screen-light.jpg" width="1400" height="824" loading="lazy" decoding="async" alt="TupleNest in the light theme."><figcaption><b>Light theme</b>Both themes are held to WCAG AA contrast.</figcaption></figure>
+      <figure class="reveal"><img src="shots/screen-tour-2.jpg" width="1400" height="824" loading="lazy" decoding="async" alt="A step of the first-run tour."><figcaption><b>First-run tour</b>Three steps, shown once.</figcaption></figure>
     </div>
-    <div class="callout" style="margin-top:26px"><b>Verify your download.</b> Each release includes <code class="inline">SHA256SUMS</code>, minisign signatures (all but the <code class="inline">.dmg</code>), an SBOM, and release notes; the public key is on the Download page. Full instructions on the <a href="download.html">Download page</a>.</div>
   </div>
 </section>
 
-<!-- 15. FAQ -->
+<!-- INSTALL CTA -->
+<section id="install">
+  <div class="wrap">
+    <div class="ctabanner reveal">
+      <div class="glow g3" aria-hidden="true"></div>
+      <h2>Install TupleNest</h2>
+      <p>macOS (<code class="inline">.dmg</code>), Windows (<code class="inline">.exe</code>, <code class="inline">.msi</code>) and Linux (<code class="inline">.AppImage</code>, <code class="inline">.deb</code>, <code class="inline">.rpm</code>). Unsigned for now: on macOS, right-click the app and choose Open the first time.</p>
+      <div class="cta" style="justify-content:center;margin-top:26px">
+        <a class="btn primary" href="https://github.com/talaatmagdyx/TupleNest/releases">Get it on GitHub Releases</a>
+        <a class="btn ghost" href="download.html">Install notes and verification</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
 <section id="faq">
   <div class="wrap">
     <div class="kicker center">FAQ</div>
     <h2 class="center">Frequently asked questions</h2>
     <div class="faq" style="margin-top:40px">
-      <div class="qa"><button>Is TupleNest free?<span class="plus">+</span></button><div class="a"><p>Yes — free forever and MIT-licensed. No paid tier gates the core product, no account required.</p></div></div>
-      <div class="qa"><button>Is it open source?<span class="plus">+</span></button><div class="a"><p>Yes. The full source is on GitHub under the MIT license, with a public issue tracker and security policy.</p></div></div>
-      <div class="qa"><button>Does it send telemetry?<span class="plus">+</span></button><div class="a"><p>No. There is no analytics SDK, no phone-home, and no crash upload. The only network destinations are the PostgreSQL host you connect to, an SSH host if you configure a tunnel, the GitHub endpoint used to check for updates, and — only if you set up the assistant and ask it something — Anthropic with your own key or your Ollama server.</p></div></div>
-      <div class="qa"><button>Does the AI see my data?<span class="plus">+</span></button><div class="a"><p>The assistant does not: it sends your question, the query in the editor, a failed statement's error with row values removed, and the names and types of your schemas, tables and columns. Never a result row. The MCP server is different by design: an AI tool you connect gets what the connections you turn on for it return, so every connection starts off, and prod and staging can be read-only at most.</p></div></div>
-      <div class="qa"><button>Which databases does it support?<span class="plus">+</span></button><div class="a"><p>PostgreSQL 13+ and SQLite 3. No other engine is planned — not MySQL, MariaDB, SQL Server, MongoDB or Redis.</p></div></div>
-      <div class="qa"><button>Where are passwords stored?<span class="plus">+</span></button><div class="a"><p>In your operating system's keychain — macOS Keychain, Windows Credential Manager, or the Linux Secret Service. The app database stores only an opaque reference, never the password itself, and the password is never returned to the WebView.</p></div></div>
-      <div class="qa"><button>Can I use it with production databases?<span class="plus">+</span></button><div class="a"><p>Yes, and it's designed for exactly that. Classify a connection as production, turn on read-only mode, and destructive statements require confirmation. For strict enforcement, connect with a database role that has no write privileges — that's the real boundary.</p></div></div>
-      <div class="qa"><button>Does it support SSH tunnels?<span class="plus">+</span></button><div class="a"><p>Yes, with host-key verification. A changed host key is rejected rather than silently trusted.</p></div></div>
-      <div class="qa"><button>Which PostgreSQL versions are supported?<span class="plus">+</span></button><div class="a"><p>Modern PostgreSQL. Contract tests run against PostgreSQL 13, 15, and 17 in CI, with TLS enabled.</p></div></div>
-      <div class="qa"><button>Does it work with hosted PostgreSQL providers?<span class="plus">+</span></button><div class="a"><p>If the provider speaks the standard PostgreSQL wire protocol and accepts TLS and (optionally) SSH tunnels, it should work. TupleNest is a standard client.</p></div></div>
-      <div class="qa"><button>Does it work on Windows, macOS, and Linux?<span class="plus">+</span></button><div class="a"><p>Yes — all three, each built on its own runner and released together.</p></div></div>
-      <div class="qa"><button>Is it a replacement for pgAdmin or DBeaver?<span class="plus">+</span></button><div class="a"><p>It's a focused alternative for PostgreSQL (and SQLite) query and exploration work with a strong safety posture. It's not trying to be a full multi-engine administration suite — see the Roadmap for what's explicitly not planned.</p></div></div>
-      <div class="qa"><button>Can I build it from source?<span class="plus">+</span></button><div class="a"><p>Yes. You need Rust, Node, and the Tauri prerequisites for your platform. Steps are on the Download page.</p></div></div>
-      <div class="qa"><button>How are updates verified?<span class="plus">+</span></button><div class="a"><p>Updates are served over HTTPS with signed artifacts and an embedded public key, and the app refuses an update advertised below a compiled-in minimum version. You can also verify any download by hand with the published checksum and signature.</p></div></div>
+      <div class="qa"><button>Which databases does it support?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>PostgreSQL 13+ and SQLite 3. No other engine is planned.</p></div></div>
+      <div class="qa"><button>Is it free? Do I need an account?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>It is MIT-licensed and free, with no account, sign-in or hosted service.</p></div></div>
+      <div class="qa"><button>Does it send telemetry?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>No. The telemetry setting is off and no code sends anything. The app talks to your databases, GitHub once at startup for an update check, and the assistant's model only if you set one up and ask it something.</p></div></div>
+      <div class="qa"><button>Does the AI see my data?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>The assistant never sends result rows: only your question, the editor's SQL, error text with row-quoting lines removed, and schema names and types. The MCP server is different by design: an AI tool you connect gets what its queries return, which is why every connection starts Off and prod and staging are read-only at most.</p></div></div>
+      <div class="qa"><button>Where are passwords stored?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>In the OS keychain — macOS Keychain, Windows Credential Manager or the Linux Secret Service. The app stores only an opaque reference, and the window never receives the password.</p></div></div>
+      <div class="qa"><button>Can it stop me from damaging production?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>It makes it much harder: server-enforced read-only profiles, the statement guard, type-the-name confirmations and an audit log on prod. The hard boundary is still a database role without write privileges.</p></div></div>
+      <div class="qa"><button>Why does my OS warn on first launch?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>The builds are not code-signed yet. The <a href="download.html">Download page</a> has the click-path for each OS and how to check a file with <code class="inline">gh attestation verify</code>.</p></div></div>
+      <div class="qa"><button>Can I build it from source?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>Yes: Rust stable (via rustup), Node 22+, and the Tauri prerequisites for your OS. See the <a href="https://github.com/talaatmagdyx/TupleNest#build-from-source">README</a>.</p></div></div>
     </div>
   </div>
 </section>
 
-<!-- 16. FINAL CTA -->
-<section>
-  <div class="wrap">
-    <div class="ctabanner reveal">
-      <div class="glow g3"></div>
-      <h2>Your PostgreSQL workflow deserves<br>a tool that takes safety seriously.</h2>
-      <p>Local-first, open-source, and honest about its limits.</p>
-      <div class="cta" style="justify-content:center;margin-top:26px">
-        <a class="btn primary" data-download href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Download TupleNest</a>
-        <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest">View on GitHub</a>
-      </div>
-    </div>
-  </div>
-</section>
+</main>
 
-<!-- 17. FOOTER -->
 <footer class="site">
   <div class="wrap">
     <div class="cols">
-      <div class="fbrand"><img src="logo.png" alt=""><p>The PostgreSQL and SQLite IDE that asks before it writes. Local-first, open-source, MIT.</p></div>
+      <div class="fbrand"><a class="brand" href="index.html" aria-label="TupleNest home"><img src="icon.svg" alt="" width="32" height="32"><span class="wm">Tuple<span>Nest</span></span></a><p>A careful desktop IDE for PostgreSQL and SQLite. Local-first, open source, MIT.</p></div>
       <div><h5>Product</h5><a href="features.html">Features</a><a href="security.html">Security</a><a href="download.html">Download</a><a href="roadmap.html">Roadmap</a><a href="changelog.html">Changelog</a></div>
-      <div><h5>Resources</h5><a href="docs.html">Documentation</a><a href="docs.html#getting-started">Getting Started</a><a href="docs.html#shortcuts">Keyboard Shortcuts</a><a href="docs.html#troubleshooting">Troubleshooting</a><a href="blog.html">Blog</a></div>
+      <div><h5>Resources</h5><a href="docs.html">Documentation</a><a href="docs.html#getting-started">Getting started</a><a href="docs.html#shortcuts">Keyboard shortcuts</a><a href="docs.html#troubleshooting">Troubleshooting</a><a href="blog.html">Blog</a></div>
       <div><h5>Community</h5><a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a><a href="https://github.com/talaatmagdyx/TupleNest/discussions">Discussions</a><a href="https://github.com/talaatmagdyx/TupleNest/issues">Issues</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a></div>
-      <div><h5>Legal</h5><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/LICENSE">MIT License</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/PRIVACY.md">Privacy</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/SECURITY.md">Security Policy</a><a href="security.html#supply-chain">Third-party notices</a></div>
+      <div><h5>Legal</h5><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/LICENSE">MIT License</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/PRIVACY.md">Privacy</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/SECURITY.md">Security policy</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/THIRD-PARTY-NOTICES.md">Third-party notices</a></div>
     </div>
-    <div class="base"><span>© <span data-year>2026</span> TupleNest · MIT licensed</span><span>Built with Rust &amp; Tauri · No cloud, no telemetry</span></div>
+    <div class="base"><span>© <span data-year>2026</span> TupleNest contributors · MIT licensed</span><span>Built with Rust and Tauri · No telemetry</span></div>
   </div>
 </footer>
 
