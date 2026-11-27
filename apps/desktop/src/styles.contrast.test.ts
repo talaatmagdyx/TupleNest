@@ -51,7 +51,7 @@ const themes = {
 // Desk (the window), island (bg and s1, every panel) and raised (s2).
 const surfaces = ["bg", "s1", "s2", "desk"] as const;
 const textTokens = [
-  "tp", "ts", "tm", "accent", "success", "danger", "warning", "purple",
+  "tp", "ts", "tm", "accent", "success", "danger", "warning", "purple", "info",
   "syn-kw", "syn-str", "syn-num", "syn-comment",
 ];
 
@@ -95,5 +95,43 @@ describe.each(Object.entries(themes))("%s theme contrast", (_name, t) => {
   it("danger text stays readable on its tint over an island", () => {
     const bg = over(rgba(t["danger-tint"]), hex(t.bg));
     expect(ratio(hex(t.danger), bg)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  // Badges and chips: each semantic colour as text on its own tint — the
+  // environment badges, tree keys, schema-compare and plan chips, completion
+  // kinds. They sit on an island or on a raised row (a header, a hover).
+  it.each([
+    ["accent", "as"],
+    ["success", "success-tint"],
+    ["danger", "danger-tint"],
+    ["warning", "warn-tint"],
+    ["purple", "purple-tint"],
+    ["info", "info-tint"],
+  ])("--tn-%s text on --tn-%s reaches 4.5:1 over an island and a raised row", (fg, tint) => {
+    for (const s of ["bg", "s2"] as const) {
+      const bg = over(rgba(t[tint]), hex(t[s]));
+      expect(ratio(hex(t[fg]), bg)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  // A pending edit: the new value in primary text, the old one struck
+  // through in muted text, both on the warning tint over the grid.
+  it("a staged cell's old and new values stay readable on the warning tint", () => {
+    const bg = over(rgba(t["warn-tint"]), hex(t.bg));
+    expect(ratio(hex(t.tm), bg)).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(hex(t.tp), bg)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("sets no colour outside the two palettes", () => {
+    // Everything after the palettes takes colour from a token, so a theme is
+    // one block to change and the light one cannot be skipped by accident.
+    const rest = css.slice(css.indexOf("/* ===== Type ====="));
+    expect(rest.match(/#[0-9a-fA-F]{3,8}\b|rgba?\(/g)).toBeNull();
+  });
+
+  it("every token the stylesheet reads is defined", () => {
+    const used = new Set([...css.matchAll(/var\(--tn-([a-z0-9-]+)/g)].map((m) => m[1]));
+    const defined = new Set([...css.matchAll(/--tn-([a-z0-9-]+)\s*:/g)].map((m) => m[1]));
+    expect([...used].filter((u) => !defined.has(u))).toEqual([]);
   });
 });

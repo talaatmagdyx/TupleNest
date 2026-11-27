@@ -193,6 +193,64 @@ check, production guard and audit log as anything you type.
 
 <br/>
 
+## 🤖 Use TupleNest from AI tools (MCP)
+
+TupleNest is also an [MCP](https://modelcontextprotocol.io) server, so an AI
+tool — Claude Desktop, Claude Code, Cursor — can query your **saved
+connections through TupleNest**, under the same safety rules. The app binary
+runs it when started as `tuplenest-desktop mcp`: no window, protocol on
+stdin/stdout, logs in the app's log file. Passwords come from the keychain
+entries TupleNest already keeps and are never returned to the tool.
+
+**Nothing is exposed until you choose.** Every connection starts **Off**. In
+**Settings → MCP server** pick, per connection, *Off*, *Read only* or *Read
+and write*. The same panel shows the configuration to copy, with this
+install's real binary path.
+
+**Claude Desktop** (`claude_desktop_config.json`) and **Cursor**
+(`~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "tuplenest": {
+      "command": "/Applications/TupleNest.app/Contents/MacOS/tuplenest-desktop",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+**Claude Code:**
+
+```sh
+claude mcp add tuplenest -- /Applications/TupleNest.app/Contents/MacOS/tuplenest-desktop mcp
+```
+
+(The path above is macOS's default; Settings shows the one for your machine.)
+
+Tools: `list_connections`, `list_schemas`, `list_tables`, `describe_table`,
+`run_query` (one statement, optional `$1…` params, at most 500 rows with a
+`truncated` flag) and `explain` (plain `EXPLAIN`, never `ANALYZE`).
+
+The rules, all enforced in the backend:
+
+| Access | What an AI tool can do |
+|---|---|
+| **Off** (default) | Nothing. The connection is not listed, and naming it gets the same answer as a name that does not exist |
+| **Read only** | The same server-enforced read-only session a read-only profile gets (`SET SESSION CHARACTERISTICS … READ ONLY`, re-checked before every statement) plus the allowlist of statements that only read |
+| **Read and write** | Writes run, but everything the destructive-statement guard would ask about — `UPDATE`/`DELETE` without a real `WHERE`, `DROP`, `TRUNCATE`, `ALTER`, `CREATE`, `GRANT`/`REVOKE`, `DO`, `CALL`, `MERGE`, `COPY … FROM`, `EXPLAIN ANALYZE` of those — is **refused with the reason**: there is no one to confirm it. Not available on connections tagged prod or staging, or marked read-only |
+
+For every access: one statement per call, no `BEGIN`/`COMMIT` (each call is
+its own transaction), and statements on **prod and staging are written to the
+audit log before they run** — if that write fails, the statement is not sent.
+Statements also go to query history; both record the sender as
+`MCP · <client name>`. As in the app, a function with side effects called
+from a `SELECT` is not something these rules can see: give an AI tool a
+database role that can only do what you want it to do.
+
+<br/>
+
 ## ⌨️ The keyboard
 
 Press <kbd>?</kbd> anywhere for the in-app cheatsheet. <kbd>⌘</kbd> = <kbd>Ctrl</kbd> on Windows/Linux.

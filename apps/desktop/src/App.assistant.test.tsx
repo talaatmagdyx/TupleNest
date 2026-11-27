@@ -38,7 +38,16 @@ const configure = (answer: string) => {
 const mount = async () => {
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByText(CONNECTION.name);
+  await screen.findAllByText(CONNECTION.name);
+  return user;
+};
+
+const connected = async () => {
+  const user = await mount();
+  await user.keyboard("{Meta>}k{/Meta}");
+  await user.type(await screen.findByPlaceholderText(/type a command/i), "Connect to local dev");
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(be.sent("pg_connect")).toHaveLength(1));
   return user;
 };
 
@@ -77,11 +86,7 @@ describe("App — assistant", () => {
     be.on("pg_query", () => {
       throw new Error("Undefined column [SQLSTATE 42703]\ncolumn \"totl\" does not exist");
     });
-    const user = await mount();
-    await user.keyboard("{Meta>}k{/Meta}");
-    await user.type(await screen.findByPlaceholderText(/type a command/i), "Connect to local dev");
-    await user.keyboard("{Enter}");
-    await waitFor(() => expect(be.sent("pg_connect")).toHaveLength(1));
+    const user = await connected();
     await type(user, "select totl from orders");
     await user.keyboard("{Meta>}{Enter}{/Meta}");
     await user.click(await screen.findByRole("button", { name: "Fix with the assistant" }));
@@ -101,7 +106,7 @@ describe("App — assistant", () => {
 
   it("inserts a suggestion after what the editor holds", async () => {
     configure("```sql\nselect 2\n```");
-    const user = await mount();
+    const user = await connected();
     await type(user, "select 1");
     await user.keyboard("{Meta>}j{/Meta}");
     await user.type(await screen.findByRole("textbox", { name: "Ask the assistant" }), "another{Enter}");
@@ -110,13 +115,25 @@ describe("App — assistant", () => {
     expect(be.calls()).not.toContain("pg_query");
   });
 
-  it("puts a suggestion into an empty editor as is", async () => {
+  it("puts a suggestion into an empty editor as is, past the welcome screen", async () => {
     configure("```sql\nselect 3\n```");
+    // Not connected: the welcome screen holds the main area, and inserting
+    // is what brings the editor back.
     const user = await mount();
-    await user.clear(editor());
+    expect(screen.queryByRole("textbox", { name: /sql editor/i })).not.toBeInTheDocument();
     await user.keyboard("{Meta>}j{/Meta}");
     await user.type(await screen.findByRole("textbox", { name: "Ask the assistant" }), "three{Enter}");
     await user.click(await screen.findByRole("button", { name: "Insert into editor" }));
     expect(editor().value).toBe("select 3");
+  });
+
+  it("puts a suggestion into a cleared editor as is", async () => {
+    configure("```sql\nselect 4\n```");
+    const user = await connected();
+    await user.clear(editor());
+    await user.keyboard("{Meta>}j{/Meta}");
+    await user.type(await screen.findByRole("textbox", { name: "Ask the assistant" }), "four{Enter}");
+    await user.click(await screen.findByRole("button", { name: "Insert into editor" }));
+    expect(editor().value).toBe("select 4");
   });
 });

@@ -15,9 +15,12 @@ pub enum StoreError {
     FutureSchema { found: i64, supported: i64 },
     #[error("invalid JSON in store: {0}")]
     Json(#[from] serde_json::Error),
+    /// A write the store's own rules refuse (not a database failure).
+    #[error("{0}")]
+    Refused(String),
 }
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 const MIGRATION_V1: &str = r#"
 CREATE TABLE meta        (key TEXT PRIMARY KEY, value TEXT);
@@ -131,6 +134,24 @@ CREATE INDEX IF NOT EXISTS idx_history_prune ON query_history(started_at) WHERE 
 CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at);
 "#;
 
+/// MCP server: which saved profiles an AI tool may reach, and how.
+///
+/// One row per profile that has been opted in; no row means `off`. So every
+/// profile that existed before this table — and every one created after — is
+/// invisible to MCP clients until the user chooses otherwise. Deleting the
+/// profile deletes its row (`foreign_keys` is on).
+///
+/// `actor` on the audit log and on history says who sent a statement: NULL is
+/// the app's own window, `MCP · <client>` an AI tool through `tuplenest mcp`.
+/// Added with a column check, per the note above V6.
+const MIGRATION_V8: &str = r#"
+CREATE TABLE IF NOT EXISTS mcp_access (
+  connection_id TEXT PRIMARY KEY REFERENCES connections(id) ON DELETE CASCADE,
+  access TEXT NOT NULL CHECK (access IN ('read_only','read_write')),
+  updated_at INTEGER NOT NULL
+);
+"#;
+
 /// Audit entries kept; older ones are pruned on insert.
 const AUDIT_RETENTION: i64 = 5000;
 
@@ -199,6 +220,11 @@ impl Store {
         conn.pragma_update(None, "wal_autocheckpoint", WAL_AUTOCHECKPOINT_PAGES)?;
         conn.pragma_update(None, "journal_size_limit", WAL_SIZE_LIMIT_BYTES)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        // The app and an MCP server (`tuplenest-desktop mcp`) can have this
+        // file open at once. Without a timeout the second writer fails at
+        // once with SQLITE_BUSY — and on a production statement a failed
+        // audit write means the statement is refused.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let store = Self { conn };
         store.migrate()?;
         Ok(store)
@@ -272,6 +298,15 @@ impl Store {
         }
         if current < 7 {
             self.conn.execute_batch(MIGRATION_V7)?;
+        }
+        if current < 8 {
+            self.conn.execute_batch(MIGRATION_V8)?;
+            for table in ["audit_log", "query_history"] {
+                if !self.column_exists(table, "actor")? {
+                    self.conn
+                        .execute_batch(&format!("ALTER TABLE {table} ADD COLUMN actor TEXT"))?;
+                }
+            }
         }
         if current < SCHEMA_VERSION {
             self.conn.execute(
@@ -492,8 +527,8 @@ impl Store {
         tx.prepare_cached(
             "INSERT INTO query_history
                (id, connection_key, sql_text, status, error_text,
-                rows_returned, rows_affected, started_at, duration_ms, favorite)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                rows_returned, rows_affected, started_at, duration_ms, favorite, actor)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
         )?
         .execute(params![
             entry.id,
@@ -506,6 +541,7 @@ impl Store {
             entry.started_at,
             entry.duration_ms as i64,
             entry.favorite as i64,
+            entry.actor,
         ])?;
         tx.prepare_cached(HISTORY_PRUNE_SQL)?
             .execute(params![retention as i64])?;
@@ -592,18 +628,31 @@ impl Store {
         environment: Option<&str>,
         sql_text: &str,
     ) -> Result<(), StoreError> {
+        self.audit_add_by(connection_key, environment, sql_text, None)
+    }
+
+    /// [`Store::audit_add`] with who sent the statement: None is the app's
+    /// own window, `Some("MCP · Claude Desktop")` an AI tool.
+    pub fn audit_add_by(
+        &self,
+        connection_key: &str,
+        environment: Option<&str>,
+        sql_text: &str,
+        actor: Option<&str>,
+    ) -> Result<(), StoreError> {
         // Same shape as `history_add`: one commit, and a prune that walks
         // `idx_audit_at` rather than sorting every retained row.
         let tx = self.conn.unchecked_transaction()?;
         tx.prepare_cached(
-            "INSERT INTO audit_log (id, connection_key, environment, sql_text, at)
-             VALUES (?1, ?2, ?3, ?4, unixepoch())",
+            "INSERT INTO audit_log (id, connection_key, environment, sql_text, at, actor)
+             VALUES (?1, ?2, ?3, ?4, unixepoch(), ?5)",
         )?
         .execute(params![
             uuid::Uuid::new_v4().to_string(),
             connection_key,
             environment,
-            sql_text
+            sql_text,
+            actor
         ])?;
         tx.prepare_cached(AUDIT_PRUNE_SQL)?
             .execute(params![AUDIT_RETENTION])?;
@@ -620,6 +669,7 @@ impl Store {
                     environment: r.get(1)?,
                     sql_text: r.get(2)?,
                     at: r.get(3)?,
+                    actor: r.get(4)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -638,7 +688,80 @@ impl Store {
             started_at: r.get(7)?,
             duration_ms: r.get::<_, i64>(8)? as u64,
             favorite: r.get::<_, i64>(9)? != 0,
+            actor: r.get(10)?,
         })
+    }
+
+    // ---- MCP access policy ------------------------------------------------
+
+    /// The access an MCP client has to this profile, after the rules: a
+    /// profile that no longer exists is `Off`, and a stored `ReadWrite` is
+    /// held to `ReadOnly` when the profile is now tagged prod or staging, or
+    /// read-only (see [`McpAccess::effective`]).
+    pub fn mcp_access_get(&self, connection_id: &str) -> Result<McpAccess, StoreError> {
+        let Some(profile) = self.connection_get(connection_id)? else {
+            return Ok(McpAccess::Off);
+        };
+        Ok(McpAccess::effective(
+            self.mcp_access_stored(connection_id)?,
+            &profile,
+        ))
+    }
+
+    fn mcp_access_stored(&self, connection_id: &str) -> Result<McpAccess, StoreError> {
+        let raw: Option<String> = self
+            .conn
+            .prepare_cached("SELECT access FROM mcp_access WHERE connection_id = ?1")?
+            .query_row(params![connection_id], |r| r.get(0))
+            .optional()?;
+        Ok(raw
+            .as_deref()
+            .map_or(McpAccess::Off, McpAccess::parse_or_off))
+    }
+
+    /// Every profile with its effective MCP access, `Off` ones included.
+    pub fn mcp_access_list(&self) -> Result<Vec<(ConnectionRecord, McpAccess)>, StoreError> {
+        self.connection_list()?
+            .into_iter()
+            .map(|p| {
+                let stored = self.mcp_access_stored(&p.id)?;
+                let access = McpAccess::effective(stored, &p);
+                Ok((p, access))
+            })
+            .collect()
+    }
+
+    /// Sets a profile's MCP access. Refuses `ReadWrite` for a profile tagged
+    /// prod or staging, or marked read-only: in this version an AI tool can
+    /// at most read those.
+    pub fn mcp_access_set(&self, connection_id: &str, access: McpAccess) -> Result<(), StoreError> {
+        let profile = self
+            .connection_get(connection_id)?
+            .ok_or_else(|| StoreError::Refused("no saved connection with that id".into()))?;
+        if access == McpAccess::ReadWrite && McpAccess::read_write_refused(&profile) {
+            return Err(StoreError::Refused(
+                "read and write is not available for a connection tagged prod or staging, \
+                 or marked read-only; choose read only or off"
+                    .into(),
+            ));
+        }
+        match access {
+            McpAccess::Off => {
+                self.conn.execute(
+                    "DELETE FROM mcp_access WHERE connection_id = ?1",
+                    params![connection_id],
+                )?;
+            }
+            _ => {
+                self.conn.execute(
+                    "INSERT INTO mcp_access (connection_id, access, updated_at)
+                     VALUES (?1, ?2, unixepoch())
+                     ON CONFLICT(connection_id) DO UPDATE SET access = ?2, updated_at = unixepoch()",
+                    params![connection_id, access.as_str()],
+                )?;
+            }
+        }
+        Ok(())
     }
 
     fn row_to_connection(r: &rusqlite::Row<'_>) -> rusqlite::Result<ConnectionRecord> {
@@ -664,7 +787,7 @@ impl Store {
 }
 
 const HISTORY_LIST_SQL: &str = "SELECT id, connection_key, sql_text, status, error_text,
-               rows_returned, rows_affected, started_at, duration_ms, favorite
+               rows_returned, rows_affected, started_at, duration_ms, favorite, actor
         FROM query_history
         WHERE (?1 IS NULL OR sql_text LIKE ?1)
         ORDER BY started_at DESC, rowid DESC LIMIT ?2";
@@ -678,7 +801,8 @@ const HISTORY_PRUNE_SQL: &str = "DELETE FROM query_history WHERE rowid IN (
 const AUDIT_PRUNE_SQL: &str = "DELETE FROM audit_log WHERE rowid IN (
           SELECT rowid FROM audit_log ORDER BY at DESC LIMIT -1 OFFSET ?1)";
 
-const AUDIT_LIST_SQL: &str = "SELECT connection_key, environment, sql_text, at FROM audit_log
+const AUDIT_LIST_SQL: &str =
+    "SELECT connection_key, environment, sql_text, at, actor FROM audit_log
         ORDER BY at DESC LIMIT ?1";
 
 const CONNECTION_SELECT: &str = "SELECT id, name, driver, environment, color, read_only,
@@ -729,6 +853,60 @@ pub struct AuditEntry {
     pub environment: Option<String>,
     pub sql_text: String,
     pub at: i64,
+    /// Who sent it: None is the app's window, `MCP · <client>` an AI tool.
+    #[serde(default)]
+    pub actor: Option<String>,
+}
+
+/// How far an MCP client (an AI tool talking to `tuplenest-desktop mcp`) may
+/// reach into one saved profile. `Off` — the default — hides it entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpAccess {
+    Off,
+    ReadOnly,
+    ReadWrite,
+}
+
+impl McpAccess {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            McpAccess::Off => "off",
+            McpAccess::ReadOnly => "read_only",
+            McpAccess::ReadWrite => "read_write",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "off" => Some(McpAccess::Off),
+            "read_only" => Some(McpAccess::ReadOnly),
+            "read_write" => Some(McpAccess::ReadWrite),
+            _ => None,
+        }
+    }
+
+    /// Anything unrecognised in the table is no access, not some access.
+    fn parse_or_off(s: &str) -> Self {
+        Self::parse(s).unwrap_or(McpAccess::Off)
+    }
+
+    /// Is read and write withheld from this profile? Prod and staging, and a
+    /// profile the user marked read-only.
+    pub fn read_write_refused(profile: &ConnectionRecord) -> bool {
+        profile.read_only || matches!(profile.environment.as_deref(), Some("prod" | "staging"))
+    }
+
+    /// The access that applies now. A profile set to read and write and later
+    /// re-tagged prod (or marked read-only) drops to read only rather than
+    /// keeping a grant the setter would refuse today.
+    pub fn effective(stored: McpAccess, profile: &ConnectionRecord) -> McpAccess {
+        if stored == McpAccess::ReadWrite && Self::read_write_refused(profile) {
+            McpAccess::ReadOnly
+        } else {
+            stored
+        }
+    }
 }
 
 /// One recorded execution. `sql_text` may be None (prod text exclusion).
@@ -747,6 +925,9 @@ pub struct HistoryEntry {
     pub started_at: i64,
     pub duration_ms: u64,
     pub favorite: bool,
+    /// Who sent it: None is the app's window, `MCP · <client>` an AI tool.
+    #[serde(default)]
+    pub actor: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1108,6 +1289,7 @@ mod tests {
             started_at,
             duration_ms: 7,
             favorite,
+            actor: None,
         }
     }
 
@@ -1257,6 +1439,160 @@ mod tests {
         assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
         assert!(store.snippet_list().unwrap().is_empty());
         assert!(store.audit_list(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn every_profile_starts_with_mcp_off() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .connection_upsert(&sample_connection("c1", "dev db"))
+            .unwrap();
+        assert_eq!(store.mcp_access_get("c1").unwrap(), McpAccess::Off);
+        assert_eq!(store.mcp_access_get("missing").unwrap(), McpAccess::Off);
+        let list = store.mcp_access_list().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].1, McpAccess::Off);
+    }
+
+    #[test]
+    fn mcp_access_round_trips_and_off_removes_the_row() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .connection_upsert(&sample_connection("c1", "dev db"))
+            .unwrap();
+        store.mcp_access_set("c1", McpAccess::ReadWrite).unwrap();
+        assert_eq!(store.mcp_access_get("c1").unwrap(), McpAccess::ReadWrite);
+        store.mcp_access_set("c1", McpAccess::ReadOnly).unwrap();
+        assert_eq!(store.mcp_access_get("c1").unwrap(), McpAccess::ReadOnly);
+        store.mcp_access_set("c1", McpAccess::Off).unwrap();
+        assert_eq!(store.mcp_access_get("c1").unwrap(), McpAccess::Off);
+        let rows: i64 = store
+            .conn
+            .query_row("SELECT count(*) FROM mcp_access", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn mcp_access_parses_only_its_own_names() {
+        for a in [McpAccess::Off, McpAccess::ReadOnly, McpAccess::ReadWrite] {
+            assert_eq!(McpAccess::parse(a.as_str()), Some(a));
+        }
+        assert_eq!(McpAccess::parse("rw"), None);
+        assert_eq!(McpAccess::parse_or_off("admin"), McpAccess::Off);
+    }
+
+    #[test]
+    fn read_write_is_refused_for_prod_staging_and_read_only_profiles() {
+        let store = Store::open_in_memory().unwrap();
+        for (id, env, read_only) in [
+            ("p", Some("prod"), false),
+            ("s", Some("staging"), false),
+            ("r", Some("dev"), true),
+        ] {
+            let mut rec = sample_connection(id, id);
+            rec.environment = env.map(String::from);
+            rec.read_only = read_only;
+            store.connection_upsert(&rec).unwrap();
+            let err = store.mcp_access_set(id, McpAccess::ReadWrite).unwrap_err();
+            assert!(matches!(err, StoreError::Refused(_)), "{id}: {err}");
+            assert_eq!(store.mcp_access_get(id).unwrap(), McpAccess::Off);
+            store.mcp_access_set(id, McpAccess::ReadOnly).unwrap();
+            assert_eq!(store.mcp_access_get(id).unwrap(), McpAccess::ReadOnly);
+        }
+        assert!(matches!(
+            store.mcp_access_set("nope", McpAccess::ReadOnly),
+            Err(StoreError::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn a_grant_drops_to_read_only_when_the_profile_becomes_prod() {
+        let store = Store::open_in_memory().unwrap();
+        let mut rec = sample_connection("c1", "was dev");
+        store.connection_upsert(&rec).unwrap();
+        store.mcp_access_set("c1", McpAccess::ReadWrite).unwrap();
+        rec.environment = Some("prod".into());
+        store.connection_upsert(&rec).unwrap();
+        assert_eq!(store.mcp_access_get("c1").unwrap(), McpAccess::ReadOnly);
+        assert_eq!(store.mcp_access_list().unwrap()[0].1, McpAccess::ReadOnly);
+    }
+
+    #[test]
+    fn deleting_a_profile_deletes_its_mcp_grant() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .connection_upsert(&sample_connection("c1", "dev db"))
+            .unwrap();
+        store.mcp_access_set("c1", McpAccess::ReadOnly).unwrap();
+        store.connection_delete("c1").unwrap();
+        store
+            .connection_upsert(&sample_connection("c1", "dev db again"))
+            .unwrap();
+        assert_eq!(store.mcp_access_get("c1").unwrap(), McpAccess::Off);
+    }
+
+    #[test]
+    fn audit_and_history_record_the_actor() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .audit_add_by("k", Some("staging"), "select 1", Some("MCP · Claude"))
+            .unwrap();
+        store.audit_add("k", Some("prod"), "select 2").unwrap();
+        let audit = store.audit_list(10).unwrap();
+        let actors: Vec<_> = audit.iter().map(|a| a.actor.clone()).collect();
+        assert!(actors.contains(&Some("MCP · Claude".into())));
+        assert!(actors.contains(&None));
+
+        let mut h = history("h1", 1, Some("select 1"), false);
+        h.actor = Some("MCP · Cursor".into());
+        store.history_add(&h, 10).unwrap();
+        assert_eq!(
+            store.history_list(None, 10).unwrap()[0].actor.as_deref(),
+            Some("MCP · Cursor")
+        );
+    }
+
+    /// A v7 database with history and audit rows upgrades to v8: rows kept,
+    /// actor NULL (they came from the app), MCP off for every profile.
+    #[test]
+    fn upgrades_a_v7_database_with_mcp_off_and_rows_kept() {
+        let conn = Connection::open_in_memory().unwrap();
+        for m in [
+            MIGRATION_V1,
+            MIGRATION_V2,
+            MIGRATION_V3,
+            MIGRATION_V4,
+            MIGRATION_V5,
+        ] {
+            conn.execute_batch(m).unwrap();
+        }
+        conn.execute_batch(
+            "ALTER TABLE connections ADD COLUMN statement_timeout_ms INTEGER NOT NULL DEFAULT 0",
+        )
+        .unwrap();
+        conn.execute_batch(MIGRATION_V7).unwrap();
+        conn.execute_batch(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '7');
+             INSERT INTO connections (id, name, driver, environment, host, port, database,
+                                      username, tls_mode)
+               VALUES ('old', 'Existing', 'postgres', 'dev', 'h', 5432, 'd', 'u', 'disabled');
+             INSERT INTO audit_log (id, connection_key, environment, sql_text, at)
+               VALUES ('a1', 'k', 'prod', 'delete from t where id = 1', 5);
+             INSERT INTO query_history (id, connection_key, sql_text, status,
+                                        rows_returned, started_at, duration_ms)
+               VALUES ('h1', 'k', 'select 1', 'success', 1, 5, 1);",
+        )
+        .unwrap();
+        let store = Store::init(conn).unwrap();
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+        let audit = store.audit_list(10).unwrap();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(audit[0].actor, None);
+        assert_eq!(store.history_list(None, 10).unwrap()[0].actor, None);
+        assert_eq!(store.mcp_access_get("old").unwrap(), McpAccess::Off);
+        // Re-running the migration on an upgraded file is a no-op.
+        store.migrate().unwrap();
     }
 
     #[test]

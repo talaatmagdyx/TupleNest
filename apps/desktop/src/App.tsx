@@ -12,6 +12,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import Titlebar from "./app-shell/Titlebar";
 import StatusBar from "./app-shell/StatusBar";
 import ActivityRail, { type RailView } from "./app-shell/ActivityRail";
+import Welcome from "./app-shell/Welcome";
 import HistoryPanel from "./history/HistoryPanel";
 import SavedList from "./connections/SavedList";
 import ConnectionForm from "./connections/ConnectionForm";
@@ -39,7 +40,7 @@ import { FILTERS, abortSave, baseName, beginSave, finishSave, saveText } from ".
 import { MAX_BARS, chartSubtitle, chartTitle, pickChartColumns } from "./lib/chart";
 import type { Pane as IntelPane } from "./overlays/IntelModal";
 import type { ObjectDetails } from "./overlays/DetailsModal";
-import { useQueryTabs } from "./hooks/useQueryTabs";
+import { FIRST_TAB, useQueryTabs } from "./hooks/useQueryTabs";
 import { useSearch } from "./hooks/useSearch";
 import { useHealth } from "./hooks/useHealth";
 import { useConnectionForm, timeoutMs, parseSsh } from "./hooks/useConnectionForm";
@@ -75,6 +76,7 @@ import {
   SearchModal,
 } from "./overlays/lazy";
 import { UpdateToast } from "./overlays/Overlays";
+import { McpSection } from "./settings/McpSection";
 import { ParamPrompt } from "./overlays/Overlays";
 import {
   coerceParam,
@@ -177,6 +179,15 @@ export default function App() {
   // Tabs live in a hook so their invariants (valid active index, dirty means
   // "user edited", never zero tabs) are stated and tested in one place.
   const { tabs, activeTab, setActiveTab, setActiveSql, newTab, closeTab, setTabs } = useQueryTabs();
+  /* The welcome screen holds the main area until there is something to work
+     on: a first connection, or a tab the user opened, picked or edited. Once
+     gone it stays gone for the session — a dropped connection must not hide
+     the SQL that was being written. Adjusted during render, not in an effect,
+     so the editor never flashes in first. */
+  const [welcome, setWelcome] = useState(true);
+  const pristine = tabs.length === 1 && tabs[0].id === FIRST_TAB.id && !tabs[0].dirty;
+  if (welcome && (connected || !pristine)) setWelcome(false);
+  const showWelcome = welcome && !connected && pristine;
   const [overlay, setOverlay] = useState<OverlayKind>(null);
   // The assistant: a right-hand island panel. Everything it produces lands in
   // the editor only on the user's click, and runs only on the user's Run.
@@ -843,12 +854,14 @@ export default function App() {
     (sql: string) => {
       if (tabs.length === 0) newTab({ name: "assistant.sql", sql, dirty: true });
       else {
-        const cur = tabs[activeTab]?.sql ?? "";
+        // Behind the welcome screen the tab holds only its starter text,
+        // which nobody has seen: replace it rather than append to it.
+        const cur = showWelcome ? "" : (tabs[activeTab]?.sql ?? "");
         setActiveSql(cur.trim() ? `${cur.replace(/\s+$/, "")}\n\n${sql}` : sql);
       }
       showToast("Inserted into the editor — nothing runs until you press Run");
     },
-    [tabs, activeTab, newTab, setActiveSql, showToast],
+    [tabs, activeTab, newTab, setActiveSql, showToast, showWelcome],
   );
 
   /** "Apply the fix": replaces the statement the fix was for — just that
@@ -1751,8 +1764,19 @@ export default function App() {
           />
         )}
         <main className="main-col">
-          <TabsBar tabs={tabs} active={activeTab} onSelect={setActiveTab} onClose={closeTab} onNew={() => newTab()} />
-          {tabs.length === 0 ? (
+          <TabsBar
+            tabs={tabs}
+            active={activeTab}
+            onSelect={(i) => {
+              setWelcome(false);
+              setActiveTab(i);
+            }}
+            onClose={closeTab}
+            onNew={() => newTab()}
+          />
+          {showWelcome ? (
+            <Welcome saved={saved} onNew={newProfile} onOpen={editProfile} />
+          ) : tabs.length === 0 ? (
             <div className="onboard">
               <div className="card">
                 <div className="onboard-glyph">
@@ -2125,6 +2149,7 @@ export default function App() {
           onTheme={applyTheme}
           onTelemetry={applyTelemetry}
           onAbout={() => setOverlay("about")}
+          mcp={<McpSection />}
           onClose={() => {
             setSettingsAssistant(false);
             setOverlay(null);

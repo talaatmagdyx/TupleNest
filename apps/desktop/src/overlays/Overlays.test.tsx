@@ -438,10 +438,63 @@ describe("Guard", () => {
     expect(screen.getByText(/^update/).textContent!.length).toBe(400);
   });
 
-  it("makes cancel the plain button and running the loud one", () => {
-    render(<Guard {...base} />);
+  it("makes not running it the primary, focused button and running the danger one", () => {
+    render(<Guard {...base} sql="update t set a=1 where id=1" />);
+    const safe = screen.getByRole("button", { name: "Don't run it" });
     expect(screen.getByRole("button", { name: "Run anyway" })).toHaveClass("danger");
-    expect(screen.getByRole("button", { name: "Cancel" })).not.toHaveClass("danger");
+    expect(safe).toHaveClass("primary");
+    expect(safe).not.toHaveClass("danger");
+    expect(safe).toHaveFocus();
+  });
+
+  it("draws the danger strip and shows the statement in a code block", () => {
+    const { container } = render(<Guard {...base} />);
+    expect(container.querySelector(".danger-strip")).toHaveAttribute("aria-hidden");
+    expect(container.querySelector("pre.d-code")).toHaveTextContent("update t set a=1");
+  });
+
+  // The worst cases on prod: every row, or the object itself.
+  it.each([
+    ["update t set a=1", "t"],
+    ["DELETE FROM orders", "orders"],
+    ["delete from only public.orders where 1=1", "public.orders"],
+    ["DROP TABLE IF EXISTS users", "users"],
+    ["drop table a, b", "a, b"],
+    ['DROP SCHEMA "Sales" CASCADE', '"Sales"'],
+    ["DROP MATERIALIZED VIEW mv_daily", "mv_daily"],
+    ["TRUNCATE TABLE ONLY events", "events"],
+    ["EXPLAIN ANALYZE DELETE FROM t", "t"],
+    ["WITH x AS (SELECT 1) DELETE FROM audit_log", "audit_log"],
+  ])("asks for the name to be typed before %s runs", async (sql, name) => {
+    const onRun = vi.fn();
+    render(<Guard {...base} sql={sql} onRun={onRun} />);
+    const run = screen.getByRole("button", { name: "Run anyway" });
+    expect(run).toBeDisabled();
+    const box = screen.getByRole("textbox", { name: `Type ${name} to confirm` });
+    if (name.length > 1) {
+      await userEvent.type(box, name.slice(0, -1));
+      expect(run).toBeDisabled();
+    }
+    await userEvent.type(box, name.slice(-1));
+    expect(run).toBeEnabled();
+    await userEvent.click(run);
+    expect(onRun).toHaveBeenCalled();
+  });
+
+  it("does not enable on a near miss in case", async () => {
+    render(<Guard {...base} sql="DELETE FROM Orders" />);
+    await userEvent.type(screen.getByRole("textbox"), "orders");
+    expect(screen.getByRole("button", { name: "Run anyway" })).toBeDisabled();
+  });
+
+  it.each([
+    ["a guarded statement that is not a worst case", "ALTER TABLE t ADD COLUMN c int", undefined],
+    ["a bounded write", "update t set a=1 where id=1", undefined],
+    ["staging, even for the worst case", "DELETE FROM orders", "staging"],
+  ])("asks for no typing on %s", (_label, sql, env) => {
+    render(<Guard {...base} sql={sql} env={env} />);
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run anyway" })).toBeEnabled();
   });
 
   it("cancels on dismissal, rather than running", async () => {
@@ -456,8 +509,18 @@ describe("Guard", () => {
   it("runs when explicitly confirmed", async () => {
     const onRun = vi.fn();
     render(<Guard {...base} onRun={onRun} />);
+    await userEvent.type(screen.getByRole("textbox", { name: "Type t to confirm" }), "t");
     await userEvent.click(screen.getByRole("button", { name: "Run anyway" }));
     expect(onRun).toHaveBeenCalled();
+  });
+
+  it("backs out from the safe button", async () => {
+    const onCancel = vi.fn();
+    const onRun = vi.fn();
+    render(<Guard {...base} onCancel={onCancel} onRun={onRun} />);
+    await userEvent.click(screen.getByRole("button", { name: "Don't run it" }));
+    expect(onCancel).toHaveBeenCalled();
+    expect(onRun).not.toHaveBeenCalled();
   });
 });
 
@@ -473,6 +536,13 @@ describe("ConnLost", () => {
     render(<ConnLost {...base} detail="terminated by administrator" />);
     expect(screen.getByText("terminated by administrator")).toBeInTheDocument();
     expect(screen.queryByText(/nothing was re-run/)).not.toBeInTheDocument();
+  });
+
+  it("draws its icon out of the accessibility tree and focuses Reconnect", () => {
+    const { container } = render(<ConnLost {...base} />);
+    expect(container.querySelector(".d-icon")).toHaveAttribute("aria-hidden");
+    expect(screen.getByRole("button", { name: "Reconnect" })).toHaveFocus();
+    expect(screen.getByRole("alertdialog")).toHaveAccessibleName("Connection lost");
   });
 
   it("reconnects and dismisses", async () => {
@@ -531,6 +601,11 @@ describe("Settings", () => {
   it("promises no query text leaves the device", () => {
     render(<Settings {...base} />);
     expect(screen.getByText(/No query text or data ever leaves the device/)).toBeInTheDocument();
+  });
+
+  it("shows the MCP server section it is given", () => {
+    render(<Settings {...base} mcp={<div>MCP slot</div>} />);
+    expect(screen.getByText("MCP slot")).toBeInTheDocument();
   });
 
   it("closes", async () => {

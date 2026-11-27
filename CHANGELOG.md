@@ -26,6 +26,19 @@ versions follow [Semantic Versioning](https://semver.org/).
 From a second audit, which re-tested every fix in 0.1.1-beta.12 rather than
 trusting it.
 
+### Added
+- TupleNest as an MCP server, so AI tools (Claude Desktop, Claude Code,
+  Cursor) can query saved connections through TupleNest's safety rules.
+  `tuplenest-desktop mcp` serves MCP on stdio, with no window. Every
+  connection starts off; Settings → MCP server turns each one on as read only
+  (a server-enforced read-only session plus the read allowlist) or read and
+  write (statements the destructive-statement guard would ask about are
+  refused, since no one can confirm them; not available on prod or staging).
+  Statements on prod and staging are audited before they run, and a failed
+  audit write refuses them; audit and history rows record the sender as
+  `MCP · <client>`. Store schema v8 adds the per-connection access table and
+  the actor columns. See "Use TupleNest from AI tools (MCP)" in the README.
+
 ### Safety
 - The window follows the environment the backend settled on for a session.
   After TN-031 the backend could treat a session as production while the

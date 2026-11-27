@@ -14,7 +14,7 @@ beforeEach(() => {
 const mount = async () => {
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByText(CONNECTION.name);
+  await screen.findAllByText(CONNECTION.name);
   return user;
 };
 
@@ -177,6 +177,13 @@ describe("App — Escape", () => {
 describe("App — the splitter", () => {
   /** jsdom has no layout, so the drag is driven by the coordinates the
    *  handler actually reads: clientY. */
+  /** Past the welcome screen: picking the tab shows the editor. */
+  const openEditor = async () => {
+    const user = await mount();
+    await user.click(screen.getByRole("tab", { name: /untitled-1/ }));
+    return user;
+  };
+
   const drag = async (handle: Element, from: number, to: number) => {
     fireEvent.mouseDown(handle, { clientY: from, clientX: from });
     await act(async () => {
@@ -186,7 +193,7 @@ describe("App — the splitter", () => {
   };
 
   it("resizes the editor pane", async () => {
-    await mount();
+    await openEditor();
     const split = document.querySelector(".splitter") as HTMLElement;
     const pane = document.querySelector(".editor-frame") as HTMLElement;
     const before = pane.style.height;
@@ -196,7 +203,7 @@ describe("App — the splitter", () => {
 
   it("will not let the editor be dragged shut", async () => {
     // Below ~120px the editor is a slit you cannot read a query in.
-    await mount();
+    await openEditor();
     const split = document.querySelector(".splitter") as HTMLElement;
     const pane = document.querySelector(".editor-frame") as HTMLElement;
     await drag(split, 300, -4000);
@@ -204,7 +211,7 @@ describe("App — the splitter", () => {
   });
 
   it("will not let the editor eat the whole window", async () => {
-    await mount();
+    await openEditor();
     const split = document.querySelector(".splitter") as HTMLElement;
     const pane = document.querySelector(".editor-frame") as HTMLElement;
     await drag(split, 300, 4000);
@@ -212,7 +219,7 @@ describe("App — the splitter", () => {
   });
 
   it("stops resizing once the button is released", async () => {
-    await mount();
+    await openEditor();
     const split = document.querySelector(".splitter") as HTMLElement;
     const pane = document.querySelector(".editor-frame") as HTMLElement;
     await drag(split, 300, 380);
@@ -224,7 +231,7 @@ describe("App — the splitter", () => {
   });
 
   it("resizes the sidebar, within its limits", async () => {
-    await mount();
+    await openEditor();
     const grip = document.querySelector(".sidebar-resize") as HTMLElement;
     const bar = document.querySelector(".sidebar") as HTMLElement;
     await drag(grip, 260, 4000);
@@ -234,7 +241,7 @@ describe("App — the splitter", () => {
   });
 
   it("ignores mouse movement when no drag is in progress", async () => {
-    await mount();
+    await openEditor();
     const pane = document.querySelector(".editor-frame") as HTMLElement;
     const before = pane.style.height;
     await act(async () => {

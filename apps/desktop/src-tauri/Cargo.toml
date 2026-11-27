@@ -32,7 +32,11 @@ tuplenest-metadata-cache = { path = "../../../crates/metadata-cache" }
 tuplenest-result-stream = { path = "../../../crates/result-stream" }
 tuplenest-ssh-core = { path = "../../../crates/ssh-core" }
 tracing = { workspace = true }
-tokio = { workspace = true }
+# io-util/io-std: the MCP server (`tuplenest-desktop mcp`) speaks over stdio.
+tokio = { workspace = true, features = ["io-util", "io-std"] }
+# The platform data directory, for the MCP server, which has no Tauri app to
+# ask for `app_data_dir`. Already in the tree through Tauri.
+dirs = "7"
 async-trait = { workspace = true }
 uuid = { workspace = true }
 # Text sorting by the Unicode Collation Algorithm, as the WebView's
@@ -48,7 +52,10 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 futures-util = { version = "0.3", default-features = false }
 
 [dev-dependencies]
-# MemoryStore, so key storage is tested without touching the OS keychain.
+# MemoryStore: the MCP and assistant tests must never touch the real keychain.
 tuplenest-credential-store = { path = "../../../crates/credential-store", features = ["test-support"] }
-# A loopback mock HTTP server for the provider tests: no real network.
+# To make the audit write fail on purpose (a trigger on audit_log).
+rusqlite = { workspace = true }
+tempfile = "3"
+# A loopback mock HTTP server for the assistant's provider tests: no real network.
 tokio = { workspace = true, features = ["net", "io-util"] }

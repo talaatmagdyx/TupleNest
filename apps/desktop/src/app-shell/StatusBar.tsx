@@ -33,7 +33,9 @@ export default function StatusBar(p: Props) {
       <span className="item">
         <span
           className="dot"
-          style={{ backgroundColor: p.connected ? (p.isProd ? "#ef4d4d" : "#3fb950") : "#4a4f57" }}
+          style={{
+            backgroundColor: p.connected ? (p.isProd ? "var(--tn-danger)" : "var(--tn-success)") : "var(--tn-tm)",
+          }}
         />
         {p.connected ? p.connName : "disconnected"}
       </span>

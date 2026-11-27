@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
-import Grid, { keepNear, type GridColumn } from "./Grid";
+import Grid, { columnMaxima, keepNear, numberOf, type GridColumn } from "./Grid";
 import type { CellEdit, EditTarget } from "../lib/dml";
 
 const invokeMock = vi.mocked(invoke);
@@ -203,7 +203,19 @@ describe("Grid — editing", () => {
     // whatever row happened to land at that index.
     render(<Grid {...base} target={target} edits={[edit()]} onStage={vi.fn()} />);
     expect(await screen.findByText("new@x.com")).toBeInTheDocument();
-    expect(screen.queryByText("ada@x.com")).not.toBeInTheDocument();
+    // The old value is still there, but only as the struck-through "was".
+    expect(screen.getByText("ada@x.com")).toHaveClass("g-was");
+    expect(screen.getByText("alan@x.com")).not.toHaveClass("g-was");
+  });
+
+  it("shows the old value struck through, and reads it as what it was", async () => {
+    const { container } = render(<Grid {...base} target={target} edits={[edit()]} onStage={vi.fn()} />);
+    await screen.findByText("new@x.com");
+    const cell = container.querySelector(".g-cell.staged") as HTMLElement;
+    expect(cell).toHaveTextContent("new@x.com, was ada@x.com");
+    expect(cell.querySelector(".g-was .sr-only")).toHaveTextContent(", was");
+    // Only staged cells carry one.
+    expect(container.querySelectorAll(".g-was")).toHaveLength(1);
   });
 
   it("marks a staged cell as dirty", async () => {
@@ -681,3 +693,53 @@ describe("Grid — a page of rows that cannot be loaded", () => {
   });
 });
 
+
+describe("Grid — numeric columns", () => {
+  const numCols: GridColumn[] = [
+    { name: "name", dbType: "text" },
+    { name: "revenue", dbType: "numeric" },
+    { name: "qty", dbType: "int4" },
+  ];
+  const numRows = [
+    ["a", "200.50", 4],
+    ["b", "-401", 0],
+    ["c", null, 2],
+  ];
+
+  it("reads numbers from what the backend sends", () => {
+    expect(numberOf(3)).toBe(3);
+    expect(numberOf("12.5")).toBe(12.5);
+    expect(numberOf(BigInt(7))).toBe(7);
+    expect(numberOf(null)).toBeNull();
+    expect(numberOf("")).toBeNull();
+    expect(numberOf("NaN")).toBeNull();
+    expect(numberOf(Infinity)).toBeNull();
+    expect(numberOf({})).toBeNull();
+  });
+
+  it("scales each numeric column by its largest loaded magnitude", () => {
+    expect(columnMaxima(numCols, { 0: numRows })).toEqual([null, 401, 4]);
+    // Nothing to scale against: no bars.
+    expect(columnMaxima(numCols, {})).toEqual([null, null, null]);
+    expect(columnMaxima(numCols, { 0: [["x", 0, null]] })).toEqual([null, null, null]);
+  });
+
+  it("right-aligns numeric cells and headers, and draws the bar as a background", async () => {
+    invokeMock.mockResolvedValue(numRows);
+    const { container } = render(<Grid {...base} columns={numCols} storedRows={numRows.length} />);
+    await screen.findByText("-401");
+    const heads = container.querySelectorAll(".g-hcell");
+    expect(heads[0]).not.toHaveClass("num");
+    expect(heads[1]).toHaveClass("num");
+    const big = screen.getByText("-401");
+    expect(big).toHaveClass("num", "bar");
+    expect(big.style.getPropertyValue("--g-frac")).toBe("1");
+    // Half of the largest, by magnitude.
+    expect(screen.getByText("200.50").style.getPropertyValue("--g-frac")).toBe("0.5");
+    // Nothing for a screen reader: the cell holds its text and nothing else.
+    expect(big.childNodes).toHaveLength(1);
+    // No bar for a zero or a text column.
+    expect(screen.getByText("0")).not.toHaveClass("bar");
+    expect(screen.getByText("a")).not.toHaveClass("num");
+  });
+});

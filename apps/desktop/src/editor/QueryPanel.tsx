@@ -94,7 +94,7 @@ export default function QueryPanel(p: Props) {
         <div className="toolbar">
           <button className="btn primary" onClick={p.onRun} disabled={!p.connected || p.running}>
             {p.running ? <span className="spin" /> : <PlayIcon />} {p.running ? "Running" : "Run"}{" "}
-            <span className="kbd" style={{ background: "rgba(0,0,0,.2)", color: "inherit", borderColor: "transparent" }}>
+            <span className="kbd on-fill">
               {kbd("mod", "enter")}
             </span>
           </button>

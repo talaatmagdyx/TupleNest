@@ -13,6 +13,8 @@ use tuplenest_workspace_store::Store;
 mod assistant;
 mod connections;
 mod export;
+mod guard;
+mod mcp;
 mod pg;
 mod sort;
 mod trim;
@@ -546,6 +548,12 @@ fn worker_threads(cores: usize) -> usize {
 }
 
 fn main() {
+    // `tuplenest-desktop mcp`: an MCP server on stdin/stdout for AI tools —
+    // no window, no WebView, no Tauri app at all. See `mcp`.
+    if std::env::args().nth(1).as_deref() == Some(mcp::SUBCOMMAND) {
+        std::process::exit(mcp::run_stdio());
+    }
+
     // Must be handed over before anything touches `tauri::async_runtime`, and
     // must outlive `run` — hence a binding that lives to the end of `main`.
     let cores = std::thread::available_parallelism().map_or(2, |n| n.get());
@@ -664,6 +672,9 @@ fn main() {
             snippet_save,
             snippet_delete,
             audit_list,
+            mcp::commands::mcp_info,
+            mcp::commands::mcp_access_list,
+            mcp::commands::mcp_access_set,
             connections::connection_save,
             connections::connection_list,
             connections::connection_delete,
