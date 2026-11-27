@@ -1,8 +1,16 @@
 # Privacy
 
-**Nothing you do in TupleNest leaves your computer, except to the databases you
-connect to, one update check, and — only if you set it up and then ask it
-something — the assistant's model.** There is no account, no sign-in, no
+**TupleNest sends data to four kinds of places, and nowhere else:**
+
+- the databases you connect to
+- one update check at start-up
+- the assistant's model, only if you set one up and then ask it something
+- an AI tool you connect over MCP, only for connections you turn on for it
+
+The MCP tool receives the rows its queries return. The assistant never
+receives rows.
+
+There is no account, no sign-in, no
 analytics endpoint, and no server run by this project. The app talks to the
 databases you point it at, and — once, at startup — GitHub, to ask whether a
 newer release exists. That check sends no data about you or your work, and it

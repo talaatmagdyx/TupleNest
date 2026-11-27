@@ -636,7 +636,7 @@ describe("Settings", () => {
 
   it("promises no query text leaves the device", () => {
     render(<Settings {...base} />);
-    expect(screen.getByText(/No query text or data ever leaves the device/)).toBeInTheDocument();
+    expect(screen.getByText(/Collects nothing today/)).toBeInTheDocument();
   });
 
   it("shows the MCP server section it is given, under its own heading in the nav", async () => {

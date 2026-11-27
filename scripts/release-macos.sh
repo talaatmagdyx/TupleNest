@@ -4,7 +4,7 @@
 #
 # This is the macOS half only. The actual release path is a tag push, which runs
 # .github/workflows/release.yml and builds macOS (arm64 + Intel), Windows and
-# Linux on their own runners — see docs/releasing.md. Keep this for a local
+# Linux on their own runners — see docs/development/releasing.md. Keep this for a local
 # signed build, or for notarizing when CI cannot.
 #
 # Requires an Apple Developer account ($99/yr). Nothing here can be faked:
@@ -21,7 +21,7 @@
 #
 # Required, because bundle.createUpdaterArtifacts is on: without these the
 # build fails at the signing step *after* producing the .app, which looks like
-# it worked (see docs/releasing.md). The key path here said ~/.tauri/ and the
+# it worked (see docs/development/releasing.md). The key path here said ~/.tauri/ and the
 # docs said ~/.tuplenest-keys/; the docs were right.
 #
 #   TAURI_SIGNING_PRIVATE_KEY           contents of ~/.tuplenest-keys/tuplenest.key

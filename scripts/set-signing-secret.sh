@@ -33,7 +33,7 @@ command -v gh >/dev/null || { echo "gh is not installed."; exit 1; }
 printf 'Passphrase for %s: ' "$KEY"
 read -rs PASS
 printf '\n'
-[ -n "$PASS" ] || { echo "Empty. An unprotected key is what SEC-06 was about — see docs/releasing.md."; exit 1; }
+[ -n "$PASS" ] || { echo "Empty. An unprotected key is what SEC-06 was about — see docs/development/releasing.md."; exit 1; }
 
 # Prove it. The probe file must exist first: `signer sign` checks the password
 # before it opens the file, so a missing file fails with "No such file" — a

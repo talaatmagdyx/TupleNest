@@ -39,7 +39,7 @@ jobs:
     # The signing key is reachable from this job. Holding it in the `release`
     # environment lets the repo require an approval (Settings → Environments →
     # release → Required reviewers) before any run — a dispatch from any
-    # branch included — can see it. See docs/releasing.md.
+    # branch included — can see it. See docs/development/releasing.md.
     environment: release
 
     # The `secrets` context cannot be read from a step-level `if:`, so the
