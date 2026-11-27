@@ -29,9 +29,15 @@
   --tn-tp:      #eceef5;
   --tn-ts:      #a9b0c2;
   --tn-tm:      #8b93a7;
-  --tn-accent:  #8b9bff;
+  --tn-accent:  #5c9dff;   /* the logo's blue, lifted for dark backgrounds */
+  /* Brand mark (lib/icons.tsx): the logo's own colours, on a white tile in both themes. */
+  --tn-brand-tile: #ffffff;
+  --tn-brand-blue: #1a6dff;
+  --tn-brand-navy: #0b1f5c;
+  --tn-brand-head: #1a5fd0;
+  --tn-brand-cell: #b9cdf2;
   --tn-on-accent: #0a0c16;
-  --tn-as:      rgba(139, 155, 255, .14);
+  --tn-as:      rgba(92, 157, 255, .14);
   --tn-success: #5be3a6;
   --tn-success-tint: rgba(91, 227, 166, .12);
   --tn-danger:  #ff6b7a;
@@ -44,11 +50,11 @@
   --tn-purple-tint: rgba(210, 168, 255, .14);
   --tn-info:    #6cc4ff;   /* a second cool hue: unique keys, column completions */
   --tn-info-tint: rgba(108, 196, 255, .14);
-  --tn-focus:   rgba(139, 155, 255, .58); /* 3.1:1 on raised (mockup .55, 2.94:1) */
+  --tn-focus:   rgba(92, 157, 255, .6); /* 3.1:1 on raised (mockup .55, 2.94:1) */
   --tn-shadow:  0 30px 80px rgba(0, 0, 0, .55);
   --tn-shadow-pop: 0 8px 24px rgba(0, 0, 0, .45); /* small popovers: find bar, completion */
   --tn-scrim:   rgba(3, 4, 8, .66);
-  --tn-syn-kw:  #9caaff;
+  --tn-syn-kw:  #8ab8ff;
   --tn-syn-str: #7ee7b8;
   --tn-syn-num: #ffc15e;
   --tn-syn-comment: #8b93a7;
@@ -64,9 +70,15 @@
   --tn-tp:      #10131b;
   --tn-ts:      #3e4657;
   --tn-tm:      #5a6375;
-  --tn-accent:  #3e4fd6;
+  --tn-accent:  #1a5fd0;   /* the logo's blue */
+  /* Brand mark (lib/icons.tsx): the logo's own colours, on a white tile in both themes. */
+  --tn-brand-tile: #ffffff;
+  --tn-brand-blue: #1a6dff;
+  --tn-brand-navy: #0b1f5c;
+  --tn-brand-head: #1a5fd0;
+  --tn-brand-cell: #b9cdf2;
   --tn-on-accent: #ffffff;
-  --tn-as:      rgba(62, 79, 214, .09);
+  --tn-as:      rgba(26, 95, 208, .09);
   --tn-success: #11724e;
   --tn-success-tint: rgba(17, 114, 78, .10);
   --tn-danger:  #c0273a;
@@ -79,11 +91,11 @@
   --tn-purple-tint: rgba(106, 63, 209, .09);
   --tn-info:    #0b6890;
   --tn-info-tint: rgba(11, 104, 144, .10);
-  --tn-focus:   rgba(62, 79, 214, .7); /* 3.0:1 on desk (mockup .45, 1.97:1) */
+  --tn-focus:   rgba(26, 95, 208, .75); /* 3.0:1 on desk (mockup .45, 1.97:1) */
   --tn-shadow:  0 30px 80px rgba(16, 19, 27, .22);
   --tn-shadow-pop: 0 8px 24px rgba(16, 19, 27, .16);
   --tn-scrim:   rgba(16, 19, 27, .38);
-  --tn-syn-kw:  #3e4fd6;
+  --tn-syn-kw:  #1a5fd0;
   --tn-syn-str: #11724e;
   --tn-syn-num: #8c5a00;
   --tn-syn-comment: #5a6375;
@@ -1670,11 +1682,12 @@ select.intel-input { font-family: var(--tn-sans); }
 }
 
 /* ============================================================
-   BRAND MARK — the accent tile with three lines (lib/icons.tsx)
+   BRAND MARK — the hexagon-and-table logo on a white tile (lib/icons.tsx)
    ============================================================ */
 .brand-mark {
   flex: none; display: inline-grid; place-items: center;
-  background: var(--tn-accent); color: var(--tn-on-accent);
+  background: var(--tn-brand-tile);
+  box-shadow: 0 0 0 1px var(--tn-bs);
 }
 .onboard-glyph { width: auto; height: auto; background: none; border: 0; }
 
