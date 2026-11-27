@@ -132,7 +132,7 @@ impl Fixture {
         let rec = ConnectionRecord {
             id: id.into(),
             name: format!("{id} db"),
-            driver: "postgres".into(),
+            engine: "postgres".into(),
             environment: Some(env.into()),
             color: None,
             read_only: false,
@@ -985,7 +985,7 @@ async fn live_read_only_reads_and_refuses_writes() {
     let rec = |id: &str| ConnectionRecord {
         id: id.into(),
         name: id.into(),
-        driver: "postgres".into(),
+        engine: "postgres".into(),
         environment: Some("dev".into()),
         color: None,
         read_only: false,
@@ -1009,7 +1009,7 @@ async fn live_read_only_reads_and_refuses_writes() {
         s.connection_upsert(&rec("rw")).unwrap();
         s.mcp_access_set("rw", McpAccess::ReadWrite).unwrap();
     }
-    let mut s = McpServer::new(store, keychain, Arc::new(super::backend::PostgresConnector));
+    let mut s = McpServer::new(store, keychain, Arc::new(super::backend::DriverConnector));
     s.set_client(Some("live test"));
 
     let (out, err) = call(
@@ -1096,4 +1096,267 @@ async fn live_read_only_reads_and_refuses_writes() {
     .await;
     assert!(!err, "{out}");
     assert_eq!(out["rows"], json!([[1]]));
+}
+
+// ---- SQLite, through the real driver (a temp file: no server, no network) ----
+
+/// A saved SQLite profile with `access`, on a file holding two tables.
+fn sqlite_fixture(
+    dir: &tempfile::TempDir,
+    env: &str,
+    access: McpAccess,
+) -> (McpServer, Arc<StdMutex<Store>>) {
+    let path = dir.path().join("app.db");
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE);
+             CREATE TABLE logs (msg TEXT, user_id INTEGER REFERENCES users(id));
+             CREATE INDEX logs_user ON logs (user_id);
+             INSERT INTO users VALUES (1, 'a@example.com'), (2, 'b@example.com');",
+        )
+        .unwrap();
+    }
+    let store = Arc::new(StdMutex::new(Store::open_in_memory().unwrap()));
+    let keychain = Arc::new(MemoryStore::new());
+    let rec = ConnectionRecord {
+        id: "lite".into(),
+        name: "lite".into(),
+        engine: "sqlite".into(),
+        environment: Some(env.into()),
+        color: None,
+        read_only: false,
+        host: String::new(),
+        port: 0,
+        database: path.display().to_string(),
+        username: String::new(),
+        secret_ref: None,
+        tls_mode: "disabled".into(),
+        tls_ca_path: None,
+        ssh_json: None,
+        options_json: None,
+        statement_timeout_ms: 0,
+    };
+    {
+        let s = store.lock().unwrap();
+        s.connection_upsert(&rec).unwrap();
+        s.mcp_access_set("lite", access).unwrap();
+    }
+    let mut server = McpServer::new(
+        store.clone(),
+        keychain,
+        Arc::new(super::backend::DriverConnector),
+    );
+    server.set_client(Some("sqlite test"));
+    (server, store)
+}
+
+#[tokio::test]
+async fn sqlite_is_off_by_default_like_any_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, store) = sqlite_fixture(&dir, "dev", McpAccess::ReadOnly);
+    store
+        .lock()
+        .unwrap()
+        .mcp_access_set("lite", McpAccess::Off)
+        .unwrap();
+    let (out, _) = call(&mut s, "list_connections", json!({})).await;
+    assert_eq!(out["connections"], json!([]));
+    let (_, err) = call(&mut s, "list_schemas", json!({"connection": "lite"})).await;
+    assert!(err);
+}
+
+#[tokio::test]
+async fn sqlite_tools_list_describe_query_and_explain() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, _) = sqlite_fixture(&dir, "dev", McpAccess::ReadOnly);
+
+    let (out, _) = call(&mut s, "list_connections", json!({})).await;
+    assert_eq!(out["connections"][0]["engine"], "sqlite");
+    assert!(out["connections"][0]["path"]
+        .as_str()
+        .unwrap()
+        .ends_with("app.db"));
+    assert!(out["connections"][0].get("host").is_none());
+
+    let (out, err) = call(&mut s, "list_schemas", json!({"connection": "lite"})).await;
+    assert!(!err, "{out}");
+    assert_eq!(out["schemas"], json!(["main"]));
+
+    let (out, err) = call(
+        &mut s,
+        "list_tables",
+        json!({"connection": "lite", "schema": "main"}),
+    )
+    .await;
+    assert!(!err, "{out}");
+    assert_eq!(
+        out["tables"],
+        json!([{"name": "logs", "kind": "table"}, {"name": "users", "kind": "table"}])
+    );
+
+    let (out, err) = call(
+        &mut s,
+        "describe_table",
+        json!({"connection": "lite", "schema": "main", "table": "logs"}),
+    )
+    .await;
+    assert!(!err, "{out}");
+    assert_eq!(out["columns"][0]["name"], "msg");
+    assert_eq!(out["columns"][0]["nullable"], true);
+    assert!(out["constraints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|c| c["kind"] == "foreign key"
+            && c["definition"]
+                .as_str()
+                .unwrap()
+                .contains("REFERENCES users(id)")));
+    assert_eq!(out["indexes"][0]["name"], "logs_user");
+
+    let (out, err) = call(
+        &mut s,
+        "describe_table",
+        json!({"connection": "lite", "schema": "main", "table": "users"}),
+    )
+    .await;
+    assert!(!err, "{out}");
+    let kinds: Vec<&str> = out["constraints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["primary key", "unique"]);
+
+    let (out, err) = call(
+        &mut s,
+        "describe_table",
+        json!({"connection": "lite", "schema": "main", "table": "nope"}),
+    )
+    .await;
+    assert!(err, "{out}");
+
+    let (out, err) = call(
+        &mut s,
+        "run_query",
+        json!({"connection": "lite", "sql": "SELECT id, email FROM users WHERE id = $1", "params": [2]}),
+    )
+    .await;
+    assert!(!err, "{out}");
+    assert_eq!(out["rows"], json!([[2, "b@example.com"]]));
+
+    let (out, err) = call(
+        &mut s,
+        "run_query",
+        json!({"connection": "lite", "sql":
+            "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n) SELECT x FROM n"}),
+    )
+    .await;
+    assert!(!err, "{out}");
+    assert_eq!(out["rows"].as_array().unwrap().len(), ROW_CAP);
+    assert_eq!(out["truncated"], true);
+
+    let (out, err) = call(
+        &mut s,
+        "explain",
+        json!({"connection": "lite", "sql": "SELECT * FROM users WHERE id = 1"}),
+    )
+    .await;
+    assert!(!err, "{out}");
+    assert!(out["plan"].as_str().unwrap().contains("users"), "{out}");
+}
+
+#[tokio::test]
+async fn sqlite_read_only_access_refuses_writes_in_the_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, _) = sqlite_fixture(&dir, "dev", McpAccess::ReadOnly);
+    for sql in [
+        "INSERT INTO users VALUES (3, 'c@example.com')",
+        "UPDATE users SET email = 'x' WHERE id = 1",
+        "DROP TABLE logs",
+    ] {
+        let (out, err) = call(
+            &mut s,
+            "run_query",
+            json!({"connection": "lite", "sql": sql}),
+        )
+        .await;
+        assert!(err, "{sql}: {out}");
+        assert!(out.as_str().unwrap().contains("read-only"), "{out}");
+    }
+    // An explained write is only planned, so a read-only grant may have it.
+    let (out, err) = call(
+        &mut s,
+        "explain",
+        json!({"connection": "lite", "sql": "DELETE FROM users WHERE id = 1"}),
+    )
+    .await;
+    assert!(!err, "{out}");
+    let (out, _) = call(
+        &mut s,
+        "run_query",
+        json!({"connection": "lite", "sql": "SELECT count(*) FROM users"}),
+    )
+    .await;
+    assert_eq!(out["rows"], json!([[2]]));
+}
+
+#[tokio::test]
+async fn sqlite_read_write_still_refuses_what_the_guard_would_ask_about() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, _) = sqlite_fixture(&dir, "dev", McpAccess::ReadWrite);
+    for sql in [
+        "DELETE FROM logs",
+        "UPDATE users SET email = 'x'",
+        "DROP TABLE logs",
+        "DELETE FROM [logs]",
+        "DELETE FROM `where`",
+    ] {
+        let (out, err) = call(
+            &mut s,
+            "run_query",
+            json!({"connection": "lite", "sql": sql}),
+        )
+        .await;
+        assert!(err, "{sql}: {out}");
+        assert!(out.as_str().unwrap().starts_with("Refused:"), "{out}");
+    }
+    let (out, err) = call(
+        &mut s,
+        "run_query",
+        json!({"connection": "lite", "sql": "UPDATE users SET email = 'z@example.com' WHERE id = 1"}),
+    )
+    .await;
+    assert!(!err, "{out}");
+    assert_eq!(out["rowsAffected"], 1);
+}
+
+#[tokio::test]
+async fn sqlite_on_prod_is_read_only_and_audited_before_it_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    // Read-only at most on prod, as for PostgreSQL.
+    let (mut s, store) = sqlite_fixture(&dir, "prod", McpAccess::ReadOnly);
+    let (out, err) = call(
+        &mut s,
+        "run_query",
+        json!({"connection": "lite", "sql": "INSERT INTO users VALUES (9, 'p@example.com')"}),
+    )
+    .await;
+    assert!(err, "{out}");
+    let (out, err) = call(
+        &mut s,
+        "run_query",
+        json!({"connection": "lite", "sql": "SELECT email FROM users WHERE id = 1"}),
+    )
+    .await;
+    assert!(!err, "{out}");
+    let audit = store.lock().unwrap().audit_list(10).unwrap();
+    assert!(audit
+        .iter()
+        .any(|a| a.sql_text.contains("SELECT email FROM users")));
+    assert!(audit
+        .iter()
+        .all(|a| a.connection_key.starts_with("sqlite:")));
 }

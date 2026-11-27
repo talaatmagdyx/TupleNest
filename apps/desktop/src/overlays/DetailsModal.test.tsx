@@ -151,6 +151,18 @@ describe("DetailsModal — structure", () => {
     expect(within(side).getByText("orders_odd_fk")).toBeInTheDocument();
   });
 
+  it("leaves out scan counts an engine does not keep (SQLite)", async () => {
+    const sqlite: TableStructure = {
+      ...structure,
+      indexes: [{ ...structure.indexes[1], isValid: true, scans: null }],
+    };
+    render(<DetailsModal {...base} structure={sqlite} />);
+    await openStructure();
+    const side = screen.getByRole("complementary", { name: "Indexes and relations" });
+    expect(within(side).getByText("unique")).toBeInTheDocument();
+    expect(within(side).queryByText(/scans/)).not.toBeInTheDocument();
+  });
+
   it("switches tabs with the arrow keys", async () => {
     render(<DetailsModal {...tabbed} />);
     screen.getByRole("tab", { name: "Details" }).focus();

@@ -38,7 +38,7 @@ const base = {
   items: ITEMS,
   search: "",
   onSearch: vi.fn(),
-  connectionPrefix: "ada@db:5432/",
+  connectionKey: "ada@db:5432/shop",
   onClear: vi.fn(),
   onToggleFavorite: vi.fn(),
   onOpen: vi.fn(),
@@ -54,9 +54,9 @@ describe("matchesFilter", () => {
     expect(ITEMS.every((h) => matchesFilter(h, "all", null))).toBe(true);
   });
 
-  it("matches this connection on its server and user", () => {
-    expect(matchesFilter(ITEMS[0], "connection", "ada@db:5432/")).toBe(true);
-    expect(matchesFilter(ITEMS[1], "connection", "ada@db:5432/")).toBe(false);
+  it("matches this connection by its key", () => {
+    expect(matchesFilter(ITEMS[0], "connection", "ada@db:5432/shop")).toBe(true);
+    expect(matchesFilter(ITEMS[1], "connection", "ada@db:5432/shop")).toBe(false);
     // Disconnected: nothing is this connection.
     expect(matchesFilter(ITEMS[0], "connection", null)).toBe(false);
   });
@@ -122,7 +122,7 @@ describe("HistoryPage", () => {
   });
 
   it("cannot filter to this connection with no connection", () => {
-    render(<HistoryPage {...base} connectionPrefix={null} />);
+    render(<HistoryPage {...base} connectionKey={null} />);
     expect(screen.getByRole("button", { name: "This connection" })).toBeDisabled();
   });
 

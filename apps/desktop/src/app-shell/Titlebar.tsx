@@ -3,6 +3,7 @@ import { kbd } from "../lib/platform";
 import { envMeta } from "../lib/sql";
 import { GearIcon, SidebarIcon, BrandMark, SearchIcon } from "../lib/icons";
 import { Menu, MenuGroup } from "../lib/a11y";
+import { engineBadge, engineName, profileTarget, type Engine } from "../lib/engine";
 
 type Props = {
   theme: "dark" | "light";
@@ -10,6 +11,8 @@ type Props = {
   activeName: string;
   activeUserHost: string;
   activeEnv: string;
+  /** The live session's engine, for the badge in the pill. */
+  activeEngine?: Engine;
   saved: ConnectionRecord[];
   activeId: string | null;
   connMenu: boolean;
@@ -61,6 +64,14 @@ export default function Titlebar(p: Props) {
                 : "var(--tn-tm)",
             }}
           />
+          {p.connected && (
+            <span
+              className={`engine-pill ${p.activeEngine === "sqlite" ? "sq" : ""}`}
+              title={engineName(p.activeEngine ?? "postgres")}
+            >
+              {engineBadge(p.activeEngine ?? "postgres")}
+            </span>
+          )}
           <span className="name">{p.connected ? p.activeName : "Not connected"}</span>
           {p.connected && p.activeUserHost && <span className="host">{p.activeUserHost}</span>}
           {p.connected &&
@@ -95,7 +106,7 @@ export default function Titlebar(p: Props) {
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ display: "block", fontSize: 12, fontWeight: 650 }}>{c.name}</span>
                     <span className="host" style={{ display: "block", fontFamily: "var(--tn-mono)", fontSize: 9.5, color: "var(--tn-tm)" }}>
-                      {c.username}@{c.host}:{c.port}/{c.database}
+                      {profileTarget(c)}
                     </span>
                   </span>
                   <span className="env-pill" style={{ color: m.color, background: m.bg }}>

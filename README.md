@@ -193,6 +193,47 @@ check, production guard and audit log as anything you type.
 
 <br/>
 
+## 🗄 Engines
+
+A new connection starts by picking the engine. Every engine gets the same
+safety model: environment tags, read-only profiles, the destructive-statement
+guard, the production audit log, and MCP access that is off until you turn it
+on.
+
+| Engine | Status | Notes |
+|---|---|---|
+| **PostgreSQL** 13+ | Available | Everything in this README |
+| **SQLite** 3 | Available | A file on this machine: no server, password, TLS or SSH |
+| MySQL / MariaDB | Coming next | Not selectable yet |
+| SQL Server, MongoDB, Redis | Planned | Not selectable yet |
+
+**SQLite.** A profile is a file path — type it, or **Choose…** for the
+system file panel; **Create a new file** makes an empty database there on
+connect (off by default, so a mistyped path is an error rather than a new
+empty file). Values come back as stored: `INTEGER`, `REAL`, `TEXT`, `BLOB`
+(as hex, like `bytea`) and `NULL`, with declared types as the column types.
+Errors carry SQLite's extended result code where a SQLSTATE goes
+(`[SQLITE_CONSTRAINT_UNIQUE]`). Declared foreign keys are enforced.
+
+- **Read-only** is enforced by SQLite: the file is opened read-only (an
+  `ATTACH`ed file inherits that), `PRAGMA query_only` is set again before
+  every statement, and a statement SQLite says would write is refused before
+  it runs — so a typed `PRAGMA query_only = OFF` changes nothing and
+  `VACUUM INTO 'copy.db'` does not write a copy.
+- **The explorer** reads `sqlite_schema` and the table-valued pragmas, every
+  name bound as a parameter: `main` and any attached databases, tables,
+  views, columns, indexes, keys and foreign keys.
+- **Row editing** keys on the `INTEGER PRIMARY KEY`, or the declared primary
+  key, with the same review step and "exactly one row" rule. A table with
+  neither is edited by its rowid: select it (`SELECT rowid, * FROM t`).
+- **EXPLAIN** shows `EXPLAIN QUERY PLAN` as rows in the grid.
+- **Not for SQLite**, so hidden or disabled with the reason: the server
+  monitor, index and table health and top queries (`pg_stat`), partitions,
+  schema and plan comparison, the plan view and `EXPLAIN ANALYZE`, CSV
+  import, TLS and SSH.
+
+<br/>
+
 ## 🤖 Use TupleNest from AI tools (MCP)
 
 TupleNest is also an [MCP](https://modelcontextprotocol.io) server, so an AI
@@ -232,6 +273,10 @@ claude mcp add tuplenest -- /Applications/TupleNest.app/Contents/MacOS/tuplenest
 Tools: `list_connections`, `list_schemas`, `list_tables`, `describe_table`,
 `run_query` (one statement, optional `$1…` params, at most 500 rows with a
 `truncated` flag) and `explain` (plain `EXPLAIN`, never `ANALYZE`).
+SQLite connections work the same way, under the same access levels:
+`list_connections` gives their `engine` and file `path`, `list_schemas` is
+`main` plus any attached databases, read-only is SQLite's own (see
+[Engines](#-engines)), and `explain` is `EXPLAIN QUERY PLAN`.
 
 The rules, all enforced in the backend:
 
@@ -284,8 +329,8 @@ respected.
 Marketing pages don't have this section — which is exactly why you should
 trust a README that does.
 
-- **One engine.** PostgreSQL 13+, done properly, before anything else is
-  attempted. Need MySQL today? TupleNest isn't your tool today.
+- **Two engines.** PostgreSQL 13+ and SQLite, done properly, before the next
+  is attempted. Need MySQL today? TupleNest isn't your tool today.
 - **The statement guard is best-effort.** It survived thirteen bypass
   attempts, but it's the seatbelt light. Read-only profiles are the seatbelt —
   the *server* enforces those. The airbag is a database role with no write
@@ -445,7 +490,7 @@ on every push:
 
 ```
 apps/desktop/   Tauri 2 shell — React/TypeScript frontend, Rust commands
-crates/         driver-api · driver-postgres · connection-core · credential-store
+crates/         driver-api · driver-postgres · driver-sqlite · connection-core · credential-store
                 ssh-core · workspace-store · metadata-cache · result-stream · telemetry
 docs/           plans, releasing runbook, landing page
 ```

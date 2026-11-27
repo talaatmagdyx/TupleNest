@@ -20,7 +20,7 @@ pub enum StoreError {
     Refused(String),
 }
 
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 
 const MIGRATION_V1: &str = r#"
 CREATE TABLE meta        (key TEXT PRIMARY KEY, value TEXT);
@@ -151,6 +151,20 @@ CREATE TABLE IF NOT EXISTS mcp_access (
   updated_at INTEGER NOT NULL
 );
 "#;
+
+/// Which database engine a profile connects to.
+///
+/// `driver` has been on the table since v2, written as `postgres` by every
+/// build and read by none: nothing could tell what it was allowed to hold.
+/// `engine` is the column that decides, and SQLite itself refuses a value
+/// the app has no driver for. Every existing profile is PostgreSQL. `driver`
+/// is kept equal to it (the store is never downgraded: see `FutureSchema`).
+/// Added with a column check, per the note above V6.
+const MIGRATION_V9: &str = "ALTER TABLE connections ADD COLUMN engine TEXT NOT NULL \
+     DEFAULT 'postgres' CHECK (engine IN ('postgres', 'sqlite'))";
+
+/// The engines a profile may name (the CHECK above).
+pub const ENGINES: [&str; 2] = ["postgres", "sqlite"];
 
 /// Audit entries kept; older ones are pruned on insert.
 const AUDIT_RETENTION: i64 = 5000;
@@ -308,6 +322,9 @@ impl Store {
                 }
             }
         }
+        if current < 9 && !self.column_exists("connections", "engine")? {
+            self.conn.execute_batch(MIGRATION_V9)?;
+        }
         if current < SCHEMA_VERSION {
             self.conn.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
@@ -443,13 +460,13 @@ impl Store {
     pub fn connection_upsert(&self, record: &ConnectionRecord) -> Result<(), StoreError> {
         self.conn.execute(
             "INSERT INTO connections
-               (id, name, driver, environment, color, read_only,
+               (id, name, engine, driver, environment, color, read_only,
                 host, port, database, username, secret_ref,
                 tls_mode, tls_ca_path, ssh_json, options_json,
                 statement_timeout_ms, created_at, updated_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,unixepoch(),unixepoch())
+             VALUES (?1,?2,?3,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,unixepoch(),unixepoch())
              ON CONFLICT(id) DO UPDATE SET
-               name=?2, driver=?3, environment=?4, color=?5, read_only=?6,
+               name=?2, engine=?3, driver=?3, environment=?4, color=?5, read_only=?6,
                host=?7, port=?8, database=?9, username=?10, secret_ref=?11,
                tls_mode=?12, tls_ca_path=?13, ssh_json=?14, options_json=?15,
                statement_timeout_ms=?16,
@@ -457,7 +474,7 @@ impl Store {
             params![
                 record.id,
                 record.name,
-                record.driver,
+                record.engine,
                 record.environment,
                 record.color,
                 record.read_only as i64,
@@ -768,7 +785,7 @@ impl Store {
         Ok(ConnectionRecord {
             id: r.get(0)?,
             name: r.get(1)?,
-            driver: r.get(2)?,
+            engine: r.get(2)?,
             environment: r.get(3)?,
             color: r.get(4)?,
             read_only: r.get::<_, i64>(5)? != 0,
@@ -805,7 +822,7 @@ const AUDIT_LIST_SQL: &str =
     "SELECT connection_key, environment, sql_text, at, actor FROM audit_log
         ORDER BY at DESC LIMIT ?1";
 
-const CONNECTION_SELECT: &str = "SELECT id, name, driver, environment, color, read_only,
+const CONNECTION_SELECT: &str = "SELECT id, name, engine, environment, color, read_only,
         host, port, database, username, secret_ref,
         tls_mode, tls_ca_path, ssh_json, options_json, statement_timeout_ms FROM connections";
 
@@ -815,7 +832,10 @@ const CONNECTION_SELECT: &str = "SELECT id, name, driver, environment, color, re
 pub struct ConnectionRecord {
     pub id: String,
     pub name: String,
-    pub driver: String,
+    /// `postgres` or `sqlite` (see [`ENGINES`]). For SQLite, `database` is
+    /// the file's path and host, port, user, password, TLS and SSH are unused.
+    #[serde(default = "default_engine")]
+    pub engine: String,
     pub environment: Option<String>,
     pub color: Option<String>,
     pub read_only: bool,
@@ -833,6 +853,10 @@ pub struct ConnectionRecord {
     /// limit, matching PostgreSQL's own meaning for `statement_timeout`.
     #[serde(default)]
     pub statement_timeout_ms: u64,
+}
+
+fn default_engine() -> String {
+    "postgres".into()
 }
 
 /// A reusable SQL snippet (Phase 2).
@@ -1225,7 +1249,7 @@ mod tests {
         ConnectionRecord {
             id: id.into(),
             name: name.into(),
-            driver: "postgres".into(),
+            engine: "postgres".into(),
             environment: Some("dev".into()),
             color: Some("#3fa7ff".into()),
             read_only: false,
@@ -1240,6 +1264,85 @@ mod tests {
             options_json: None,
             statement_timeout_ms: 0,
         }
+    }
+
+    /// v8 → v9: every existing profile is PostgreSQL, and the store refuses
+    /// an engine it has no driver for.
+    #[test]
+    fn upgrades_a_v8_database_every_profile_postgres() {
+        let conn = Connection::open_in_memory().unwrap();
+        for m in [MIGRATION_V1, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4] {
+            conn.execute_batch(m).unwrap();
+        }
+        conn.execute_batch(
+            "ALTER TABLE connections ADD COLUMN statement_timeout_ms INTEGER NOT NULL DEFAULT 0",
+        )
+        .unwrap();
+        conn.execute_batch(MIGRATION_V7).unwrap();
+        conn.execute_batch(MIGRATION_V8).unwrap();
+        for table in ["audit_log", "query_history"] {
+            conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN actor TEXT"))
+                .unwrap();
+        }
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '8')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO connections (id, name, driver, environment, host, port, database,
+                                      username, tls_mode)
+             VALUES ('old', 'Existing', 'postgres', 'prod', 'db.internal', 5432, 'app',
+                     'reader', 'verify-full')",
+            [],
+        )
+        .unwrap();
+        let store = Store { conn };
+        assert!(!store.column_exists("connections", "engine").unwrap());
+
+        let store = Store::init(store.conn).unwrap();
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+        let rec = store.connection_get("old").unwrap().unwrap();
+        assert_eq!(rec.engine, "postgres");
+        assert_eq!(rec.host, "db.internal");
+
+        // Re-running is a no-op, not a duplicate ADD COLUMN.
+        let store = Store::init(store.conn).unwrap();
+        assert_eq!(store.connection_list().unwrap().len(), 1);
+
+        let mut bad = sample_connection("x", "x");
+        bad.engine = "oracle".into();
+        assert!(store.connection_upsert(&bad).is_err());
+    }
+
+    #[test]
+    fn a_sqlite_profile_round_trips_with_its_path() {
+        let store = Store::open_in_memory().unwrap();
+        let rec = ConnectionRecord {
+            engine: "sqlite".into(),
+            host: String::new(),
+            port: 0,
+            database: "/home/me/app.db".into(),
+            username: String::new(),
+            secret_ref: None,
+            ..sample_connection("s1", "Local file")
+        };
+        store.connection_upsert(&rec).unwrap();
+        assert_eq!(store.connection_get("s1").unwrap().unwrap(), rec);
+        // The legacy column follows.
+        let driver: String = store
+            .conn
+            .query_row("SELECT driver FROM connections WHERE id = 's1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(driver, "sqlite");
+        // A record serialized by an older frontend, without `engine`.
+        let json = serde_json::to_value(&rec).unwrap();
+        let mut obj = json.as_object().unwrap().clone();
+        obj.remove("engine");
+        let back: ConnectionRecord = serde_json::from_value(obj.into()).unwrap();
+        assert_eq!(back.engine, "postgres");
     }
 
     #[test]

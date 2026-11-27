@@ -16,10 +16,10 @@ export type HistoryPageProps = {
   items: HistoryEntry[];
   search: string;
   onSearch: (s: string) => void;
-  /** `user@host:port/` of the live session, or null when disconnected. The
-   *  store keys history by `user@host:port/database`; matching on the server
-   *  and user is what "this connection" means to someone reading the list. */
-  connectionPrefix: string | null;
+  /** The store's key for the live session (`user@host:port/database`, or
+   *  `sqlite:<path>` for a SQLite file), or null when disconnected. History
+   *  rows carry the same key, so "this connection" is an exact match. */
+  connectionKey: string | null;
   onClear: () => void | Promise<void>;
   onToggleFavorite: (h: HistoryEntry) => void | Promise<void>;
   onOpen: (sql: string) => void;
@@ -33,14 +33,14 @@ export type HistoryPageProps = {
 export function matchesFilter(
   h: HistoryEntry,
   f: HistoryFilter,
-  prefix: string | null,
+  key: string | null,
   now: Date = new Date(),
 ): boolean {
   switch (f) {
     case "all":
       return true;
     case "connection":
-      return prefix !== null && h.connectionKey.startsWith(prefix);
+      return key !== null && h.connectionKey === key;
     case "writes":
       // Prod rows carry no text; a row count of changed rows is all there is.
       return h.sqlText !== null ? hasWriteVerb(h.sqlText) : h.rowsAffected !== null;
@@ -77,8 +77,8 @@ export default function HistoryPage(p: HistoryPageProps) {
   const [filter, setFilter] = useState<HistoryFilter>("all");
   const [picked, setPicked] = useState<string | null>(null);
   const shown = useMemo(
-    () => p.items.filter((h) => matchesFilter(h, filter, p.connectionPrefix)),
-    [p.items, filter, p.connectionPrefix],
+    () => p.items.filter((h) => matchesFilter(h, filter, p.connectionKey)),
+    [p.items, filter, p.connectionKey],
   );
   const sel = shown.find((h) => h.id === picked) ?? shown[0] ?? null;
 
@@ -121,7 +121,7 @@ export default function HistoryPage(p: HistoryPageProps) {
                 key={f.id}
                 className={`fchip ${filter === f.id ? "on" : ""}`}
                 aria-pressed={filter === f.id}
-                disabled={f.id === "connection" && p.connectionPrefix === null}
+                disabled={f.id === "connection" && p.connectionKey === null}
                 onClick={() => setFilter(f.id)}
               >
                 {f.label}

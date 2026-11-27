@@ -187,7 +187,9 @@ function Structure(p: { s: TableStructure | null; onDiagram?: () => void }) {
             <div key={ix.name} className="det-item">
               <span className="mono strong">{ix.name}</span>
               <span className="muted">
-                {[ix.isPrimary ? "primary" : ix.isUnique ? "unique" : null, `${ix.scans.toLocaleString()} scans`, ix.isValid ? null : "invalid"]
+                {[ix.isPrimary ? "primary" : ix.isUnique ? "unique" : null, // SQLite keeps no usage counters: its scans come back null,
+                  // and a missing number is left out rather than shown as 0.
+                  typeof ix.scans === "number" ? `${ix.scans.toLocaleString()} scans` : null, ix.isValid ? null : "invalid"]
                   .filter(Boolean)
                   .join(" · ")}
               </span>

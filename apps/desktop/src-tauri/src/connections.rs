@@ -10,6 +10,7 @@ use tuplenest_driver_api::SecretRef;
 use tuplenest_workspace_store::ConnectionRecord;
 use uuid::Uuid;
 
+use crate::engine::Engine;
 use crate::pg::SshParams;
 use crate::AppState;
 
@@ -20,6 +21,9 @@ use crate::AppState;
 pub struct ConnectionInput {
     pub id: Option<String>,
     pub name: String,
+    /// "postgres" (default: every WebView before engines) or "sqlite".
+    #[serde(default)]
+    pub engine: Option<String>,
     pub environment: Option<String>,
     pub color: Option<String>,
     #[serde(default)]
@@ -92,6 +96,25 @@ fn settle_secret(
     }
 }
 
+impl ConnectionInput {
+    /// A SQLite profile is a file: whatever the form still held for a
+    /// server — a password, an SSH hop, a host — is dropped, never stored.
+    fn for_sqlite(self) -> Self {
+        Self {
+            host: String::new(),
+            port: 0,
+            username: String::new(),
+            password: None,
+            secret_ref: None,
+            tls_mode: Some("disabled".into()),
+            tls_ca_path: None,
+            ssh_json: None,
+            ssh_passphrase: None,
+            ..self
+        }
+    }
+}
+
 fn parse_ssh(json: Option<&str>) -> Option<SshParams> {
     json.filter(|j| !j.trim().is_empty())
         .and_then(|j| serde_json::from_str::<SshParams>(j).ok())
@@ -103,6 +126,14 @@ pub fn connection_save(
     pg: tauri::State<'_, crate::pg::PgState>,
     input: ConnectionInput,
 ) -> Result<ConnectionRecord, String> {
+    let engine = Engine::parse(input.engine.as_deref())?;
+    let input = match engine {
+        Engine::Sqlite => input.for_sqlite(),
+        Engine::Postgres => input,
+    };
+    if engine == Engine::Sqlite && input.database.trim().is_empty() {
+        return Err("A SQLite connection needs the path of its database file.".into());
+    }
     let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
     // The store lock is held only to read and to write, never across the
     // keychain calls below: a keychain permission prompt held it for as long
@@ -132,7 +163,7 @@ pub fn connection_save(
     // `pg::authorize_secret`): address *and* TLS mode, CA file and SSH hop.
     // Changing any of them without re-entering it would carry the password to
     // a different place — or to the same place over a weaker channel.
-    if let Some(old) = &existing {
+    if let Some(old) = existing.as_ref().filter(|_| engine == Engine::Postgres) {
         let tls = |m: Option<&str>| {
             m.filter(|m| !m.is_empty())
                 .unwrap_or("verify-full")
@@ -190,7 +221,16 @@ pub fn connection_save(
     // no password → keep the profile's existing ref, or adopt one already
     // created this session (a prior Test), so it isn't orphaned.
     let keychain = KeychainStore::new();
-    let secret_ref = settle_secret(&keychain, input.password, adoptable, existing_ref)?;
+    let secret_ref = match engine {
+        Engine::Postgres => settle_secret(&keychain, input.password, adoptable, existing_ref)?,
+        // A profile that moved to a file has no password left to keep.
+        Engine::Sqlite => {
+            if let Some(old) = existing_ref {
+                let _ = keychain.delete(&SecretRef::new(old));
+            }
+            None
+        }
+    };
 
     // The passphrase, by the same rule. The ref the WebView sent is never
     // stored as given: it is replaced by what was settled here.
@@ -216,7 +256,7 @@ pub fn connection_save(
     let record = ConnectionRecord {
         id,
         name: input.name,
-        driver: "postgres".into(),
+        engine: engine.as_str().into(),
         environment: input.environment,
         color: input.color,
         read_only: input.read_only,
@@ -269,9 +309,7 @@ pub fn connection_delete(
 ) -> Result<(), String> {
     let (secret_ref, passphrase_ref, orphaned_cache) = {
         let store = state.store.lock().map_err(|_| "store lock poisoned")?;
-        let key_of = |r: &tuplenest_workspace_store::ConnectionRecord| {
-            crate::pg::cache_key(&r.username, &r.host, r.port, &r.database)
-        };
+        let key_of = crate::pg::record_cache_key;
         let doomed = store.connection_get(&id).map_err(|e| e.to_string())?;
         let passphrase_ref = doomed
             .as_ref()
