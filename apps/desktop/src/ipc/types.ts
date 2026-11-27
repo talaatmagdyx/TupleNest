@@ -155,6 +155,8 @@ export type HistoryEntry = {
   startedAt: number;
   durationMs: number;
   favorite: boolean;
+  /** Who sent it: absent or null is this window, "MCP · <client>" an AI tool. */
+  actor?: string | null;
 };
 
 export type SnippetRecord = {

@@ -1,14 +1,18 @@
 import {
+  AuditRailIcon,
   DiagramRailIcon,
   ExplorerRailIcon,
   GearIcon,
   HistoryRailIcon,
   MonitorRailIcon,
   PastePlanRailIcon,
+  SavedRailIcon,
 } from "../lib/icons";
 import { kbd } from "../lib/platform";
 
-export type RailView = "explorer" | "history";
+/** What the main area shows. "explorer" is the editor with the explorer
+ *  beside it; the others are pages that take the editor's place. */
+export type RailView = "explorer" | "history" | "saved";
 
 type Props = {
   view: RailView;
@@ -17,6 +21,7 @@ type Props = {
   onView: (v: RailView) => void;
   onMonitor: () => void;
   onDiagram: () => void;
+  onAudit: () => void;
   onPastePlan: () => void;
   onSettings: () => void;
 };
@@ -42,6 +47,7 @@ function Item(opts: {
     <button
       className={`rail-btn ${opts.active ? "on" : ""}`}
       title={opts.title}
+      aria-current={opts.active ? "page" : undefined}
       disabled={opts.disabled}
       onClick={opts.onClick}
     >
@@ -51,11 +57,12 @@ function Item(opts: {
   );
 }
 
-/** VS Code / DataGrip-style activity rail: switches the sidebar panel and
- *  launches tool overlays. The active view shows an accent indicator bar. */
+/** VS Code / DataGrip-style activity rail: switches the main area between the
+ *  editor and its pages, and launches tool overlays. The active view shows an
+ *  accent indicator bar. */
 export default function ActivityRail(p: Props) {
   return (
-    <nav className="activity-rail">
+    <nav className="activity-rail" aria-label="Views">
       <div className="rail-group">
         <Item
           title={`Explorer (${kbd("mod", "B")})`}
@@ -64,18 +71,22 @@ export default function ActivityRail(p: Props) {
         >
           <ExplorerRailIcon />
         </Item>
-        <Item
-          title="Query history"
-          active={p.view === "history" && !p.collapsed}
-          onClick={() => p.onView("history")}
-        >
+        <Item title="Query history" active={p.view === "history"} onClick={() => p.onView("history")}>
           <HistoryRailIcon />
+        </Item>
+        <Item title="Saved queries" active={p.view === "saved"} onClick={() => p.onView("saved")}>
+          <SavedRailIcon />
         </Item>
         <Item title="Server monitor" disabled={!p.connected} onClick={p.onMonitor}>
           <MonitorRailIcon />
         </Item>
         <Item title="ER diagram" disabled={!p.connected} onClick={p.onDiagram}>
           <DiagramRailIcon />
+        </Item>
+        {/* Not gated on `connected`: the log lives in the local store, and
+            reading what was run is most useful after the session is gone. */}
+        <Item title="Audit log" onClick={p.onAudit}>
+          <AuditRailIcon />
         </Item>
         {/* Deliberately not gated on `connected`: the whole point is analysing
             a plan from somewhere this app cannot reach. */}

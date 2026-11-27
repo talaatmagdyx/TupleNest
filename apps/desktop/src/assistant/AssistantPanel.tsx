@@ -4,13 +4,17 @@ import { isSqlBlock, splitAnswer } from "./answer";
 import CodeCard from "./CodeCard";
 import { useAssistant, type Message } from "./useAssistant";
 
-/** An action asked for from outside the panel: Fix from the error view. */
+/** An action asked for from outside the panel: Fix from the error view, or a
+ *  question typed into the command palette. */
 export type AssistantRequest = {
   /** Bumped per request, so the same Fix twice is two requests. */
   n: number;
   action: Action;
   sql: string;
   error?: string | null;
+  /** Put this in the message box instead of sending anything: what was typed
+   *  in the palette is a draft, and the person sends it when it reads right. */
+  draft?: string;
 };
 
 type Props = {
@@ -72,6 +76,15 @@ export default function AssistantPanel(p: Props) {
 
   const chosen = options?.find((o) => keyOf(o) === pick) ?? null;
 
+  // A question typed in the palette lands in the box, once per request. Set
+  // while rendering rather than in an effect: it only follows a prop.
+  const [drafted, setDrafted] = useState<number | null>(null);
+  const r0 = p.request;
+  if (r0?.draft !== undefined && drafted !== r0.n) {
+    setDrafted(r0.n);
+    setDraft(r0.draft);
+  }
+
   const run = (action: Action, message: string, sql: string | null, error?: string | null) => {
     if (!chosen || busy) return;
     void send(chosen, { action, message: message || ACTION_WORDS[action], sql, error });
@@ -80,7 +93,7 @@ export default function AssistantPanel(p: Props) {
   // A Fix asked for from the error view, once the model list is in.
   useEffect(() => {
     const r = p.request;
-    if (!r || handled.current === r.n || !chosen || busy) return;
+    if (!r || r.draft !== undefined || handled.current === r.n || !chosen || busy) return;
     handled.current = r.n;
     void send(chosen, { action: r.action, message: ACTION_WORDS[r.action], sql: r.sql, error: r.error });
   }, [p.request, chosen, busy, send]);

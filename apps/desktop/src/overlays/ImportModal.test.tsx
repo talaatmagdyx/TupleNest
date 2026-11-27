@@ -92,6 +92,26 @@ describe("ImportModal — choosing a file", () => {
     expect(values).toContain("boolean");
   });
 
+  it("shows where the wizard is, and sums up the file", async () => {
+    const { container } = render(<ImportModal {...base} />);
+    const current = () => screen.getByRole("list", { name: "Steps" }).querySelector('[aria-current="step"]');
+    expect(current()).toHaveTextContent("File");
+    await choose(container, csv(GOOD));
+    await screen.findByText(/Import 2 rows/);
+    expect(current()).toHaveTextContent("Columns");
+    expect(screen.getByText("UTF-8 · comma · header row · 3 columns")).toBeInTheDocument();
+    // The mapping row: the file's column over the one it becomes.
+    const head = screen.getAllByRole("columnheader")[1];
+    expect(head).toHaveTextContent("full name");
+    expect(head).toHaveTextContent("→ full_name");
+  });
+
+  it("counts a single column as one", async () => {
+    const { container } = render(<ImportModal {...base} />);
+    await choose(container, csv("id\n1\n"));
+    expect(await screen.findByText("UTF-8 · comma · header row · 1 column")).toBeInTheDocument();
+  });
+
   it("goes back to the picker", async () => {
     const { container } = render(<ImportModal {...base} />);
     await choose(container, csv(GOOD));

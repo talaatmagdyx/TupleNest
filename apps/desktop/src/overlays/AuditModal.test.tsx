@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 import AuditModal from "./AuditModal";
@@ -70,7 +70,46 @@ describe("AuditModal", () => {
   it("says when an AI tool sent the statement", async () => {
     invokeMock.mockResolvedValue([{ ...entry("select 1"), actor: "MCP · Claude Desktop" }]);
     render(<AuditModal onClose={vi.fn()} />);
-    expect(await screen.findByText(/prod-db · MCP · Claude Desktop/)).toBeInTheDocument();
+    const row = (await screen.findByText("select 1")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("MCP · Claude Desktop")).toBeInTheDocument();
+    expect(within(row).getByText("prod-db")).toBeInTheDocument();
+  });
+
+  it("is named by its title", async () => {
+    invokeMock.mockResolvedValue([]);
+    render(<AuditModal onClose={vi.fn()} />);
+    expect(screen.getByRole("dialog", { name: "Audit log" })).toBeInTheDocument();
+  });
+
+  it("filters by who sent the statement", async () => {
+    invokeMock.mockResolvedValue([
+      entry("select mine"),
+      { ...entry("select theirs"), actor: "MCP · Cursor", environment: "staging" },
+    ]);
+    render(<AuditModal onClose={vi.fn()} />);
+    await screen.findByText("select mine");
+    expect(screen.getByText("STAGING")).toBeInTheDocument();
+    expect(screen.getByText("PROD")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "MCP · AI tools" }));
+    expect(screen.getByRole("button", { name: "MCP · AI tools" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("select mine")).not.toBeInTheDocument();
+    expect(screen.getByText("select theirs")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "You" }));
+    expect(screen.getByText("select mine")).toBeInTheDocument();
+    expect(screen.queryByText("select theirs")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "All" }));
+    expect(screen.getByText("select theirs")).toBeInTheDocument();
+  });
+
+  it("says so when a sender has nothing in the log", async () => {
+    invokeMock.mockResolvedValue([entry("select 1")]);
+    render(<AuditModal onClose={vi.fn()} />);
+    await screen.findByText("select 1");
+    await userEvent.click(screen.getByRole("button", { name: "MCP · AI tools" }));
+    expect(screen.getByText("Nothing from this sender.")).toBeInTheDocument();
   });
 
   it("lists several statements", async () => {
