@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { SHORTCUTS } from "../lib/shortcuts";
 import {
   ABOUT_LINKS,
   About,
@@ -265,6 +268,39 @@ describe("Palette", () => {
     render(<Palette {...base} q="users" idx={9} onPick={onPick} />);
     await userEvent.keyboard("{Enter}");
     expect(onPick).toHaveBeenCalledWith(items[2]);
+  });
+
+  it("groups the results under a heading per kind", () => {
+    render(<Palette {...base} items={[...items, { icon: "✎", label: "weekly", type: "Snippet", exec: vi.fn() }]} />);
+    expect(screen.getByRole("group", { name: "Commands" })).toHaveTextContent("Open connection");
+    expect(screen.getByRole("group", { name: "Tables" })).toHaveTextContent("users");
+    expect(screen.getByRole("group", { name: "Saved queries" })).toHaveTextContent("weekly");
+  });
+
+  it("leads with commands when idle and with names once something is typed", () => {
+    const { rerender } = render(<Palette {...base} />);
+    const heads = () => screen.getAllByRole("group").map((g) => g.firstElementChild?.textContent);
+    expect(heads()).toEqual(["Commands", "Tables"]);
+    // "s" is in "Open settings", "Open connection" and "users".
+    rerender(<Palette {...base} q="s" />);
+    expect(heads()).toEqual(["Tables", "Commands"]);
+  });
+
+  it("heads an unknown kind with its own name", () => {
+    render(<Palette {...base} items={[{ icon: "x", label: "odd", type: "Other", exec: vi.fn() }]} />);
+    expect(screen.getByRole("group", { name: "Other" })).toBeInTheDocument();
+  });
+
+  it("offers to ask the assistant once something is typed", async () => {
+    const onAsk = vi.fn();
+    const onPick = vi.fn((it: PaletteItem) => void it.exec());
+    const { rerender } = render(<Palette {...base} onAsk={onAsk} onPick={onPick} />);
+    expect(screen.queryByText(/Ask the assistant/)).not.toBeInTheDocument();
+    rerender(<Palette {...base} q="  slow orders  " onAsk={onAsk} onPick={onPick} />);
+    // Even with no other match, there is somewhere to go.
+    expect(screen.queryByText("No matches")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("option", { name: /Ask the assistant: “slow orders”/ }));
+    expect(onAsk).toHaveBeenCalledWith("slow orders");
   });
 
   it("does nothing on Enter when nothing matches", async () => {
@@ -603,9 +639,66 @@ describe("Settings", () => {
     expect(screen.getByText(/No query text or data ever leaves the device/)).toBeInTheDocument();
   });
 
-  it("shows the MCP server section it is given", () => {
+  it("shows the MCP server section it is given, under its own heading in the nav", async () => {
     render(<Settings {...base} mcp={<div>MCP slot</div>} />);
+    expect(screen.queryByText("MCP slot")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "MCP server" }));
     expect(screen.getByText("MCP slot")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "MCP server" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("leaves out the sections it was not given", () => {
+    render(<Settings {...base} />);
+    const nav = screen.getByRole("navigation", { name: "Settings sections" });
+    expect(within(nav).getAllByRole("button").map((b) => b.textContent)).toEqual(["General", "Shortcuts", "About"]);
+  });
+
+  it("groups the general settings that exist", () => {
+    render(<Settings {...base} />);
+    expect(screen.getAllByRole("heading").map((h) => h.textContent)).toEqual([
+      "Appearance",
+      "Results",
+      "Privacy and updates",
+    ]);
+  });
+
+  it("opens on the section it is asked for", () => {
+    render(
+      <Settings {...base} section="assistant">
+        <div>Assistant slot</div>
+      </Settings>,
+    );
+    expect(screen.getByText("Assistant slot")).toBeInTheDocument();
+    expect(screen.queryByText("Theme")).not.toBeInTheDocument();
+  });
+
+  it("falls back to General when the section asked for was not given", () => {
+    render(<Settings {...base} section="mcp" />);
+    expect(screen.getByText("Theme")).toBeInTheDocument();
+  });
+
+  it("lists the real shortcut table", async () => {
+    const { container } = render(<Settings {...base} />);
+    await userEvent.click(screen.getByRole("button", { name: "Shortcuts" }));
+    expect(screen.getByRole("heading", { name: "Keyboard shortcuts" })).toBeInTheDocument();
+    const rows = [...container.querySelectorAll(".sc-grid .kv-row .kl")].map((r) => r.firstChild?.textContent);
+    expect(rows).toEqual(SHORTCUTS.map((s) => s.label));
+  });
+
+  it("shows About inside, with the update check", async () => {
+    const onCheckUpdates = vi.fn(async () => {});
+    render(<Settings {...base} version="0.2.0" os="linux" onCheckUpdates={onCheckUpdates} />);
+    await userEvent.click(screen.getByRole("button", { name: "About" }));
+    expect(screen.getByText("Version 0.2.0 · Linux")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+    expect(onCheckUpdates).toHaveBeenCalled();
+  });
+
+  it("shows About with no version yet", async () => {
+    render(<Settings {...base} />);
+    await userEvent.click(screen.getByRole("button", { name: "About" }));
+    expect(screen.getByText("Version —")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Check for updates" })).not.toBeInTheDocument();
   });
 
   it("closes", async () => {
@@ -673,17 +766,44 @@ describe("About", () => {
   });
 
   it("only ever opens URLs the capability file allows", async () => {
-    // These must match capabilities/default.json, read here rather than
-    // copied: a URL in one and not the other is rejected at runtime, which no
-    // type check would catch.
-    const { readFileSync } = await import("node:fs");
-    const caps = JSON.parse(readFileSync("src-tauri/capabilities/default.json", "utf8")) as {
-      permissions: (string | { identifier: string; allow: { url: string }[] })[];
-    };
-    const opener = caps.permissions.find((p) => typeof p !== "string" && p.identifier === "opener:allow-open-url");
-    const allowed = typeof opener === "object" ? opener.allow.map((a) => a.url) : [];
-    expect(allowed).toContain("https://claude.com");
+    // These must match capabilities/default.json. A URL in one and not the
+    // other is rejected at runtime, which no type check would catch.
+    const allowed = [
+      "https://github.com/talaatmagdyx",
+      "https://claude.com",
+      "https://github.com/talaatmagdyx/TupleNest/blob/main/CHANGELOG.md",
+      "https://github.com/talaatmagdyx/TupleNest/issues",
+    ];
     expect(Object.values(ABOUT_LINKS).sort()).toEqual([...allowed].sort());
+    const caps = JSON.parse(readFileSync(resolve(process.cwd(), "src-tauri/capabilities/default.json"), "utf8"));
+    const opener = caps.permissions.find((x: { identifier?: string }) => x.identifier === "opener:allow-open-url");
+    expect(opener.allow.map((a: { url: string }) => a.url).sort()).toEqual([...allowed].sort());
+  });
+
+  it("opens the changelog and the issue tracker in the browser", async () => {
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+    render(<About version="0.1.0" os="macos" onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Changelog" }));
+    await waitFor(() => expect(openUrl).toHaveBeenCalledWith(ABOUT_LINKS.changelog));
+    await userEvent.click(screen.getByRole("button", { name: "Report a problem" }));
+    await waitFor(() => expect(openUrl).toHaveBeenCalledWith(ABOUT_LINKS.issues));
+  });
+
+  it("shows the commit the build came from when it is known", () => {
+    const { rerender } = render(<About version="0.1.0" os="macos" sha="c0e49ed" onClose={vi.fn()} />);
+    expect(screen.getByText("c0e49ed")).toBeInTheDocument();
+    rerender(<About version="0.1.0" os="macos" sha="" onClose={vi.fn()} />);
+    expect(screen.queryByText("c0e49ed")).not.toBeInTheDocument();
+  });
+
+  it("checks for updates on request, and says it is checking", async () => {
+    let done: () => void = () => {};
+    const onCheckUpdates = vi.fn(() => new Promise<void>((r) => (done = r)));
+    render(<About version="0.1.0" os="macos" onCheckUpdates={onCheckUpdates} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+    expect(screen.getByRole("button", { name: "Checking…" })).toBeDisabled();
+    await act(async () => done());
+    expect(screen.getByRole("button", { name: "Check for updates" })).toBeEnabled();
   });
 
   it("stays quiet when there is no browser to open", async () => {

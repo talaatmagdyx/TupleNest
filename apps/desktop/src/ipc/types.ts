@@ -16,6 +16,11 @@ export type SshParams = {
 };
 
 export type PgParams = {
+  /** "postgres" (absent means this too) or "sqlite". For SQLite `database`
+   *  is the file's path and the server fields are ignored. */
+  engine?: string | null;
+  /** SQLite only: create the file if it does not exist. */
+  create?: boolean | null;
   host: string;
   port: number;
   database: string;
@@ -48,7 +53,9 @@ export type TestReport = {
 export type ConnectionRecord = {
   id: string;
   name: string;
-  driver: string;
+  /** "postgres" | "sqlite" — see `engineOf`. For SQLite, `database` is the
+   *  file's path and host, port, user, TLS and SSH are unused. */
+  engine?: string;
   environment: string | null;
   color: string | null;
   readOnly: boolean;
@@ -107,9 +114,10 @@ export type DbIndex = {
   definition: string;
   isUnique: boolean;
   isPrimary: boolean;
-  bytes: number;
-  /** Times this index has been used. 0 = dead weight. */
-  scans: number;
+  /** Null where the engine keeps no such statistic (SQLite). */
+  bytes: number | null;
+  /** Times this index has been used. 0 = dead weight. Null as `bytes`. */
+  scans: number | null;
   isValid: boolean;
 };
 
@@ -155,6 +163,8 @@ export type HistoryEntry = {
   startedAt: number;
   durationMs: number;
   favorite: boolean;
+  /** Who sent it: absent or null is this window, "MCP · <client>" an AI tool. */
+  actor?: string | null;
 };
 
 export type SnippetRecord = {

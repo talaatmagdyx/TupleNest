@@ -384,8 +384,57 @@ describe("App — history", () => {
   it("loads a past statement back into the editor", async () => {
     const user = await mount();
     await user.click(screen.getByTitle("Query history"));
-    await user.click(await screen.findByText("select 1"));
+    // History is a page now: the row picks the statement, and the detail
+    // pane beside it puts it in the editor.
+    const list = await screen.findByRole("list", { name: "Statements" });
+    await user.click(await within(list).findByText("select 1"));
+    await user.click(screen.getByRole("button", { name: "Open in editor" }));
     expect(screen.getByRole("textbox", { name: /sql editor/i })).toHaveValue("select 1");
+    expect(screen.queryByRole("region", { name: "Query history" })).not.toBeInTheDocument();
+  });
+
+  it("goes back to the editor on Escape, and from the rail", async () => {
+    const user = await mount();
+    await user.click(screen.getByTitle("Query history"));
+    const main = document.querySelector(".main-col") as HTMLElement;
+    expect(await screen.findByRole("region", { name: "Query history" })).toBeInTheDocument();
+    // Hidden, not unmounted: the editor keeps its state for the way back.
+    expect(main).not.toBeVisible();
+    await user.click(screen.getByLabelText("Search history"));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("region", { name: "Query history" })).not.toBeInTheDocument();
+    expect(document.querySelector(".main-col")).toBe(main);
+    expect(main).toBeVisible();
+
+    // The rail: the active page's own button, or Explorer.
+    await user.click(screen.getByTitle("Query history"));
+    await user.click(screen.getByTitle("Query history"));
+    expect(screen.queryByRole("region", { name: "Query history" })).not.toBeInTheDocument();
+    await user.click(screen.getByTitle("Query history"));
+    await user.click(screen.getByTitle(/Explorer/));
+    expect(screen.queryByRole("region", { name: "Query history" })).not.toBeInTheDocument();
+    expect(screen.getByTitle(/Explorer/)).toHaveAttribute("aria-current", "page");
+  });
+
+  it("goes back to the editor on Escape when focus is outside the page", async () => {
+    const user = await mount();
+    await user.click(screen.getByTitle("Query history"));
+    await screen.findByRole("region", { name: "Query history" });
+    (document.activeElement as HTMLElement | null)?.blur();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("region", { name: "Query history" })).not.toBeInTheDocument();
+  });
+
+  it("saves a statement from the history page as a snippet", async () => {
+    const user = await mount();
+    await user.click(screen.getByTitle("Query history"));
+    await screen.findByRole("list", { name: "Statements" });
+    await user.click(screen.getByRole("button", { name: "Save as query" }));
+    const name = await screen.findByLabelText("Name");
+    expect(name).toHaveValue("select 1");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(be.sent("snippet_save")).toHaveLength(1));
+    expect(be.sent("snippet_save")[0]).toMatchObject({ name: "select 1", body: "select 1" });
   });
 
   it("clears everything but the favourites", async () => {

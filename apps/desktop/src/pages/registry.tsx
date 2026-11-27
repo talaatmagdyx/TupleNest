@@ -6,6 +6,7 @@
  * main area (`PageHost`). Adding a page means adding it here, not threading
  * another overlay kind and its props through App.
  */
+import type { Feature } from "../lib/engine";
 import type { PaletteItem } from "../overlays/Overlays";
 import BackupPage from "./BackupPage";
 import DashboardsPage from "./DashboardsPage";
@@ -26,14 +27,25 @@ export const PAGE_TITLES: Record<Page, string> = {
   roles: "Users and roles",
 };
 
-/** Palette entries. Every page is PostgreSQL-only; one opened with no session
- *  says what it needs rather than being hidden. */
-export function pageCommands(open: (page: Page) => void): PaletteItem[] {
+/** Is this main-area view one of the pages registered here? */
+export function isRegistryPage(view: string): view is Page {
+  return view in PAGE_TITLES;
+}
+
+/**
+ * Palette entries. Dashboards and notebooks run on any engine through the
+ * normal query path. Backup and roles are PostgreSQL-only: hidden while a
+ * session of another engine is live (`lacks`, App's rule for every
+ * engine-specific command); offline they still open and say what they need.
+ */
+export function pageCommands(open: (page: Page) => void, lacks: (f: Feature) => boolean): PaletteItem[] {
   return [
     { icon: "▦", label: "Open dashboards", type: "Action", exec: () => open("dashboards") },
     { icon: "▤", label: "Open notebooks", type: "Action", exec: () => open("notebooks") },
-    { icon: "⇩", label: "Backup and restore (pg_dump)…", type: "Action", exec: () => open("backup") },
-    { icon: "☺", label: "Users and roles…", type: "Action", exec: () => open("roles") },
+    ...(lacks("backup")
+      ? []
+      : [{ icon: "⇩", label: "Backup and restore (pg_dump)…", type: "Action", exec: () => open("backup") }]),
+    ...(lacks("roles") ? [] : [{ icon: "☺", label: "Users and roles…", type: "Action", exec: () => open("roles") }]),
   ];
 }
 

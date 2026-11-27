@@ -1,4 +1,4 @@
-//! Dashboards (schema v9): named pages of charts, each chart a saved query
+//! Dashboards (schema v10): named pages of charts, each chart a saved query
 //! that is re-run when the page opens.
 //!
 //! The store keeps what to run and how to draw it — never a result. Whether a
@@ -12,7 +12,7 @@ use crate::{Store, StoreError};
 /// `IF NOT EXISTS`, per the note above V5 in lib.rs. A chart goes with its
 /// dashboard; a dashboard outlives the profile it was made on (it just stops
 /// naming one).
-pub(crate) const MIGRATION_V9: &str = r#"
+pub(crate) const MIGRATION_V10: &str = r#"
 CREATE TABLE IF NOT EXISTS dashboards (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -334,28 +334,42 @@ mod tests {
         assert_eq!(all[0].connection_id, None);
     }
 
-    /// A v8 database (the MCP release) gets the tables and keeps its rows.
+    /// A v9 database (main with the SQLite engine) gets the tables and keeps
+    /// its rows.
     #[test]
-    fn upgrades_a_v8_database() {
+    fn upgrades_a_v9_database() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("v8.db");
+        let path = dir.path().join("v9.db");
         {
             let store = Store::open(&path).unwrap();
             store.setting_set("theme", &"dark").unwrap();
             store
                 .conn
                 .execute_batch(
-                    "DROP TABLE dashboard_charts; DROP TABLE dashboards;
-                     UPDATE meta SET value = '8' WHERE key = 'schema_version';",
+                    "DROP TABLE dashboard_charts; DROP TABLE dashboards; DROP TABLE notebooks;
+                     DROP TABLE backups;
+                     UPDATE meta SET value = '9' WHERE key = 'schema_version';",
                 )
                 .unwrap();
         }
+        // Exactly what main's v9 has: the engine column, none of v10–v12.
         let store = Store::open(&path).unwrap();
+        assert!(store.column_exists("connections", "engine").unwrap());
+        assert_eq!(store.schema_version().unwrap(), crate::SCHEMA_VERSION);
         assert_eq!(
             store.setting_get::<String>("theme").unwrap().unwrap(),
             "dark"
         );
         store.dashboard_save("d1", "Sales", None, 0).unwrap();
         assert_eq!(store.dashboard_list().unwrap().len(), 1);
+        store
+            .notebook_save(&crate::NotebookRecord {
+                id: "n1".into(),
+                name: "n".into(),
+                connection_id: None,
+                cells: serde_json::json!([]),
+            })
+            .unwrap();
+        store.backup_start("b1", None, "backup", "a", "/a").unwrap();
     }
 }

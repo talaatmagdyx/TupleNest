@@ -9,7 +9,8 @@ import type { Role } from "../lib/roles";
 const invokeMock = vi.mocked(invoke);
 
 const ctx = (over: Partial<PageContext> = {}): PageContext => ({
-  pg: true,
+  live: true,
+  engine: "postgres",
   env: "prod",
   liveProfile: null,
   saved: [],
@@ -101,8 +102,14 @@ describe("RolesPage", () => {
   });
 
   it("asks for a PostgreSQL connection first", () => {
-    render(<RolesPage ctx={ctx({ pg: false })} />);
+    render(<RolesPage ctx={ctx({ live: false })} />);
     expect(screen.getByText(/Connect to a PostgreSQL database/)).toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("says why on SQLite, which has no roles, and asks nothing", () => {
+    render(<RolesPage ctx={ctx({ engine: "sqlite" })} />);
+    expect(screen.getByText(/SQLite has no users, roles or grants/)).toBeInTheDocument();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

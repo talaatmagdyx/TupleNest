@@ -1,9 +1,14 @@
 import { useCallback, useState } from "react";
 import type { ConnectionRecord, PgParams, SshParams } from "../ipc/types";
+import { engineOf, type Engine } from "../lib/engine";
 
 /** A profile that has never been saved has no id. */
 export const BLANK = {
   profileId: null as string | null,
+  engine: "postgres" as Engine,
+  // SQLite: create the file on connect if it is not there. Off, so a
+  // mistyped path is an error rather than a new empty database.
+  createFile: false,
   profileName: "",
   environment: "dev",
   // Off by default: a profile that silently refused writes would be a
@@ -42,6 +47,9 @@ export type ConnectionForm = ConnectionFormState & {
   load: (c: ConnectionRecord) => void;
   /** Back to a blank new-connection form. */
   reset: () => void;
+  /** Switch engine. `database` is a path for SQLite and a name for
+   *  PostgreSQL, so the other engine's default is not carried across. */
+  chooseEngine: (e: Engine) => void;
   /** The SSH block, or null when there is no usable tunnel configured.
    *  `passphraseRef` overrides the form's when the caller has just saved a
    *  newly typed passphrase. */
@@ -84,10 +92,24 @@ export function useConnectionForm(initial: Partial<ConnectionFormState> = {}): C
 
   const reset = useCallback(() => setState({ ...BLANK }), []);
 
+  const chooseEngine = useCallback(
+    (engine: Engine) =>
+      setState((s) => {
+        if (s.engine === engine) return s;
+        let database = s.database;
+        if (engine === "sqlite" && database === BLANK.database) database = "";
+        if (engine === "postgres" && database === "") database = BLANK.database;
+        return { ...s, engine, database, createFile: false };
+      }),
+    [],
+  );
+
   const load = useCallback((c: ConnectionRecord) => {
     const ssh = parseSsh(c.sshJson ?? null);
     setState({
       profileId: c.id,
+      engine: engineOf(c.engine),
+      createFile: false,
       profileName: c.name,
       environment: c.environment ?? "dev",
       readOnly: c.readOnly ?? false,
@@ -134,22 +156,45 @@ export function useConnectionForm(initial: Partial<ConnectionFormState> = {}): C
   );
 
   const toParams = useCallback(
-    (secretRef: string | null, passphraseRef?: string | null): PgParams => ({
-      host: state.host,
-      port: state.port,
-      database: state.database,
-      username: state.username,
-      secretRef,
-      tlsMode: state.tlsMode,
-      // "" means "not set", and the backend distinguishes null from empty.
-      tlsCaPath: state.tlsCaPath || null,
-      environment: state.environment,
-      readOnly: state.readOnly,
-      statementTimeoutMs: timeoutMs(state.statementTimeoutSec),
-      ssh: ssh(passphraseRef),
-    }),
+    (secretRef: string | null, passphraseRef?: string | null): PgParams =>
+      state.engine === "sqlite"
+        ? sqliteParams(state)
+        : {
+            host: state.host,
+            port: state.port,
+            database: state.database,
+            username: state.username,
+            secretRef,
+            tlsMode: state.tlsMode,
+            // "" means "not set", and the backend distinguishes null from empty.
+            tlsCaPath: state.tlsCaPath || null,
+            environment: state.environment,
+            readOnly: state.readOnly,
+            statementTimeoutMs: timeoutMs(state.statementTimeoutSec),
+            ssh: ssh(passphraseRef),
+          },
     [state, ssh],
   );
 
-  return { ...state, set, load, reset, ssh, toParams };
+  return { ...state, set, load, reset, chooseEngine, ssh, toParams };
+}
+
+/** A SQLite file's params: the path, the policy, and nothing about a
+ *  server — no password, TLS or tunnel is sent, so none can be used. */
+export function sqliteParams(s: ConnectionFormState): PgParams {
+  return {
+    engine: "sqlite",
+    create: s.createFile,
+    host: "",
+    port: 0,
+    database: s.database.trim(),
+    username: "",
+    secretRef: null,
+    tlsMode: "disabled",
+    tlsCaPath: null,
+    environment: s.environment,
+    readOnly: s.readOnly,
+    statementTimeoutMs: timeoutMs(s.statementTimeoutSec),
+    ssh: null,
+  };
 }

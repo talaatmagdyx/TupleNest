@@ -41,7 +41,8 @@ describe("App — overlays that need no connection", () => {
   it("opens the settings panel", async () => {
     const user = await mount();
     await palette(user, "Open settings");
-    expect(await screen.findByText(/appearance|theme/i)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Settings sections" })).toBeInTheDocument();
   });
 
   it("stores a telemetry change rather than only ticking the box", async () => {

@@ -1,6 +1,7 @@
 import type { ConnectionRecord } from "../ipc/types";
 import { BrandMark } from "../lib/icons";
 import { envMeta } from "../lib/sql";
+import { engineBadge, engineOf } from "../lib/engine";
 
 type Props = {
   saved: ConnectionRecord[];
@@ -31,7 +32,7 @@ export default function Welcome(p: Props) {
       <div className="welcome-actions">
         <button className="welcome-card primary" onClick={p.onNew}>
           <span className="wc-title">New connection</span>
-          <span className="wc-text">PostgreSQL: host, port, database and user.</span>
+          <span className="wc-text">PostgreSQL (host, port, database and user) or a SQLite file.</span>
         </button>
       </div>
       {recent.length > 0 && (
@@ -45,12 +46,12 @@ export default function Welcome(p: Props) {
               return (
                 <li key={c.id}>
                   <button className="welcome-row" onClick={() => p.onOpen(c)}>
-                    <span className="pg-avatar" aria-hidden>
-                      PG
+                    <span className={`pg-avatar ${engineOf(c.engine) === "sqlite" ? "sq" : ""}`} aria-hidden>
+                      {engineBadge(engineOf(c.engine))}
                     </span>
                     <span className="wr-name">{c.name}</span>
                     <span className="wr-host mono">
-                      {c.host}:{c.port}/{c.database}
+                      {engineOf(c.engine) === "sqlite" ? c.database : `${c.host}:${c.port}/${c.database}`}
                     </span>
                     <span className="grow" />
                     <span className="env-pill" style={{ color: m.color, background: m.bg }}>

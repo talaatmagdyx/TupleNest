@@ -32,6 +32,7 @@ use tuplenest_driver_api::{
 use tuplenest_workspace_store::{ConnectionRecord, HistoryEntry, McpAccess, Store};
 
 use super::backend::{Connector, OpenTarget, Session};
+use crate::engine::Engine;
 use crate::guard;
 
 /// Rows `run_query` returns at most.
@@ -108,7 +109,7 @@ pub fn tool_definitions() -> Value {
         {
             "name": "list_schemas",
             "title": "List schemas",
-            "description": "Schemas in the connection's database (system schemas left out).",
+            "description": "Schemas in the connection's database (system schemas left out). For SQLite: `main` and any attached databases.",
             "inputSchema": {"type": "object", "properties": {"connection": connection},
                 "required": ["connection"], "additionalProperties": false},
             "annotations": {"readOnlyHint": true}
@@ -116,7 +117,7 @@ pub fn tool_definitions() -> Value {
         {
             "name": "list_tables",
             "title": "List tables",
-            "description": "Tables, views, materialized views and foreign tables in one schema.",
+            "description": "Tables, views, materialized views and foreign tables in one schema (`main` on SQLite).",
             "inputSchema": {"type": "object", "properties": {
                     "connection": connection,
                     "schema": {"type": "string", "description": "Schema name, e.g. public."}},
@@ -148,7 +149,7 @@ pub fn tool_definitions() -> Value {
         {
             "name": "explain",
             "title": "Explain query plan",
-            "description": "The planner's plan for one statement (EXPLAIN, never ANALYZE: the statement is not run).",
+            "description": "The planner's plan for one statement (EXPLAIN, never ANALYZE; EXPLAIN QUERY PLAN on SQLite): the statement is not run.",
             "inputSchema": {"type": "object", "properties": {
                     "connection": connection,
                     "sql": {"type": "string", "description": "The statement to explain, without EXPLAIN."},
@@ -450,8 +451,16 @@ impl McpServer {
         let list: Vec<Value> = self
             .visible()?
             .into_iter()
-            .map(|(p, access)| {
-                json!({
+            .map(|(p, access)| match engine_of(&p) {
+                Engine::Sqlite => json!({
+                    "id": p.id,
+                    "name": p.name,
+                    "engine": "sqlite",
+                    "environment": p.environment,
+                    "access": access.as_str(),
+                    "path": p.database,
+                }),
+                Engine::Postgres => json!({
                     "id": p.id,
                     "name": p.name,
                     "engine": "postgresql",
@@ -460,7 +469,7 @@ impl McpServer {
                     "host": p.host,
                     "port": p.port,
                     "database": p.database,
-                })
+                }),
             })
             .collect();
         Ok(ToolOutput::ok(json!({ "connections": list })))
@@ -486,8 +495,28 @@ impl McpServer {
         profile: &ConnectionRecord,
         access: McpAccess,
     ) -> Result<ConnectionConfig, String> {
+        let engine = Engine::parse(Some(&profile.engine))?;
+        if engine == Engine::Sqlite {
+            return Ok(ConnectionConfig {
+                driver_id: engine.as_str().into(),
+                name: format!("{} (MCP)", profile.name),
+                environment: Environment::Dev,
+                read_only: access != McpAccess::ReadWrite || profile.read_only,
+                host: String::new(),
+                port: 0,
+                // The file's path. Never created from here: an MCP client
+                // opens what the user saved, or nothing.
+                database: profile.database.clone(),
+                username: String::new(),
+                secret_ref: None,
+                tls_mode: tuplenest_driver_api::TlsMode::Disabled,
+                tls_ca_path: None,
+                options: Default::default(),
+                default_statement_timeout_ms: profile.statement_timeout_ms,
+            });
+        }
         Ok(ConnectionConfig {
-            driver_id: "postgres".into(),
+            driver_id: engine.as_str().into(),
             name: format!("{} (MCP)", profile.name),
             environment: Environment::Dev,
             // `effective` has already held read_write to read_only for a
@@ -535,8 +564,13 @@ impl McpServer {
         }
         if !self.sessions.contains_key(&profile.id) {
             let config = Self::config_for(profile, access)?;
-            let password = self.secret(profile.secret_ref.as_deref())?;
-            let ssh = match crate::pg::saved_ssh(profile) {
+            let sqlite = engine_of(profile) == Engine::Sqlite;
+            let password = if sqlite {
+                None
+            } else {
+                self.secret(profile.secret_ref.as_deref())?
+            };
+            let ssh = match crate::pg::saved_ssh(profile).filter(|_| !sqlite) {
                 Some(ssh) => {
                     let passphrase = self
                         .secret(ssh.passphrase_key())?
@@ -633,16 +667,17 @@ impl McpServer {
     async fn list_schemas(&mut self, args: &Value) -> Result<ToolOutput, String> {
         let obj = args_object(args, &["connection"])?;
         let (profile, access) = self.resolve(&string_arg(obj, "connection", NAME_MAX)?)?;
-        let ran = self
-            .internal(
-                &profile,
-                access,
+        let sql = match engine_of(&profile) {
+            Engine::Postgres => {
                 "SELECT nspname::text AS schema FROM pg_catalog.pg_namespace \
                  WHERE nspname NOT LIKE 'pg\\_%' AND nspname <> 'information_schema' \
-                 ORDER BY 1",
-                vec![],
-            )
-            .await?;
+                 ORDER BY 1"
+            }
+            Engine::Sqlite => {
+                "SELECT name AS schema FROM pragma_database_list WHERE name <> 'temp' ORDER BY seq"
+            }
+        };
+        let ran = self.internal(&profile, access, sql, vec![]).await?;
         let schemas: Vec<Value> = ran
             .rows_json()
             .as_array()
@@ -657,10 +692,9 @@ impl McpServer {
         let obj = args_object(args, &["connection", "schema"])?;
         let (profile, access) = self.resolve(&string_arg(obj, "connection", NAME_MAX)?)?;
         let schema = string_arg(obj, "schema", NAME_MAX)?;
-        let ran = self
-            .internal(
-                &profile,
-                access,
+        let sql = match engine_of(&profile) {
+            Engine::Sqlite => SQLITE_TABLES,
+            Engine::Postgres => {
                 "SELECT c.relname::text AS name, \
                    CASE c.relkind WHEN 'r' THEN 'table' WHEN 'p' THEN 'partitioned table' \
                      WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view' \
@@ -668,7 +702,14 @@ impl McpServer {
                  FROM pg_catalog.pg_class c \
                  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
                  WHERE n.nspname = $1::text AND c.relkind IN ('r','p','v','m','f') \
-                 ORDER BY 1",
+                 ORDER BY 1"
+            }
+        };
+        let ran = self
+            .internal(
+                &profile,
+                access,
+                sql,
                 vec![ParamValue::Text(schema.clone())],
             )
             .await?;
@@ -690,6 +731,11 @@ impl McpServer {
                 ParamValue::Text(table.clone()),
             ]
         };
+        if engine_of(&profile) == Engine::Sqlite {
+            return self
+                .describe_sqlite_table(&profile, access, schema, table)
+                .await;
+        }
         const REL: &str = "to_regclass(format('%I.%I', $1::text, $2::text))";
         let columns = self
             .internal(
@@ -828,12 +874,7 @@ impl McpServer {
         sql: &str,
         params: Vec<ParamValue>,
     ) -> Result<Ran, String> {
-        let key = crate::pg::cache_key(
-            &profile.username,
-            &profile.host,
-            profile.port,
-            &profile.database,
-        );
+        let key = crate::pg::record_cache_key(profile);
         // Connect first, so an unreachable server is not audited as sent.
         self.session(profile, access).await?;
         self.audit(profile, &key, sql)?;
@@ -904,11 +945,19 @@ impl McpServer {
                  VALUES or TABLE), without EXPLAIN or its options; got `{word}`. Nothing was run."
             ));
         }
-        let statement = format!("EXPLAIN {sql}");
+        let sqlite = engine_of(&profile) == Engine::Sqlite;
+        let statement = if sqlite {
+            format!("EXPLAIN QUERY PLAN {sql}")
+        } else {
+            format!("EXPLAIN {sql}")
+        };
         check_statement(access, &statement)?;
         let ran = self
             .run_checked(&profile, access, &statement, params)
             .await?;
+        if sqlite {
+            return Ok(ToolOutput::ok(json!({ "plan": sqlite_plan(&ran) })));
+        }
         let plan: Vec<String> = ran
             .rows_json()
             .as_array()
@@ -919,6 +968,110 @@ impl McpServer {
             })
             .unwrap_or_default();
         Ok(ToolOutput::ok(json!({ "plan": plan.join("\n") })))
+    }
+}
+
+/// A profile's engine. A row the store accepted always names a known one.
+fn engine_of(profile: &ConnectionRecord) -> Engine {
+    Engine::parse(Some(&profile.engine)).unwrap_or_default()
+}
+
+/// Tables and views of one SQLite schema (`$1`), as `list_tables` returns
+/// PostgreSQL's.
+const SQLITE_TABLES: &str =
+    "SELECT name, CASE type WHEN 'view' THEN 'view' ELSE 'table' END AS kind \
+     FROM pragma_table_list WHERE schema = $1 AND type IN ('table', 'view', 'virtual') \
+     AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY 1";
+
+/// `EXPLAIN QUERY PLAN` rows (id, parent, notused, detail) as the indented
+/// tree the sqlite3 shell prints.
+fn sqlite_plan(ran: &Ran) -> String {
+    let rows = ran.rows_json();
+    let mut depth: HashMap<i64, usize> = HashMap::new();
+    let mut lines = Vec::new();
+    for r in rows.as_array().into_iter().flatten() {
+        let id = r.get(0).and_then(Value::as_i64).unwrap_or(0);
+        let parent = r.get(1).and_then(Value::as_i64).unwrap_or(0);
+        let d = depth.get(&parent).map_or(0, |d| d + 1);
+        depth.insert(id, d);
+        let detail = r.get(3).and_then(Value::as_str).unwrap_or("");
+        lines.push(format!("{}{detail}", "  ".repeat(d)));
+    }
+    lines.join("\n")
+}
+
+impl McpServer {
+    /// `describe_table` for SQLite: the table-valued pragmas, every name
+    /// bound. `$1` is the schema, `$2` the table.
+    async fn describe_sqlite_table(
+        &mut self,
+        profile: &ConnectionRecord,
+        access: McpAccess,
+        schema: String,
+        table: String,
+    ) -> Result<ToolOutput, String> {
+        let target = || {
+            vec![
+                ParamValue::Text(schema.clone()),
+                ParamValue::Text(table.clone()),
+            ]
+        };
+        let columns = self
+            .internal(
+                profile,
+                access,
+                "SELECT name, type, \"notnull\" = 0 AS nullable, dflt_value AS \"default\" \
+                 FROM pragma_table_xinfo($2, $1) WHERE hidden <> 1 ORDER BY cid",
+                target(),
+            )
+            .await?;
+        if columns.rows.is_empty() {
+            return Err(format!("No table or view `{schema}`.`{table}` was found."));
+        }
+        let constraints = self
+            .internal(
+                profile,
+                access,
+                "SELECT 'primary key' AS name, 'primary key' AS kind, \
+                   'PRIMARY KEY (' || group_concat(name, ', ') || ')' AS definition \
+                 FROM (SELECT name FROM pragma_table_info($2, $1) WHERE pk > 0 ORDER BY pk) \
+                 HAVING count(*) > 0 \
+                 UNION ALL \
+                 SELECT 'foreign key ' || id, 'foreign key', \
+                   'FOREIGN KEY (' || group_concat(\"from\", ', ') || ') REFERENCES ' || \"table\" \
+                   || '(' || group_concat(coalesce(\"to\", ''), ', ') || ')' \
+                 FROM pragma_foreign_key_list($2, $1) GROUP BY id \
+                 UNION ALL \
+                 SELECT name, 'unique', NULL FROM pragma_index_list($2, $1) \
+                 WHERE \"unique\" AND origin <> 'pk'",
+                target(),
+            )
+            .await?;
+        let indexes = self
+            .internal(
+                profile,
+                access,
+                "SELECT name, CASE origin WHEN 'c' THEN 'CREATE INDEX' \
+                   WHEN 'pk' THEN 'PRIMARY KEY (automatic)' ELSE 'UNIQUE (automatic)' END \
+                   || CASE partial WHEN 1 THEN ', partial' ELSE '' END AS definition \
+                 FROM pragma_index_list($2, $1) ORDER BY 1",
+                target(),
+            )
+            .await?;
+        let mut columns = objects(&columns, &["name", "type", "nullable", "default"]);
+        // `notnull = 0` is 0 or 1 to SQLite; the answer is a yes or no.
+        for c in &mut columns {
+            if let Some(n) = c.get("nullable").and_then(Value::as_i64) {
+                c["nullable"] = Value::Bool(n != 0);
+            }
+        }
+        Ok(ToolOutput::ok(json!({
+            "schema": schema,
+            "table": table,
+            "columns": columns,
+            "constraints": objects(&constraints, &["name", "kind", "definition"]),
+            "indexes": objects(&indexes, &["name", "definition"]),
+        })))
     }
 }
 

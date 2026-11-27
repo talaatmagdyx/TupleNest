@@ -15,6 +15,10 @@ import { fromClauseShape, maskLiterals, maskStrings, parseTableRefs, statementAt
 export type GridCol = { name: string; dbType: string };
 
 export type EditTarget = {
+  /** The SQL dialect to write in; absent is PostgreSQL. SQLite has no `::`
+   *  casts and no `to_regclass`, and needs neither: it binds values to the
+   *  column's affinity, and its name resolution is checked another way. */
+  engine?: "postgres" | "sqlite";
   schema: string;
   table: string;
   /** Primary-key columns, with their position in the result row. */
@@ -273,7 +277,10 @@ export function analyzeEditability(sql: string, cols: GridCol[], cat: Catalog | 
   // way both times.
   const quoted = quoteIdent(ref.name);
   const resolvedFrom = ref.schema ? undefined : stmt.includes(quoted) ? quoted : ref.name;
-  return { editable: true, target: { schema, table: ref.name, pk, writable, types, resolvedFrom } };
+  return {
+    editable: true,
+    target: { ...(cat.engine ? { engine: cat.engine } : {}), schema, table: ref.name, pk, writable, types, resolvedFrom },
+  };
 }
 
 /** A type name safe to splice into `::type` — catalog-supplied, so checked. */
@@ -318,13 +325,15 @@ export function castType(type: string): string {
 
 /** `$n`, cast to the column's type when it is known: `$n::text::uuid`. */
 function placeholder(
-  target: Pick<EditTarget, "types">,
+  target: Pick<EditTarget, "types" | "engine">,
   column: string,
   params: unknown[],
   value: unknown,
 ): string {
   const type = target.types?.[column];
-  if (!type || !SAFE_TYPE.test(type)) {
+  // SQLite has no casts to add: the value is bound as it is, and the
+  // column's affinity converts it on the way in.
+  if (target.engine === "sqlite" || !type || !SAFE_TYPE.test(type)) {
     params.push(value);
     return `$${params.length}`;
   }
@@ -334,8 +343,13 @@ function placeholder(
 
 /** `col IS NOT DISTINCT FROM $n`. `json` has no equality operator, so it is
  *  compared as jsonb. */
-function unchangedTest(target: Pick<EditTarget, "types">, column: string, params: unknown[], old: unknown): string {
-  if (target.types?.[column]?.toLowerCase() === "json") {
+function unchangedTest(
+  target: Pick<EditTarget, "types" | "engine">,
+  column: string,
+  params: unknown[],
+  old: unknown,
+): string {
+  if (target.engine !== "sqlite" && target.types?.[column]?.toLowerCase() === "json") {
     params.push(asText(old));
     return `${quoteIdent(column)}::jsonb IS NOT DISTINCT FROM $${params.length}::text::jsonb`;
   }
@@ -364,9 +378,13 @@ function unchangedTest(target: Pick<EditTarget, "types">, column: string, params
  * So the statement asks the server, in the same breath as the write, whether
  * the name the query used still means the table being written. If not, it
  * matches zero rows.
+ *
+ * SQLite resolves an unqualified name to `temp` first, then `main`, then the
+ * attached databases in order — the catalog's candidate order after `temp`.
+ * So the test there is that no temporary table or view has taken the name.
  */
 export function buildUpdate(
-  target: Pick<EditTarget, "schema" | "table" | "pk" | "types" | "resolvedFrom">,
+  target: Pick<EditTarget, "schema" | "table" | "pk" | "types" | "resolvedFrom" | "engine">,
   pkValues: unknown[],
   sets: { column: string; value: unknown; oldValue: unknown }[]
 ): Statement {
@@ -380,7 +398,14 @@ export function buildUpdate(
   const keyed = target.pk.map((k, i) => `${quoteIdent(k.name)} = ${placeholder(target, k.name, params, pkValues[i])}`);
   const unchanged = sets.map((s) => unchangedTest(target, s.column, params, s.oldValue));
   const same: string[] = [];
-  if (target.resolvedFrom) {
+  if (target.resolvedFrom && target.engine === "sqlite") {
+    if (target.schema !== "temp") {
+      params.push(target.table);
+      same.push(
+        `NOT EXISTS (SELECT 1 FROM temp.sqlite_schema WHERE type IN ('table', 'view') AND name = $${params.length} COLLATE NOCASE)`,
+      );
+    }
+  } else if (target.resolvedFrom) {
     params.push(target.resolvedFrom, qualifiedName(target.schema, target.table));
     same.push(`to_regclass($${params.length - 1}) = to_regclass($${params.length})`);
   }
@@ -390,7 +415,7 @@ export function buildUpdate(
 }
 
 export function buildDelete(
-  target: Pick<EditTarget, "schema" | "table" | "pk" | "types">,
+  target: Pick<EditTarget, "schema" | "table" | "pk" | "types" | "engine">,
   pkValues: unknown[]
 ): Statement {
   if (pkValues.length !== target.pk.length) throw new Error("buildDelete: primary key value count mismatch");

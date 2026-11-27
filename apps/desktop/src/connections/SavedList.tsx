@@ -1,5 +1,6 @@
 import type { ConnectionRecord } from "../ipc/types";
 import { envMeta } from "../lib/sql";
+import { engineBadge, engineName, engineOf, profileTarget } from "../lib/engine";
 
 type Props = {
   saved: ConnectionRecord[];
@@ -38,7 +39,12 @@ export default function SavedList(p: Props) {
             // has no way to present a control nested in a control.
             <div key={c.id} className={`conn-card ${active ? "active" : ""}`}>
               <button className="conn-open" onClick={() => p.onLoad(c)}>
-                <span className="pg-avatar">PG</span>
+                <span
+                  className={`pg-avatar ${engineOf(c.engine) === "sqlite" ? "sq" : ""}`}
+                  title={engineName(engineOf(c.engine))}
+                >
+                  {engineBadge(engineOf(c.engine))}
+                </span>
                 <span className="meta">
                   <span className="nm">
                     {/* In its own element so it can be told to ellipsize. As a
@@ -54,9 +60,7 @@ export default function SavedList(p: Props) {
                       />
                     )}
                   </span>
-                  <span className="full">
-                    {c.username}@{c.host}:{c.port}/{c.database}
-                  </span>
+                  <span className="full">{profileTarget(c)}</span>
                 </span>
                 <span className="env-pill" style={{ color: m.color, background: m.bg }}>
                   {c.environment ?? "dev"}

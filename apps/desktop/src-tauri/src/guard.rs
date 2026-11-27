@@ -134,6 +134,36 @@ fn mask_chars(sql: &[char]) -> Vec<char> {
     out
 }
 
+/// Blank the inside of SQLite's other identifier quotes, `[name]` and
+/// `` `name` ``, in text `mask_chars` has already masked: `DELETE FROM
+/// [where]` is an unbounded DELETE, not a bounded one. In PostgreSQL `[…]` is
+/// an array subscript, and blanking one can only hide a WHERE, which errs
+/// towards stopping. `maskBracketQuotes` in the WebView; change both.
+fn mask_bracket_quotes(masked: &[char]) -> Vec<char> {
+    let mut out = masked.to_vec();
+    let mut i = 0;
+    while i < out.len() {
+        let close = match out[i] {
+            '[' => ']',
+            '`' => '`',
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        let end = (i + 1..out.len())
+            .find(|&k| out[k] == close)
+            .unwrap_or(out.len());
+        for c in out.iter_mut().take(end).skip(i + 1) {
+            if *c != '\n' {
+                *c = ' ';
+            }
+        }
+        i = end + 1;
+    }
+    out
+}
+
 /// Position of the next whole word `word` (lowercase) in `hay` (already
 /// lowercased) at or after `from`, with `\b` on both sides.
 fn find_word(hay: &[char], word: &str, from: usize) -> Option<usize> {
@@ -248,7 +278,7 @@ pub fn write_reason(sql: &str) -> Option<String> {
 }
 
 fn reason_of(sql: &[char]) -> Option<GuardReason> {
-    let masked = lower(&mask_chars(sql));
+    let masked = lower(&mask_bracket_quotes(&mask_chars(sql)));
     let verb = first_keyword(&masked)?;
 
     // EXPLAIN ANALYZE runs what it explains: judge the statement inside it.
@@ -483,6 +513,24 @@ mod tests {
     }
     fn why(sql: &str) -> String {
         guard_reason(sql).map(|r| r.why).unwrap_or_default()
+    }
+
+    #[test]
+    fn sqlite_identifier_quotes_never_look_like_a_where() {
+        assert!(guarded("DELETE FROM [where]"));
+        assert!(guarded("DELETE FROM `where`"));
+        assert!(guarded("UPDATE [t] SET [where] = 1"));
+        assert!(!guarded("DELETE FROM [orders] WHERE [id] = 1"));
+        assert!(!guarded("UPDATE `t` SET x = 1 WHERE `id` = 2"));
+        // SQLite spellings of the statements the guard stops.
+        assert!(guarded("DROP TABLE IF EXISTS logs"));
+        assert!(guarded("ALTER TABLE t DROP COLUMN x"));
+        assert!(guarded("VACUUM"));
+        assert!(guarded("UPDATE OR REPLACE t SET x = 1"));
+        assert!(guarded("DELETE FROM main.t"));
+        assert!(!guarded("INSERT OR REPLACE INTO t VALUES (1)"));
+        // A PostgreSQL subscript is still read.
+        assert!(!guarded("UPDATE t SET a[1] = 0 WHERE id = 1"));
     }
 
     #[test]

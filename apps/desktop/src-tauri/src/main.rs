@@ -14,6 +14,7 @@ mod assistant;
 mod backup;
 mod connections;
 mod dashboards;
+mod engine;
 mod export;
 mod guard;
 mod mcp;
@@ -247,6 +248,35 @@ fn audit_list(
 /// goes only to what the user chose there. The fs plugin write permission is
 /// therefore removed from the capability entirely — the invariant is now
 /// enforced by construction, not by convention.
+/// The connection form's "Choose…" for a SQLite file: the native open panel
+/// (or, with `create`, the save panel for a new file) runs here, as for
+/// `export_save`, so the WebView is granted no dialog or filesystem
+/// permission. Nothing is opened or written: the chosen path goes back to the
+/// form, and connecting opens it (creating it only if the form says so).
+#[tauri::command]
+fn sqlite_choose_file(app: tauri::AppHandle, create: bool) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let builder = app
+        .dialog()
+        .file()
+        .add_filter("SQLite database", &["db", "sqlite", "sqlite3", "db3"]);
+    // blocking_* must run off the main thread; sync command handlers do.
+    let picked = if create {
+        builder.set_file_name("database.db").blocking_save_file()
+    } else {
+        builder.blocking_pick_file()
+    };
+    match picked {
+        Some(fp) => Ok(Some(
+            fp.into_path()
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .into_owned(),
+        )),
+        None => Ok(None), // cancelled — not an error
+    }
+}
+
 #[tauri::command]
 fn export_save(
     app: tauri::AppHandle,
@@ -660,6 +690,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_get_info,
             export_save,
+            sqlite_choose_file,
             export_begin,
             export_result_page,
             copy_result_text,

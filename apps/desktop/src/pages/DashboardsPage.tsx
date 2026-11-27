@@ -78,7 +78,7 @@ export default function DashboardsPage(p: { ctx: PageContext }) {
 
   const board = boards?.find((b) => b.id === activeId) ?? null;
   const owner = board?.connectionId ? ctx.saved.find((c) => c.id === board.connectionId) : undefined;
-  const runnable = !!board && ctx.pg && (!board.connectionId || board.connectionId === ctx.liveProfile?.id);
+  const runnable = !!board && ctx.live && (!board.connectionId || board.connectionId === ctx.liveProfile?.id);
 
   // Never auto-run anything but what the page is for: its own charts, on
   // open and on the interval, only while the right connection is live.
@@ -215,8 +215,8 @@ export default function DashboardsPage(p: { ctx: PageContext }) {
 
       {board && !runnable && (
         <div className="page-note" role="status">
-          {!ctx.pg
-            ? "Connect to a PostgreSQL database to run these charts."
+          {!ctx.live
+            ? "Connect to a database to run these charts."
             : `This dashboard runs on ${owner?.name ?? "another connection"}. Connect to it to refresh the charts.`}
         </div>
       )}

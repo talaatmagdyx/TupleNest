@@ -1,13 +1,11 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+/** The pages that take the editor's place (history, saved queries), and the
+ *  rail and palette entries that reach them and the other redesigned views. */
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { check } from "@tauri-apps/plugin-updater";
 import App from "./App";
 import { CONNECTION, backend, type Backend } from "./test/backend";
-
-/**
- * The stage 6b pages, as App wires them: opened from the palette, drawn in
- * place of the editor, and closed back to it with the editor as it was.
- */
 
 let be: Backend;
 beforeEach(() => {
@@ -27,71 +25,165 @@ const palette = async (user: ReturnType<typeof userEvent.setup>, term: string) =
   await user.keyboard("{Enter}");
 };
 
-describe("App — first run", () => {
-  it("opens what's new again from About", async () => {
-    const user = await mount();
-    await palette(user, "About TupleNest");
-    await user.click(await screen.findByRole("button", { name: "What's new" }));
-    expect(await screen.findByRole("dialog", { name: "What's new" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Got it" }));
-    expect(screen.queryByRole("dialog", { name: "What's new" })).not.toBeInTheDocument();
+const editor = () => screen.getByRole("textbox", { name: /sql editor/i }) as HTMLTextAreaElement;
+
+describe("App — the saved queries page", () => {
+  beforeEach(() => {
+    be.on("snippet_list", () => [{ id: "s1", name: "weekly", body: "select 'weekly'", tags: null }]);
   });
 
-  it("opens the tour again from About", async () => {
+  it("opens from the rail, and puts a snippet in the editor", async () => {
     const user = await mount();
-    await palette(user, "About TupleNest");
-    await user.click(await screen.findByRole("button", { name: "Show the welcome tour" }));
-    expect(await screen.findByText("STEP 1 OF 3")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Skip the tour" }));
-    expect(screen.queryByText("STEP 1 OF 3")).not.toBeInTheDocument();
+    await user.click(screen.getByTitle("Saved queries"));
+    expect(screen.getByTitle("Saved queries")).toHaveAttribute("aria-current", "page");
+    await user.click(await screen.findByTitle("Open “weekly” in the editor"));
+    expect(editor().value).toBe("select 'weekly'");
+    expect(screen.queryByRole("region", { name: "Saved queries" })).not.toBeInTheDocument();
+    expect(await screen.findByText(/Inserted snippet "weekly"/)).toBeInTheDocument();
   });
 
-  it("shows the tour on a first launch, with nothing saved yet", async () => {
-    be.on("settings_get", () => null);
-    be.on("connection_list", () => []);
-    render(<App />);
-    expect(await screen.findByText("STEP 1 OF 3")).toBeInTheDocument();
+  it("starts a new query from the page", async () => {
+    const user = await mount();
+    await user.click(screen.getByTitle("Saved queries"));
+    await user.click(await screen.findByRole("button", { name: "New query" }));
+    expect(screen.queryByRole("region", { name: "Saved queries" })).not.toBeInTheDocument();
+    expect(editor()).toBeInTheDocument();
+  });
+
+  it("goes back on Escape", async () => {
+    const user = await mount();
+    await user.click(screen.getByTitle("Saved queries"));
+    await user.click(await screen.findByRole("button", { name: "New query" }));
+    await user.click(screen.getByTitle("Saved queries"));
+    screen.getByRole("button", { name: "New query" }).focus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("region", { name: "Saved queries" })).not.toBeInTheDocument();
+  });
+
+  it("is reachable from the palette, as is history", async () => {
+    const user = await mount();
+    await palette(user, "Show saved queries");
+    expect(await screen.findByRole("region", { name: "Saved queries" })).toBeInTheDocument();
+    await palette(user, "Show query history");
+    expect(await screen.findByRole("region", { name: "Query history" })).toBeInTheDocument();
+    // Anything else from the palette acts on the editor, so brings it back.
+    await palette(user, "New query tab");
+    expect(editor()).toBeInTheDocument();
   });
 });
 
-describe("App — pages", () => {
-  it("opens dashboards in place of the editor and goes back", async () => {
+describe("App — the palette's assistant entry", () => {
+  it("opens the assistant with what was typed", async () => {
     const user = await mount();
-    await palette(user, "Open dashboards");
-    expect(await screen.findByRole("region", { name: "Dashboards" })).toBeInTheDocument();
-    expect(await screen.findByText("No dashboards yet")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Back to the editor/ }));
-    expect(screen.queryByRole("region", { name: "Dashboards" })).not.toBeInTheDocument();
+    await user.keyboard("{Meta>}k{/Meta}");
+    await user.type(await screen.findByPlaceholderText(/type a command/i), "zzz why slow");
+    await user.click(screen.getByRole("option", { name: /Ask the assistant/ }));
+    expect(await screen.findByRole("complementary", { name: "Assistant" })).toBeInTheDocument();
+    expect(be.sent("assistant_ask")).toHaveLength(0);
+  });
+});
+
+describe("App — the audit log from the rail", () => {
+  it("opens without a session: the log is local", async () => {
+    be.on("audit_list", () => []);
+    const user = await mount();
+    await user.click(screen.getByTitle("Audit log"));
+    expect(await screen.findByRole("dialog", { name: "Audit log" })).toBeInTheDocument();
+    await waitFor(() => expect(be.sent("audit_list").length).toBeGreaterThan(0));
+  });
+});
+
+describe("App — table details", () => {
+  const tables = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(await screen.findByText("public"));
+    await user.click(await screen.findByText("Tables"));
+    await screen.findByText("users");
+  };
+
+  const meta = () =>
+    be.on("pg_metadata", (a) => {
+      const req = a.request as { kind: string; name?: string };
+      if (req.kind === "list_schemas") return { payload: ["public"], cached: false };
+      if (req.kind === "list_objects") return { payload: [{ name: "users", kind: "table" }], cached: false };
+      if (req.kind === "object_details") {
+        return { payload: { title: "users", kind: "table", sections: [] }, cached: false };
+      }
+      if (req.kind === "describe_object") {
+        return {
+          payload: { columns: [{ name: "id", dbType: "int8", nullable: false, primaryKey: true, comment: null }] },
+          cached: false,
+        };
+      }
+      return { payload: [], cached: false };
+    });
+
+  const connect = async () => {
+    const user = await mount();
+    await palette(user, "Connect to local dev");
+    await waitFor(() => expect(be.sent("pg_connect")).toHaveLength(1));
+    return user;
+  };
+
+  it("shows the columns, and queries the table", async () => {
+    meta();
+    const user = await connect();
+    await tables(user);
+    await user.click(screen.getByTitle(/Details —/));
+    await user.click(await screen.findByRole("tab", { name: "Structure" }));
+    expect(await screen.findByText("primary key")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show in ER diagram" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Query this table" }));
+    expect(editor().value).toMatch(/select \* from .*users.* limit 100/);
+    expect(screen.queryByRole("tab", { name: "Structure" })).not.toBeInTheDocument();
   });
 
-  it("opens dashboards and notebooks from the rail, and the same button closes them", async () => {
+  it("opens the ER diagram from the details", async () => {
+    meta();
+    const user = await connect();
+    await tables(user);
+    await user.click(screen.getByTitle(/Details —/));
+    await user.click(await screen.findByRole("tab", { name: "Structure" }));
+    await user.click(await screen.findByRole("button", { name: "Show in ER diagram" }));
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "Structure" })).not.toBeInTheDocument());
+  });
+});
+
+describe("App — checking for updates from About", () => {
+  const about = async () => {
     const user = await mount();
-    await user.click(screen.getByRole("button", { name: "Dashboards" }));
-    expect(await screen.findByRole("region", { name: "Dashboards" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Notebooks" }));
-    expect(await screen.findByRole("region", { name: "Notebooks" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Dashboards" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Notebooks" }));
-    expect(screen.queryByRole("region", { name: "Notebooks" })).not.toBeInTheDocument();
+    await palette(user, "About TupleNest");
+    await screen.findByRole("dialog", { name: "About TupleNest" });
+    return user;
+  };
+
+  it("says when there is nothing newer", async () => {
+    const user = await about();
+    vi.mocked(check).mockResolvedValueOnce(null);
+    await user.click(screen.getByRole("button", { name: "Check for updates" }));
+    expect(await screen.findByText("TupleNest is up to date")).toBeInTheDocument();
   });
 
-  it("opens notebooks", async () => {
-    const user = await mount();
-    await palette(user, "Open notebooks");
-    expect(await screen.findByRole("region", { name: "Notebooks" })).toBeInTheDocument();
-    expect(await screen.findByText("No notebooks yet")).toBeInTheDocument();
+  it("offers an update it finds", async () => {
+    const user = await about();
+    vi.mocked(check).mockResolvedValueOnce({ version: "9.9.9", body: "faster" } as Awaited<ReturnType<typeof check>>);
+    await user.click(screen.getByRole("button", { name: "Check for updates" }));
+    expect(await screen.findByText("Update available")).toBeInTheDocument();
   });
 
-  it("opens backup and restore from the palette", async () => {
-    const user = await mount();
-    await palette(user, "Backup and restore");
-    expect(await screen.findByRole("region", { name: "Backup and restore" })).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Back up…" })).toBeEnabled();
+  it("says when the check itself failed", async () => {
+    const user = await about();
+    vi.mocked(check).mockRejectedValueOnce(new Error("offline"));
+    await user.click(screen.getByRole("button", { name: "Check for updates" }));
+    expect(await screen.findByText(/Could not check for updates: .*offline/)).toBeInTheDocument();
   });
+});
 
-  it("opens users and roles, which needs a PostgreSQL session", async () => {
+describe("App — settings from the assistant", () => {
+  it("opens on the Assistant section", async () => {
     const user = await mount();
-    await palette(user, "Users and roles");
-    expect(await screen.findByText(/Connect to a PostgreSQL database to see its roles/)).toBeInTheDocument();
+    await user.keyboard("{Meta>}j{/Meta}");
+    await user.click(await screen.findByRole("button", { name: "Open Settings › Assistant" }));
+    const nav = await screen.findByRole("navigation", { name: "Settings sections" });
+    expect(within(nav).getByRole("button", { name: "Assistant" })).toHaveAttribute("aria-current", "page");
   });
 });

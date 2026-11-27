@@ -1,4 +1,5 @@
 import {
+  AuditRailIcon,
   DashboardRailIcon,
   DiagramRailIcon,
   ExplorerRailIcon,
@@ -7,24 +8,29 @@ import {
   MonitorRailIcon,
   NotebookRailIcon,
   PastePlanRailIcon,
+  SavedRailIcon,
 } from "../lib/icons";
 import { kbd } from "../lib/platform";
 
-export type RailView = "explorer" | "history";
-/** Pages the rail opens in place of the editor. */
+/** What the main area shows. "explorer" is the editor with the explorer
+ *  beside it; the others are pages that take the editor's place. */
+export type RailView = "explorer" | "history" | "saved";
+/** Stage 6b pages the rail opens in place of the editor. */
 export type RailPage = "dashboards" | "notebooks";
 
 type Props = {
-  view: RailView;
+  /** The main area: a RailView, or a page from pages/registry. */
+  view: string;
   collapsed: boolean;
   connected: boolean;
   onView: (v: RailView) => void;
   onMonitor: () => void;
+  /** Why the live session's engine has no server monitor, or null. */
+  monitorUnavailable?: string | null;
   onDiagram: () => void;
+  onAudit: () => void;
   onPastePlan: () => void;
   onSettings: () => void;
-  /** The page open in the main area, if it is one of the rail's. */
-  page?: string | null;
   onPage?: (page: RailPage) => void;
 };
 
@@ -49,6 +55,7 @@ function Item(opts: {
     <button
       className={`rail-btn ${opts.active ? "on" : ""}`}
       title={opts.title}
+      aria-current={opts.active ? "page" : undefined}
       disabled={opts.disabled}
       onClick={opts.onClick}
     >
@@ -58,11 +65,12 @@ function Item(opts: {
   );
 }
 
-/** VS Code / DataGrip-style activity rail: switches the sidebar panel and
- *  launches tool overlays. The active view shows an accent indicator bar. */
+/** VS Code / DataGrip-style activity rail: switches the main area between the
+ *  editor and its pages, and launches tool overlays. The active view shows an
+ *  accent indicator bar. */
 export default function ActivityRail(p: Props) {
   return (
-    <nav className="activity-rail">
+    <nav className="activity-rail" aria-label="Views">
       <div className="rail-group">
         <Item
           title={`Explorer (${kbd("mod", "B")})`}
@@ -71,25 +79,33 @@ export default function ActivityRail(p: Props) {
         >
           <ExplorerRailIcon />
         </Item>
-        <Item
-          title="Query history"
-          active={p.view === "history" && !p.collapsed}
-          onClick={() => p.onView("history")}
-        >
+        <Item title="Query history" active={p.view === "history"} onClick={() => p.onView("history")}>
           <HistoryRailIcon />
         </Item>
-        <Item title="Server monitor" disabled={!p.connected} onClick={p.onMonitor}>
+        <Item title="Saved queries" active={p.view === "saved"} onClick={() => p.onView("saved")}>
+          <SavedRailIcon />
+        </Item>
+        <Item
+          title={p.monitorUnavailable ? `Server monitor — ${p.monitorUnavailable}` : "Server monitor"}
+          disabled={!p.connected || !!p.monitorUnavailable}
+          onClick={p.onMonitor}
+        >
           <MonitorRailIcon />
         </Item>
         <Item title="ER diagram" disabled={!p.connected} onClick={p.onDiagram}>
           <DiagramRailIcon />
         </Item>
+        {/* Not gated on `connected`: the log lives in the local store, and
+            reading what was run is most useful after the session is gone. */}
+        <Item title="Audit log" onClick={p.onAudit}>
+          <AuditRailIcon />
+        </Item>
         {/* Open with no session too: each page says what it needs, and a
             saved notebook can be read offline. */}
-        <Item title="Dashboards" active={p.page === "dashboards"} onClick={() => p.onPage?.("dashboards")}>
+        <Item title="Dashboards" active={p.view === "dashboards"} onClick={() => p.onPage?.("dashboards")}>
           <DashboardRailIcon />
         </Item>
-        <Item title="Notebooks" active={p.page === "notebooks"} onClick={() => p.onPage?.("notebooks")}>
+        <Item title="Notebooks" active={p.view === "notebooks"} onClick={() => p.onPage?.("notebooks")}>
           <NotebookRailIcon />
         </Item>
         {/* Deliberately not gated on `connected`: the whole point is analysing

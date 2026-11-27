@@ -1,4 +1,4 @@
-//! Backup and restore runs (schema v11): what `pg_dump` / `pg_restore` was
+//! Backup and restore runs (schema v12): what `pg_dump` / `pg_restore` was
 //! asked to do, where the file is, and how it ended. Never a password.
 
 use rusqlite::{params, OptionalExtension};
@@ -6,7 +6,7 @@ use rusqlite::{params, OptionalExtension};
 use crate::{Store, StoreError};
 
 /// `IF NOT EXISTS`, per the note above V5 in lib.rs.
-pub(crate) const MIGRATION_V11: &str = r#"
+pub(crate) const MIGRATION_V12: &str = r#"
 CREATE TABLE IF NOT EXISTS backups (
   id TEXT PRIMARY KEY,
   connection_id TEXT REFERENCES connections(id) ON DELETE SET NULL,
@@ -201,16 +201,16 @@ mod tests {
     }
 
     #[test]
-    fn upgrades_a_v10_database() {
+    fn upgrades_a_v11_database() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("v10.db");
+        let path = dir.path().join("v11.db");
         {
             let store = Store::open(&path).unwrap();
             store.setting_set("theme", &"light").unwrap();
             store
                 .conn
                 .execute_batch(
-                    "DROP TABLE backups; UPDATE meta SET value = '10' WHERE key = 'schema_version';",
+                    "DROP TABLE backups; UPDATE meta SET value = '11' WHERE key = 'schema_version';",
                 )
                 .unwrap();
         }

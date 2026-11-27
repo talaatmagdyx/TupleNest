@@ -10,6 +10,7 @@ import {
   type Role,
   type TablePrivileges,
 } from "../lib/roles";
+import { unsupported } from "../lib/engine";
 import { errText } from "../lib/text";
 import type { PageContext } from "./context";
 
@@ -29,19 +30,22 @@ export default function RolesPage(p: { ctx: PageContext }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [matrix, setMatrix] = useState<Matrix | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // PostgreSQL-only: what this engine lacks, said rather than tried.
+  const lacking = ctx.live ? unsupported(ctx.engine, "roles") : null;
+  const ready = ctx.live && lacking === null;
 
   useEffect(() => {
-    if (!ctx.pg) return;
+    if (!ready) return;
     invoke<Role[]>("pg_roles")
       .then((r) => {
         setRoles(r);
         setSelected((cur) => cur ?? r[0]?.name ?? null);
       })
       .catch((e: unknown) => setError(errText(e)));
-  }, [ctx.pg]);
+  }, [ready]);
 
   useEffect(() => {
-    if (!ctx.pg || !selected) return;
+    if (!ready || !selected) return;
     let live = true;
     invoke<Matrix>("pg_role_privileges", { role: selected, schema: null })
       .then((m) => live && setMatrix(m))
@@ -49,14 +53,14 @@ export default function RolesPage(p: { ctx: PageContext }) {
     return () => {
       live = false;
     };
-  }, [ctx.pg, selected]);
+  }, [ready, selected]);
 
-  if (!ctx.pg) {
+  if (!ready) {
     return (
       <section className="page" aria-label="Users and roles">
         <div className="page-empty">
           <div className="big">Users and roles</div>
-          <p>Connect to a PostgreSQL database to see its roles and what each may do.</p>
+          <p>{lacking ?? "Connect to a PostgreSQL database to see its roles and what each may do."}</p>
         </div>
       </section>
     );

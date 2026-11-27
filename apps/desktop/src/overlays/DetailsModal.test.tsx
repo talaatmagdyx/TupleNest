@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import DetailsModal, { type ObjectDetails } from "./DetailsModal";
+import type { TableStructure } from "../lib/structure";
 
 const details: ObjectDetails = {
   title: "messages",
@@ -90,5 +91,112 @@ describe("DetailsModal", () => {
     render(<DetailsModal {...base} onClose={onClose} />);
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("has no tabs for an object without columns", () => {
+    render(<DetailsModal {...base} />);
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Query this table" })).not.toBeInTheDocument();
+  });
+});
+
+describe("DetailsModal — structure", () => {
+  const structure: TableStructure = {
+    columns: [
+      { name: "id", dbType: "int8", nullable: false, primaryKey: true, comment: null },
+      { name: "customer_id", dbType: "int8", nullable: true, primaryKey: false, comment: "who ordered" },
+      { name: "total", dbType: "numeric", nullable: true, primaryKey: false, comment: null, generated: true },
+    ],
+    indexes: [
+      { name: "orders_pkey", definition: "USING btree (id)", isUnique: true, isPrimary: true, bytes: 1, scans: 12, isValid: true },
+      { name: "orders_ref", definition: "USING btree (ref)", isUnique: true, isPrimary: false, bytes: 1, scans: 0, isValid: false },
+      { name: "orders_cust", definition: "USING btree (customer_id)", isUnique: false, isPrimary: false, bytes: 1, scans: 3, isValid: true },
+    ],
+    constraints: [
+      { name: "orders_customer_fk", kind: "foreign key", definition: "FOREIGN KEY (customer_id) REFERENCES customers(id)", isValid: true },
+      { name: "orders_odd_fk", kind: "foreign key", definition: null, isValid: true },
+      { name: "orders_total_check", kind: "check", definition: "CHECK (total > 0)", isValid: true },
+    ],
+  };
+  const tabbed = { ...base, structure };
+  const openStructure = () => userEvent.click(screen.getByRole("tab", { name: "Structure" }));
+
+  it("opens on the details, with a tab for the structure", () => {
+    render(<DetailsModal {...tabbed} />);
+    expect(screen.getByRole("tab", { name: "Details" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("Storage");
+  });
+
+  it("tabulates the columns with their key tags", async () => {
+    render(<DetailsModal {...tabbed} />);
+    await openStructure();
+    expect(screen.getByRole("tab", { name: "Structure" })).toHaveAttribute("aria-selected", "true");
+    const row = (name: string) => screen.getByRole("cell", { name }).closest("tr") as HTMLElement;
+    expect(within(row("id")).getByText("primary key")).toBeInTheDocument();
+    expect(within(row("customer_id")).getByText("foreign key")).toBeInTheDocument();
+    expect(within(row("customer_id")).getByText("who ordered")).toBeInTheDocument();
+    expect(within(row("total")).getByText("generated")).toBeInTheDocument();
+    expect(within(row("id")).getByText("no")).toBeInTheDocument();
+  });
+
+  it("lists the indexes and the relations beside the columns", async () => {
+    render(<DetailsModal {...tabbed} />);
+    await openStructure();
+    const side = screen.getByRole("complementary", { name: "Indexes and relations" });
+    expect(within(side).getByText("primary · 12 scans")).toBeInTheDocument();
+    expect(within(side).getByText("unique · 0 scans · invalid")).toBeInTheDocument();
+    expect(within(side).getByText("3 scans")).toBeInTheDocument();
+    expect(within(side).getByText("customers.id")).toBeInTheDocument();
+    // A foreign key whose definition could not be read is still named.
+    expect(within(side).getByText("orders_odd_fk")).toBeInTheDocument();
+  });
+
+  it("leaves out scan counts an engine does not keep (SQLite)", async () => {
+    const sqlite: TableStructure = {
+      ...structure,
+      indexes: [{ ...structure.indexes[1], isValid: true, scans: null }],
+    };
+    render(<DetailsModal {...base} structure={sqlite} />);
+    await openStructure();
+    const side = screen.getByRole("complementary", { name: "Indexes and relations" });
+    expect(within(side).getByText("unique")).toBeInTheDocument();
+    expect(within(side).queryByText(/scans/)).not.toBeInTheDocument();
+  });
+
+  it("switches tabs with the arrow keys", async () => {
+    render(<DetailsModal {...tabbed} />);
+    screen.getByRole("tab", { name: "Details" }).focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tab", { name: "Structure" })).toHaveAttribute("aria-selected", "true");
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("tab", { name: "Details" })).toHaveAttribute("aria-selected", "true");
+    await userEvent.keyboard("{Home}");
+    expect(screen.getByRole("tab", { name: "Details" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("says loading while the structure is on its way", async () => {
+    render(<DetailsModal {...base} structure={null} />);
+    await openStructure();
+    expect(screen.getByText("loading…")).toBeInTheDocument();
+  });
+
+  it("says so when nothing could be read", async () => {
+    render(<DetailsModal {...base} structure={{ columns: [], indexes: [], constraints: [] }} />);
+    await openStructure();
+    expect(screen.getByText("No columns could be read.")).toBeInTheDocument();
+    expect(screen.getByText("None.")).toBeInTheDocument();
+    expect(screen.getByText("No foreign keys.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show in ER diagram" })).not.toBeInTheDocument();
+  });
+
+  it("queries the table and opens the diagram", async () => {
+    const onQuery = vi.fn();
+    const onDiagram = vi.fn();
+    render(<DetailsModal {...tabbed} onQuery={onQuery} onDiagram={onDiagram} />);
+    await userEvent.click(screen.getByRole("button", { name: "Query this table" }));
+    expect(onQuery).toHaveBeenCalled();
+    await openStructure();
+    await userEvent.click(screen.getByRole("button", { name: "Show in ER diagram" }));
+    expect(onDiagram).toHaveBeenCalled();
   });
 });

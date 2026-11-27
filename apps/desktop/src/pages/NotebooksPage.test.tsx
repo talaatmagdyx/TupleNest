@@ -9,11 +9,12 @@ import type { Notebook } from "../lib/notebook";
 
 const invokeMock = vi.mocked(invoke);
 
-const PROFILE = { id: "p1", name: "orders-prod", driver: "postgres" } as ConnectionRecord;
-const OTHER = { id: "p2", name: "analytics", driver: "postgres" } as ConnectionRecord;
+const PROFILE = { id: "p1", name: "orders-prod", engine: "postgres" } as ConnectionRecord;
+const OTHER = { id: "p2", name: "analytics", engine: "postgres" } as ConnectionRecord;
 
 const ctx = (over: Partial<PageContext> = {}): PageContext => ({
-  pg: true,
+  live: true,
+  engine: "postgres",
   env: "dev",
   liveProfile: PROFILE,
   saved: [PROFILE, OTHER],
@@ -135,9 +136,9 @@ describe("NotebooksPage", () => {
     expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
   });
 
-  it("does not run without PostgreSQL", async () => {
-    await openSaved(ctx({ pg: false, liveProfile: null }));
-    expect(screen.getByText("Connect to a PostgreSQL database to run cells.")).toBeInTheDocument();
+  it("does not run without a session", async () => {
+    await openSaved(ctx({ live: false, liveProfile: null }));
+    expect(screen.getByText("Connect to a database to run cells.")).toBeInTheDocument();
   });
 
   it("builds a new notebook of text, SQL and chart cells", async () => {

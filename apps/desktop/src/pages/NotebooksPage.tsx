@@ -104,7 +104,7 @@ export default function NotebooksPage(p: { ctx: PageContext }) {
   };
 
   const owner = nb?.connectionId ? ctx.saved.find((c) => c.id === nb.connectionId) : undefined;
-  const canRun = !!nb && ctx.pg && (!nb.connectionId || nb.connectionId === ctx.liveProfile?.id);
+  const canRun = !!nb && ctx.live && (!nb.connectionId || nb.connectionId === ctx.liveProfile?.id);
 
   const run = async (cell: Extract<Cell, { kind: "sql" }>, confirmed = false) => {
     if (!confirmed && guardReason(cell.sql, ctx.env)) {
@@ -221,7 +221,7 @@ export default function NotebooksPage(p: { ctx: PageContext }) {
             </label>
             {!canRun && (
               <span className="page-sub" role="status">
-                {ctx.pg ? `Connect to ${owner?.name ?? "that connection"} to run cells.` : "Connect to a PostgreSQL database to run cells."}
+                {ctx.live ? `Connect to ${owner?.name ?? "that connection"} to run cells.` : "Connect to a database to run cells."}
               </span>
             )}
           </div>

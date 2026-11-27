@@ -27,6 +27,25 @@ From a second audit, which re-tested every fix in 0.1.1-beta.12 rather than
 trusting it.
 
 ### Added
+- SQLite as a second engine. The connection form now starts with an engine
+  picker (PostgreSQL and SQLite; MySQL/MariaDB, SQL Server, MongoDB and Redis
+  shown as coming, not selectable). A SQLite profile is a file path, typed
+  or chosen with the system file panel, optionally created on connect; it
+  has no password, TLS or SSH. The same safety model applies: environment
+  tags, the destructive-statement guard (which now also reads SQLite's
+  `[name]` and `` `name` `` quoting), the production audit log, and
+  read-only enforced by SQLite itself (read-only open, `query_only` set
+  before every statement, writing statements refused, so `ATTACH`, pragmas
+  and `VACUUM INTO` cannot get around it). Rows stream under the same
+  20,000-row cap; cancel interrupts the statement; errors show SQLite's
+  extended result code. The explorer, search, ER diagram and row editing
+  (by `INTEGER PRIMARY KEY`, declared key, or rowid) work; EXPLAIN shows
+  `EXPLAIN QUERY PLAN` rows. PostgreSQL-only panels (server monitor, health,
+  partitions, schema and plan compare, the plan view, CSV import) are hidden
+  or disabled with the reason. MCP serves SQLite profiles under the same
+  access levels, off by default. Store schema v9 adds `connections.engine`,
+  `postgres` for every existing profile. New crate:
+  `tuplenest-driver-sqlite`.
 - TupleNest as an MCP server, so AI tools (Claude Desktop, Claude Code,
   Cursor) can query saved connections through TupleNest's safety rules.
   `tuplenest-desktop mcp` serves MCP on stdio, with no window. Every

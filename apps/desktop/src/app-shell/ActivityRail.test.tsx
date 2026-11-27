@@ -10,6 +10,7 @@ const base = {
   onView: vi.fn(),
   onMonitor: vi.fn(),
   onDiagram: vi.fn(),
+  onAudit: vi.fn(),
   onPastePlan: vi.fn(),
   onSettings: vi.fn(),
 };
@@ -26,6 +27,31 @@ describe("ActivityRail", () => {
   it("marks history when that is the view", () => {
     render(<ActivityRail {...base} view="history" />);
     expect(btn(/Query history/)).toHaveClass("on");
+  });
+
+  it("marks saved queries when that page is showing, and says so to a screen reader", () => {
+    render(<ActivityRail {...base} view="saved" />);
+    expect(btn(/Saved queries/)).toHaveClass("on");
+    expect(btn(/Saved queries/)).toHaveAttribute("aria-current", "page");
+    expect(btn(/Explorer/)).not.toHaveAttribute("aria-current");
+  });
+
+  it("keeps a page marked while the sidebar is collapsed", () => {
+    // The pages live in the main area; the sidebar has nothing to do with them.
+    render(<ActivityRail {...base} view="history" collapsed />);
+    expect(btn(/Query history/)).toHaveClass("on");
+  });
+
+  it("opens the saved page and the audit log", async () => {
+    const onView = vi.fn();
+    const onAudit = vi.fn();
+    render(<ActivityRail {...base} connected={false} onView={onView} onAudit={onAudit} />);
+    await userEvent.click(btn(/Saved queries/));
+    // The log is in the local store: readable with no session at all.
+    expect(btn(/Audit log/)).toBeEnabled();
+    await userEvent.click(btn(/Audit log/));
+    expect(onView).toHaveBeenCalledWith("saved");
+    expect(onAudit).toHaveBeenCalled();
   });
 
   it("shows no view as active while the sidebar is collapsed", () => {
@@ -83,7 +109,7 @@ describe("ActivityRail", () => {
     await userEvent.click(btn(/Notebooks/));
     expect(onPage.mock.calls).toEqual([["dashboards"], ["notebooks"]]);
     expect(btn(/Notebooks/)).not.toHaveClass("on");
-    rerender(<ActivityRail {...base} page="notebooks" onPage={onPage} />);
+    rerender(<ActivityRail {...base} view="notebooks" onPage={onPage} />);
     expect(btn(/Notebooks/)).toHaveClass("on");
     expect(btn(/Dashboards/)).not.toHaveClass("on");
   });

@@ -10,12 +10,13 @@ import type { ConnectionRecord } from "../ipc/types";
 const invokeMock = vi.mocked(invoke);
 const listenMock = vi.mocked(listen);
 
-const DEV = { id: "p1", name: "shop-dev", driver: "postgres", environment: "dev", database: "shop", host: "localhost" } as ConnectionRecord;
-const PROD = { id: "p2", name: "orders-prod", driver: "postgres", environment: "prod", database: "orders", host: "db.internal" } as ConnectionRecord;
-const LITE = { id: "p3", name: "local file", driver: "sqlite", environment: "dev", database: "x" } as ConnectionRecord;
+const DEV = { id: "p1", name: "shop-dev", engine: "postgres", environment: "dev", database: "shop", host: "localhost" } as ConnectionRecord;
+const PROD = { id: "p2", name: "orders-prod", engine: "postgres", environment: "prod", database: "orders", host: "db.internal" } as ConnectionRecord;
+const LITE = { id: "p3", name: "local file", engine: "sqlite", environment: "dev", database: "x" } as ConnectionRecord;
 
 const ctx = (over: Partial<PageContext> = {}): PageContext => ({
-  pg: true,
+  live: true,
+  engine: "postgres",
   env: "dev",
   liveProfile: DEV,
   saved: [DEV, PROD, LITE],

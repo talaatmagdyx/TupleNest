@@ -1,4 +1,4 @@
-//! SQL notebooks (schema v10): a document of cells — text, SQL, chart.
+//! SQL notebooks (schema v11): a document of cells — text, SQL, chart.
 //!
 //! The cells are one JSON document per notebook; the page owns their shape.
 //! The store holds it to three rules: it is an array of objects with a known
@@ -11,7 +11,7 @@ use rusqlite::{params, OptionalExtension};
 use crate::{Store, StoreError};
 
 /// `IF NOT EXISTS`, per the note above V5 in lib.rs.
-pub(crate) const MIGRATION_V10: &str = r#"
+pub(crate) const MIGRATION_V11: &str = r#"
 CREATE TABLE IF NOT EXISTS notebooks (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -226,16 +226,16 @@ mod tests {
     }
 
     #[test]
-    fn upgrades_a_v9_database() {
+    fn upgrades_a_v10_database() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("v9.db");
+        let path = dir.path().join("v10.db");
         {
             let store = Store::open(&path).unwrap();
             store.dashboard_save("d1", "Sales", None, 0).unwrap();
             store
                 .conn
                 .execute_batch(
-                    "DROP TABLE notebooks; UPDATE meta SET value = '9' WHERE key = 'schema_version';",
+                    "DROP TABLE notebooks; UPDATE meta SET value = '10' WHERE key = 'schema_version';",
                 )
                 .unwrap();
         }

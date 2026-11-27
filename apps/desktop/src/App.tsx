@@ -13,7 +13,6 @@ import Titlebar from "./app-shell/Titlebar";
 import StatusBar from "./app-shell/StatusBar";
 import ActivityRail, { type RailView } from "./app-shell/ActivityRail";
 import Welcome from "./app-shell/Welcome";
-import HistoryPanel from "./history/HistoryPanel";
 import SavedList from "./connections/SavedList";
 import ConnectionForm from "./connections/ConnectionForm";
 import ExplorerTree from "./explorer/ExplorerTree";
@@ -40,6 +39,9 @@ import { FILTERS, abortSave, baseName, beginSave, finishSave, saveText } from ".
 import { MAX_BARS, chartSubtitle, chartTitle, pickChartColumns } from "./lib/chart";
 import type { Pane as IntelPane } from "./overlays/IntelModal";
 import type { ObjectDetails } from "./overlays/DetailsModal";
+import { HAS_STRUCTURE, loadStructure, type TableStructure } from "./lib/structure";
+import HistoryPage from "./pages/HistoryPage";
+import SavedPage from "./pages/SavedPage";
 import { FIRST_TAB, useQueryTabs } from "./hooks/useQueryTabs";
 import { useSearch } from "./hooks/useSearch";
 import { useHealth } from "./hooks/useHealth";
@@ -59,6 +61,7 @@ import { useConnection } from "./hooks/useConnection";
 import { suggestName, useSnippets } from "./hooks/useSnippets";
 import type { HealthTab } from "./overlays/HealthModal";
 import { analyzeEditability, qualifiedName } from "./lib/dml";
+import { fileName, sessionKey, unsupported, type Engine, type Feature } from "./lib/engine";
 import type { SchemaExtra } from "./overlays/SchemaModal";
 import {
   AuditModal,
@@ -81,7 +84,7 @@ import { ParamPrompt } from "./overlays/Overlays";
 import {
   FirstRun,
   PageHost,
-  isPostgres,
+  isRegistryPage,
   pageCommands,
   type FirstRunRequest,
   type Page,
@@ -152,7 +155,7 @@ export default function App() {
     host, port, database, username, password, secretRef, tlsMode, tlsCaPath,
     sshEnabled, sshHost, sshPort, sshUser, sshKeyPath, sshFingerprint,
     sshPassphrase, sshPassphraseRef,
-    profileId, profileName, environment,
+    profileId, profileName, environment, engine,
   } = form;
 
   const [saved, setSaved] = useState<ConnectionRecord[]>([]);
@@ -161,6 +164,9 @@ export default function App() {
   // owns that rule.
   const session = useConnection();
   const { connected, connectedEnv, connectedTo, serverVersion, status, setStatus, stages, testing, testSummary } = session;
+  /** The live session's engine: what the explorer, the guard's dialect and
+   *  the PostgreSQL-only panels follow. */
+  const liveEngine: Engine = connected && connectedTo ? connectedTo.engine : engine;
   const [updateInfo, setUpdateInfo] = useState<{ version: string; notes: string } | null>(null);
   // Execution and its result state live in a hook; App keeps the overlays.
   const query = useQuery();
@@ -198,8 +204,6 @@ export default function App() {
   if (welcome && (connected || !pristine)) setWelcome(false);
   const showWelcome = welcome && !connected && pristine;
   const [overlay, setOverlay] = useState<OverlayKind>(null);
-  /** A page shown in place of the editor (dashboards, notebooks, …). */
-  const [page, setPage] = useState<Page | null>(null);
   /** What's new or the tour, asked for again from About. */
   const [firstRun, setFirstRun] = useState<FirstRunRequest>(null);
   const reopenFirstRun = (kind: NonNullable<FirstRunRequest>["kind"]) => {
@@ -222,7 +226,9 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(272);
   const sidebarDragRef = useRef<{ x: number; w: number } | null>(null);
-  const [railView, setRailView] = useState<RailView>("explorer");
+  /** What the main area shows: the editor ("explorer"), or a page in its
+   *  place — the rail's own (history, saved) or one from pages/registry. */
+  const [page, setPage] = useState<RailView | Page>("explorer");
   const [connMenu, setConnMenu] = useState(false);
   const [exportMenu, setExportMenu] = useState(false);
   // CSV export neutralizes spreadsheet formulas by default (security FILE-01).
@@ -246,6 +252,8 @@ export default function App() {
   const [schemaExtra, setSchemaExtra] = useState<SchemaExtra | null>(null);
   const [inspectCol, setInspectCol] = useState<string | undefined>(undefined);
   const [snippetName, setSnippetName] = useState("");
+  /** What the name prompt saves when it is not the editor's text. */
+  const [snippetBody, setSnippetBody] = useState<string | null>(null);
   const {
     explain,
     opts: explainOpts,
@@ -260,8 +268,11 @@ export default function App() {
   const [schemasError, setSchemasError] = useState<string | null>(null);
   const [details, setDetails] = useState<{
     schema: string;
+    name: string;
     data: ObjectDetails | null;
     error: string | null;
+    /** Undefined for kinds without columns; null while it loads. */
+    structure?: TableStructure | null;
   } | null>(null);
 
   // Health + global search
@@ -332,10 +343,8 @@ export default function App() {
     invoke<boolean | null>("settings_get", { key: "telemetry" })
       .then((v) => setTelemetry(!!v))
       .catch(() => {});
-    /* `refreshSaved` awaits the IPC call before it sets anything, so nothing
-       here is synchronous — the rule follows the setState inside it but not the
-       await in front of it. Loading on mount is what an effect is for. */
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // Loading on mount is what an effect is for: both await their IPC call
+    // before setting anything.
     void refreshSaved();
     void refreshSnippets();
   }, [refreshSaved, refreshSnippets]);
@@ -414,11 +423,11 @@ export default function App() {
     async (request: Record<string, unknown>): Promise<MetadataOut<unknown> | null> => {
       if (connected) return await invoke<MetadataOut<unknown>>("pg_metadata", { request });
       return await invoke<MetadataOut<unknown> | null>("pg_metadata_cached", {
-        params: { host, port, database, username, secretRef: null, tlsMode, tlsCaPath: null },
+        params: { engine, host, port, database, username, secretRef: null, tlsMode, tlsCaPath: null },
         request,
       });
     },
-    [connected, host, port, database, username, tlsMode]
+    [connected, engine, host, port, database, username, tlsMode]
   );
 
   /** The lazy schema tree. Declared after `metaFetch` because it takes it. */
@@ -481,8 +490,8 @@ export default function App() {
     }
     forgetSession(); // connecting replaces whatever session there was
     afterConnect();
-    showToast(`Connected — ${username}@${host}/${database}`);
-  }, [session, withSecret, environment, profileId, forgetSession, afterConnect, showToast, username, host, database]);
+    showToast(`Connected — ${engine === "sqlite" ? fileName(database) : `${username}@${host}/${database}`}`);
+  }, [session, withSecret, environment, profileId, forgetSession, afterConnect, showToast, engine, username, host, database]);
 
   const reallyDisconnect = useCallback(async () => {
     await session.disconnect();
@@ -526,6 +535,7 @@ export default function App() {
       // Cached metadata is keyed by the target, not the credentials.
       invoke<MetadataOut<string[]> | null>("pg_metadata_cached", {
         params: {
+          engine: c.engine,
           host: c.host,
           port: c.port,
           database: c.database,
@@ -561,6 +571,7 @@ export default function App() {
       const ssh = c.sshJson ? (JSON.parse(c.sshJson) as SshParams) : null;
       const out = await session.connect(
         {
+          engine: c.engine,
           host: c.host,
           port: c.port,
           database: c.database,
@@ -599,7 +610,10 @@ export default function App() {
       const rec = await invoke<ConnectionRecord>("connection_save", {
         input: {
           id: profileId,
-          name: profileName || `${username || "user"}@${host}/${database}`,
+          engine,
+          name:
+            profileName ||
+            (engine === "sqlite" ? fileName(database) || "SQLite file" : `${username || "user"}@${host}/${database}`),
           environment,
           color: null,
           readOnly: form.readOnly,
@@ -633,7 +647,7 @@ export default function App() {
       setStatus(`Save error: ${errText(e)}`);
       return null;
     }
-  }, [profileId, profileName, environment, host, port, database, username, password, secretRef, sshPassphrase, sshPassphraseRef, tlsMode, tlsCaPath, form, refreshSaved, setStatus]);
+  }, [profileId, engine, profileName, environment, host, port, database, username, password, secretRef, sshPassphrase, sshPassphraseRef, tlsMode, tlsCaPath, form, refreshSaved, setStatus]);
 
   const saveAndConnect = useCallback(async () => {
     const rec = await doSaveProfile();
@@ -649,6 +663,8 @@ export default function App() {
   }, []);
 
   const newProfile = useCallback(() => {
+    // A new connection starts on PostgreSQL; the picker is at the top.
+    form.chooseEngine("postgres");
     form.set("profileId", null);
     form.set("profileName", "");
     form.set("secretRef", null);
@@ -710,18 +726,27 @@ export default function App() {
    *  is just a stale number wearing a confident face. */
   const showDetails = useCallback(
     async (schema: string, name: string, kind: string) => {
-      setDetails({ schema, data: null, error: null });
+      const tabular = HAS_STRUCTURE.has(kind);
+      setDetails({ schema, name, data: null, error: null, structure: tabular ? null : undefined });
       setOverlay("details");
+      // Only the answer for the object still on screen is kept: a slow read
+      // for the last table must not fill in the next one's dialog.
+      const mine = (d: { schema: string; name: string }) => d.schema === schema && d.name === name;
+      if (tabular) {
+        void loadStructure(metaFetch, schema, name).then((s) =>
+          setDetails((d) => (d && mine(d) ? { ...d, structure: s } : d)),
+        );
+      }
       try {
         const r = await invoke<MetadataOut<ObjectDetails>>("pg_metadata", {
           request: { kind: "object_details", schema, name, objectKind: kind },
         });
-        setDetails({ schema, data: r.payload, error: null });
+        setDetails((d) => (d && mine(d) ? { ...d, data: r.payload, error: null } : d));
       } catch (e) {
-        setDetails({ schema, data: null, error: String(e) });
+        setDetails((d) => (d && mine(d) ? { ...d, data: null, error: String(e) } : d));
       }
     },
-    []
+    [metaFetch]
   );
 
   /** Open the health report on a tab. The fetching and caching live in the
@@ -774,8 +799,8 @@ export default function App() {
     for (const [schema, objs] of Object.entries(objects)) {
       for (const o of objs) tables.push({ schema, name: o.name, kind: o.kind });
     }
-    return { schemas, tables, columns, searchPath };
-  }, [schemas, objects, columns, searchPath]);
+    return { schemas, tables, columns, searchPath, engine: liveEngine };
+  }, [schemas, objects, columns, searchPath, liveEngine]);
 
   /** Load object lists / column lists the editor needs but the explorer
    *  hasn't lazily opened yet. Guarded so each key is fetched once. */
@@ -843,18 +868,27 @@ export default function App() {
       showToast("Nothing to save");
       return;
     }
+    setSnippetBody(null);
     setSnippetName(suggestName(body));
     setOverlay("snippetName");
   }, [tabs, activeTab, showToast]);
 
+  /** The same prompt for a statement that is not in the editor — one picked
+   *  on the history page. Callers only offer it for a statement with text. */
+  const saveSnippetFrom = useCallback((body: string) => {
+    setSnippetBody(body);
+    setSnippetName(suggestName(body));
+    setOverlay("snippetName");
+  }, []);
+
   const commitSnippet = useCallback(async () => {
-    const body = tabs[activeTab]?.sql ?? "";
+    const body = snippetBody ?? tabs[activeTab]?.sql ?? "";
     const name = snippetName.trim();
     if (!name || !body.trim()) return;
     setOverlay(null);
     const out = await saveSnippetRecord({ name, body });
     showToast(out.ok ? `Saved snippet "${name}"` : out.message.slice(0, 70));
-  }, [tabs, activeTab, snippetName, showToast, saveSnippetRecord]);
+  }, [tabs, activeTab, snippetBody, snippetName, showToast, saveSnippetRecord]);
 
   /* ---------------- tabs ---------------- */
 
@@ -1160,6 +1194,14 @@ export default function App() {
         return;
       }
       const title = tabs[activeTab]?.name ?? "query";
+      // SQLite has no plan JSON to draw: its plan is EXPLAIN QUERY PLAN's
+      // rows, shown in the grid like any result. Never run, only planned.
+      if (connected && liveEngine === "sqlite") {
+        const sql = (tabs[activeTab]?.sql ?? "").trim().replace(/;\s*$/, "");
+        if (!sql) return;
+        await doRun(false, undefined, `EXPLAIN QUERY PLAN ${sql}`);
+        return;
+      }
       const out = await runExplainRaw({
         sql: tabs[activeTab]?.sql ?? "",
         title,
@@ -1184,7 +1226,7 @@ export default function App() {
         );
       }
     },
-    [tabs, activeTab, connected, connectedEnv, runExplainRaw, catalog, showToast],
+    [tabs, activeTab, connected, connectedEnv, liveEngine, doRun, runExplainRaw, catalog, showToast],
   );
 
   /** Everything the exporters need from the current plan. */
@@ -1403,16 +1445,20 @@ export default function App() {
     };
   }, []);
 
-  // Clicking the active rail view collapses the sidebar; another view expands.
+  // Explorer: clicking it while it shows collapses the sidebar, otherwise it
+  // brings the editor and the sidebar back. A page: clicking it opens it, and
+  // clicking it again goes back to the editor.
   const handleRailView = useCallback(
     (v: RailView) => {
-      if (v === railView && !sidebarCollapsed) setSidebarCollapsed(true);
-      else {
-        setRailView(v);
-        setSidebarCollapsed(false);
-      }
+      if (v === "explorer") {
+        if (page === "explorer" && !sidebarCollapsed) setSidebarCollapsed(true);
+        else {
+          setPage("explorer");
+          setSidebarCollapsed(false);
+        }
+      } else setPage(page === v ? "explorer" : v);
     },
-    [railView, sidebarCollapsed]
+    [page, sidebarCollapsed]
   );
 
   useEffect(() => {
@@ -1491,7 +1537,8 @@ export default function App() {
             // run, and it closed the import while its inserts carried on with
             // no progress and no Cancel button.
             if (!writingRef.current) setOverlay(null);
-          } else if (running) void doCancel();
+          } else if (page !== "explorer") setPage("explorer");
+          else if (running) void doCancel();
           else {
             setConnMenu(false);
             setExportMenu(false);
@@ -1501,7 +1548,7 @@ export default function App() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [doRun, newTab, overlay, running, doCancel, showToast, doFormat, applyTheme, theme, connected, search]);
+  }, [doRun, newTab, overlay, page, running, doCancel, showToast, doFormat, applyTheme, theme, connected, search]);
 
   /**
    * Everything the palette can do.
@@ -1514,6 +1561,9 @@ export default function App() {
    * second to draw a list nobody had opened.
    */
   const paletteItems = useMemo<PaletteItem[]>(() => {
+    // A PostgreSQL-only command is not offered on a session of another
+    // engine: it would open a panel that can only fail.
+    const lacks = (f: Feature) => connected && unsupported(liveEngine, f) !== null;
     const items: PaletteItem[] = [
       { icon: "▶", label: "Run query", type: "Action", kbd: kbd("mod", "enter"), exec: () => doRun() },
       { icon: "⧉", label: "Format SQL", type: "Action", kbd: kbd("mod", "shift", "F"), exec: doFormat },
@@ -1525,10 +1575,12 @@ export default function App() {
       { icon: "📋", label: "Analyze a pasted plan…", type: "Action", exec: () => setOverlay("pastePlan") },
       { icon: "＋", label: "New connection…", type: "Action", exec: newProfile },
       { icon: "⌥", label: "Show EXPLAIN plan", type: "Action", exec: () => runExplain() },
-      { icon: "⤓", label: "Import CSV…", type: "Action", exec: () => setOverlay("import") },
+      ...(lacks("csvImport") ? [] : [{ icon: "⤓", label: "Import CSV…", type: "Action", exec: () => setOverlay("import") } as PaletteItem]),
       { icon: "⌕", label: "Find usages & rename…", type: "Action", exec: () => openIntel("usages") },
-      { icon: "⇄", label: "Compare schemas…", type: "Action", exec: () => openIntel("diff") },
-      { icon: "◫", label: "Compare EXPLAIN plans…", type: "Action", exec: () => openIntel("plans") },
+      ...(lacks("schemaCompare") ? [] : [{ icon: "⇄", label: "Compare schemas…", type: "Action", exec: () => openIntel("diff") } as PaletteItem]),
+      ...(lacks("planCompare") ? [] : [{ icon: "◫", label: "Compare EXPLAIN plans…", type: "Action", exec: () => openIntel("plans") } as PaletteItem]),
+      { icon: "↺", label: "Show query history", type: "Action", exec: () => setPage("history") },
+      { icon: "★", label: "Show saved queries", type: "Action", exec: () => setPage("saved") },
       { icon: "⚙", label: "Open settings", type: "Action", exec: () => setOverlay("settings") },
       { icon: "◈", label: "About TupleNest", type: "Action", exec: () => setOverlay("about") },
     ];
@@ -1539,10 +1591,10 @@ export default function App() {
       ? []
       : [
           { icon: "⌕", label: "Find anything (all schemas)…", type: "Action", kbd: kbd("mod", "P"), exec: () => setOverlay("search") },
-          { icon: "◱", label: "Index health (unused & recoverable)…", type: "Action", exec: () => loadHealth("indexes") },
-          { icon: "☰", label: "Vacuum & bloat…", type: "Action", exec: () => loadHealth("tables") },
-          { icon: "⏱", label: "Top queries…", type: "Action", exec: () => loadHealth("queries") },
-          { icon: "📊", label: "Server monitor (sessions & locks)", type: "Action", exec: () => setOverlay("monitor") },
+          ...(lacks("health") ? [] : [{ icon: "◱", label: "Index health (unused & recoverable)…", type: "Action", exec: () => loadHealth("indexes") } as PaletteItem]),
+          ...(lacks("health") ? [] : [{ icon: "☰", label: "Vacuum & bloat…", type: "Action", exec: () => loadHealth("tables") } as PaletteItem]),
+          ...(lacks("health") ? [] : [{ icon: "⏱", label: "Top queries…", type: "Action", exec: () => loadHealth("queries") } as PaletteItem]),
+          ...(lacks("monitor") ? [] : [{ icon: "📊", label: "Server monitor (sessions & locks)", type: "Action", exec: () => setOverlay("monitor") } as PaletteItem]),
           { icon: "◫", label: "ER diagram (relationships)", type: "Action", exec: () => setOverlay("diagram") },
           // The log only records statements run against prod.
           ...(connectedEnv === "prod"
@@ -1601,8 +1653,8 @@ export default function App() {
         exec: () => setActiveSql(h.sqlText),
       }));
 
-    return [...items, ...pageCommands(setPage), ...live, ...connections, ...catalogItems, ...snippetItems, ...recent];
-  }, [doRun, doFormat, saveSnippet, newTab, applyTheme, theme, newProfile, runExplain, openIntel, connected, connectedEnv, inTx, doDisconnect, doBegin, doCommit, doRollback, saved, selectProfile, objects, insertSelect, describeObject, snippets, historyItems, setActiveSql, showToast, loadHealth]);
+    return [...items, ...pageCommands(setPage, lacks), ...live, ...connections, ...catalogItems, ...snippetItems, ...recent];
+  }, [doRun, doFormat, saveSnippet, newTab, applyTheme, theme, newProfile, runExplain, openIntel, connected, connectedEnv, liveEngine, inTx, doDisconnect, doBegin, doCommit, doRollback, saved, selectProfile, objects, insertSelect, describeObject, snippets, historyItems, setActiveSql, showToast, loadHealth]);
 
   /* ---------------- render ---------------- */
 
@@ -1617,9 +1669,14 @@ export default function App() {
   const livePort = connected && connectedTo ? connectedTo.port : port;
   const liveTls = connected && connectedTo ? connectedTo.tlsMode : tlsMode;
   const liveProfile = saved.find((c) => c.id === liveId) ?? null;
+  // A SQLite session is named by its file; there is no user or host.
+  const liveFile = liveEngine === "sqlite" ? (connected && connectedTo ? connectedTo.database : database) : null;
+  const liveLabel = liveFile !== null ? fileName(liveFile) : `${liveUser || "?"}@${liveHost}`;
+  const liveTarget = liveFile !== null ? liveFile : liveHost ? `${liveUser || "?"}@${liveHost}:${livePort}` : "";
   const pageCtx = useMemo<PageContext>(
     () => ({
-      pg: connected && isPostgres(liveProfile),
+      live: connected,
+      engine: liveEngine,
       env: connected ? connectedEnv : null,
       liveProfile: connected ? liveProfile : null,
       saved,
@@ -1627,7 +1684,7 @@ export default function App() {
       currentSql,
       toast: showToast,
     }),
-    [connected, connectedEnv, liveProfile, saved, snippets, currentSql, showToast],
+    [connected, liveEngine, connectedEnv, liveProfile, saved, snippets, currentSql, showToast],
   );
   // HUD design: two-state label — live when connected, cached otherwise.
   const explorerSource: "live" | "cached" | "—" =
@@ -1662,6 +1719,22 @@ export default function App() {
     };
   }, []);
 
+  /** "Check for updates" in About. Unlike the quiet check at start-up, this
+   *  one was asked for, so it always says what it found. */
+  const checkForUpdates = useCallback(async () => {
+    try {
+      const up = await check();
+      if (!up || !meetsUpdateFloor(up.version)) {
+        showToast("TupleNest is up to date");
+        return;
+      }
+      pendingUpdate.current = up;
+      setUpdateInfo({ version: up.version, notes: up.body ?? "" });
+    } catch (e) {
+      showToast(`Could not check for updates: ${errText(e).slice(0, 60)}`);
+    }
+  }, [showToast]);
+
   const installUpdate = useCallback(async () => {
     const up = pendingUpdate.current;
     if (!up) return;
@@ -1686,9 +1759,10 @@ export default function App() {
       <Titlebar
         theme={theme}
         connected={connected}
-        activeName={liveProfile?.name ?? (connected ? `${liveUser || "?"}@${liveHost}` : profileName || "No connection")}
-        activeUserHost={liveHost ? `${liveUser || "?"}@${liveHost}:${livePort}` : ""}
+        activeName={liveProfile?.name ?? (connected ? liveLabel : profileName || "No connection")}
+        activeUserHost={liveTarget}
         activeEnv={connected ? (connectedEnv ?? "dev") : environment}
+        activeEngine={liveEngine}
         saved={saved}
         activeId={liveId}
         connMenu={connMenu}
@@ -1714,75 +1788,52 @@ export default function App() {
       )}
       <div className="body">
         <ActivityRail
-          view={railView}
+          view={page}
           collapsed={sidebarCollapsed}
           connected={connected}
           onView={handleRailView}
           onMonitor={() => setOverlay("monitor")}
+          monitorUnavailable={connected ? unsupported(liveEngine, "monitor") : null}
           onPastePlan={() => setOverlay("pastePlan")}
           onDiagram={() => setOverlay("diagram")}
+          onAudit={() => setOverlay("audit")}
           onSettings={() => setOverlay("settings")}
-          page={page}
-          onPage={(next) => setPage((cur) => (cur === next ? null : next))}
+          onPage={(next) => setPage((cur) => (cur === next ? "explorer" : next))}
         />
         <aside
           className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}
           style={{ width: sidebarCollapsed ? 0 : sidebarWidth }}
         >
-          {railView === "explorer" ? (
-            <>
-              <SavedList
-                saved={saved}
-                activeId={liveId}
-                connected={connected}
-                onLoad={editProfile}
-                onNew={newProfile}
-                onDelete={doDeleteProfile}
-              />
-              <div className="side-sep" />
-              <ExplorerTree
-                schemas={schemas}
-                loadError={schemasError}
-                onRetry={afterConnect}
-                metaCached={metaCached}
-                connected={connected}
-                open={openNodes}
-                onToggle={toggleNode}
-                objects={objects}
-                columns={columns}
-                indexes={indexes}
-                constraints={constraints}
-                partitions={partitions}
-                types={types}
-                routines={routines}
-                onInsertSelect={insertSelect}
-                onDescribe={describeObject}
-                onDetails={showDetails}
-                onPartitions={showPartitions}
-                onConnect={saved.length ? () => setConnMenu(true) : newProfile}
-              />
-            </>
-          ) : (
-            <>
-              <div className="side-head">
-                <span className="label">History</span>
-              </div>
-              <HistoryPanel
-                items={historyItems}
-                search={historySearch}
-                onSearch={setHistorySearch}
-                onClear={async () => {
-                  await clearHistory();
-                  showToast("Cleared history — favorites kept");
-                }}
-                onToggleFavorite={(h) => toggleHistoryFavorite(h.id, !h.favorite)}
-                onLoad={(sql) => {
-                  setActiveSql(sql);
-                  showToast("Loaded into editor");
-                }}
-              />
-            </>
-          )}
+          <SavedList
+            saved={saved}
+            activeId={liveId}
+            connected={connected}
+            onLoad={editProfile}
+            onNew={newProfile}
+            onDelete={doDeleteProfile}
+          />
+          <div className="side-sep" />
+          <ExplorerTree
+            schemas={schemas}
+            loadError={schemasError}
+            onRetry={afterConnect}
+            metaCached={metaCached}
+            connected={connected}
+            open={openNodes}
+            onToggle={toggleNode}
+            objects={objects}
+            columns={columns}
+            indexes={indexes}
+            constraints={constraints}
+            partitions={partitions}
+            types={types}
+            routines={routines}
+            onInsertSelect={insertSelect}
+            onDescribe={describeObject}
+            onDetails={showDetails}
+            onPartitions={showPartitions}
+            onConnect={saved.length ? () => setConnMenu(true) : newProfile}
+          />
         </aside>
         {!sidebarCollapsed && (
           <div
@@ -1794,8 +1845,10 @@ export default function App() {
             }}
           />
         )}
-        {page && <PageHost page={page} ctx={pageCtx} onClose={() => setPage(null)} />}
-        <main className="main-col" hidden={page !== null}>
+        {isRegistryPage(page) && <PageHost page={page} ctx={pageCtx} onClose={() => setPage("explorer")} />}
+        {/* Hidden rather than unmounted while a page is up: the editor keeps
+            its scroll, selection and undo history for the way back. */}
+        <main className="main-col" hidden={page !== "explorer"}>
           <TabsBar
             tabs={tabs}
             active={activeTab}
@@ -1905,6 +1958,41 @@ export default function App() {
             />
           )}
         </main>
+        {page === "history" && (
+          <HistoryPage
+            items={historyItems}
+            search={historySearch}
+            onSearch={setHistorySearch}
+            connectionKey={connected && connectedTo ? sessionKey(connectedTo) : null}
+            onClear={async () => {
+              await clearHistory();
+              showToast("Cleared history — favorites kept");
+            }}
+            onToggleFavorite={(h) => toggleHistoryFavorite(h.id, !h.favorite)}
+            onOpen={(sql) => {
+              setActiveSql(sql);
+              setPage("explorer");
+              showToast("Loaded into editor");
+            }}
+            onSave={saveSnippetFrom}
+            onClose={() => setPage("explorer")}
+          />
+        )}
+        {page === "saved" && (
+          <SavedPage
+            items={snippets}
+            onOpen={(sn) => {
+              setActiveSql(sn.body);
+              setPage("explorer");
+              showToast(`Inserted snippet "${sn.name}"`);
+            }}
+            onNew={() => {
+              newTab();
+              setPage("explorer");
+            }}
+            onClose={() => setPage("explorer")}
+          />
+        )}
         {assistantOpen && (
           <AssistantPanel
             sql={currentSql}
@@ -1925,7 +2013,7 @@ export default function App() {
       <StatusBar
         connected={connected}
         isProd={isProd}
-        connName={liveProfile?.name ?? `${liveUser || "?"}@${liveHost}`}
+        connName={liveProfile?.name ?? liveLabel}
         tlsMode={liveTls}
         explorerSource={explorerSource}
         rowsInfo={result && result.columns.length > 0 ? rowsInfo : ""}
@@ -1979,13 +2067,34 @@ export default function App() {
           onIdx={setPaletteIdx}
           onPick={(it) => {
             setOverlay(null);
+            // Nearly everything here acts on the editor, so it comes back
+            // into view first; the page commands below set their page after.
+            setPage("explorer");
             void it.exec();
+          }}
+          onAsk={(text) => {
+            setAssistantOpen(true);
+            setAssistantReq((r) => ({ n: (r?.n ?? 0) + 1, action: "chat", sql: currentSql, draft: text }));
           }}
           onClose={() => setOverlay(null)}
         />
       )}
       {overlay === "connEditor" && (
         <ConnectionForm
+          engine={engine}
+          onEngine={form.chooseEngine}
+          createFile={form.createFile}
+          onCreateFile={(v) => form.set("createFile", v)}
+          onChooseFile={async () => {
+            try {
+              // The native panel runs in the backend; only the chosen path
+              // comes back. A new file is picked with the save panel.
+              const path = await invoke<string | null>("sqlite_choose_file", { create: form.createFile });
+              if (path) form.set("database", path);
+            } catch (e) {
+              setStatus(`Could not open the file chooser: ${errText(e)}`);
+            }
+          }}
           isEdit={profileId !== null}
           profileName={profileName}
           environment={environment}
@@ -2077,6 +2186,17 @@ export default function App() {
           schema={details.schema}
           details={details.data}
           error={details.error}
+          structure={details.structure}
+          onQuery={
+            details.structure !== undefined
+              ? () => {
+                  insertSelect(details.schema, details.name);
+                  setPage("explorer");
+                  setOverlay(null);
+                }
+              : undefined
+          }
+          onDiagram={connected ? () => setOverlay("diagram") : undefined}
           onClose={() => setOverlay(null)}
         />
       )}
@@ -2180,7 +2300,12 @@ export default function App() {
           telemetry={telemetry}
           onTheme={applyTheme}
           onTelemetry={applyTelemetry}
-          onAbout={() => setOverlay("about")}
+          section={settingsAssistant ? "assistant" : "general"}
+          version={info?.version ?? ""}
+          os={info?.os ?? ""}
+          onCheckUpdates={checkForUpdates}
+          onNews={() => reopenFirstRun("news")}
+          onTour={() => reopenFirstRun("tour")}
           mcp={<McpSection />}
           onClose={() => {
             setSettingsAssistant(false);
@@ -2231,6 +2356,7 @@ export default function App() {
         <About
           version={info?.version ?? ""}
           os={info?.os ?? ""}
+          onCheckUpdates={checkForUpdates}
           onClose={() => setOverlay(null)}
           onNews={() => reopenFirstRun("news")}
           onTour={() => reopenFirstRun("tour")}

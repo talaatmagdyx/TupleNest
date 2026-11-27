@@ -8,11 +8,12 @@ import type { ConnectionRecord } from "../ipc/types";
 
 const invokeMock = vi.mocked(invoke);
 
-const PROFILE = { id: "p1", name: "orders-prod", driver: "postgres" } as ConnectionRecord;
-const OTHER = { id: "p2", name: "analytics", driver: "postgres" } as ConnectionRecord;
+const PROFILE = { id: "p1", name: "orders-prod", engine: "postgres" } as ConnectionRecord;
+const OTHER = { id: "p2", name: "analytics", engine: "postgres" } as ConnectionRecord;
 
 const ctx = (over: Partial<PageContext> = {}): PageContext => ({
-  pg: true,
+  live: true,
+  engine: "postgres",
   env: "dev",
   liveProfile: PROFILE,
   saved: [PROFILE, OTHER],
@@ -100,9 +101,9 @@ describe("DashboardsPage", () => {
     expect(screen.getByRole("button", { name: "Refresh now" })).toBeDisabled();
   });
 
-  it("does not run without a PostgreSQL session", async () => {
-    render(<DashboardsPage ctx={ctx({ pg: false, liveProfile: null })} />);
-    expect(await screen.findByText(/Connect to a PostgreSQL database/)).toBeInTheDocument();
+  it("does not run without a session", async () => {
+    render(<DashboardsPage ctx={ctx({ live: false, liveProfile: null })} />);
+    expect(await screen.findByText(/Connect to a database/)).toBeInTheDocument();
     expect(calls("pg_query_read")).toHaveLength(0);
   });
 

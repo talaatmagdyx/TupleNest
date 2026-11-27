@@ -1,0 +1,21 @@
+[package]
+name = "tuplenest-driver-sqlite"
+description = "SQLite driver: open a file, stream, interrupt, engine-enforced read-only"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+# The same bundled SQLite the app's own store links: one copy in the binary.
+# `column_decltype` is how declared column types reach the grid.
+rusqlite = { workspace = true, features = ["column_decltype"] }
+tuplenest-driver-api = { path = "../driver-api" }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true }

@@ -32,6 +32,12 @@ pub fn is_numeric_type(db_type: &str) -> bool {
             | "double precision"
             | "money"
             | "oid"
+            // SQLite's spellings (as declared; the grid shows them as is).
+            | "int"
+            | "tinyint"
+            | "mediumint"
+            | "double"
+            | "float"
     )
 }
 
@@ -415,6 +421,10 @@ mod tests {
         assert!(is_numeric_type("int8"));
         assert!(is_numeric_type("numeric(10,2)"));
         assert!(is_numeric_type("Double Precision"));
+        assert!(is_numeric_type("INTEGER"));
+        assert!(is_numeric_type("REAL"));
+        assert!(is_numeric_type("DOUBLE"));
+        assert!(!is_numeric_type("TEXT"));
         assert!(!is_numeric_type("interval"));
         assert!(!is_numeric_type("int4range"));
         assert!(!is_numeric_type("point"));

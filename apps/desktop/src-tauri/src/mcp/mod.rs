@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 
-use backend::PostgresConnector;
+use backend::DriverConnector;
 use server::McpServer;
 
 /// Protocol revisions this server speaks, newest first. A client asking for
@@ -47,8 +47,9 @@ const INVALID_PARAMS: i64 = -32602;
 pub const SUBCOMMAND: &str = "mcp";
 
 const INSTRUCTIONS: &str =
-    "TupleNest gives access to the user's saved PostgreSQL connections that \
-they turned on for AI tools. Call list_connections first. read_only connections accept only \
+    "TupleNest gives access to the user's saved database connections (PostgreSQL or \
+SQLite: see each one's `engine`) that they turned on for AI tools. Call list_connections first. \
+Write SQL for that engine: a SQLite connection's schemas are `main` and any attached databases. read_only connections accept only \
 statements that read. On read_write connections, destructive statements (no WHERE, DROP, \
 TRUNCATE, ALTER, …) are refused because no one can confirm them here. Statements on prod and \
 staging connections are recorded in TupleNest's audit log before they run.";
@@ -278,7 +279,7 @@ pub fn run_stdio() -> i32 {
     let server = McpServer::new(
         Arc::new(StdMutex::new(store)),
         Arc::new(tuplenest_credential_store::KeychainStore::new()),
-        Arc::new(PostgresConnector),
+        Arc::new(DriverConnector),
     );
     tracing::info!(
         component = "mcp",

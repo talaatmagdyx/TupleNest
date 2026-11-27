@@ -44,7 +44,9 @@ pub struct Target {
 
 impl Target {
     pub fn of(profile: &ConnectionRecord) -> Result<Self, String> {
-        if profile.driver != "postgres" {
+        if crate::engine::Engine::parse(Some(&profile.engine))
+            != Ok(crate::engine::Engine::Postgres)
+        {
             return Err("Backup and restore are available for PostgreSQL connections only.".into());
         }
         if crate::pg::saved_ssh(profile).is_some() {
@@ -751,7 +753,7 @@ mod tests {
         ConnectionRecord {
             id: "p1".into(),
             name: "orders-prod".into(),
-            driver: "postgres".into(),
+            engine: "postgres".into(),
             environment: Some("prod".into()),
             color: None,
             read_only: false,
@@ -898,7 +900,7 @@ mod tests {
         p.database = " ".into();
         assert!(Target::of(&p).is_err());
         let mut p = profile();
-        p.driver = "sqlite".into();
+        p.engine = "sqlite".into();
         assert!(Target::of(&p).unwrap_err().contains("PostgreSQL"));
         let mut p = profile();
         p.ssh_json = Some(

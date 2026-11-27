@@ -100,6 +100,17 @@ export const HistoryRailIcon = ({ size }: { size?: number }) => (
     <path d="M12 7v5l3 2" />
   </svg>
 );
+export const SavedRailIcon = ({ size }: { size?: number }) => (
+  <svg {...S({ size: size ?? 20 })}>
+    <path d="M6 3h12v18l-6-4-6 4z" />
+  </svg>
+);
+export const AuditRailIcon = ({ size }: { size?: number }) => (
+  <svg {...S({ size: size ?? 20 })}>
+    <path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z" />
+    <path d="M9 12l2 2 4-4" />
+  </svg>
+);
 export const MonitorRailIcon = ({ size }: { size?: number }) => (
   <svg {...S({ size: size ?? 20 })}>
     <path d="M3 12h4l2 6 4-14 2 8h6" />
