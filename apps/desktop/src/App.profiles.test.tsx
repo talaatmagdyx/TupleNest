@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -16,7 +16,7 @@ beforeEach(() => {
 const mount = async () => {
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByText(CONNECTION.name);
+  await screen.findAllByText(CONNECTION.name);
   return user;
 };
 
@@ -117,7 +117,7 @@ describe("App — deleting a profile", () => {
     const user = await mount();
     await user.click(screen.getByRole("button", { name: `Delete ${CONNECTION.name}` }));
     expect(be.sent("connection_delete")).toHaveLength(0);
-    expect(screen.getByText(CONNECTION.name)).toBeInTheDocument();
+    expect(within(document.querySelector(".conn-list") as HTMLElement).getByText(CONNECTION.name)).toBeInTheDocument();
   });
 
   it("names the connection in the question", async () => {
@@ -157,7 +157,7 @@ describe("App — deleting a profile", () => {
     });
     await user.click(screen.getByRole("button", { name: `Delete ${CONNECTION.name}` }));
     await waitFor(() => expect(be.sent("connection_delete")).toHaveLength(1));
-    expect(screen.getByText(CONNECTION.name)).toBeInTheDocument();
+    expect(within(document.querySelector(".conn-list") as HTMLElement).getByText(CONNECTION.name)).toBeInTheDocument();
   });
 });
 

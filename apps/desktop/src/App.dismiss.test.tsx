@@ -15,7 +15,7 @@ beforeEach(() => {
 const mount = async () => {
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByText(CONNECTION.name);
+  await screen.findAllByText(CONNECTION.name);
   return user;
 };
 
@@ -232,7 +232,7 @@ describe("App — the write guard", () => {
     await user.click(screen.getByRole("button", { name: /^Run/ }));
     await screen.findByText(/no WHERE clause/i);
     const modal = document.querySelector(".modal.dialog") as HTMLElement;
-    await user.click(within(modal).getByRole("button", { name: /^Cancel$/ }));
+    await user.click(within(modal).getByRole("button", { name: /^Don't run it$/ }));
     await waitFor(() => expect(document.querySelector(".modal")).not.toBeInTheDocument());
     expect(be.sent("pg_query")).toHaveLength(0);
   });

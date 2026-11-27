@@ -12,7 +12,7 @@ beforeEach(() => {
 const mount = async () => {
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByText(CONNECTION.name);
+  await screen.findAllByText(CONNECTION.name);
   return user;
 };
 
@@ -67,7 +67,11 @@ describe("App — the write guard", () => {
     await type(user, "delete from users");
     await user.click(screen.getByRole("button", { name: /^Run/ }));
     await screen.findByText(/no where clause/i);
-    await user.click(screen.getByRole("button", { name: /^Run anyway$/ }));
+    // Every row of a prod table: the name is typed back before it runs.
+    const run = screen.getByRole("button", { name: /^Run anyway$/ });
+    expect(run).toBeDisabled();
+    await user.type(screen.getByRole("textbox", { name: "Type users to confirm" }), "users");
+    await user.click(run);
     await waitFor(() => expect(be.sent("pg_query")).toHaveLength(1));
   });
 
@@ -76,8 +80,7 @@ describe("App — the write guard", () => {
     await type(user, "delete from users");
     await user.click(screen.getByRole("button", { name: /^Run/ }));
     const dialog = (await screen.findByText(/no where clause/i)).closest(".modal") as HTMLElement;
-    // The toolbar has a Cancel too — that one cancels a running query.
-    await user.click(within(dialog).getByRole("button", { name: /^Cancel$/ }));
+    await user.click(within(dialog).getByRole("button", { name: /^Don't run it$/ }));
     expect(be.sent("pg_query")).toHaveLength(0);
   });
 

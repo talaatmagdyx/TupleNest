@@ -13,6 +13,7 @@ import {
   needsGuard,
   dmlWithoutWhere,
   guardReason,
+  guardTarget,
   firstKeyword,
   paramCount,
   tokenizeLines,
@@ -820,3 +821,29 @@ describe("replaceMatch / replaceAllMatches", () => {
   });
 });
 
+
+describe("guardTarget — what has to be typed back on prod", () => {
+  it.each([
+    ["DELETE FROM orders", "DELETE", "orders"],
+    ["delete from orders where true", "DELETE", "orders"],
+    ["UPDATE ONLY public.users SET a = 1", "UPDATE", "public.users"],
+    ["/* nightly */ TRUNCATE events, audit_log", "TRUNCATE", "events, audit_log"],
+    ["DROP INDEX CONCURRENTLY IF EXISTS orders_created_idx", "DROP", "orders_created_idx"],
+    ['DROP TABLE "Order Lines"', "DROP", '"Order Lines"'],
+    ["explain (analyze) delete from t", "DELETE", "t"],
+  ])("%s", (sql, verb, name) => {
+    expect(guardTarget(sql, "prod")).toEqual({ verb, name });
+  });
+
+  it.each([
+    ["staging", "DELETE FROM orders", "staging"],
+    ["dev", "DELETE FROM orders", "dev"],
+    ["a bounded delete", "DELETE FROM orders WHERE id = 1", "prod"],
+    ["ALTER, which asks but is not a worst case", "ALTER TABLE t DROP COLUMN c", "prod"],
+    ["a plain EXPLAIN, which runs nothing", "EXPLAIN DELETE FROM t", "prod"],
+    ["an empty statement", "  -- nothing", "prod"],
+    ["a DROP with no name to read", "DROP TABLE ;", "prod"],
+  ])("is null for %s", (_label, sql, env) => {
+    expect(guardTarget(sql, env)).toBeNull();
+  });
+});

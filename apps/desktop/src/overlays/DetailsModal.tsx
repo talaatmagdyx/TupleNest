@@ -21,7 +21,7 @@ const KIND_COLOR: Record<string, string> = {
   view: "var(--tn-purple)",
   matview: "var(--tn-purple)",
   sequence: "var(--tn-success)",
-  index: "var(--tn-brand-a, #FFC24B)",
+  index: "var(--tn-warning)",
 };
 
 /** Values worth reading as code rather than prose. */

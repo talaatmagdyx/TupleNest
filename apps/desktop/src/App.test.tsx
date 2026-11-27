@@ -13,7 +13,7 @@ beforeEach(() => {
 const mount = async () => {
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByText(CONNECTION.name);
+  await screen.findAllByText(CONNECTION.name);
   return user;
 };
 
@@ -33,6 +33,45 @@ const connected = async () => {
   return user;
 };
 
+describe("App — the welcome screen", () => {
+  const welcome = () => screen.queryByRole("region", { name: "Connect to a database" });
+
+  it("fills the main area before the first connection", async () => {
+    await mount();
+    expect(welcome()).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /sql editor/i })).not.toBeInTheDocument();
+    // The saved profiles, as a way in.
+    expect(within(welcome()!).getByRole("button", { name: /local dev/ })).toBeInTheDocument();
+  });
+
+  it("opens a blank connection form from New connection", async () => {
+    const user = await mount();
+    await user.click(within(welcome()!).getByRole("button", { name: /^New connection/ }));
+    expect(await screen.findByRole("button", { name: /^Save & Connect$/ })).toBeInTheDocument();
+  });
+
+  it("opens a saved profile in the form from the list", async () => {
+    const user = await mount();
+    await user.click(within(welcome()!).getByRole("button", { name: /local dev/ }));
+    expect(await screen.findByDisplayValue(CONNECTION.name)).toBeInTheDocument();
+  });
+
+  it("gives way to the editor when the tab is picked", async () => {
+    const user = await mount();
+    await user.click(screen.getByRole("tab", { name: /untitled-1/ }));
+    expect(welcome()).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: /sql editor/i })).toBeInTheDocument();
+  });
+
+  it("is gone once connected, and stays gone after a disconnect", async () => {
+    const user = await connected();
+    expect(welcome()).not.toBeInTheDocument();
+    await palette(user, "Disconnect");
+    await waitFor(() => expect(be.sent("pg_disconnect").length).toBeGreaterThan(0));
+    expect(welcome()).not.toBeInTheDocument();
+  });
+});
+
 describe("App — coming up", () => {
   it("reads its identity, settings, connections and snippets on mount", async () => {
     await mount();
@@ -47,7 +86,8 @@ describe("App — coming up", () => {
 
   it("lists the saved connections", async () => {
     await mount();
-    expect(screen.getByText(CONNECTION.name)).toBeInTheDocument();
+    const list = document.querySelector(".conn-list") as HTMLElement;
+    expect(within(list).getByText(CONNECTION.name)).toBeInTheDocument();
   });
 
   it("survives a backend that cannot answer at all", async () => {

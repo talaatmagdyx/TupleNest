@@ -568,7 +568,7 @@ export default function ExplorerTree(p: Props) {
       case "type":
         return (
           <div key={r.id} className="tree-row leaf" style={leaf} title={r.ty.labels ?? r.ty.kind}>
-            <Chip ch="E" color="var(--tn-brand-a, #FFC24B)" />
+            <Chip ch="E" color="var(--tn-warning)" />
             <span className="cn">{r.ty.name}</span>
             <span className="ct">{r.ty.labels ?? r.ty.kind}</span>
           </div>

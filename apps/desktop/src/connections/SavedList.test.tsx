@@ -67,8 +67,8 @@ describe("SavedList", () => {
 
   it("colours a prod pill differently — the point of the pill", () => {
     const { container } = render(<SavedList {...base} saved={[conn({ environment: "prod" })]} />);
-    // jsdom serialises the hex to rgb().
-    expect(container.querySelector(".env-pill")).toHaveStyle({ color: "rgb(239, 77, 77)" });
+    // The theme's danger token, so the badge follows light and dark.
+    expect(container.querySelector(".env-pill")).toHaveStyle({ color: "var(--tn-danger)" });
   });
 
   it("marks the active card", () => {

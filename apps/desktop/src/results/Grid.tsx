@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { cellText, errText } from "../lib/text";
 import { isNumericType } from "../lib/chart";
 import { invoke } from "@tauri-apps/api/core";
@@ -75,6 +75,36 @@ function cellClass(c: GridColumn, v: unknown): string {
   return "";
 }
 
+/** A cell value as a number, for the magnitude bar; null when it is not one. */
+export function numberOf(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "bigint") return Number(v);
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+/**
+ * The largest magnitude in each numeric column, over the rows loaded now.
+ * Null for a column that is not numeric, or holds nothing but zeros and
+ * nulls — there is no scale to draw against.
+ */
+export function columnMaxima(columns: GridColumn[], blocks: Record<number, unknown[][]>): (number | null)[] {
+  return columns.map((c, ci) => {
+    if (!isNumericType(c.dbType)) return null;
+    let max = 0;
+    for (const k in blocks) {
+      for (const row of blocks[k]) {
+        const n = numberOf(row[ci]);
+        if (n !== null && Math.abs(n) > max) max = Math.abs(n);
+      }
+    }
+    return max > 0 ? max : null;
+  });
+}
+
 type Handlers = {
   pick: (ri: number) => void;
   select: (ri: number, ci: number, col: GridColumn, v: unknown) => void;
@@ -100,6 +130,8 @@ type RowProps = {
   draft: string;
   target: EditTarget | null | undefined;
   staged: Map<string, unknown>;
+  /** Per column: the largest magnitude loaded, for the bar; null for none. */
+  maxima: (number | null)[];
   viewRef: RefObject<HTMLDivElement | null>;
   h: Handlers;
 };
@@ -110,7 +142,7 @@ type RowProps = {
  * the row it entered — not every row on screen.
  */
 const Row = memo(function Row(p: RowProps) {
-  const { i, row, target, widths, offs, selCol, editCol, draft, staged, viewRef, h } = p;
+  const { i, row, target, widths, offs, selCol, editCol, draft, staged, maxima, viewRef, h } = p;
   const bodyW = offs[p.columns.length];
   const totalW = NUM_W + bodyW;
   const padL = offs[p.c0];
@@ -151,6 +183,10 @@ const Row = memo(function Row(p: RowProps) {
           const isSel = selCol === ci;
           const isEditing = editCol === ci;
           const canEdit = !!target?.writable[ci];
+          // How big this value is next to the column's largest loaded one.
+          const max = maxima[ci];
+          const n = max === null ? null : numberOf(v);
+          const frac = n === null || max === null ? 0 : Math.min(1, Math.abs(n) / max);
 
           if (isEditing) {
             return (
@@ -177,7 +213,7 @@ const Row = memo(function Row(p: RowProps) {
           return (
             <div
               key={ci}
-              className={`g-cell ${cellClass(c, v)} ${isSel ? "selcell" : ""} ${
+              className={`g-cell ${cellClass(c, v)} ${max !== null ? "num" : ""} ${frac > 0 ? "bar" : ""} ${isSel ? "selcell" : ""} ${
                 isStaged ? "staged" : ""
               } ${canEdit ? "editable" : ""}`}
               role="gridcell"
@@ -199,7 +235,10 @@ const Row = memo(function Row(p: RowProps) {
                     }
                   : undefined
               }
-              style={{ width: widths[ci] }}
+              // The magnitude bar is a background, not an element: decoration
+              // the number beside it already says, so there is nothing for a
+              // screen reader to find and nothing in the way of a text selection.
+              style={frac > 0 ? ({ width: widths[ci], "--g-frac": frac } as CSSProperties) : { width: widths[ci] }}
               title={
                 isStaged ? `${cellText(original)} → ${text} (pending)` : canEdit ? `${text} — double-click to edit` : text
               }
@@ -207,6 +246,12 @@ const Row = memo(function Row(p: RowProps) {
               onDoubleClick={() => h.beginEdit(i, ci, original)}
             >
               {text}
+              {isStaged && (
+                <span className="g-was">
+                  <span className="sr-only">, was </span>
+                  {cellText(original)}
+                </span>
+              )}
             </div>
           );
         })
@@ -454,6 +499,7 @@ export default function Grid(p: Props) {
     return { widths, offs };
   }, [p.columns]);
   const { widths, offs } = layout;
+  const maxima = useMemo(() => columnMaxima(p.columns, blocks), [p.columns, blocks]);
   const nCols = p.columns.length;
   const bodyW = offs[nCols];
   const totalW = NUM_W + bodyW;
@@ -503,6 +549,7 @@ export default function Grid(p: Props) {
         draft={ed === null ? "" : draft}
         target={p.target}
         staged={staged}
+        maxima={maxima}
         viewRef={viewRef}
         h={h}
       />,
@@ -593,7 +640,7 @@ export default function Grid(p: Props) {
         {p.columns.map((c, ci) => (
           <div
             key={ci}
-            className="g-hcell"
+            className={`g-hcell ${isNumericType(c.dbType) ? "num" : ""}`}
             role="columnheader"
             aria-sort={sortCol === ci && sortDir ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
             style={{ width: widths[ci] }}

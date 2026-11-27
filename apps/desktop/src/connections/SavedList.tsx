@@ -50,7 +50,7 @@ export default function SavedList(p: Props) {
                     {active && p.connected && (
                       <span
                         className="dot"
-                        style={{ background: "#3fb950", boxShadow: "0 0 6px rgba(63,185,80,.5)" }}
+                        style={{ background: "var(--tn-success)", boxShadow: "0 0 6px color-mix(in srgb, var(--tn-success) 50%, transparent)" }}
                       />
                     )}
                   </span>

@@ -1,31 +1,24 @@
 /** Inline SVG icons matching the HUD design (1.6–1.8px stroke). */
 
-/** TupleNest brand mark — layered-stack, amber→coral. Scales crisply to any size. */
-export const BrandMark = ({ size = 18 }: { size?: number }) => {
-  const id = "tnb"; // gradient ids are page-unique enough for a single header/onboard use
-  return (
-    <svg width={size} height={size} viewBox="0 0 512 512" aria-hidden>
-      <defs>
-        <linearGradient id={`${id}w`} x1="0" y1="150" x2="0" y2="386" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#FFC24B" />
-          <stop offset="0.5" stopColor="#FF7A45" />
-          <stop offset="1" stopColor="#FF5560" />
-        </linearGradient>
-        <linearGradient id={`${id}t`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#FFD07A" />
-          <stop offset="1" stopColor="#FF9A45" />
-        </linearGradient>
-      </defs>
-      <rect x="132" y="322" width="248" height="64" rx="22" fill={`url(#${id}w)`} />
-      <rect x="132" y="234" width="248" height="64" rx="22" fill={`url(#${id}w)`} />
-      <g transform="rotate(-5 256 182)">
-        <rect x="146" y="150" width="248" height="64" rx="22" fill={`url(#${id}w)`} />
-        <rect x="146" y="150" width="248" height="33" rx="16" fill={`url(#${id}t)`} fillOpacity="0.55" />
-        <rect x="160" y="163" width="84" height="9" rx="4" fill="#ffffff" fillOpacity="0.55" />
-      </g>
+/** TupleNest brand mark — an accent tile with three horizontal lines in the
+ *  on-accent colour. Both come from the theme tokens, so the mark follows the
+ *  light and dark palettes. Decorative: it always sits beside the wordmark. */
+export const BrandMark = ({ size = 18 }: { size?: number }) => (
+  <span className="brand-mark" style={{ width: size, height: size, borderRadius: Math.round(size * 0.29) }} aria-hidden>
+    <svg
+      width={Math.round(size * 0.58)}
+      height={Math.round(size * 0.58)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.6}
+      strokeLinecap="round"
+      aria-hidden
+    >
+      <path d="M4 7h16M4 12h10M4 17h6" />
     </svg>
-  );
-};
+  </span>
+);
 
 const S = (props: { size?: number }) => ({
   width: props.size ?? 15,
@@ -83,6 +76,12 @@ export const WarnIcon = ({ size }: { size?: number }) => (
     <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
     <line x1="12" y1="9" x2="12" y2="13" />
     <line x1="12" y1="17" x2="12.01" y2="17" />
+  </svg>
+);
+
+export const OfflineIcon = ({ size }: { size?: number }) => (
+  <svg {...S({ size: size ?? 15 })} strokeWidth={2}>
+    <path d="M2 8.8a15 15 0 0 1 20 0M5 12.6a10 10 0 0 1 14 0M8.5 16.4a5 5 0 0 1 7 0M12 20h.01M3 3l18 18" />
   </svg>
 );
 
