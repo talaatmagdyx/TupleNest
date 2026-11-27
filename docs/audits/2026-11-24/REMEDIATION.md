@@ -66,14 +66,14 @@ Data integrity and safety first, release engineering last.
 | 24 | TN-031 two profiles for one database: the first one's tag wins (new, see below) | 75, then 80 | merged | verified, including 80: connected through the dev profile of a dev/prod pair, the window shows PRODUCTION |
 | 25 | Guard dialog and parameter prompt wording (found in verification) | 76 | merged | verified on its branch |
 | 26 | TN-011 signing key in the environment of the whole release build | 81 | merged | the workflow was run by manual dispatch on 2026-11-25 (run 45672866668); see the third pass below |
-| 27 | TN-010 signing secrets not scoped to the `release` environment | — | repository-settings change for the owner | — |
+| 27 | TN-010 signing secrets not scoped to the `release` environment | — | partly done on 2026-11-26: `TAURI_SIGNING_PRIVATE_KEY` and the macOS certificate secrets are on the `release` environment; `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` and the original key copy are still repository-level, because the passphrase could not be re-entered | — |
 | 28 | TN-005 release readiness and an end-to-end updater test | — | not started; no release until the items under "Still to verify" are closed | — |
 
 Every merged fix has a regression test that fails without it, and passed the
 full gates and CI (including the PostgreSQL 13, 15 and 17 contract jobs)
 before merging.
 
-Still open: TN-005 and TN-010 (rows above), and part of the P3 list.
+Still open: TN-005, the rest of TN-010 (rows above), and the P3 items that wait on a decision.
 
 ### The P3 list
 
@@ -82,15 +82,17 @@ Still open: TN-005 and TN-010 (rows above), and part of the P3 list.
 | A statement timeout is recorded as "cancelled" | Fixed in pull request 78, with a refused COMMIT that had the same cause |
 | A stale `cargo deny` ignore entry | Fixed in pull request 79, with three unused licence allowances |
 | Keychain entries from tested-but-unsaved passwords are never removed | Fixed in pull request 82, corrected in 84: swept in the background after the next start. **Not proven** against the real keychain |
-| `e2e/` has 27 known npm vulnerabilities (test-only) | Open. `npm audit fix` leaves 22, the rest need breaking upgrades, and those tests run only against a published release, so the change could not be checked |
+| `e2e/` has 27 known npm vulnerabilities (test-only) | Fixed in pull request 92: WebdriverIO 10 and two scoped overrides, `npm audit` 0. Smoke run 45915276640 ran the 21 tests against dev build 45913892826 and all passed. The eight Dependabot pull requests it superseded were closed unmerged |
 | `row_limit` and `timeout_ms` are accepted and ignored | Open, a decision: stopping at the row cap would lose the exact total the grid shows ("20,000 of 1,000,000") |
 | Two roadmaps that contradict each other | Open, a decision: `docs/ROADMAP.md` plans other engines and an assistant; the site lists them as not planned |
-| Release assets are mutable | Open: a repository setting for the owner |
-| A killed backend is not recognised until the next statement | Open |
+| Release assets are mutable | Fixed on 2026-11-26: immutable releases turned on. Actions are also now required to be pinned to a full commit SHA |
+| A killed backend is not recognised until the next statement | Fixed in pull request 93: the driver's connection task reports a server or network close, and the app shows "Connection lost" within about a second, with no polling |
 | SSH supports only unencrypted key files | Fixed: a passphrase field in the SSH settings; the passphrase is kept in the OS keychain behind an opaque ref, under the same rules as the password (fresh-or-owned, pending sweep, removed with the profile). A missing or wrong passphrase is reported at once. No ssh-agent support yet |
-| Accessibility gaps | Open |
-| Grid loses keyboard focus after End on wide results | Open |
-| Stale numbers in docs and comments | Open |
+| Accessibility gaps | Fixed in pull request 95: named dialogs (`alertdialog` for confirmations), tab and menu roles with keyboard movement, a live region announcing each run's outcome, light-theme tokens raised to AA. Checked in jsdom and by eye in a built app; not yet with a screen reader |
+| Grid loses keyboard focus after End on wide results | Fixed in pull request 91, with Explain no longer clearing the results grid |
+| Stale numbers in docs and comments | Fixed in pull request 89 |
+| `money` renders as hex | Fixed in pull request 90: decoded at the server's `lc_monetary` scale, asked per result; still hex if the server cannot be asked |
+| A keychain prompt after every macOS update or rebuild | Fixed in pull requests 96–98: macOS release builds are signed with one self-signed certificate, so every version has the same designated requirement. Dev build 45913892826's app shows `Authority=TupleNest Self-Signed`. Gatekeeper still warns until a Developer ID is used |
 
 ## Verification in a built app (2026-11-25)
 
