@@ -593,11 +593,11 @@ impl McpServer {
         access: McpAccess,
         sql: &str,
         params: Vec<ParamValue>,
-    ) -> Result<Ran, DriverError> {
+    ) -> Result<Ran, Box<DriverError>> {
         let session = self
             .session(profile, access)
             .await
-            .map_err(|e| DriverError::new(ErrorCategory::Network, e))?;
+            .map_err(|e| Box::new(DriverError::new(ErrorCategory::Network, e)))?;
         let sink = CollectSink::default();
         let request = QueryRequest {
             execution_id: ExecutionId::new(),
@@ -625,7 +625,7 @@ impl McpServer {
                 if e.category == ErrorCategory::Network {
                     self.sessions.remove(&profile.id);
                 }
-                Err(*e)
+                Err(e)
             }
         }
     }
