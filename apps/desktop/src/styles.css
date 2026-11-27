@@ -3,51 +3,82 @@
    Tokens: --tn-* · dark is primary, light is a token swap.
    ================================================================ */
 
+/* ===== Colour tokens =====
+   The one live palette. Names are the historical ones so every component keeps
+   working; the comment on each says which role of the island design it holds.
+
+     desk    window background, the gaps between islands
+     bg, s1  island: every panel, menu and modal surface
+     s2      raised: headers, hover, selected rows, inputs on an island
+     bh      border: island edges and region dividers
+     bs      border-soft: dividers inside a region
+     bc      border-strong: the boundary of a control (inputs, outlined
+             buttons). Held to 3:1 on every surface; bh and bs are not,
+             because they separate regions rather than identify a control.
+
+   Every text token is held to WCAG 2.1 AA (4.5:1) on desk, island and raised,
+   in both themes — styles.contrast.test.ts reads this block and checks it. */
 :root, [data-tn-theme="dark"] {
-  --tn-bg: rgba(12, 16, 30, .5);
-  --tn-s1: rgba(30, 42, 70, .5);
-  --tn-s2: rgba(46, 62, 100, .45);
-  --tn-bh: rgba(120, 170, 255, .4);
-  --tn-bs: rgba(120, 160, 240, .2);
-  --tn-tp: #eaf3ff;
-  --tn-ts: #a9bce0;
-  --tn-tm: #7183ad;
-  --tn-accent: #38d0ff;
-  --tn-as: rgba(56, 208, 255, .2);
-  --tn-success: #46f0b0;
-  --tn-danger: #ff5c8a;
-  --tn-warning: #ffcf5c;
-  --tn-purple: #9d7bff;
-  --tn-focus: rgba(56, 208, 255, .55);
-  --tn-shadow: 0 18px 50px rgba(0, 20, 60, .5);
-  --tn-desk: #04060f;
-  --tn-glow1: rgba(56, 208, 255, .5);
-  --tn-glow2: rgba(157, 123, 255, .45);
-  --tn-glow3: rgba(70, 240, 176, .35);
-  --tn-desk2: #0a1226;
+  --tn-desk:    #07080c;
+  --tn-bg:      #0f1118;
+  --tn-s1:      #0f1118;
+  --tn-s2:      #181b26;
+  --tn-bh:      #222736;
+  --tn-bs:      #1b1f2b;
+  --tn-bc:      #5b6684;   /* 3.01:1 on raised (mockup #3a4154, 1.69:1) */
+  --tn-tp:      #eceef5;
+  --tn-ts:      #a9b0c2;
+  --tn-tm:      #8b93a7;
+  --tn-accent:  #8b9bff;
+  --tn-on-accent: #0a0c16;
+  --tn-as:      rgba(139, 155, 255, .14);
+  --tn-success: #5be3a6;
+  --tn-success-tint: rgba(91, 227, 166, .12);
+  --tn-danger:  #ff6b7a;
+  --tn-on-danger: #16070a;
+  --tn-danger-tint: rgba(255, 107, 122, .14);
+  --tn-warning: #ffc15e;
+  --tn-on-warn: #1a1204;
+  --tn-warn-tint: rgba(255, 193, 94, .12);
+  --tn-purple:  #d2a8ff;   /* also the syntax colour for functions */
+  --tn-focus:   rgba(139, 155, 255, .58); /* 3.1:1 on raised (mockup .55, 2.94:1) */
+  --tn-shadow:  0 30px 80px rgba(0, 0, 0, .55);
+  --tn-scrim:   rgba(3, 4, 8, .66);
+  --tn-syn-kw:  #9caaff;
+  --tn-syn-str: #7ee7b8;
+  --tn-syn-num: #ffc15e;
+  --tn-syn-comment: #8b93a7;
 }
 [data-tn-theme="light"] {
-  --tn-bg: rgba(255, 255, 255, .55);
-  --tn-s1: rgba(255, 255, 255, .5);
-  --tn-s2: rgba(235, 242, 255, .55);
-  --tn-bh: rgba(50, 110, 220, .3);
-  --tn-bs: rgba(50, 110, 220, .15);
-  --tn-tp: #0e1830;
-  --tn-ts: #3a4a70;
-  --tn-tm: #7a89ad;
-  --tn-accent: #0a9fd8;
-  --tn-as: rgba(10, 159, 216, .14);
-  --tn-success: #0a9d6b;
-  --tn-danger: #e2445c;
-  --tn-warning: #c78a16;
-  --tn-purple: #7b5cf6;
-  --tn-focus: rgba(10, 159, 216, .4);
-  --tn-shadow: 0 18px 50px rgba(20, 40, 80, .2);
-  --tn-desk: #dfe7f5;
-  --tn-glow1: rgba(56, 208, 255, .35);
-  --tn-glow2: rgba(157, 123, 255, .3);
-  --tn-glow3: rgba(70, 240, 176, .25);
-  --tn-desk2: #eef3fc;
+  --tn-desk:    #e8ebf1;
+  --tn-bg:      #ffffff;
+  --tn-s1:      #ffffff;
+  --tn-s2:      #f2f4f8;
+  --tn-bh:      #dde2ea;
+  --tn-bs:      #eceff4;
+  --tn-bc:      #7c889c;   /* 3.00:1 on desk (mockup #8c96a8, 2.50:1) */
+  --tn-tp:      #10131b;
+  --tn-ts:      #3e4657;
+  --tn-tm:      #5a6375;
+  --tn-accent:  #3e4fd6;
+  --tn-on-accent: #ffffff;
+  --tn-as:      rgba(62, 79, 214, .09);
+  --tn-success: #11724e;
+  --tn-success-tint: rgba(17, 114, 78, .10);
+  --tn-danger:  #c0273a;
+  --tn-on-danger: #ffffff;
+  --tn-danger-tint: rgba(192, 39, 58, .09);
+  --tn-warning: #8c5a00;
+  --tn-on-warn: #ffffff;
+  --tn-warn-tint: rgba(197, 135, 20, .13);
+  --tn-purple:  #6a3fd1;   /* also the syntax colour for functions */
+  --tn-focus:   rgba(62, 79, 214, .7); /* 3.0:1 on desk (mockup .45, 1.97:1) */
+  --tn-shadow:  0 30px 80px rgba(16, 19, 27, .22);
+  --tn-scrim:   rgba(16, 19, 27, .38);
+  --tn-syn-kw:  #3e4fd6;
+  --tn-syn-str: #11724e;
+  --tn-syn-num: #8c5a00;
+  --tn-syn-comment: #5a6375;
 }
 
 /* ===== Type =====
@@ -68,7 +99,13 @@
    Inter is deliberately NOT bundled. It is the first name in --tn-sans, but
    what follows resolves to the system UI font — San Francisco, Segoe UI,
    Roboto — which is the right face for a native desktop shell anyway, and
-   worth neither the bytes nor a UI that looks foreign on every platform. */
+   worth neither the bytes nor a UI that looks foreign on every platform.
+
+   Space Grotesk is the display face: the wordmark, dialog titles, empty-state
+   headings. Unlike body text it carries the look, so it is bundled — the CSP
+   allows fonts from 'self' only, and the app has to look the same offline.
+   Latin and Latin Extended, ~41KB together; anything else falls through to
+   the sans stack. OFL-1.1, see assets/fonts/OFL-SpaceGrotesk.txt. */
 @font-face {
   font-family: "JetBrains Mono";
   src: url("./assets/fonts/JetBrainsMono-var.woff2") format("woff2");
@@ -77,6 +114,26 @@
   /* The file is on local disk inside the app, so the block period is over in
      milliseconds. `swap` would trade that for a visible flash of Courier. */
   font-display: block;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("./assets/fonts/SpaceGrotesk-latin-var.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: block;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("./assets/fonts/SpaceGrotesk-latin-ext-var.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: block;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 /* No italic face. Italic mono appears in three muted places — SQL comments,
    null cells, redacted history rows — and with no italic face declared the
@@ -90,6 +147,7 @@
     Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
   --tn-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
+  --tn-display: "Space Grotesk", var(--tn-sans);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -98,12 +156,6 @@ body {
   font: 13px/1.45 var(--tn-sans);
   color: var(--tn-tp);
   background: var(--tn-desk);
-  background-image:
-    radial-gradient(60% 80% at 15% 10%, var(--tn-glow1), transparent 55%),
-    radial-gradient(55% 75% at 88% 15%, var(--tn-glow2), transparent 55%),
-    radial-gradient(70% 90% at 65% 100%, var(--tn-glow3), transparent 60%),
-    linear-gradient(160deg, var(--tn-desk2), var(--tn-desk));
-  background-attachment: fixed;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
@@ -337,7 +389,7 @@ a { color: var(--tn-accent); text-decoration: none; }
 .qtab.on { color: var(--tn-tp); background: var(--tn-bg); border-bottom-color: var(--tn-accent); }
 .qtab .dirty { width: 6px; height: 6px; border-radius: 50%; background: var(--tn-warning); }
 .qtab .x { color: var(--tn-tm); font-size: 12px; border-radius: 4px; padding: 0 3px; }
-.qtab .x:hover { color: var(--tn-danger); background: rgba(255, 92, 138, .12); }
+.qtab .x:hover { color: var(--tn-danger); background: var(--tn-danger-tint); }
 .qtab-new { border: none; background: transparent; color: var(--tn-tm); padding: 0 12px; font-size: 14px; cursor: pointer; }
 .qtab-new:hover { color: var(--tn-tp); }
 
@@ -352,14 +404,14 @@ a { color: var(--tn-accent); text-decoration: none; }
   color: var(--tn-ts); font: 600 12px var(--tn-sans); cursor: pointer;
 }
 .btn:hover { background: var(--tn-s2); color: var(--tn-tp); }
-.btn.primary { background: var(--tn-accent); border-color: transparent; color: #04121f; font-weight: 700; }
+.btn.primary { background: var(--tn-accent); border-color: transparent; color: var(--tn-on-accent); font-weight: 700; }
 .btn.primary:hover { filter: brightness(1.1); }
 .btn.primary:disabled, .btn:disabled { opacity: .5; cursor: default; }
-.btn.commit { color: var(--tn-success); border-color: rgba(70, 240, 176, .4); }
-.btn.commit:hover { background: rgba(70, 240, 176, .1); }
-.btn.rollback { color: var(--tn-danger); border-color: rgba(255, 92, 138, .4); }
-.btn.rollback:hover { background: rgba(255, 92, 138, .1); }
-.btn.danger { background: var(--tn-danger); border-color: transparent; color: #fff; }
+.btn.commit { color: var(--tn-success); border-color: var(--tn-success); }
+.btn.commit:hover { background: var(--tn-success-tint); }
+.btn.rollback { color: var(--tn-danger); border-color: var(--tn-danger); }
+.btn.rollback:hover { background: var(--tn-danger-tint); }
+.btn.danger { background: var(--tn-danger); border-color: transparent; color: var(--tn-on-danger); }
 .spin {
   width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(255,255,255,.3);
   border-top-color: #fff; animation: tnspin .7s linear infinite;
@@ -457,10 +509,10 @@ a { color: var(--tn-accent); text-decoration: none; }
   position: absolute; left: -58px; width: 33px; text-align: right;
   color: var(--tn-tm); user-select: none;
 }
-.tok-k { color: var(--tn-purple); }
-.tok-s { color: var(--tn-success); }
-.tok-n { color: var(--tn-warning); }
-.tok-c { color: var(--tn-tm); font-style: italic; }
+.tok-k { color: var(--tn-syn-kw); }
+.tok-s { color: var(--tn-syn-str); }
+.tok-n { color: var(--tn-syn-num); }
+.tok-c { color: var(--tn-syn-comment); font-style: italic; }
 .run-status {
   flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 14px;
   font: 11.5px var(--tn-mono); border-top: 1px solid var(--tn-bs);
@@ -486,7 +538,7 @@ a { color: var(--tn-accent); text-decoration: none; }
 }
 .center-note .big { font: 600 15px var(--tn-sans); color: var(--tn-ts); }
 .error-box {
-  margin: 18px; border: 1px solid rgba(255, 92, 138, .4); background: rgba(255, 92, 138, .07);
+  margin: 18px; border: 1px solid var(--tn-danger); background: var(--tn-danger-tint);
   border-radius: 10px; padding: 14px 16px; font: 12px/1.5 var(--tn-mono); color: var(--tn-danger);
   /* The backend sends the server's full report — message, Detail, Hint,
      Context, constraint names — newline-separated. Collapsing whitespace
@@ -643,7 +695,7 @@ a { color: var(--tn-accent); text-decoration: none; }
   color: var(--tn-tm); background: transparent;
 }
 .seg button.on { color: var(--tn-tp); background: var(--tn-s2); }
-.seg button.on.prod { color: #fff; background: var(--tn-danger); }
+.seg button.on.prod { color: var(--tn-on-danger); background: var(--tn-danger); }
 .toggle {
   position: relative; width: 38px; height: 22px; border-radius: 11px; border: none;
   cursor: pointer; background: var(--tn-bh); transition: background .14s; flex: none;
@@ -982,20 +1034,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    same identity.
    ============================================================ */
 
-/* — More restrained, elegant backdrop — */
-:root, [data-tn-theme="dark"] {
-  --tn-glow1: rgba(56, 208, 255, .32);
-  --tn-glow2: rgba(157, 123, 255, .28);
-  --tn-glow3: rgba(70, 240, 176, .18);
-}
-body {
-  background-image:
-    radial-gradient(50% 60% at 12% 4%, var(--tn-glow1), transparent 60%),
-    radial-gradient(45% 60% at 92% 8%, var(--tn-glow2), transparent 62%),
-    radial-gradient(60% 70% at 70% 104%, var(--tn-glow3), transparent 64%),
-    linear-gradient(165deg, var(--tn-desk2), var(--tn-desk));
-}
-
 /* — Consistent, smooth motion — */
 .btn, .icon-btn, .tree-row, .conn-card, .qtab, .rtab, .pal-item,
 .conn-menu .row, .drop-menu button, .hist-row, .mon-row, .plus,
@@ -1029,7 +1067,7 @@ body {
 /* — Grid: zebra rows, gradient header, sharper selection — */
 .g-hcell { background: linear-gradient(180deg, var(--tn-s2), color-mix(in srgb, var(--tn-s2) 80%, transparent)); }
 .g-row:nth-child(even of .g-row) { background: rgba(255, 255, 255, .012); }
-.g-row:hover { background: rgba(56, 208, 255, .05); }
+.g-row:hover { background: var(--tn-s2); }
 .g-row.sel { background: var(--tn-as); box-shadow: inset 2px 0 0 var(--tn-accent); }
 .g-rownum { transition: color .13s ease; }
 .g-row:hover .g-rownum { color: var(--tn-ts); }
@@ -1058,12 +1096,6 @@ body {
 /* — Env pill: tiny refinement — */
 .env-pill { letter-spacing: .08em; }
 
-/* — Light theme: soften the glow so text stays crisp — */
-[data-tn-theme="light"] {
-  --tn-glow1: rgba(56, 208, 255, .22);
-  --tn-glow2: rgba(157, 123, 255, .18);
-  --tn-glow3: rgba(70, 240, 176, .14);
-}
 [data-tn-theme="light"] .titlebar,
 [data-tn-theme="light"] .toolbar,
 [data-tn-theme="light"] .qtabs,
@@ -1076,56 +1108,8 @@ body {
    Reference feel: DataGrip / TablePlus / VS Code.
    ============================================================ */
 
-/* — Opaque professional dark palette — */
-:root, [data-tn-theme="dark"] {
-  --tn-desk:   #16191f;   /* window backdrop */
-  --tn-desk2:  #16191f;
-  --tn-bg:     #1b1f27;   /* editor / deepest content */
-  --tn-s1:     #20242c;   /* sidebar, panels */
-  --tn-s2:     #272c35;   /* headers, hover, raised */
-  --tn-bh:     #383f4a;   /* hard border / divider */
-  --tn-bs:     #2b313a;   /* soft divider */
-  --tn-bc:     #383f4a;   /* control boundary (inputs, outlined buttons) */
-  --tn-tp:     #dbe1ea;   /* primary text */
-  --tn-ts:     #9aa5b4;   /* soft text */
-  --tn-tm:     #6a7482;   /* muted text */
-  --tn-accent: #4a9eff;   /* calm IDE blue */
-  --tn-as:     rgba(74, 158, 255, .16);
-  --tn-success:#4bbf7b;
-  --tn-danger: #ef5f6b;
-  --tn-warning:#e0a13a;
-  --tn-purple: #9d7bff;
-  --tn-focus:  rgba(74, 158, 255, .5);
-  --tn-shadow: 0 8px 24px rgba(0, 0, 0, .45);
-  --tn-glow1: transparent; --tn-glow2: transparent; --tn-glow3: transparent;
-}
-/* Light theme colours are held to WCAG 2.1 AA against the darkest surface
-   they sit on (--tn-s2): 4.5:1 for every text token, 3:1 for the control
-   boundary and the focus ring. Each was darkened along its own hue only as far
-   as that needs. The dividers (--tn-bh, --tn-bs) stay light on purpose:
-   they separate regions, they do not identify a control — that is --tn-bc. */
-[data-tn-theme="light"] {
-  --tn-desk:   #eceef2;
-  --tn-desk2:  #eceef2;
-  --tn-bg:     #ffffff;
-  --tn-s1:     #f5f6f9;
-  --tn-s2:     #e9ecf1;
-  --tn-bh:     #cfd5de;
-  --tn-bs:     #e2e6ec;
-  --tn-bc:     #7889a2;   /* 3.01:1 on s2 (was #cfd5de, 1.25:1) */
-  --tn-tp:     #1c2230;
-  --tn-ts:     #4a5568;
-  --tn-tm:     #626b7b;   /* 4.54:1 on s2 (was #8a93a2, 2.62:1) */
-  --tn-accent: #1d69c6;   /* 4.56:1 on s2, white on it 5.40:1 (was #2f7fe0, 3.39:1) */
-  --tn-as:     rgba(47, 127, 224, .12);
-  --tn-success:#187a44;   /* 4.54:1 (was #1f9d57, 2.95:1) */
-  --tn-danger: #cc2734;   /* 4.54:1 (was #d93a46, 3.82:1) */
-  --tn-warning:#8d6218;   /* 4.56:1 (was #b8801f, 2.89:1) */
-  --tn-purple: #6c4af5;   /* 4.51:1 (was #7b5cf6, 3.77:1) */
-  --tn-focus:  rgba(29, 105, 198, .75); /* 3.01:1 on s2 (was .4 of the old accent, 1.58:1) */
-  --tn-shadow: 0 8px 24px rgba(30, 45, 75, .16);
-  --tn-glow1: transparent; --tn-glow2: transparent; --tn-glow3: transparent;
-}
+/* (The palette that used to sit here moved to the top of the file: it is the
+   only one now.) */
 
 /* — Flat, solid window: no gradient, no glass — */
 body { background: var(--tn-desk); background-image: none; }
@@ -1164,7 +1148,7 @@ body { background: var(--tn-desk); background-image: none; }
 .btn { background: transparent; border-color: transparent; }
 .btn:hover { background: var(--tn-s2); }
 .btn.primary { background: var(--tn-accent); border-color: var(--tn-accent);
-  box-shadow: none; color: #fff; }
+  box-shadow: none; color: var(--tn-on-accent); }
 .btn.primary:hover { background: color-mix(in srgb, var(--tn-accent) 88%, white); box-shadow: none; }
 .btn.commit { border-color: transparent; }
 .btn.rollback { border-color: transparent; }
@@ -1189,12 +1173,12 @@ body { background: var(--tn-desk); background-image: none; }
 
 /* — Prod banner: solid, not gradient — */
 .prod-banner {
-  background: rgba(239, 95, 107, .12); border-bottom: 1px solid var(--tn-danger);
+  background: var(--tn-danger-tint); border-bottom: 1px solid var(--tn-danger);
   color: var(--tn-danger);
 }
 
 /* — Overlay backdrop: plain dim, no heavy blur (native modal) — */
-.overlay { background: rgba(0, 0, 0, .48); backdrop-filter: blur(1.5px); -webkit-backdrop-filter: blur(1.5px); }
+.overlay { background: var(--tn-scrim); backdrop-filter: blur(1.5px); -webkit-backdrop-filter: blur(1.5px); }
 
 /* — Titlebar: compact toolbar height like a native app — */
 .titlebar { height: 40px; }
@@ -1211,7 +1195,6 @@ body { background: var(--tn-desk); background-image: none; }
   padding: 8px 0; background: var(--tn-desk);
   border-right: 1px solid var(--tn-bh);
 }
-[data-tn-theme="light"] .activity-rail { background: var(--tn-s2); }
 .rail-group { display: flex; flex-direction: column; gap: 2px; width: 100%; align-items: center; }
 .rail-btn {
   position: relative; width: 40px; height: 40px; display: grid; place-items: center;
@@ -1231,12 +1214,12 @@ body { background: var(--tn-desk); background-image: none; }
 .statusbar .item { padding: 0 12px; height: 100%; display: flex; align-items: center; gap: 6px; }
 .statusbar .bar-sep { display: none; }
 .statusbar .item:first-child {
-  background: var(--tn-accent); color: #fff; font-weight: 600;
+  background: var(--tn-accent); color: var(--tn-on-accent); font-weight: 600;
 }
-.statusbar .item:first-child .dot { background: #fff !important; box-shadow: none !important; }
+.statusbar .item:first-child .dot { background: currentColor !important; box-shadow: none !important; }
 [data-tn-theme="dark"] .statusbar .item:not(:first-child):hover,
 [data-tn-theme="light"] .statusbar .item:not(:first-child):hover { background: var(--tn-s2); }
-.statusbar .txwarn { background: rgba(224, 161, 58, .16); }
+.statusbar .txwarn { background: var(--tn-warn-tint); }
 
 /* When disconnected, the first segment is muted grey, not accent */
 .statusbar.off .item:first-child { background: var(--tn-s2); color: var(--tn-tm); }
@@ -1318,14 +1301,11 @@ body { background: var(--tn-desk); background-image: none; }
   50%      { box-shadow: inset 0 0 0 1.5px rgba(239,95,107,.9), inset 0 0 46px -4px rgba(239,95,107,.42); }
 }
 
-/* The activity rail top edge picks up the env color as a quiet accent line */
-.env-frame .activity-rail { border-top: 2px solid var(--env-line, transparent); }
-
 /* Env-tinted connection dot glow in the titlebar is already handled;
    here we tint the status-bar first segment to match the env exactly */
-.env-frame.env-staging .statusbar .item:first-child { background: #e0a13a; }
-.env-frame.env-prod    .statusbar .item:first-child { background: #ef5f6b; }
-.env-frame.env-test    .statusbar .item:first-child { background: #6a7482; }
+.env-frame.env-staging .statusbar .item:first-child { background: var(--tn-warning); color: var(--tn-on-warn); }
+.env-frame.env-prod    .statusbar .item:first-child { background: var(--tn-danger); color: var(--tn-on-danger); }
+.env-frame.env-test    .statusbar .item:first-child { background: var(--tn-tm); color: var(--tn-bg); }
 
 
 /* ============================================================
@@ -1632,7 +1612,7 @@ select.intel-input { font-family: var(--tn-sans); }
 }
 .er-foot { display: flex; align-items: center; gap: 8px; padding: 14px 18px 16px; }
 .er-note { font-size: 11px; color: var(--tn-tm); }
-.btn.danger { background: #ef4d4d; border-color: #ef4d4d; color: #fff; font-weight: 700; }
+.btn.danger { background: var(--tn-danger); border-color: var(--tn-danger); color: var(--tn-on-danger); font-weight: 700; }
 .btn.danger:hover { background: #ff6060; }
 
 /* ============================================================
@@ -1909,3 +1889,218 @@ select.intel-input { font-family: var(--tn-sans); }
 /* The menus move focus with the arrow keys, so a focused item must show it. */
 .drop-menu [role^="menuitem"]:focus-visible,
 .conn-menu [role^="menuitem"]:focus-visible { outline: 2px solid var(--tn-focus); outline-offset: -2px; }
+
+
+/* ============================================================
+   ISLAND LAYOUT  (final layer)
+   The window is a desk; every region sits on it as a rounded panel with an
+   8px gap around it. Layout and colour only: no region, handle or control
+   changes what it does.
+   ============================================================ */
+
+:root { --tn-island-r: 12px; --tn-gap: 8px; }
+
+/* — Window: desk background, 8px around and between the islands. The top
+     padding also clears the 3px environment ribbon. — */
+.shell {
+  background: var(--tn-desk);
+  padding: calc(3px + var(--tn-gap)) var(--tn-gap) 4px;
+  gap: var(--tn-gap);
+}
+.body { gap: var(--tn-gap); }
+.main-col { gap: 0; }
+/* The toast's live region is an empty box in the shell's column; out of the
+   flow, it does not take a gap of its own. The toast inside is fixed anyway. */
+.shell > .toast-live { position: absolute; }
+
+/* — Environment ribbon: the window's top edge says where the session points.
+     Rendered by the title bar, which knows the environment. — */
+.env-ribbon {
+  position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 250;
+  pointer-events: none; background: var(--tn-bh);
+  transition: background-color .3s ease;
+}
+.env-ribbon-prod { background: var(--tn-danger); }
+.env-ribbon-staging { background: var(--tn-warning); }
+
+/* — Islands — */
+.titlebar, .activity-rail, .sidebar, .results-island, .prod-banner {
+  background: var(--tn-s1);
+  border: 1px solid var(--tn-bh);
+  border-radius: var(--tn-island-r);
+  box-shadow: none;
+}
+.results-island {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+}
+/* The tab strip and the editor read as one island. They are siblings in two
+   different components, so the strip is the top half and the panel under it
+   the bottom half. The editor half does not clip: the export menu and the
+   completion popup open past its edge. */
+.qtabs {
+  background: var(--tn-s1);
+  border: 1px solid var(--tn-bh); border-bottom: 1px solid var(--tn-bs);
+  border-radius: var(--tn-island-r) var(--tn-island-r) 0 0;
+  box-shadow: none;
+}
+.editor-island, .main-col > .onboard {
+  background: var(--tn-s1);
+  border: 1px solid var(--tn-bh); border-top: 0;
+  border-radius: 0 0 var(--tn-island-r) var(--tn-island-r);
+}
+.editor-island { flex: none; display: flex; flex-direction: column; min-height: 0; }
+/* Transparent so the island's own background and rounded corners show
+   through, rather than square children painting over the curve. */
+.editor-island .editor-frame, .editor-island .gutter-bg { background: transparent; }
+.editor-island .editor-frame { border-bottom: 0; }
+.editor-island .run-status { border-top: 1px solid var(--tn-bs); }
+.vgrid { background: transparent; }
+
+/* — Splitter: the gap between the editor and the results is the handle. — */
+.splitter { height: var(--tn-gap); background: transparent; border: 0; }
+.splitter span { width: 40px; height: 3px; background: var(--tn-bh); transition: background-color .13s ease; }
+.splitter:hover span { background: var(--tn-accent); }
+
+/* — Sidebar: an island; collapsed, it gives its gap back too. — */
+.sidebar { border-right: 1px solid var(--tn-bh); }
+.sidebar.collapsed { margin-right: calc(-1 * var(--tn-gap)); border: 0; }
+/* The resize handle sits in the gap between the sidebar and the editor. */
+.sidebar-resize {
+  width: var(--tn-gap); margin: 0 calc(-1 * var(--tn-gap));
+  background: transparent; opacity: 1;
+}
+.sidebar-resize:hover { background: transparent; opacity: 1; }
+.sidebar-resize::after {
+  content: ""; position: absolute; top: 12px; bottom: 12px; left: 3px; width: 2px;
+  border-radius: 1px; background: transparent; transition: background-color .13s ease;
+}
+.sidebar-resize:hover::after { background: var(--tn-accent); }
+
+/* — Activity rail — */
+.activity-rail { width: 48px; padding: 8px 0; }
+.rail-btn { width: 36px; height: 36px; border-radius: 9px; color: var(--tn-ts); }
+.rail-btn.on { color: var(--tn-accent); background: var(--tn-as); }
+.rail-ind { left: -6px; top: 10px; bottom: 10px; width: 3px; }
+
+/* — Prod banner: its own island, tinted. The tint is laid over the island
+     colour, not the desk: on the light desk it would not hold 4.5:1. — */
+.prod-banner {
+  border-color: var(--tn-danger);
+  background: linear-gradient(var(--tn-danger-tint), var(--tn-danger-tint)), var(--tn-s1);
+  color: var(--tn-danger); padding: 6px 14px;
+}
+
+/* — Status bar: plain text on the desk, under the islands. — */
+.statusbar {
+  height: 22px; background: transparent; border: 0; box-shadow: none;
+  font-family: var(--tn-sans); font-size: 11.5px; color: var(--tn-ts);
+}
+.statusbar .item { border-radius: 6px; }
+
+/* ===== Title bar ===== */
+.titlebar { height: 46px; padding: 0 10px; gap: 12px; }
+[data-tn-os="macos"] .titlebar { padding-left: 70px; }
+.brand { gap: 8px; }
+.brand-word {
+  font-family: var(--tn-display); font-size: 16px; font-weight: 700; letter-spacing: -.02em;
+  background: none; -webkit-background-clip: border-box; background-clip: border-box;
+  color: var(--tn-tp);
+}
+.titlebar .icon-btn { width: 32px; height: 32px; border-radius: 9px; color: var(--tn-ts); }
+.titlebar .icon-btn.outlined { border: 1px solid var(--tn-bc); }
+
+/* The connection switcher is a pill: dot, name, target, environment badge. */
+.conn-switch > button {
+  height: 32px; padding: 0 10px; gap: 8px; border-radius: 9px;
+  border: 1px solid var(--tn-bc); background: var(--tn-s2);
+  color: var(--tn-tp); font-size: 12.5px;
+}
+.conn-switch > button:hover { border-color: var(--tn-ts); }
+.conn-switch .name { font-weight: 600; }
+.conn-switch .host { color: var(--tn-ts); }
+/* In a narrow window the target gives way first, then the name; the badge
+   (flex: none) and the search box keep their room. */
+.conn-switch { min-width: 0; flex: 0 1 auto; }
+.conn-switch > button { min-width: 0; max-width: 100%; }
+.conn-switch .name, .conn-switch .host {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.conn-switch .host { flex: 0 1000 auto; }
+.conn-switch .name { flex: 0 1 auto; }
+.conn-switch .dot { width: 8px; height: 8px; }
+.conn-switch .caret { font-size: 9px; color: var(--tn-tm); }
+.conn-menu { top: 38px; border-radius: 10px; }
+/* PROD and STAGING are a solid block, not a tint: the two places a stray
+   write costs something are the two that should be impossible to miss. */
+.env-pill { border-radius: 5px; }
+.env-pill.solid {
+  font-size: 10px; font-weight: 700; letter-spacing: .06em; padding: 2px 7px;
+}
+.env-pill.solid.env-prod { background: var(--tn-danger); color: var(--tn-on-danger); }
+.env-pill.solid.env-staging { background: var(--tn-warning); color: var(--tn-on-warn); }
+
+/* Search and commands: the box centred in the bar. */
+.tb-center { flex: 1 1 170px; min-width: 120px; display: flex; justify-content: center; }
+.brand { flex: none; }
+.palette-btn {
+  width: min(440px, 100%); min-width: 0; height: 32px; padding: 0 10px; gap: 8px;
+  border-radius: 9px; border: 1px solid var(--tn-bc); background: var(--tn-desk);
+  color: var(--tn-tm); font-size: 12.5px; overflow: hidden;
+}
+.palette-btn:hover { border-color: var(--tn-ts); color: var(--tn-ts); }
+.palette-btn svg { flex: none; }
+.palette-label { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-btn .kbd {
+  font-family: var(--tn-sans); font-size: 11px; padding: 1px 6px; border-radius: 5px;
+  background: transparent; border: 1px solid var(--tn-bh); color: var(--tn-ts);
+}
+
+/* ===== Query tabs: pills inside the strip ===== */
+.qtabs { height: 40px; align-items: center; padding: 0 8px; gap: 4px; }
+.qtab-list { align-items: center; gap: 4px; }
+.qtab {
+  height: 28px; border: 0; border-radius: 8px; padding: 0 12px;
+  color: var(--tn-ts); box-shadow: none;
+}
+.qtab:hover { background: var(--tn-s2); }
+.qtab.on { background: var(--tn-s2); color: var(--tn-tp); box-shadow: none; font-weight: 600; }
+.qtab-new { height: 28px; border-radius: 8px; color: var(--tn-ts); }
+
+/* ===== Result tabs: same pills ===== */
+.rtabs { height: 40px; padding: 0 8px; gap: 4px; border-bottom: 1px solid var(--tn-bh); }
+.rtab-list { gap: 4px; }
+.rtab {
+  height: 28px; padding: 0 11px; border: 0; border-radius: 8px;
+  color: var(--tn-ts); font-size: 12px;
+}
+.rtab:hover { color: var(--tn-tp); background: var(--tn-s2); }
+.rtab.on { color: var(--tn-accent); background: var(--tn-as); }
+
+/* ===== Buttons =====
+   Primary: accent fill, on-accent text. Secondary: outlined with the control
+   border, which holds 3:1 on every surface. */
+/* Wraps rather than running past the island in a narrow window. */
+.toolbar { padding: 8px 10px; gap: 6px; border-bottom: 0; flex-wrap: wrap; }
+.btn {
+  border-radius: 9px; border: 1px solid var(--tn-bc);
+  background: transparent; color: var(--tn-tp);
+}
+.toolbar .btn, .toolbar .btn.primary { height: 32px; padding: 0 12px; white-space: nowrap; flex: none; }
+.btn:hover { background: var(--tn-s2); }
+.btn.primary { background: var(--tn-accent); border-color: var(--tn-accent); color: var(--tn-on-accent); }
+.btn.primary:hover { background: color-mix(in srgb, var(--tn-accent) 88%, var(--tn-tp)); }
+.btn.primary:disabled { background: var(--tn-s2); color: var(--tn-tm); border-color: var(--tn-bs); }
+.btn.commit { border-color: var(--tn-success); }
+.btn.rollback { border-color: var(--tn-danger); }
+.btn.danger { background: var(--tn-danger); border-color: var(--tn-danger); color: var(--tn-on-danger); }
+.btn.xs { border-radius: 7px; }
+
+/* ===== Floating surfaces ===== */
+.modal { border-radius: 16px; box-shadow: var(--tn-shadow); }
+.conn-menu, .drop-menu, .toast, .update-toast { box-shadow: var(--tn-shadow); }
+
+/* ===== Headings in the display face ===== */
+h1, h2, h3, .modal-head .t, .dialog .d-title, .onboard .big, .about-name,
+.center-note .big, .es-t, .imp-big {
+  font-family: var(--tn-display); letter-spacing: -.01em;
+}

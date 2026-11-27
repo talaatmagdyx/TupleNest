@@ -61,17 +61,42 @@ describe("Titlebar", () => {
 
   it("greys the dot when disconnected", () => {
     const { container } = render(<Titlebar {...base} connected={false} />);
-    expect(container.querySelector(".conn-switch .dot")).toHaveStyle({ backgroundColor: "#4a4f57" });
+    expect(container.querySelector(".conn-switch .dot")).toHaveStyle({ backgroundColor: "var(--tn-tm)" });
   });
 
   it("reddens the dot on prod — the warning that has to be visible at a glance", () => {
     const { container } = render(<Titlebar {...base} activeEnv="prod" />);
-    expect(container.querySelector(".conn-switch .dot")).toHaveStyle({ backgroundColor: "#ef4d4d" });
+    expect(container.querySelector(".conn-switch .dot")).toHaveStyle({ backgroundColor: "var(--tn-danger)" });
   });
 
   it("greens the dot off prod", () => {
     const { container } = render(<Titlebar {...base} />);
-    expect(container.querySelector(".conn-switch .dot")).toHaveStyle({ backgroundColor: "#3fb950" });
+    expect(container.querySelector(".conn-switch .dot")).toHaveStyle({ backgroundColor: "var(--tn-success)" });
+  });
+
+  it.each([
+    ["prod", true, "env-ribbon-prod"],
+    ["staging", true, "env-ribbon-staging"],
+    ["dev", true, "env-ribbon-none"],
+    ["test", true, "env-ribbon-none"],
+    // Disconnected, activeEnv is the connection form's value: not where you are.
+    ["prod", false, "env-ribbon-none"],
+  ])("colours the ribbon for %s (connected: %s)", (env, connected, cls) => {
+    const { container } = render(<Titlebar {...base} activeEnv={env} connected={connected} />);
+    const ribbon = container.querySelector(".env-ribbon");
+    expect(ribbon).toHaveClass(cls);
+    expect(ribbon).toHaveAttribute("aria-hidden");
+  });
+
+  it("makes the PROD and STAGING badges solid, and leaves dev a tint", () => {
+    const { container, rerender } = render(<Titlebar {...base} activeEnv="prod" />);
+    expect(container.querySelector(".conn-switch .env-pill")).toHaveClass("solid", "env-prod");
+    rerender(<Titlebar {...base} activeEnv="staging" />);
+    expect(container.querySelector(".conn-switch .env-pill")).toHaveClass("solid", "env-staging");
+    rerender(<Titlebar {...base} activeEnv="dev" />);
+    expect(container.querySelector(".conn-switch .env-pill")).not.toHaveClass("solid");
+    // The badge is text, so the environment is in the switcher's name.
+    expect(screen.getByRole("button", { name: /customer_analytics.*dev/ })).toBeInTheDocument();
   });
 
   it("keeps the connection menu shut until asked", () => {
@@ -99,7 +124,7 @@ describe("Titlebar", () => {
 
   it("does not mark a profile active when its session is closed", () => {
     const { container } = render(<Titlebar {...base} connMenu connected={false} />);
-    expect(container.querySelector(".conn-menu .row .dot")).toHaveStyle({ backgroundColor: "#4a4f57" });
+    expect(container.querySelector(".conn-menu .row .dot")).toHaveStyle({ backgroundColor: "var(--tn-tm)" });
   });
 
   it("defaults a profile with no environment to dev", () => {
