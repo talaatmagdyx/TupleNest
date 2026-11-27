@@ -1,7 +1,7 @@
 import type { ConnectionRecord } from "../ipc/types";
 import { kbd } from "../lib/platform";
 import { envMeta } from "../lib/sql";
-import { GearIcon, SidebarIcon, BrandMark } from "../lib/icons";
+import { GearIcon, SidebarIcon, BrandMark, SearchIcon } from "../lib/icons";
 import { Menu, MenuGroup } from "../lib/a11y";
 
 type Props = {
@@ -23,10 +23,22 @@ type Props = {
   onOpenSettings: () => void;
 };
 
+/** The environments whose badge is a solid block rather than a tint: the two
+ *  where a stray write costs something. */
+const SOLID_ENVS = new Set(["prod", "staging"]);
+
 export default function Titlebar(p: Props) {
   const em = envMeta(p.activeEnv);
+  // Only a live session has an environment. The connection form's value is
+  // what activeEnv carries while disconnected, and that is not where you are.
+  const ribbon = p.connected && SOLID_ENVS.has(p.activeEnv) ? p.activeEnv : "none";
+  const solid = SOLID_ENVS.has(p.activeEnv);
   return (
     <header className="titlebar">
+      {/* The window's top edge, coloured by where the session points. Fixed to
+          the viewport, so where it sits in the tree does not matter; hidden
+          from assistive tech because the badge beside the name says it. */}
+      <div className={`env-ribbon env-ribbon-${ribbon}`} aria-hidden />
       <button className="icon-btn" title="Toggle sidebar" onClick={p.onToggleSidebar}>
         <SidebarIcon />
       </button>
@@ -39,18 +51,24 @@ export default function Titlebar(p: Props) {
           <span
             className="dot"
             style={{
-              backgroundColor: p.connected ? (p.activeEnv === "prod" ? "#ef4d4d" : "#3fb950") : "#4a4f57",
-              boxShadow: p.connected ? `0 0 8px ${p.activeEnv === "prod" ? "rgba(239,77,77,.5)" : "rgba(63,185,80,.5)"}` : "none",
+              backgroundColor: p.connected
+                ? p.activeEnv === "prod"
+                  ? "var(--tn-danger)"
+                  : "var(--tn-success)"
+                : "var(--tn-tm)",
             }}
           />
           <span className="name">{p.connected ? p.activeName : "Not connected"}</span>
           {p.connected && p.activeUserHost && <span className="host">{p.activeUserHost}</span>}
-          {p.connected && (
-            <span className="env-pill" style={{ color: em.color, background: em.bg }}>
-              {p.activeEnv}
-            </span>
-          )}
-          <span style={{ fontSize: 9, color: "var(--tn-tm)" }} aria-hidden>
+          {p.connected &&
+            (solid ? (
+              <span className={`env-pill solid env-${p.activeEnv}`}>{p.activeEnv}</span>
+            ) : (
+              <span className="env-pill" style={{ color: em.color, background: em.bg }}>
+                {p.activeEnv}
+              </span>
+            ))}
+          <span className="caret" aria-hidden>
             ▾
           </span>
         </button>
@@ -69,11 +87,11 @@ export default function Titlebar(p: Props) {
                 >
                   <span
                     className="dot"
-                    style={{ backgroundColor: c.id === p.activeId && p.connected ? "#3fb950" : "#4a4f57" }}
+                    style={{ backgroundColor: c.id === p.activeId && p.connected ? "var(--tn-success)" : "var(--tn-tm)" }}
                   />
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ display: "block", fontSize: 12, fontWeight: 650 }}>{c.name}</span>
-                    <span className="host" style={{ display: "block", fontFamily: "JetBrains Mono, monospace", fontSize: 9.5, color: "var(--tn-tm)" }}>
+                    <span className="host" style={{ display: "block", fontFamily: "var(--tn-mono)", fontSize: 9.5, color: "var(--tn-tm)" }}>
                       {c.username}@{c.host}:{c.port}/{c.database}
                     </span>
                   </span>
@@ -91,12 +109,14 @@ export default function Titlebar(p: Props) {
           </Menu>
         )}
       </div>
-      <div style={{ flex: 1 }} />
-      <button className="palette-btn" onClick={p.onOpenPalette}>
-        <span>Search &amp; commands</span>
-        <span className="kbd">{kbd("mod", "K")}</span>
-      </button>
-      <button className="icon-btn" title="Toggle theme" onClick={p.onToggleTheme}>
+      <div className="tb-center">
+        <button className="palette-btn" onClick={p.onOpenPalette}>
+          <SearchIcon />
+          <span className="palette-label">Search &amp; commands</span>
+          <span className="kbd">{kbd("mod", "K")}</span>
+        </button>
+      </div>
+      <button className="icon-btn outlined" title="Toggle theme" onClick={p.onToggleTheme}>
         {p.theme === "dark" ? "☾" : "☀"}
       </button>
       <button className="icon-btn" title="Settings" onClick={p.onOpenSettings}>

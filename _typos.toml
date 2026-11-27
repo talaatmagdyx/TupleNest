@@ -20,6 +20,11 @@ extend-exclude = [
   "docs/audits/*/reviewers/",
 ]
 
+[default]
+# CSS unicode-range values (`U+0100-02BA` in the bundled @font-face rules)
+# are hex code points, not words.
+extend-ignore-re = ["U\\+[0-9A-Fa-f?]+(-[0-9A-Fa-f]+)?"]
+
 [default.extend-words]
 # `.pn-head`, `.pn-cost` … — the CSS prefix for plan-node, read as "on".
 pn = "pn"

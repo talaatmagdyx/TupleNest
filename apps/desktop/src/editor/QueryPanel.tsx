@@ -86,279 +86,285 @@ export default function QueryPanel(p: Props) {
     // The panel the editor tab strip controls. A box rather than a fragment so
     // it can carry the role; it lays out exactly as .main-col did.
     <div className="query-tabpanel" role="tabpanel" id={QUERY_PANEL_ID} aria-labelledby={p.tabId}>
-      <div className="toolbar">
-        <button className="btn primary" onClick={p.onRun} disabled={!p.connected || p.running}>
-          {p.running ? <span className="spin" /> : <PlayIcon />} {p.running ? "Running" : "Run"}{" "}
-          <span className="kbd" style={{ background: "rgba(0,0,0,.2)", color: "inherit", borderColor: "transparent" }}>
-            {kbd("mod", "enter")}
-          </span>
-        </button>
-        <button className="btn" onClick={p.onCancel} disabled={!p.running}>
-          Cancel
-        </button>
-        <span className="sep" />
-        {p.inTx ? (
-          <>
-            <span className="tx-chip">
-              <span className="pulse" /> IN TRANSACTION
+      {/* Two islands: the editor (toolbar and text) and the results. Plain
+          boxes for the panel look; the splitter between them is the gap. */}
+      <div className="editor-island">
+        <div className="toolbar">
+          <button className="btn primary" onClick={p.onRun} disabled={!p.connected || p.running}>
+            {p.running ? <span className="spin" /> : <PlayIcon />} {p.running ? "Running" : "Run"}{" "}
+            <span className="kbd" style={{ background: "rgba(0,0,0,.2)", color: "inherit", borderColor: "transparent" }}>
+              {kbd("mod", "enter")}
             </span>
-            <button className="btn commit" onClick={p.onCommit}>
-              Commit
-            </button>
-            <button className="btn rollback" onClick={p.onRollback}>
-              Rollback
-            </button>
-          </>
-        ) : (
-          <button className="btn" onClick={p.onBegin} disabled={!p.connected}>
-            Begin transaction
           </button>
-        )}
-        <div className="grow" />
-        {/* Wrapped, not passed by reference: onClick would hand the click event
-            to onExplain's first parameter. */}
-        <button className="btn" onClick={() => p.onExplain()} disabled={!p.connected}>
-          Explain
-        </button>
-        <button className="btn" onClick={p.onFormat} title={`Format SQL (${kbd("mod", "shift", "F")})`}>
-          Format
-        </button>
-        <div className="menu-wrap">
-          <button
-            className="btn"
-            onClick={p.onToggleExport}
-            disabled={!r || r.columns.length === 0}
-            aria-haspopup="menu"
-            aria-expanded={p.exportMenu}
-          >
-            Export <span aria-hidden>▾</span>
+          <button className="btn" onClick={p.onCancel} disabled={!p.running}>
+            Cancel
           </button>
-          {p.exportMenu && (
-            <Menu className="drop-menu" label="Export result" onClose={p.onToggleExport}>
-              <MenuGroup id="export-save" label="Save result as">
-                <button role="menuitem" onClick={() => p.onExport("csv")}>
-                  CSV <span>.csv</span>
-                </button>
-                <button role="menuitem" onClick={() => p.onExport("json")}>
-                  JSON <span>.json</span>
-                </button>
-                <button role="menuitem" onClick={() => p.onExport("md")}>
-                  Markdown <span>.md</span>
-                </button>
-              </MenuGroup>
-              <div className="divider" role="separator" />
-              {/* A menuitemcheckbox, not a checkbox in a label: a menu may only
-                  own menu items, and the arrows have to be able to land here.
-                  The native box stays as the visual, hidden from the tree. */}
-              <div
-                className="menu-check"
-                role="menuitemcheckbox"
-                aria-checked={p.csvSafe}
-                tabIndex={-1}
-                title="Prefixes cells starting with = + - @ so spreadsheets treat them as text, not formulas"
-                onClick={() => p.onCsvSafe(!p.csvSafe)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    p.onCsvSafe(!p.csvSafe);
-                  }
-                }}
-              >
-                <input type="checkbox" checked={p.csvSafe} readOnly tabIndex={-1} aria-hidden />
-                <span>Spreadsheet-safe CSV</span>
-              </div>
-              {p.onCopyResult && (
-                <>
-                  <div className="divider" role="separator" />
-                  <MenuGroup id="export-copy" label="Copy to clipboard">
-                    <button role="menuitem" onClick={() => p.onCopyResult!("csv")}>
-                      CSV
-                    </button>
-                    <button role="menuitem" onClick={() => p.onCopyResult!("md")}>
-                      Markdown
-                    </button>
-                  </MenuGroup>
-                </>
-              )}
-            </Menu>
+          <span className="sep" />
+          {p.inTx ? (
+            <>
+              <span className="tx-chip">
+                <span className="pulse" /> IN TRANSACTION
+              </span>
+              <button className="btn commit" onClick={p.onCommit}>
+                Commit
+              </button>
+              <button className="btn rollback" onClick={p.onRollback}>
+                Rollback
+              </button>
+            </>
+          ) : (
+            <button className="btn" onClick={p.onBegin} disabled={!p.connected}>
+              Begin transaction
+            </button>
+          )}
+          <div className="grow" />
+          {/* Wrapped, not passed by reference: onClick would hand the click event
+              to onExplain's first parameter. */}
+          <button className="btn" onClick={() => p.onExplain()} disabled={!p.connected}>
+            Explain
+          </button>
+          <button className="btn" onClick={p.onFormat} title={`Format SQL (${kbd("mod", "shift", "F")})`}>
+            Format
+          </button>
+          <div className="menu-wrap">
+            <button
+              className="btn"
+              onClick={p.onToggleExport}
+              disabled={!r || r.columns.length === 0}
+              aria-haspopup="menu"
+              aria-expanded={p.exportMenu}
+            >
+              Export <span aria-hidden>▾</span>
+            </button>
+            {p.exportMenu && (
+              <Menu className="drop-menu" label="Export result" onClose={p.onToggleExport}>
+                <MenuGroup id="export-save" label="Save result as">
+                  <button role="menuitem" onClick={() => p.onExport("csv")}>
+                    CSV <span>.csv</span>
+                  </button>
+                  <button role="menuitem" onClick={() => p.onExport("json")}>
+                    JSON <span>.json</span>
+                  </button>
+                  <button role="menuitem" onClick={() => p.onExport("md")}>
+                    Markdown <span>.md</span>
+                  </button>
+                </MenuGroup>
+                <div className="divider" role="separator" />
+                {/* A menuitemcheckbox, not a checkbox in a label: a menu may only
+                    own menu items, and the arrows have to be able to land here.
+                    The native box stays as the visual, hidden from the tree. */}
+                <div
+                  className="menu-check"
+                  role="menuitemcheckbox"
+                  aria-checked={p.csvSafe}
+                  tabIndex={-1}
+                  title="Prefixes cells starting with = + - @ so spreadsheets treat them as text, not formulas"
+                  onClick={() => p.onCsvSafe(!p.csvSafe)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      p.onCsvSafe(!p.csvSafe);
+                    }
+                  }}
+                >
+                  <input type="checkbox" checked={p.csvSafe} readOnly tabIndex={-1} aria-hidden />
+                  <span>Spreadsheet-safe CSV</span>
+                </div>
+                {p.onCopyResult && (
+                  <>
+                    <div className="divider" role="separator" />
+                    <MenuGroup id="export-copy" label="Copy to clipboard">
+                      <button role="menuitem" onClick={() => p.onCopyResult!("csv")}>
+                        CSV
+                      </button>
+                      <button role="menuitem" onClick={() => p.onCopyResult!("md")}>
+                        Markdown
+                      </button>
+                    </MenuGroup>
+                  </>
+                )}
+              </Menu>
+            )}
+          </div>
+        </div>
+
+        <div className="editor-zone">
+          <SqlEditor
+            sql={p.sql}
+            /* Editable whether or not a connection is up. Drafting a query,
+               searching it (⌘F), commenting it (⌘/) and formatting it are all
+               things you do *before* you connect — and disabling the editor made
+               two of those, shipped in beta.6, unreachable in exactly the state
+               where you would reach for them. Running is what needs a server, and
+               the Run button and the "Not connected" note already say so. */
+            disabled={false}
+            height={p.editorH}
+            onChange={p.onSqlChange}
+            catalog={p.catalog}
+            onPrefetchTables={p.onPrefetchTables}
+            onPrefetchSchema={p.onPrefetchSchema}
+          />
+          {p.status && (
+            <div className="run-status" style={{ color: p.status.color }}>
+              <span>{p.status.icon}</span>
+              <span>{p.status.text}</span>
+            </div>
           )}
         </div>
-      </div>
-
-      <div className="editor-zone">
-        <SqlEditor
-          sql={p.sql}
-          /* Editable whether or not a connection is up. Drafting a query,
-             searching it (⌘F), commenting it (⌘/) and formatting it are all
-             things you do *before* you connect — and disabling the editor made
-             two of those, shipped in beta.6, unreachable in exactly the state
-             where you would reach for them. Running is what needs a server, and
-             the Run button and the "Not connected" note already say so. */
-          disabled={false}
-          height={p.editorH}
-          onChange={p.onSqlChange}
-          catalog={p.catalog}
-          onPrefetchTables={p.onPrefetchTables}
-          onPrefetchSchema={p.onPrefetchSchema}
-        />
-        {p.status && (
-          <div className="run-status" style={{ color: p.status.color }}>
-            <span>{p.status.icon}</span>
-            <span>{p.status.text}</span>
-          </div>
-        )}
       </div>
 
       <div className="splitter" onMouseDown={p.onSplitStart} title="Drag to resize">
         <span />
       </div>
 
-      <div className="rtabs">
-        {/* Plan runs EXPLAIN and opens a modal: it is an action, not a view,
-            so it sits beside the tablist rather than in it. */}
-        <TabList
-          className="rtab-list"
-          label="Result views"
-          idBase="results"
-          tabs={tabs}
-          active={p.resultTab}
-          onSelect={p.onResultTab}
-        />
-        <button className="rtab" onClick={() => p.onExplain()} title="Run EXPLAIN and show the plan">
-          Plan
-        </button>
-        {p.editTarget && (
-          <span className="edit-chip" title={`Rows map to ${p.editTarget.schema}.${p.editTarget.table} — double-click a cell to edit`}>
-            editable
-          </span>
-        )}
-        <div className="meta">
-          {r && !p.lastError && <span style={{ color: "var(--tn-success)" }}>✓</span>}
-          <span>{meta}</span>
-        </div>
-      </div>
-
-      {/* `editReason` was declared, passed in by App, and never rendered — so
-          the specific explanation analyzeEditability works to produce ("no
-          primary key", "more than one table is referenced") was computed and
-          thrown away, leaving cells that just silently refuse to edit. Only
-          shown when there is a result to explain and nothing staged. */}
-      {p.editReason && r && r.columns.length > 0 && (p.edits?.length ?? 0) === 0 && (
-        <div className="edit-bar readonly">
-          <span className="muted">Read-only — {p.editReason}.</span>
-        </div>
-      )}
-
-      {(p.edits?.length ?? 0) > 0 && (
-        <div className="edit-bar">
-          <span className="dot-pulse" />
-          <span>
-            <strong>{p.edits!.length}</strong> pending change{p.edits!.length === 1 ? "" : "s"}
-          </span>
-          <span className="sep-dot">·</span>
-          <span className="muted">nothing is written until you apply</span>
-          <div className="grow" />
-          <button className="btn" onClick={p.onDiscardEdits}>
-            Discard
+      <div className="results-island">
+        <div className="rtabs">
+          {/* Plan runs EXPLAIN and opens a modal: it is an action, not a view,
+              so it sits beside the tablist rather than in it. */}
+          <TabList
+            className="rtab-list"
+            label="Result views"
+            idBase="results"
+            tabs={tabs}
+            active={p.resultTab}
+            onSelect={p.onResultTab}
+          />
+          <button className="rtab" onClick={() => p.onExplain()} title="Run EXPLAIN and show the plan">
+            Plan
           </button>
-          <button className="btn primary" onClick={p.onReviewEdits}>
-            Review &amp; apply
-          </button>
+          {p.editTarget && (
+            <span className="edit-chip" title={`Rows map to ${p.editTarget.schema}.${p.editTarget.table} — double-click a cell to edit`}>
+              editable
+            </span>
+          )}
+          <div className="meta">
+            {r && !p.lastError && <span style={{ color: "var(--tn-success)" }}>✓</span>}
+            <span>{meta}</span>
+          </div>
         </div>
-      )}
 
-      <div className="results-zone" {...tabPanelProps("results", p.resultTab)}>
-        {p.resultTab === "results" && (
-          <>
-            {p.lastError && <div className="error-box">{p.lastError}</div>}
-            {!p.lastError && !r && !p.connected && (
-              <div className="center-note">
-                <div className="big">Not connected</div>
-                <div>Connect to a database to run queries — {kbd("mod", "K")} or the connection menu.</div>
-              </div>
-            )}
-            {!p.lastError && !r && p.connected && (
-              <div className="center-note">Run the query ({kbd("mod", "enter")}) to see results</div>
-            )}
-            {!p.lastError && r && r.columns.length === 0 && (
-              <div className="center-note">
-                <div className="big">{r.rowsAffected ?? 0} row(s) affected</div>
-                <div>{r.elapsedMs} ms</div>
-              </div>
-            )}
-            {!p.lastError && r && r.columns.length > 0 && r.totalRows === 0 && (
-              <div className="center-note">
-                <div className="big">0 rows</div>
-                <div>The query ran fine but matched no rows.</div>
-              </div>
-            )}
-            {!p.lastError && r && r.columns.length > 0 && r.totalRows > 0 && (
-              <>
-                {r.truncated && (
-                  <div className="trunc-note">
-                    showing first {r.storedRows.toLocaleString()} of {totalRowsText(r)} rows
-                    {r.totalKnown === false && ` ${STOPPED_AT_LIMIT}`}
-                  </div>
-                )}
-                <Grid
-                  columns={r.columns}
-                  storedRows={r.storedRows}
-                  epoch={p.queryEpoch}
-                  onInspect={p.onInspect}
-                  onCopyable={p.onCopyable}
-                  onToast={p.onToast}
-                  onVisible={p.onVisibleRows}
-                  target={p.editTarget}
-                  edits={p.edits}
-                  onStage={p.onStageEdit}
-                />
-              </>
-            )}
-          </>
-        )}
-        {p.resultTab === "messages" && (
-          <div className="msg-pane">
-            {!r && !p.lastError && <div>no messages yet</div>}
-            {p.lastError && <div style={{ color: "var(--tn-danger)" }}>✕ {p.lastError}</div>}
-            {r && (
-              <>
-                <div style={{ color: "var(--tn-success)" }}>✓ {meta}</div>
-                {r.truncated && <div>first {r.storedRows.toLocaleString()} rows kept in memory for scrolling</div>}
-                <div>columns: {r.columns.map((c) => `${c.name} ${c.dbType}`).join(", ") || "—"}</div>
-              </>
-            )}
+        {/* `editReason` was declared, passed in by App, and never rendered — so
+            the specific explanation analyzeEditability works to produce ("no
+            primary key", "more than one table is referenced") was computed and
+            thrown away, leaving cells that just silently refuse to edit. Only
+            shown when there is a result to explain and nothing staged. */}
+        {p.editReason && r && r.columns.length > 0 && (p.edits?.length ?? 0) === 0 && (
+          <div className="edit-bar readonly">
+            <span className="muted">Read-only — {p.editReason}.</span>
           </div>
         )}
-        {p.resultTab === "chart" && (
-          <div className="chart-pane">
-            {!p.chart && (
-              <div className="center-note" style={{ padding: 40 }}>
-                Chart needs a result with one text column and one numeric column.
-              </div>
-            )}
-            {p.chart && (
-              <>
-                <div className="chart-title">{p.chart.title}</div>
-                <div className="chart-sub">{p.chart.sub}</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {p.chart.data.map((d, i) => {
-                    const max = Math.max(...p.chart!.data.map((x) => x.v), 1);
-                    return (
-                      <div key={i} className="chart-row">
-                        <div className="lbl">{d.label}</div>
-                        <div className="track">
-                          <div className="fill" style={{ width: `${(d.v / max) * 100}%` }} />
-                        </div>
-                        <div className="val">{d.v.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
-                      </div>
-                    );
-                  })}
+
+        {(p.edits?.length ?? 0) > 0 && (
+          <div className="edit-bar">
+            <span className="dot-pulse" />
+            <span>
+              <strong>{p.edits!.length}</strong> pending change{p.edits!.length === 1 ? "" : "s"}
+            </span>
+            <span className="sep-dot">·</span>
+            <span className="muted">nothing is written until you apply</span>
+            <div className="grow" />
+            <button className="btn" onClick={p.onDiscardEdits}>
+              Discard
+            </button>
+            <button className="btn primary" onClick={p.onReviewEdits}>
+              Review &amp; apply
+            </button>
+          </div>
+        )}
+
+        <div className="results-zone" {...tabPanelProps("results", p.resultTab)}>
+          {p.resultTab === "results" && (
+            <>
+              {p.lastError && <div className="error-box">{p.lastError}</div>}
+              {!p.lastError && !r && !p.connected && (
+                <div className="center-note">
+                  <div className="big">Not connected</div>
+                  <div>Connect to a database to run queries — {kbd("mod", "K")} or the connection menu.</div>
                 </div>
-              </>
-            )}
-          </div>
-        )}
-        {p.resultTab === "history" && <HistoryPanel {...p.history} />}
+              )}
+              {!p.lastError && !r && p.connected && (
+                <div className="center-note">Run the query ({kbd("mod", "enter")}) to see results</div>
+              )}
+              {!p.lastError && r && r.columns.length === 0 && (
+                <div className="center-note">
+                  <div className="big">{r.rowsAffected ?? 0} row(s) affected</div>
+                  <div>{r.elapsedMs} ms</div>
+                </div>
+              )}
+              {!p.lastError && r && r.columns.length > 0 && r.totalRows === 0 && (
+                <div className="center-note">
+                  <div className="big">0 rows</div>
+                  <div>The query ran fine but matched no rows.</div>
+                </div>
+              )}
+              {!p.lastError && r && r.columns.length > 0 && r.totalRows > 0 && (
+                <>
+                  {r.truncated && (
+                    <div className="trunc-note">
+                      showing first {r.storedRows.toLocaleString()} of {totalRowsText(r)} rows
+                      {r.totalKnown === false && ` ${STOPPED_AT_LIMIT}`}
+                    </div>
+                  )}
+                  <Grid
+                    columns={r.columns}
+                    storedRows={r.storedRows}
+                    epoch={p.queryEpoch}
+                    onInspect={p.onInspect}
+                    onCopyable={p.onCopyable}
+                    onToast={p.onToast}
+                    onVisible={p.onVisibleRows}
+                    target={p.editTarget}
+                    edits={p.edits}
+                    onStage={p.onStageEdit}
+                  />
+                </>
+              )}
+            </>
+          )}
+          {p.resultTab === "messages" && (
+            <div className="msg-pane">
+              {!r && !p.lastError && <div>no messages yet</div>}
+              {p.lastError && <div style={{ color: "var(--tn-danger)" }}>✕ {p.lastError}</div>}
+              {r && (
+                <>
+                  <div style={{ color: "var(--tn-success)" }}>✓ {meta}</div>
+                  {r.truncated && <div>first {r.storedRows.toLocaleString()} rows kept in memory for scrolling</div>}
+                  <div>columns: {r.columns.map((c) => `${c.name} ${c.dbType}`).join(", ") || "—"}</div>
+                </>
+              )}
+            </div>
+          )}
+          {p.resultTab === "chart" && (
+            <div className="chart-pane">
+              {!p.chart && (
+                <div className="center-note" style={{ padding: 40 }}>
+                  Chart needs a result with one text column and one numeric column.
+                </div>
+              )}
+              {p.chart && (
+                <>
+                  <div className="chart-title">{p.chart.title}</div>
+                  <div className="chart-sub">{p.chart.sub}</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {p.chart.data.map((d, i) => {
+                      const max = Math.max(...p.chart!.data.map((x) => x.v), 1);
+                      return (
+                        <div key={i} className="chart-row">
+                          <div className="lbl">{d.label}</div>
+                          <div className="track">
+                            <div className="fill" style={{ width: `${(d.v / max) * 100}%` }} />
+                          </div>
+                          <div className="val">{d.v.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          {p.resultTab === "history" && <HistoryPanel {...p.history} />}
+        </div>
       </div>
     </div>
   );
