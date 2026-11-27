@@ -3,12 +3,14 @@ import {
   ANTHROPIC_MODELS,
   errorText,
   getSettings,
+  ollamaLabel,
   removeKey,
   saveKey,
   setSettings,
   testAnthropic,
   testOllama,
   type AssistantSettings as Settings,
+  type OllamaModel,
   type Provider,
 } from "../assistant/api";
 
@@ -30,7 +32,7 @@ export default function AssistantSettings(p: { onChanged?: () => void; focus?: b
   const [url, setUrl] = useState("");
   const [ollamaNote, setOllamaNote] = useState<Note>(null);
   const [ollamaBusy, setOllamaBusy] = useState(false);
-  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
   const [saveNote, setSaveNote] = useState<Note>(null);
   const ref = useRef<HTMLElement>(null);
 
@@ -73,6 +75,7 @@ export default function AssistantSettings(p: { onChanged?: () => void; focus?: b
         ollamaEnabled: next.ollamaEnabled,
         ollamaUrl: next.ollamaUrl,
         ollamaAllowRemote: next.ollamaAllowRemote,
+        ollamaAllowCloud: next.ollamaAllowCloud ?? false,
         defaultProvider: next.defaultProvider,
         defaultModel: next.defaultModel,
       });
@@ -134,9 +137,11 @@ export default function AssistantSettings(p: { onChanged?: () => void; focus?: b
     try {
       const models = await testOllama(url, s.ollamaAllowRemote);
       setOllamaModels(models);
+      const cloud = models.filter((m) => m.cloud).length;
+      const cloudText = cloud ? ` (${cloud} of them run${cloud === 1 ? "s" : ""} on ollama.com, not this computer)` : "";
       setOllamaNote(
         models.length
-          ? { ok: true, text: `Ollama is running: ${models.length} model${models.length === 1 ? "" : "s"} found.` }
+          ? { ok: true, text: `Ollama is running: ${models.length} model${models.length === 1 ? "" : "s"} found${cloudText}.` }
           : { ok: false, text: "Ollama is running but has no models. Pull one with `ollama pull llama3.2`." },
       );
     } catch (e) {
@@ -153,7 +158,9 @@ export default function AssistantSettings(p: { onChanged?: () => void; focus?: b
     for (const m of ANTHROPIC_MODELS) defaults.push({ provider: "anthropic", model: m.model, label: `${m.label} · your key` });
   }
   if (s.ollamaEnabled) {
-    const names = new Set(ollamaModels);
+    // Cloud models are never offered as the default: they send the prompt
+    // to ollama.com, so they are only used when picked by hand.
+    const names = new Set(ollamaModels.filter((m) => !m.cloud).map((m) => m.name));
     if (s.defaultProvider === "ollama" && s.defaultModel) names.add(s.defaultModel);
     for (const m of names) defaults.push({ provider: "ollama", model: m, label: `${m} · Ollama` });
   }
@@ -257,12 +264,34 @@ export default function AssistantSettings(p: { onChanged?: () => void; focus?: b
         <div className="as-hint">
           {s.ollamaAllowRemote
             ? "On: your questions, the query and table names go to the server at this URL."
-            : "Off: only this computer (localhost, 127.0.0.1, ::1). Nothing leaves this computer."}
+            : "Off: only Ollama on this computer (localhost, 127.0.0.1, ::1). With a local model, nothing leaves this computer."}
+        </div>
+        <label className="as-check">
+          <input
+            type="checkbox"
+            checked={s.ollamaAllowCloud ?? false}
+            onChange={(e) => void persist({ ollamaAllowCloud: e.target.checked, ollamaUrl: url })}
+          />
+          Allow Ollama cloud models — your question, the query and table names are sent to ollama.com
+        </label>
+        <div className="as-hint">
+          {s.ollamaAllowCloud
+            ? "On: models marked “cloud via ollama.com” can be picked in the panel. They are never the default."
+            : "Off: models that Ollama runs on ollama.com are listed but cannot be used."}
         </div>
         {ollamaNote && (
           <div role="status" className={ollamaNote.ok ? "as-ok" : "as-err"}>
             {ollamaNote.text}
           </div>
+        )}
+        {ollamaModels.length > 0 && (
+          <ul className="as-models" aria-label="Ollama models">
+            {ollamaModels.map((m) => (
+              <li key={m.name} className={m.cloud ? "as-cloud" : undefined}>
+                {ollamaLabel(m)}
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 

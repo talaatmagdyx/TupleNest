@@ -22,19 +22,40 @@ export type AssistantSettings = {
   ollamaEnabled: boolean;
   ollamaUrl: string;
   ollamaAllowRemote: boolean;
+  /** Opt-in to Ollama's cloud models, which run on ollama.com. Enforced in Rust. */
+  ollamaAllowCloud: boolean;
   defaultProvider: Provider | null;
   defaultModel: string | null;
 };
 
 export type AssistantSettingsInput = Omit<AssistantSettings, "anthropicConfigured">;
 
-export type ModelOption = { provider: Provider; model: string; label: string };
+/**
+ * `cloud`: runs off this computer (an Ollama cloud model on ollama.com).
+ * `available`: false for a cloud model the user has not opted in to.
+ */
+export type ModelOption = { provider: Provider; model: string; label: string; cloud?: boolean; available?: boolean };
 export type ModelsOut = {
   options: ModelOption[];
   defaultProvider: Provider | null;
   defaultModel: string | null;
   ollamaError: string | null;
+  ollamaAllowCloud?: boolean;
 };
+
+/** One model from Ollama's `/api/tags`, as the Rust side parsed it. */
+export type OllamaModel = { name: string; cloud: boolean; remoteHost: string | null };
+
+/** Where a cloud model's prompt goes, for labels. */
+export function cloudHost(m: OllamaModel): string {
+  try {
+    return m.remoteHost ? new URL(m.remoteHost).hostname : "ollama.com";
+  } catch {
+    return "ollama.com";
+  }
+}
+
+export const ollamaLabel = (m: OllamaModel) => (m.cloud ? `${m.name} · cloud via ${cloudHost(m)}` : `${m.name} · Ollama`);
 
 export type AskInput = {
   action: Action;
@@ -57,7 +78,7 @@ export const saveKey = (key: string) => invoke<AssistantSettings>("assistant_key
 export const removeKey = () => invoke<AssistantSettings>("assistant_key_remove");
 export const testAnthropic = (key: string | null) => invoke<string>("assistant_anthropic_test", { key });
 export const testOllama = (url: string, allowRemote: boolean) =>
-  invoke<string[]>("assistant_ollama_test", { url, allowRemote });
+  invoke<OllamaModel[]>("assistant_ollama_test", { url, allowRemote });
 export const listModels = () => invoke<ModelsOut>("assistant_models");
 export const ask = (id: string, provider: Provider, model: string, input: AskInput) =>
   invoke<{ cancelled: boolean }>("assistant_ask", { id, provider, model, input });

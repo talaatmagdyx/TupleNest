@@ -22,7 +22,7 @@ Windows, `~/.local/share/app.tuplenest.desktop` on Linux.
 | What | Where | Notes |
 |---|---|---|
 | **Anthropic API key** (if you add one) | OS keychain | Stored the same way as database passwords: the value in the keychain, an opaque `tn-secret-*` reference in the SQLite settings. The window never receives the key or the reference back. Removing the provider in Settings › Assistant deletes the keychain entry. |
-| **Assistant settings** | `<data>` SQLite | Whether Ollama is on, its URL, whether a non-local Ollama is allowed, the default model. **Assistant conversations are not stored** — they live in the panel until you clear it or close the app. |
+| **Assistant settings** | `<data>` SQLite | Whether Ollama is on, its URL, whether a non-local Ollama is allowed, whether Ollama cloud models are allowed, the default model. **Assistant conversations are not stored** — they live in the panel until you clear it or close the app. |
 | **Passwords and SSH key passphrases** | OS keychain | Keychain / Credential Manager / Secret Service. Never in the files below — the SQLite table has no password or passphrase column, only opaque references. |
 | **Connection profiles** | `<data>` SQLite | Host, port, database, username, TLS mode, SSH settings (including the key file's path, not the key). Not the password or the key's passphrase. |
 | **Query history** | `<data>` SQLite | Newest 1,000. **On prod-tagged connections the SQL text is not recorded** — only timing, row counts, and status. On other environments the SQL is stored with a best-effort scrub of secret literals (`PASSWORD '…'`, `IDENTIFIED BY '…'`, `key=…`, connection-string URLs → `[REDACTED]`). Add a `-- tuplenest:no-history` comment to a statement to skip its history row entirely. When a query fails, only a reduced error is stored (title, SQLSTATE, category); the server's DETAIL/HINT — which can quote row values like `Key (email)=(…)` — is shown on screen but **not** written to disk. |
@@ -78,7 +78,9 @@ TupleNest makes exactly these connections:
 3. **The assistant's model, only when you ask it something** (or press Test
    in Settings › Assistant). Either `api.anthropic.com`, over HTTPS with your
    own key, or the Ollama server whose URL you set — `http://localhost:11434`
-   by default, which never leaves this computer. See below.
+   by default. A local Ollama model never leaves this computer; an Ollama
+   *cloud* model does (it runs on `ollama.com`), and is only used once you
+   opt in. See below.
 4. **Nothing else.** Following a link in the About box hands the URL to your
    browser and is the only other outbound traffic, and only if you click it.
 
@@ -114,12 +116,24 @@ connections' schemas, or anything from another tab.
 | Provider | Destination | Sent when |
 |---|---|---|
 | Claude (Anthropic API) | `https://api.anthropic.com/v1/messages`, with your key in the `x-api-key` header | You send a message, press Explain or Fix; Test sends a one-word request with no data of yours |
-| Ollama | The URL you set: `http://localhost:11434` unless you change it | You send a message, press Explain or Fix; Test lists the models (`/api/tags`) |
+| Ollama | The URL you set: `http://localhost:11434` unless you change it; for a cloud model, Ollama passes the request on to `ollama.com` (only with **Allow Ollama cloud models** on) | You send a message, press Explain or Fix; Test lists the models (`/api/tags`) |
 
 The Ollama URL must be on this computer (`localhost`, `127.0.0.0/8` or `::1`)
 unless you turn on **Allow a server on another computer**; with it on, your
 questions, the query and the table names go to that server. Redirects are
 never followed, so a local server cannot pass the request on elsewhere.
+
+**Ollama cloud models.** An Ollama signed in to ollama.com lists *cloud*
+models (a name ending in `:cloud` or `-cloud`, or a `remote_host` such as
+`https://ollama.com:443` in `/api/tags`) next to local ones. Ollama forwards
+those requests to that host, so your question, the query and the table names
+leave this computer even though the app only talks to `localhost`. TupleNest
+marks them "cloud via ollama.com" wherever models are listed, never makes one
+the default, and refuses to send to one — checked in the Rust core against
+`/api/tags` before each request — until you turn on **Allow Ollama cloud
+models** in Settings › Assistant. That choice is remembered and can be turned
+off at any time. What ollama.com does with a request is governed by Ollama's
+terms, not by this project.
 Anthropic's handling of what you send is governed by your agreement with
 Anthropic, not by this project.
 

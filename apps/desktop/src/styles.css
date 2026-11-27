@@ -2181,6 +2181,8 @@ h1, h2, h3, .modal-head .t, .dialog .d-title, .onboard .big, .about-name,
 .as-input:focus { outline: none; border-color: var(--tn-accent); box-shadow: 0 0 0 3px var(--tn-as); }
 .as-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--tn-ts); }
 .as-hint { font-size: 11px; color: var(--tn-tm); }
+.as-models { margin: 0; padding-left: 18px; font-size: 12px; color: var(--tn-ts); }
+.as-models .as-cloud { color: var(--tn-warning); }
 .as-ok { color: var(--tn-success); font-size: 12px; }
 
 /* ============================================================

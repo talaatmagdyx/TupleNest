@@ -173,7 +173,10 @@ in **Settings › Assistant**:
 - **A local model through [Ollama](https://ollama.com).** `http://localhost:11434`
   by default. A URL on another computer is refused unless you turn on *Allow a
   server on another computer* — the point of a local model is that nothing
-  leaves the machine.
+  leaves the machine. Ollama's *cloud* models (`…:cloud`, or listed with a
+  `remote_host`) run on ollama.com, so they are marked "cloud via
+  ollama.com", never chosen as the default, and refused until you turn on
+  *Allow Ollama cloud models*.
 
 **What is sent:** your message (and the earlier turns of that panel
 conversation), the editor's SQL when the action uses it, the error's message

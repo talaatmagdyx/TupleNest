@@ -233,7 +233,10 @@ pub async fn ollama_ask(
 }
 
 /// The models Ollama has pulled.
-pub async fn ollama_tags(client: &reqwest::Client, base: &str) -> Result<Vec<String>, String> {
+pub async fn ollama_tags(
+    client: &reqwest::Client,
+    base: &str,
+) -> Result<Vec<ollama::OllamaModel>, String> {
     let resp = client
         .get(format!("{base}/api/tags"))
         .timeout(Duration::from_secs(5))
@@ -246,6 +249,23 @@ pub async fn ollama_tags(client: &reqwest::Client, base: &str) -> Result<Vec<Str
         return Err(ollama::status_error(status, &text, "that"));
     }
     ollama::parse_tags(&text)
+}
+
+/// Refuse to send to an Ollama cloud model unless the user opted in. Asks
+/// `/api/tags` first, because a cloud model's name need not say so; without
+/// the opt-in, a model that cannot be checked is not sent to.
+pub async fn ollama_cloud_gate(
+    client: &reqwest::Client,
+    base: &str,
+    model: &str,
+    allow_cloud: bool,
+) -> Result<(), String> {
+    if allow_cloud {
+        return Ok(());
+    }
+    ollama::check_cloud(model, &[], false)?;
+    let listed = ollama_tags(client, base).await?;
+    ollama::check_cloud(model, &listed, false)
 }
 
 #[cfg(test)]
@@ -396,10 +416,10 @@ mod tests {
             r#"{"models":[{"name":"llama3.2:latest"}]}"#,
         ))
         .await;
-        assert_eq!(
-            ollama_tags(&client().unwrap(), &base).await.unwrap(),
-            vec!["llama3.2:latest"]
-        );
+        let tags = ollama_tags(&client().unwrap(), &base).await.unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name, "llama3.2:latest");
+        assert!(!tags[0].cloud);
 
         let (base, _r) = mock(status(404, r#"{"error":"model \"nope\" not found"}"#)).await;
         let err = ollama_ask(
@@ -413,6 +433,39 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.contains("ollama pull nope"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn the_cloud_gate_checks_remote_host_before_anything_is_sent() {
+        // A cloud model whose name does not say so: only `remote_host` tells.
+        let tags = r#"{"models":[{"name":"kimi:latest","remote_host":"https://ollama.com:443"},{"name":"llama3.2:latest"}]}"#;
+        let (base, req) = mock(ok("application/json", tags)).await;
+        let err = ollama_cloud_gate(&client().unwrap(), &base, "kimi:latest", false)
+            .await
+            .unwrap_err();
+        assert!(err.contains("ollama.com"), "{err}");
+        // Only the listing was asked for; no chat request went out.
+        assert!(req.await.unwrap().starts_with("GET /api/tags"));
+
+        let (base, _r) = mock(ok("application/json", tags)).await;
+        ollama_cloud_gate(&client().unwrap(), &base, "llama3.2:latest", false)
+            .await
+            .unwrap();
+
+        // A `:cloud` name is refused without asking the server at all.
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let base = format!("http://127.0.0.1:{port}");
+        let err = ollama_cloud_gate(&client().unwrap(), &base, "glm-5.2:cloud", false)
+            .await
+            .unwrap_err();
+        assert!(err.contains("Allow Ollama cloud models"), "{err}");
+        // With the opt-in, nothing is checked.
+        ollama_cloud_gate(&client().unwrap(), &base, "glm-5.2:cloud", true)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

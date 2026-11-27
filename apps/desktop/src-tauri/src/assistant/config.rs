@@ -35,6 +35,9 @@ pub struct AssistantConfig {
     pub ollama_enabled: bool,
     pub ollama_url: String,
     pub ollama_allow_remote: bool,
+    /// The user's remembered opt-in to Ollama's cloud models, which run on
+    /// ollama.com. Off by default; `assistant_ask` refuses them without it.
+    pub ollama_allow_cloud: bool,
     pub default_provider: Option<Provider>,
     pub default_model: Option<String>,
 }
@@ -46,6 +49,7 @@ impl Default for AssistantConfig {
             ollama_enabled: false,
             ollama_url: ollama::DEFAULT_URL.to_string(),
             ollama_allow_remote: false,
+            ollama_allow_cloud: false,
             default_provider: None,
             default_model: None,
         }
@@ -60,6 +64,7 @@ pub struct AssistantSettingsOut {
     pub ollama_enabled: bool,
     pub ollama_url: String,
     pub ollama_allow_remote: bool,
+    pub ollama_allow_cloud: bool,
     pub default_provider: Option<Provider>,
     pub default_model: Option<String>,
 }
@@ -71,6 +76,7 @@ impl From<&AssistantConfig> for AssistantSettingsOut {
             ollama_enabled: c.ollama_enabled,
             ollama_url: c.ollama_url.clone(),
             ollama_allow_remote: c.ollama_allow_remote,
+            ollama_allow_cloud: c.ollama_allow_cloud,
             default_provider: c.default_provider,
             default_model: c.default_model.clone(),
         }
@@ -84,6 +90,9 @@ pub struct AssistantSettingsIn {
     pub ollama_enabled: bool,
     pub ollama_url: String,
     pub ollama_allow_remote: bool,
+    /// Missing means off: an older WebView never opts in by accident.
+    #[serde(default)]
+    pub ollama_allow_cloud: bool,
     pub default_provider: Option<Provider>,
     pub default_model: Option<String>,
 }
@@ -117,11 +126,19 @@ pub fn update(store: &Mutex<Store>, input: AssistantSettingsIn) -> Result<Assist
         if !ok {
             return Err(format!("{m} is not a model this provider offers."));
         }
+        if p == Provider::Ollama && ollama::is_cloud_name(m) {
+            return Err(format!(
+                "{m} runs on {}, so it cannot be the default. Pick it in the panel when you \
+                 mean to use it.",
+                ollama::CLOUD_HOST
+            ));
+        }
     }
     let mut c = load(store)?;
     c.ollama_enabled = input.ollama_enabled;
     c.ollama_url = url;
     c.ollama_allow_remote = input.ollama_allow_remote;
+    c.ollama_allow_cloud = input.ollama_allow_cloud;
     c.default_provider = input.default_provider;
     c.default_model = input.default_model.filter(|m| !m.is_empty());
     save(store, &c)?;
@@ -289,6 +306,7 @@ mod tests {
                 ollama_enabled: true,
                 ollama_url: "http://localhost:11434".into(),
                 ollama_allow_remote: false,
+                ollama_allow_cloud: false,
                 default_provider: Some(Provider::Anthropic),
                 default_model: Some("claude-haiku-5-5".into()),
             },
@@ -328,6 +346,7 @@ mod tests {
             ollama_enabled: true,
             ollama_url: "http://gpu-box.lan:11434/".into(),
             ollama_allow_remote: allow,
+            ollama_allow_cloud: false,
             default_provider: Some(Provider::Ollama),
             default_model: Some("llama3.2".into()),
         };
@@ -348,12 +367,40 @@ mod tests {
                 ollama_enabled: false,
                 ollama_url: ollama::DEFAULT_URL.into(),
                 ollama_allow_remote: false,
+                ollama_allow_cloud: false,
                 default_provider: Some(Provider::Anthropic),
                 default_model: Some("gpt-9".into()),
             },
         )
         .unwrap_err();
         assert!(err.contains("gpt-9"));
+    }
+
+    #[test]
+    fn the_cloud_opt_in_is_off_by_default_remembered_and_never_a_default() {
+        let s = store();
+        assert!(!load(&s).unwrap().ollama_allow_cloud);
+        let input = |cloud, model: &str| AssistantSettingsIn {
+            ollama_enabled: true,
+            ollama_url: ollama::DEFAULT_URL.into(),
+            ollama_allow_remote: false,
+            ollama_allow_cloud: cloud,
+            default_provider: Some(Provider::Ollama),
+            default_model: Some(model.into()),
+        };
+        // Even with the opt-in on, a cloud model is not made the default.
+        let err = update(&s, input(true, "glm-5.2:cloud")).unwrap_err();
+        assert!(err.contains("ollama.com"), "{err}");
+        let c = update(&s, input(true, "llama3.2")).unwrap();
+        assert!(c.ollama_allow_cloud);
+        assert!(load(&s).unwrap().ollama_allow_cloud, "remembered");
+        assert!(AssistantSettingsOut::from(&c).ollama_allow_cloud);
+        // An older WebView that does not send the field turns it off.
+        let old: AssistantSettingsIn = serde_json::from_str(
+            r#"{"ollamaEnabled":true,"ollamaUrl":"http://localhost:11434","ollamaAllowRemote":false,"defaultProvider":null,"defaultModel":null}"#,
+        )
+        .unwrap();
+        assert!(!old.ollama_allow_cloud);
     }
 
     #[test]

@@ -189,6 +189,7 @@ const defaults = (): Record<string, (args: Record<string, unknown>) => unknown> 
     ollamaEnabled: false,
     ollamaUrl: "http://localhost:11434",
     ollamaAllowRemote: false,
+    ollamaAllowCloud: false,
     defaultProvider: null,
     defaultModel: null,
   }),

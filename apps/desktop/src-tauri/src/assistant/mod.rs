@@ -155,7 +155,10 @@ pub async fn assistant_anthropic_test(
 
 /// List the models at an Ollama URL, checking the URL policy first.
 #[tauri::command]
-pub async fn assistant_ollama_test(url: String, allow_remote: bool) -> Result<Vec<String>, String> {
+pub async fn assistant_ollama_test(
+    url: String,
+    allow_remote: bool,
+) -> Result<Vec<ollama::OllamaModel>, String> {
     let base = ollama::validate_url(&url, allow_remote)?;
     http::ollama_tags(&http::client()?, &base).await
 }
@@ -166,6 +169,11 @@ pub struct ModelOption {
     pub provider: Provider,
     pub model: String,
     pub label: String,
+    /// Runs off this computer (an Ollama cloud model, on ollama.com).
+    pub cloud: bool,
+    /// False for a cloud model the user has not opted in to: shown, marked,
+    /// and refused by `assistant_ask`.
+    pub available: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -176,6 +184,7 @@ pub struct ModelsOut {
     pub default_model: Option<String>,
     /// Set when Ollama is turned on but could not be listed.
     pub ollama_error: Option<String>,
+    pub ollama_allow_cloud: bool,
 }
 
 fn anthropic_options() -> Vec<ModelOption> {
@@ -185,8 +194,44 @@ fn anthropic_options() -> Vec<ModelOption> {
             provider: Provider::Anthropic,
             model: id.to_string(),
             label: format!("{label} · your key"),
+            cloud: false,
+            available: true,
         })
         .collect()
+}
+
+fn ollama_options(models: Vec<ollama::OllamaModel>, allow_cloud: bool) -> Vec<ModelOption> {
+    models
+        .into_iter()
+        .map(|m| ModelOption {
+            provider: Provider::Ollama,
+            label: m.label(),
+            available: allow_cloud || !m.cloud,
+            cloud: m.cloud,
+            model: m.name,
+        })
+        .collect()
+}
+
+/// The stored default, unless it names a cloud model: those are only ever
+/// used when picked by hand.
+fn safe_default(
+    options: &[ModelOption],
+    provider: Option<Provider>,
+    model: Option<String>,
+) -> (Option<Provider>, Option<String>) {
+    let cloud = model.as_deref().is_some_and(|m| {
+        provider == Some(Provider::Ollama)
+            && (ollama::is_cloud_name(m)
+                || options
+                    .iter()
+                    .any(|o| o.provider == Provider::Ollama && o.model == m && o.cloud))
+    });
+    if cloud {
+        (provider, None)
+    } else {
+        (provider, model)
+    }
 }
 
 /// What the panel's model picker offers: the configured providers only.
@@ -204,19 +249,18 @@ pub async fn assistant_models(app: tauri::State<'_, crate::AppState>) -> Result<
             Err(e) => Err(e),
         };
         match listed {
-            Ok(models) => options.extend(models.into_iter().map(|m| ModelOption {
-                provider: Provider::Ollama,
-                label: format!("{m} · Ollama"),
-                model: m,
-            })),
+            Ok(models) => options.extend(ollama_options(models, c.ollama_allow_cloud)),
             Err(e) => ollama_error = Some(e),
         }
     }
+    let (default_provider, default_model) =
+        safe_default(&options, c.default_provider, c.default_model);
     Ok(ModelsOut {
         options,
-        default_provider: c.default_provider,
-        default_model: c.default_model,
+        default_provider,
+        default_model,
         ollama_error,
+        ollama_allow_cloud: c.ollama_allow_cloud,
     })
 }
 
@@ -253,6 +297,12 @@ pub async fn assistant_ask(
         }
         Provider::Ollama if !ollama::is_valid_model(&model) => {
             return Err("That is not an Ollama model name.".into())
+        }
+        Provider::Ollama => {
+            // A cloud model sends the prompt to ollama.com: refused, before
+            // the schema is even read, unless the user opted in.
+            let base = ollama::validate_url(&c.ollama_url, c.ollama_allow_remote)?;
+            http::ollama_cloud_gate(&http::client()?, &base, &model, c.ollama_allow_cloud).await?;
         }
         _ => {}
     }
@@ -351,5 +401,34 @@ mod tests {
         assert_eq!(o.len(), 3);
         assert_eq!(o[0].model, anthropic::DEFAULT_MODEL);
         assert!(o.iter().all(|m| m.provider == Provider::Anthropic));
+    }
+
+    fn listed() -> Vec<ollama::OllamaModel> {
+        ollama::parse_tags(
+            r#"{"models":[{"name":"llama3.2:latest"},{"name":"glm-5.2:cloud","remote_host":"https://ollama.com:443"},{"name":"kimi:latest","remote_host":"https://ollama.com:443"}]}"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn cloud_models_are_labelled_and_unavailable_until_opted_in() {
+        let o = ollama_options(listed(), false);
+        assert_eq!(o[0].label, "llama3.2:latest · Ollama");
+        assert!(o[0].available && !o[0].cloud);
+        assert_eq!(o[1].label, "glm-5.2:cloud · cloud via ollama.com");
+        assert!(o[1].cloud && !o[1].available);
+        assert!(o[2].cloud && !o[2].available);
+        assert!(ollama_options(listed(), true).iter().all(|m| m.available));
+    }
+
+    #[test]
+    fn a_cloud_model_is_never_the_default() {
+        let o = ollama_options(listed(), true);
+        for m in ["glm-5.2:cloud", "kimi:latest"] {
+            let (_, model) = safe_default(&o, Some(Provider::Ollama), Some(m.into()));
+            assert_eq!(model, None, "{m}");
+        }
+        let (_, model) = safe_default(&o, Some(Provider::Ollama), Some("llama3.2:latest".into()));
+        assert_eq!(model.as_deref(), Some("llama3.2:latest"));
     }
 }
