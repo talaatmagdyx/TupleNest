@@ -491,11 +491,13 @@ export function Settings(p: {
   /** Optional: the palette can reach About directly, so Settings offers it
    *  rather than owning it — this is just where people look for it. */
   onAbout?: () => void;
+  /** Further sections, below the general ones: Settings › Assistant. */
+  children?: React.ReactNode;
   onClose: () => void;
 }) {
   return (
     <Overlay onClose={p.onClose}>
-      <div className="modal" style={{ width: 520 }}>
+      <div className="modal settings-modal" style={{ width: p.children ? 620 : 520 }}>
         <ModalHead title="Settings" onClose={p.onClose} />
         <div className="modal-body">
           <div className="section-row" style={{ borderTop: "none" }}>
@@ -566,6 +568,7 @@ export function Settings(p: {
               </button>
             </div>
           )}
+          {p.children}
         </div>
       </div>
     </Overlay>

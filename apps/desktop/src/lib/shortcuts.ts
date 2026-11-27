@@ -27,6 +27,7 @@ export type ShortcutId =
   | "cheatsheet"
   | "toggleComment"
   | "find"
+  | "assistant"
   | "escape";
 
 export type Shortcut = {
@@ -68,6 +69,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "openConnection", label: "Open connection", keys: ["mod", "O"], match: letter("o") },
   { id: "toggleExplorer", label: "Show or hide the sidebar", keys: ["mod", "B"], match: letter("b") },
   { id: "theme", label: "Switch light / dark", keys: ["mod", "shift", "L"], match: shiftLetter("l") },
+  { id: "assistant", label: "Show or hide the assistant", keys: ["mod", "J"], match: letter("j") },
   {
     id: "copyCell",
     label: "Copy the selected cell",

@@ -176,6 +176,18 @@ const defaults = (): Record<string, (args: Record<string, unknown>) => unknown> 
     stages: [{ name: "dns", passed: true, ms: 1, detail: "" }],
     serverVersion: "18.0",
   }),
+  // The assistant, unconfigured: no provider, so the panel shows its empty
+  // state. Tests that ask it something install their own handlers.
+  assistant_models: () => ({ options: [], defaultProvider: null, defaultModel: null, ollamaError: null }),
+  assistant_settings_get: () => ({
+    anthropicConfigured: false,
+    ollamaEnabled: false,
+    ollamaUrl: "http://localhost:11434",
+    ollamaAllowRemote: false,
+    defaultProvider: null,
+    defaultModel: null,
+  }),
+  assistant_cancel: () => true,
   pg_metadata: (a) => metadata(a),
   pg_metadata_cached: (a) => metadata((a.request ?? {}) as Record<string, unknown>),
 });

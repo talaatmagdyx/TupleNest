@@ -6445,7 +6445,10 @@ version = "0.1.1"
 dependencies = [
  "arboard",
  "async-trait",
+ "futures-util",
  "icu_collator",
+ "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "tauri",
