@@ -57,6 +57,9 @@
       <div class="card"><h4>SSH tunnel</h4><p>Optional. Host keys are verified; a changed key is rejected.</p></div>
       <div class="card"><h4>Local disk</h4><p>App database, logs, crash reports — owner-only on Unix.</p></div>
       <div class="card"><h4>Update channel</h4><p>HTTPS, signed artifacts, embedded public key, anti-rollback floor.</p></div>
+      <div class="card"><h4>Assistant provider</h4><p>Optional. Anthropic with your own key, or an Ollama server on this computer. The Rust core builds every request from a fixed list of inputs. <a href="#ai">What is sent</a>.</p></div>
+      <div class="card"><h4>AI tools over MCP</h4><p>Optional, off for every connection. A tool you run talks to <code class="inline">tuplenest-desktop mcp</code> over stdin/stdout, under per-connection access rules.</p></div>
+      <div class="card"><h4>SQLite files</h4><p>A file on this machine: no network, TLS or SSH. Read-only is SQLite's own read-only open plus <code class="inline">query_only</code>.</p></div>
     </div>
   </div>
 </section>
@@ -121,9 +124,9 @@
     <h2>An accident guardrail, stated honestly</h2>
     <div class="grid2">
       <div class="card"><ul>
-        <li>Connections are labelled development, staging, or production</li>
-        <li>Read-only mode issues a PostgreSQL read-only session characteristic, and sends only statements that read (no <code class="inline">VACUUM</code>, <code class="inline">COPY</code>, <code class="inline">DO</code> or <code class="inline">CALL</code>)</li>
-        <li>Destructive statements are detected and require confirmation</li>
+        <li>Connections are labelled development, test, staging, or production</li>
+        <li>Read-only mode issues a PostgreSQL read-only session characteristic, and sends only statements that read (no <code class="inline">VACUUM</code>, <code class="inline">COPY</code>, <code class="inline">DO</code> or <code class="inline">CALL</code>). On SQLite the file is opened read-only, <code class="inline">PRAGMA query_only</code> is set before every statement, and a statement SQLite says would write is refused</li>
+        <li>On prod and staging, destructive statements are detected and require confirmation; on prod, every statement is written to the audit log before it runs</li>
         <li>The open transaction is owned by a tab; another tab can't commit it</li>
       </ul></div>
       <div class="callout warn" style="margin:0"><b>TupleNest protects against accidental writes.</b> For strict enforcement, connect with a database role that has no write privileges. Database permissions remain the final authority — the app is a guardrail, not a replacement for least privilege.</div>
@@ -146,6 +149,11 @@
       <tr><td>Reduced error history</td><td class="how">Local SQLite — title, SQLSTATE, category only; no row values</td></tr>
       <tr><td>Logs</td><td class="how">Local rotating files (owner-only on Unix); chatty transport/crypto crates capped to warn in release</td></tr>
       <tr><td>Crash reports</td><td class="how">Local only — never uploaded</td></tr>
+      <tr><td>Anthropic API key (if you add one)</td><td class="how">OS keychain, like a database password; never returned to the WebView</td></tr>
+      <tr><td>Notebooks</td><td class="how">Local SQLite, including the last result of each SQL cell, up to 200 rows — row data on disk, unencrypted</td></tr>
+      <tr><td>Dashboards</td><td class="how">Local SQLite: each chart's title, kind and SQL. Not its results; a chart re-runs its query</td></tr>
+      <tr><td>Backups</td><td class="how">The file goes where you choose; the app keeps a list of recent runs (path, status, size), not their contents</td></tr>
+      <tr><td>MCP access</td><td class="how">Local SQLite: off, read only, or read and write per connection. Off unless you change it</td></tr>
     </table>
     <div class="callout info" style="margin-top:20px">On Unix, the app-data directory is <code class="inline">0700</code> and the SQLite databases (plus WAL/SHM) are <code class="inline">0600</code>, so another local user can't read your profiles, history, or logs. Windows relies on the user-profile ACL.</div>
   </div>
@@ -159,15 +167,42 @@
     <div class="grid2">
       <div class="card"><h4>What TupleNest does not do</h4><ul>
         <li>No telemetry</li><li>No account</li><li>No cloud sync</li><li>No advertising</li>
-        <li>No analytics SDK</li><li>No remote crash upload</li><li>No schema upload</li><li>No query upload</li>
+        <li>No analytics SDK</li><li>No remote crash upload</li><li>No row data sent to an AI by the assistant</li><li>No schema or query upload, except to an assistant you set up and ask</li>
       </ul></div>
       <div class="card"><h4>Every network destination</h4><ul>
         <li>The PostgreSQL host you configure</li>
         <li>The SSH host you configure (if you use a tunnel)</li>
         <li>The GitHub endpoint used to check for updates</li>
-      </ul><p style="margin-top:12px">That list is exhaustive. There is no fourth destination.</p></div>
+        <li>The assistant's model, only if you set one up and ask it something: <code class="inline">api.anthropic.com</code> with your key, or your Ollama server (this computer unless you allow another)</li>
+      </ul><p style="margin-top:12px">That list is exhaustive. A SQLite database is a local file, and the MCP server talks to the AI tool that started it over stdin/stdout.</p></div>
     </div>
     <div class="callout ok" style="margin-top:20px"><b>Query plans are analysed locally, including pasted ones.</b> A plan is not innocuous: it carries table names, index names, filter conditions and sometimes literal values straight out of production. The common habit of pasting one into an analysis website sends all of that to a third party. TupleNest reads pasted plans on your machine — in psql's text format or <code class="inline">FORMAT JSON</code> — so a plan from a locked-down production server never has to leave it. See <a href="features.html#paste">Paste a plan</a>.</div>
+  </div>
+</section>
+
+<!-- AI -->
+<section id="ai">
+  <div class="wrap">
+    <div class="kicker">The assistant and AI tools</div>
+    <h2>What an AI sees, exactly</h2>
+    <p class="lede">Two separate features, with opposite defaults on row data. Both are off until you turn them on.</p>
+    <div class="grid2">
+      <div class="card"><h4>The assistant</h4><ul>
+        <li><b>Sent:</b> your message and the last six turns of that panel conversation; the editor's SQL (up to 20,000 characters) for Ask, Explain and Fix; for Fix, the error's title, SQLSTATE, message and hint with the server's <code class="inline">DETAIL</code> and <code class="inline">CONTEXT</code> lines removed; the connected database's schema, table and column names and types (up to 12,000 characters)</li>
+        <li><b>Never sent:</b> row data or any result cell, history, the audit log, the connection's host, user or password, other connections</li>
+        <li>Every request is made by the Rust core; the WebView never holds the key</li>
+        <li>Ollama must be on this computer unless you allow another, and redirects are not followed</li>
+        <li>A suggestion runs only when you press Run, through the same guard and audit log</li>
+      </ul></div>
+      <div class="card"><h4>The MCP server</h4><ul>
+        <li><b>Off</b> for every connection by default: not listed, and naming it gets the same answer as a name that does not exist</li>
+        <li><b>Read only</b>: the server-enforced read-only session plus the read allowlist</li>
+        <li><b>Read and write</b>: anything the guard would ask about is refused, since no one can confirm it; not available on prod, staging or read-only connections</li>
+        <li>One statement per call, at most 500 rows or 1 MB back; prod and staging statements are audited before they run, and a failed audit write refuses them</li>
+        <li><b>Rows a tool queries go to that tool</b>, and wherever it sends them. That is what MCP is for</li>
+      </ul></div>
+    </div>
+    <div class="callout warn" style="margin-top:20px">Neither the assistant's rules nor MCP's can see inside a function with side effects called from a <code class="inline">SELECT</code>. Give an AI tool a database role that can only do what you want it to do.</div>
   </div>
 </section>
 
@@ -249,6 +284,8 @@
         <li>A local user with access to your OS account may reach local metadata</li>
         <li>Clipboard content is controlled by the operating system, not by TupleNest</li>
         <li>Read-only mode is an accident guardrail, not a substitute for database privileges</li>
+        <li>Notebooks keep up to 200 rows of each SQL cell's last result on disk</li>
+        <li>The assistant sends schema names to the provider you chose; a name that is itself sensitive goes too</li>
       </ul></div>
       <div class="card"><ul>
         <li>Raw CSV export (when you opt out of spreadsheet-safe mode) can be interpreted as formulas by spreadsheets</li>
@@ -300,7 +337,7 @@
 <footer class="site">
   <div class="wrap">
     <div class="cols">
-      <div class="fbrand"><img src="logo.png" alt=""><p>The PostgreSQL IDE that asks before it writes. Local-first, open-source, MIT.</p></div>
+      <div class="fbrand"><img src="logo.png" alt=""><p>The PostgreSQL and SQLite IDE that asks before it writes. Local-first, open-source, MIT.</p></div>
       <div><h5>Product</h5><a href="features.html">Features</a><a href="security.html">Security</a><a href="download.html">Download</a><a href="roadmap.html">Roadmap</a><a href="changelog.html">Changelog</a></div>
       <div><h5>Resources</h5><a href="docs.html">Documentation</a><a href="docs.html#getting-started">Getting Started</a><a href="docs.html#shortcuts">Keyboard Shortcuts</a><a href="docs.html#troubleshooting">Troubleshooting</a><a href="blog.html">Blog</a></div>
       <div><h5>Community</h5><a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a><a href="https://github.com/talaatmagdyx/TupleNest/discussions">Discussions</a><a href="https://github.com/talaatmagdyx/TupleNest/issues">Issues</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a></div>

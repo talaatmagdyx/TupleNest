@@ -12,9 +12,10 @@ import BackupPage from "./BackupPage";
 import DashboardsPage from "./DashboardsPage";
 import NotebooksPage from "./NotebooksPage";
 import RolesPage from "./RolesPage";
-import type { PageContext } from "./context";
+import type { AppPageContext } from "./context";
+import { onPageKeyDown } from "./PageHeader";
 
-export type { PageContext } from "./context";
+export type { AppPageContext, PageContext } from "./context";
 export { default as FirstRun, type FirstRunRequest } from "./FirstRun";
 export { isPostgres } from "./context";
 
@@ -50,20 +51,17 @@ export function pageCommands(open: (page: Page) => void, lacks: (f: Feature) => 
 }
 
 /** The open page, in place of the editor. The editor stays mounted behind it
- *  (hidden), so its tabs and undo history are there on the way back. */
-export function PageHost(p: { page: Page; ctx: PageContext; onClose: () => void }) {
+ *  (hidden), so its tabs and undo history are there on the way back. Each
+ *  page draws the shared `PageHeader`, whose back control is `ctx.back`;
+ *  Escape goes back too, as on history and saved queries. */
+export function PageHost(p: { page: Page; ctx: AppPageContext; onClose: () => void }) {
+  const ctx = { ...p.ctx, back: p.onClose };
   return (
-    <main className="main-col page-host">
-      <div className="page-back">
-        <button className="btn xs" onClick={p.onClose}>
-          ← Back to the editor
-        </button>
-        <span className="page-sub">{PAGE_TITLES[p.page]}</span>
-      </div>
-      {p.page === "dashboards" && <DashboardsPage ctx={p.ctx} />}
-      {p.page === "notebooks" && <NotebooksPage ctx={p.ctx} />}
-      {p.page === "backup" && <BackupPage ctx={p.ctx} />}
-      {p.page === "roles" && <RolesPage ctx={p.ctx} />}
+    <main className="main-col page-host" onKeyDown={onPageKeyDown(p.onClose)}>
+      {p.page === "dashboards" && <DashboardsPage ctx={ctx} />}
+      {p.page === "notebooks" && <NotebooksPage ctx={ctx} />}
+      {p.page === "backup" && <BackupPage ctx={ctx} />}
+      {p.page === "roles" && <RolesPage ctx={ctx} />}
     </main>
   );
 }

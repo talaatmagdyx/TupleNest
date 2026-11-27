@@ -17,27 +17,17 @@ export type EngineChoice = {
   /** Two letters for the badge. */
   code: string;
   name: string;
-  status: "available" | "next" | "planned";
-  /** Set only for engines that can be picked today. */
-  engine?: Engine;
+  /** One line under the name: what the engine connects to. */
+  detail: string;
+  engine: Engine;
 };
 
-/** The engine picker, in the design's order. Only `available` ones can be
- *  chosen; the rest say when to expect them. */
+/** The engine picker. TupleNest supports PostgreSQL and SQLite only; no
+ *  other engine is planned, so none is shown. */
 export const ENGINE_CHOICES: EngineChoice[] = [
-  { code: "PG", name: "PostgreSQL", status: "available", engine: "postgres" },
-  { code: "SQ", name: "SQLite", status: "available", engine: "sqlite" },
-  { code: "MY", name: "MySQL / MariaDB", status: "next" },
-  { code: "MS", name: "SQL Server", status: "planned" },
-  { code: "MG", name: "MongoDB", status: "planned" },
-  { code: "RD", name: "Redis", status: "planned" },
+  { code: "PG", name: "PostgreSQL", detail: "A server", engine: "postgres" },
+  { code: "SQ", name: "SQLite", detail: "A file on this machine", engine: "sqlite" },
 ];
-
-export const STATUS_LABEL: Record<EngineChoice["status"], string> = {
-  available: "Available",
-  next: "Coming next",
-  planned: "Planned",
-};
 
 export function engineName(e: Engine): string {
   return e === "sqlite" ? "SQLite" : "PostgreSQL";

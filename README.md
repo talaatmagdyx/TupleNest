@@ -4,7 +4,7 @@
 
 # TupleNest
 
-### The PostgreSQL IDE that **asks before it writes.**
+### The PostgreSQL and SQLite IDE that **asks before it writes.**
 
 *Fast. Local. Safe by architecture. Simple on purpose.*
 
@@ -66,19 +66,21 @@ CI would catch regressing.
 <td width="25%" align="center"><h3>0</h3><b>accounts</b><br/><sub>No sign-up, no license key, no cloud. Download, open, connect.</sub></td>
 <td width="25%" align="center"><h3>60s</h3><b>to first query</b><br/><sub>One dialog between you and <code>SELECT</code>. Passwords go to the OS keychain, not a config file.</sub></td>
 <td width="25%" align="center"><h3>1</h3><b>window</b><br/><sub>One window, one session, tabs inside it. No workspace files, no project setup.</sub></td>
-<td width="25%" align="center"><h3>2</h3><b>network destinations</b><br/><sub>Your databases + one startup version check to GitHub. That's the <a href="PRIVACY.md">entire network story</a>.</sub></td>
+<td width="25%" align="center"><h3>2</h3><b>network destinations</b><br/><sub>Your databases + one startup version check to GitHub. A third only if you set up the assistant. That's the <a href="PRIVACY.md">entire network story</a>.</sub></td>
 </tr>
 </table>
 
 ## 🚀 Sixty seconds to your first query
 
 ```
-1 · Download  →  2 · Press ⌘O, fill host/db/user  →  3 · Test (staged probe)  →  4 · ⌘↵
+1 · Download  →  2 · Press ⌘O, pick PostgreSQL or SQLite  →  3 · Test (staged probe)  →  4 · ⌘↵
 ```
 
-The **Test** button runs a staged probe — `DNS ✓ TCP ✓ auth ✓ server version ✓` —
+For PostgreSQL, fill in host, database and user; for SQLite, pick a file. The
+**Test** button runs a staged probe — `DNS ✓ TCP ✓ auth ✓ server version ✓` —
 so when something is wrong you learn **which layer**, not just *"could not
-connect"*.
+connect"*. A first launch opens a three-step tour; an update shows what's new
+once.
 
 > Nothing is code-signed yet, so your OS will object once on first launch.
 > [Install](#-install) has the exact click-path through every dialog you'll see.
@@ -179,7 +181,8 @@ in **Settings › Assistant**:
 conversation), the editor's SQL when the action uses it, the error's message
 and SQLSTATE for a Fix — with the server's `DETAIL`/`CONTEXT` lines, which can
 quote row values, removed — and the **names and types** of the connected
-database's schemas, tables and columns, capped in size.
+database's schemas, tables and columns, capped in size (and, on a SQLite
+session, that it is SQLite).
 **What is never sent:** row data or result cells, query history, the
 connection's host, user or password, or anything about other connections.
 The rule is enforced in the Rust core, which makes every request; the window
@@ -195,17 +198,15 @@ check, production guard and audit log as anything you type.
 
 ## 🗄 Engines
 
-A new connection starts by picking the engine. Every engine gets the same
-safety model: environment tags, read-only profiles, the destructive-statement
-guard, the production audit log, and MCP access that is off until you turn it
-on.
+TupleNest supports two engines, PostgreSQL and SQLite, and no others are
+planned. A new connection starts by picking one. Both get the same safety
+model: environment tags, read-only profiles, the destructive-statement guard,
+the production audit log, and MCP access that is off until you turn it on.
 
-| Engine | Status | Notes |
-|---|---|---|
-| **PostgreSQL** 13+ | Available | Everything in this README |
-| **SQLite** 3 | Available | A file on this machine: no server, password, TLS or SSH |
-| MySQL / MariaDB | Coming next | Not selectable yet |
-| SQL Server, MongoDB, Redis | Planned | Not selectable yet |
+| Engine | Notes |
+|---|---|
+| **PostgreSQL** 13+ | Everything in this README |
+| **SQLite** 3 | A file on this machine: no server, password, TLS or SSH |
 
 **SQLite.** A profile is a file path — type it, or **Choose…** for the
 system file panel; **Create a new file** makes an empty database there on
@@ -230,7 +231,8 @@ Errors carry SQLite's extended result code where a SQLSTATE goes
 - **Not for SQLite**, so hidden or disabled with the reason: the server
   monitor, index and table health and top queries (`pg_stat`), partitions,
   schema and plan comparison, the plan view and `EXPLAIN ANALYZE`, CSV
-  import, TLS and SSH.
+  import, backup and restore (the database is one file you can copy), users
+  and roles, TLS and SSH. Dashboards and notebooks work on both engines.
 
 <br/>
 
@@ -294,6 +296,12 @@ Statements also go to query history; both record the sender as
 from a `SELECT` is not something these rules can see: give an AI tool a
 database role that can only do what you want it to do.
 
+**What a query returns goes to the AI tool that asked**, and from there to
+wherever that tool sends it, its own model provider included. That is what MCP
+is for, and why every connection starts Off. This is the one path by which row
+data reaches an AI; the assistant above never sends any. The MCP server itself
+opens no network connection other than to your databases.
+
 <br/>
 
 ## ⌨️ The keyboard
@@ -302,7 +310,7 @@ Press <kbd>?</kbd> anywhere for the in-app cheatsheet. <kbd>⌘</kbd> = <kbd>Ctr
 
 | | | | |
 |---|---|---|---|
-| <kbd>⌘↵</kbd> Run | <kbd>Esc</kbd> Cancel / close | <kbd>⌘K</kbd> Command palette | <kbd>⌘P</kbd> Object search |
+| <kbd>⌘↵</kbd> Run | <kbd>Esc</kbd> Close / back / cancel | <kbd>⌘K</kbd> Command palette | <kbd>⌘P</kbd> Object search |
 | <kbd>⌘T</kbd> New tab | <kbd>⌘O</kbd> Connections | <kbd>⌘B</kbd> Sidebar | <kbd>⇧⌘F</kbd> Format SQL |
 | <kbd>⇧⌘L</kbd> Dark ↔ light | <kbd>⌘C</kbd> Copy cell | <kbd>⌘J</kbd> Assistant | |
 
@@ -316,7 +324,10 @@ respected.
 
 | | |
 |---|---|
-| **📝 Query work** | Format SQL · EXPLAIN / ANALYZE plan tab · **candidate `CREATE INDEX` statements from the plan** · find & replace (`⌘F`) and comment toggling (`⌘/`) · a per-connection query timeout the *server* enforces · `$1..$n` parameter binding · searchable history · **prod audit log** (full SQL of everything run on prod) · snippets in the palette · CSV/JSON export with an honest truncation note · one-click charts |
+| **📝 Query work** | Format SQL · EXPLAIN / ANALYZE plan tab · **candidate `CREATE INDEX` statements from the plan** · find & replace (`⌘F`) and comment toggling (`⌘/`) · a per-connection query timeout the *server* enforces · `$1..$n` parameter binding · **prod audit log** (full SQL of everything run on prod) · CSV/JSON export with an honest truncation note · one-click charts · a result keeps 20,000 rows, and a plain read **stops at the limit** instead of reading the rest ("20,000+ rows (stopped at the limit)") |
+| **🗂 Pages** | **History** (search, filters for this connection, writes, failed and today, the sender of each statement) and **Saved queries** (cards with tags) take the editor's place, with one header and a way back (or <kbd>Esc</kbd>) · **Settings** with a section list: General (appearance, results, privacy and updates), Assistant, MCP server, Shortcuts, About |
+| **📊 Dashboards & notebooks** | **Dashboards**: saved queries pinned as bar, line or single-number charts, re-run on open and, if you choose, every 1, 5 or 15 minutes. Only a query that reads can be pinned; each run is capped at 1,000 rows · **Notebooks**: text, SQL and chart cells in one document. A SQL cell runs only when you press its Run, through the guard and audit log, and keeps its last 200 rows so the notebook reopens as you left it · Both work on PostgreSQL and SQLite |
+| **🗃 Backup & roles** (PostgreSQL) | **Backup and restore** with your own `pg_dump` (custom format) and `pg_restore`, run without a shell; the password goes in a private temporary pgpass file, never on the command line. Restoring into prod or staging asks you to type the database name; a read-only profile is never restored into; SSH-tunnelled profiles are not supported yet · **Users and roles**: each role's SELECT/INSERT/UPDATE/DELETE/TRUNCATE on each table, with a warning when a role that looks read-only can write. It changes nothing: the matching `REVOKE` or `GRANT` is text to copy |
 | **🗺 Schema work** | Global object search · column-by-column schema diff · find-usages & rename across tabs (unicode-aware) · **node-by-node EXPLAIN comparison** (which node got slower, and an *ambiguous* label when the pairing is a guess) · **generated `ALTER` migration scripts** — destructive statements come back commented out, and TupleNest never runs them · partition tree browsing |
 | **🩺 Health** | Index health report · vacuum & bloat panel · `pg_stat_statements` top queries |
 | **📥 Data in** | CSV import wizard — **streams the file, so it is not bounded by RAM** (358 MB / 6M rows imports with ~15 MB peak growth) · RFC-4180 parsing, type inference **you review before anything runs**, batched inserts in one transaction, cancel-and-roll-back mid-import |
@@ -329,8 +340,9 @@ respected.
 Marketing pages don't have this section — which is exactly why you should
 trust a README that does.
 
-- **Two engines.** PostgreSQL 13+ and SQLite, done properly, before the next
-  is attempted. Need MySQL today? TupleNest isn't your tool today.
+- **Two engines, and only two.** PostgreSQL 13+ and SQLite. There will be no
+  MySQL, SQL Server, MongoDB or Redis support. Need one of those? TupleNest
+  isn't your tool.
 - **The statement guard is best-effort.** It survived thirteen bypass
   attempts, but it's the seatbelt light. Read-only profiles are the seatbelt —
   the *server* enforces those. The airbag is a database role with no write
@@ -338,6 +350,9 @@ trust a README that does.
 - **Nothing is code-signed.** Each OS objects once; the docs walk you through
   it, and the [attestation check](#-verifying-a-download) proves more than the
   dialogs do.
+- **No hosted service.** No account, no cloud sync, nothing run by this
+  project between you and your database. The [roadmap](https://talaatmagdyx.github.io/TupleNest/roadmap.html)
+  says what is next and what is not planned.
 - **Saved passwords on Linux need a keyring daemon** (GNOME Keyring /
   KWallet). Connecting works without one; *saving* doesn't.
 

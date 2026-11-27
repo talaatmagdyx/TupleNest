@@ -6,6 +6,7 @@ import { errText } from "../lib/text";
 import { Overlay, ModalHead } from "../overlays/Overlays";
 import type { QueryResult } from "../ipc/types";
 import type { PageContext } from "./context";
+import PageHeader from "./PageHeader";
 
 export type DashboardChart = {
   id: string;
@@ -137,55 +138,67 @@ export default function DashboardsPage(p: { ctx: PageContext }) {
 
   return (
     <section className="page" aria-label="Dashboards">
-      <div className="page-head">
-        <h1 className="page-title">{board?.name ?? "Dashboards"}</h1>
-        {boards && boards.length > 1 && (
-          <select aria-label="Dashboard" value={activeId ?? ""} onChange={(e) => setActiveId(e.target.value)}>
-            {boards.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
-        )}
-        {board && (
-          <span className="page-sub">
-            {board.charts.length} chart{board.charts.length === 1 ? "" : "s"}
-            {owner ? ` · ${owner.name}` : ""} · each chart is a saved query
-          </span>
-        )}
-        <div className="grow" />
-        {board && (
+      <PageHeader
+        title={board?.name ?? "Dashboards"}
+        onBack={ctx.back}
+        meta={
           <>
-            <select
-              aria-label="Refresh"
-              value={board.refreshSecs}
-              onChange={(e) => void save({ refreshSecs: Number(e.target.value) })}
-            >
-              {REFRESH_OPTIONS.map((o) => (
-                <option key={o.secs} value={o.secs}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            <button className="btn" disabled={!runnable} onClick={() => setTick((t) => t + 1)}>
-              Refresh now
-            </button>
-            <button className="btn" onClick={() => setNaming({ creating: false, name: board.name })}>
-              Rename
-            </button>
-            <button className="btn" onClick={() => void remove()}>
-              Delete
-            </button>
-            <button className="btn primary" onClick={() => setAdding(true)}>
-              Add chart
+            {boards && boards.length > 1 && (
+              <select aria-label="Dashboard" value={activeId ?? ""} onChange={(e) => setActiveId(e.target.value)}>
+                {boards.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </>
+        }
+        sub={
+          board ? (
+            <>
+              {board.charts.length} chart{board.charts.length === 1 ? "" : "s"}
+              {owner ? ` · ${owner.name}` : ""} · each chart is a saved query
+            </>
+          ) : (
+            "Saved queries pinned as charts."
+          )
+        }
+        actions={
+          <>
+            {board && (
+              <>
+                <select
+                  aria-label="Refresh"
+                  value={board.refreshSecs}
+                  onChange={(e) => void save({ refreshSecs: Number(e.target.value) })}
+                >
+                  {REFRESH_OPTIONS.map((o) => (
+                    <option key={o.secs} value={o.secs}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                <button className="btn" disabled={!runnable} onClick={() => setTick((t) => t + 1)}>
+                  Refresh now
+                </button>
+                <button className="btn" onClick={() => setNaming({ creating: false, name: board.name })}>
+                  Rename
+                </button>
+                <button className="btn" onClick={() => void remove()}>
+                  Delete
+                </button>
+                <button className="btn primary" onClick={() => setAdding(true)}>
+                  Add chart
+                </button>
+              </>
+            )}
+            <button className="btn" onClick={() => setNaming({ creating: true, name: "" })}>
+              New dashboard
             </button>
           </>
-        )}
-        <button className="btn" onClick={() => setNaming({ creating: true, name: "" })}>
-          New dashboard
-        </button>
-      </div>
+        }
+      />
 
       {naming !== null && (
         <form

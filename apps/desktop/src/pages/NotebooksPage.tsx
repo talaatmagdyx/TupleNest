@@ -10,6 +10,7 @@ import { cellText, errText } from "../lib/text";
 import { Guard } from "../overlays/Overlays";
 import type { QueryResult } from "../ipc/types";
 import type { PageContext } from "./context";
+import PageHeader from "./PageHeader";
 
 type Summary = { id: string; name: string; connectionId: string | null; updatedAt: number };
 
@@ -135,42 +136,46 @@ export default function NotebooksPage(p: { ctx: PageContext }) {
 
   return (
     <section className="page" aria-label="Notebooks">
-      <div className="page-head">
-        <h1 className="page-title">{nb?.name ?? "Notebooks"}</h1>
-        {dirty && <span className="page-sub">unsaved</span>}
-        <div className="grow" />
-        {list && list.length > 0 && (
-          <select aria-label="Open notebook" value={nb?.id ?? ""} onChange={(e) => void open(e.target.value)}>
-            <option value="" disabled>
-              Open a notebook…
-            </option>
-            {list.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.name}
-              </option>
-            ))}
-          </select>
-        )}
-        {nb && (
+      <PageHeader
+        title={nb?.name ?? "Notebooks"}
+        sub={dirty ? "unsaved" : "Notes, queries and charts together. Nothing runs until you press Run."}
+        onBack={ctx.back}
+        actions={
           <>
-            <button className="btn" onClick={() => setRenaming(nb.name)}>
-              Rename
-            </button>
-            <button className="btn" onClick={() => void exportMd()}>
-              Export Markdown
-            </button>
-            <button className="btn" onClick={() => void remove()}>
-              Delete
-            </button>
-            <button className="btn primary" disabled={!dirty} onClick={() => void save()}>
-              Save
+            {list && list.length > 0 && (
+              <select aria-label="Open notebook" value={nb?.id ?? ""} onChange={(e) => void open(e.target.value)}>
+                <option value="" disabled>
+                  Open a notebook…
+                </option>
+                {list.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            {nb && (
+              <>
+                <button className="btn" onClick={() => setRenaming(nb.name)}>
+                  Rename
+                </button>
+                <button className="btn" onClick={() => void exportMd()}>
+                  Export Markdown
+                </button>
+                <button className="btn" onClick={() => void remove()}>
+                  Delete
+                </button>
+                <button className="btn primary" disabled={!dirty} onClick={() => void save()}>
+                  Save
+                </button>
+              </>
+            )}
+            <button className="btn" onClick={create}>
+              New notebook
             </button>
           </>
-        )}
-        <button className="btn" onClick={create}>
-          New notebook
-        </button>
-      </div>
+        }
+      />
 
       {nb && renaming !== null && (
         <form

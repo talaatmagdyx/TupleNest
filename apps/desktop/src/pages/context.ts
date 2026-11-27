@@ -18,7 +18,12 @@ export type PageContext = {
   /** The active editor tab's SQL. */
   currentSql: string;
   toast: (text: string) => void;
+  /** Leave the page for the editor: the header's back control. */
+  back: () => void;
 };
+
+/** What App builds; the page host adds `back`. */
+export type AppPageContext = Omit<PageContext, "back">;
 
 /** Is this profile a PostgreSQL one? A profile with no engine is. */
 export function isPostgres(profile: ConnectionRecord | null | undefined): boolean {

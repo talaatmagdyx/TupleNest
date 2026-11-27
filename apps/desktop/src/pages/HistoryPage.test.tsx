@@ -192,6 +192,14 @@ describe("HistoryPage", () => {
     expect(onClear).toHaveBeenCalled();
   });
 
+  it("goes back from the header's back control", async () => {
+    const onClose = vi.fn();
+    render(<HistoryPage {...base} onClose={onClose} />);
+    expect(screen.getByRole("heading", { level: 1, name: "History" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Back to the editor" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("goes back on Escape", () => {
     const onClose = vi.fn();
     render(<HistoryPage {...base} onClose={onClose} />);

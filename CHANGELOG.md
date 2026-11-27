@@ -5,7 +5,56 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+In short: a redesign (island layout, a new palette, Inter, Space Grotesk and
+JetBrains Mono); SQLite beside PostgreSQL; the assistant; an MCP server for AI
+tools; History, Saved queries, Dashboards, Notebooks, Backup and restore, and
+Users and roles as pages; Settings with a section list; What's new and a
+first-run tour; and a plain read that stops at the 20,000-row limit. The
+engines are PostgreSQL and SQLite only: no other engine is planned.
+
+### Changed
+- The engine picker in the connection form offers PostgreSQL and SQLite and
+  nothing else. It listed MySQL/MariaDB, SQL Server, MongoDB and Redis as
+  coming; none of them is planned, so they are gone, as is the copy that
+  promised them.
+- Every page uses one header: a back control ("Back to the editor"), the
+  title, one line saying what the page is, and the page's actions at the
+  right. History and Saved queries had it inside their island; Dashboards,
+  Notebooks, Backup and Users and roles had a separate back bar above a
+  header island. Escape goes back to the editor from every page.
+- The website, README, PRIVACY.md and SECURITY.md describe what is in the
+  app now: SQLite, the assistant and exactly what it sends, the MCP server
+  and its rules (including that rows a tool queries go to that tool),
+  dashboards, notebooks (whose SQL cells keep their last 200 rows on disk),
+  backup and restore, users and roles. The roadmap lives on the website;
+  `docs/ROADMAP.md` points to it.
+
 ### Added
+- **Pages.** History and Saved queries take the editor's place, reached from
+  the left rail; the editor stays mounted behind them. History has search,
+  filters (all, this connection, writes, failed, today), the sender of each
+  statement and a detail pane with Open in editor and Save as query.
+  Settings gains a section list (General, Assistant, MCP server, Shortcuts,
+  About).
+- **Dashboards**: saved queries pinned as bar, line or single-number charts.
+  Each re-runs when the page opens and, optionally, every 1, 5 or 15
+  minutes while its connection is live. Only a query that reads can be
+  pinned, and each run keeps at most 1,000 rows.
+- **SQL notebooks**: text, SQL and chart cells in one document. Nothing runs
+  when a notebook opens; a SQL cell runs on its own Run, through the
+  guard, history and audit log, and keeps its last 200 rows. Text cells
+  render a small Markdown subset with no raw HTML. Export to Markdown.
+- **Backup and restore** for PostgreSQL profiles with your own `pg_dump`
+  (custom format) and `pg_restore`, run from an argument list with no shell.
+  The password goes in a private temporary pgpass file, never in argv.
+  Restoring into prod or staging needs the database name typed; a
+  read-only profile is never restored into; SSH-tunnelled profiles are not
+  supported yet. Cancel kills the run and removes a partial file.
+- **Users and roles** for PostgreSQL: each role's table privileges, with a
+  warning when a role that looks read-only can write or is a superuser.
+  Nothing changes a grant; the matching `REVOKE` or `GRANT` is text to copy.
+- **What's new**, shown once after an update, and a **three-step tour** on a
+  first launch. About opens either again.
 - **The assistant.** A panel beside the editor (title-bar **Assistant**
   button, <kbd>⌘J</kbd>) that answers questions about the query and schema,
   explains a query, writes SQL from a plain-English request, and fixes a
@@ -28,8 +77,7 @@ trusting it.
 
 ### Added
 - SQLite as a second engine. The connection form now starts with an engine
-  picker (PostgreSQL and SQLite; MySQL/MariaDB, SQL Server, MongoDB and Redis
-  shown as coming, not selectable). A SQLite profile is a file path, typed
+  picker (PostgreSQL and SQLite). A SQLite profile is a file path, typed
   or chosen with the system file panel, optionally created on connect; it
   has no password, TLS or SSH. The same safety model applies: environment
   tags, the destructive-statement guard (which now also reads SQLite's

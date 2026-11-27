@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { SnippetRecord } from "../ipc/types";
+import PageHeader, { onPageKeyDown } from "./PageHeader";
 
 export type SavedPageProps = {
   items: SnippetRecord[];
@@ -27,26 +28,18 @@ export default function SavedPage(p: SavedPageProps) {
   const shown = tag === null ? p.items : p.items.filter((s) => tagsOf(s).includes(tag));
 
   return (
-    <div
-      className="page saved-page"
-      onKeyDown={(e) => {
-        // Stopped here, as on the history page: leaving a page must not also
-        // cancel a running query.
-        if (e.key === "Escape") {
-          e.stopPropagation();
-          p.onClose();
-        }
-      }}
-    >
+    <div className="page saved-page" onKeyDown={onPageKeyDown(p.onClose)}>
       <section className="page-island grow-col" aria-label="Saved queries">
-        <div className="page-head">
-          <h1 className="page-title">Saved queries</h1>
-          <span className="page-sub">Reusable queries and snippets. Save one from the command palette.</span>
-          <div className="grow" />
-          <button className="btn primary" onClick={p.onNew}>
-            New query
-          </button>
-        </div>
+        <PageHeader
+          title="Saved queries"
+          sub="Reusable queries and snippets. Save one from the command palette."
+          onBack={p.onClose}
+          actions={
+            <button className="btn primary" onClick={p.onNew}>
+              New query
+            </button>
+          }
+        />
         {tags.length > 0 && (
           <div className="page-tools">
             <div className="chip-filters" role="group" aria-label="Filter by tag">

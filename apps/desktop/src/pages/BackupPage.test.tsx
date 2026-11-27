@@ -23,6 +23,7 @@ const ctx = (over: Partial<PageContext> = {}): PageContext => ({
   snippets: [],
   currentSql: "",
   toast: vi.fn(),
+  back: vi.fn(),
   ...over,
 });
 

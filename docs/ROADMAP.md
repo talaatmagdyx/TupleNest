@@ -4,10 +4,13 @@ The roadmap lives on the website, in one place:
 **<https://talaatmagdyx.github.io/TupleNest/roadmap.html>** (source:
 [`docs/site/roadmap.html`](site/roadmap.html)).
 
-It covers what has shipped, what is in progress, what is planned or under
-consideration, and what TupleNest will not become. In short, TupleNest is a
-PostgreSQL IDE: support for every database engine is not planned, and no AI
-assistant is promised.
+It covers what has shipped, what is planned, and what TupleNest will not
+become. In short: the engines are PostgreSQL and SQLite, and no other engine
+(MySQL, MariaDB, SQL Server, MongoDB, Redis) is planned; there is no hosted
+or cloud service; and TupleNest does not send your data to an AI. The
+assistant sends your question, the query and schema names only, never row
+data; an AI tool you connect over MCP gets only what the connections you turn
+on for it return.
 
 The plans the project was built from are kept for their history:
 [phase-0-plan.md](phase-0-plan.md) and [phase-1-plan.md](phase-1-plan.md).
