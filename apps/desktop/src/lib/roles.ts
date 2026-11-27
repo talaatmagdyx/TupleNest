@@ -73,6 +73,13 @@ export function revokeSql(role: string, schema: string, grants: { table: string;
   ].join("\n");
 }
 
+/** For a superuser, the only change that matters: superusers bypass every
+ *  privilege check, so a REVOKE on a table would do nothing. Always quoted,
+ *  so the name is taken exactly as it is. Text to copy; never run. */
+export function noSuperuserSql(role: string): string {
+  return `ALTER ROLE ${quoteIdent(role)} NOSUPERUSER;`;
+}
+
 /** GRANT text for read access to every table in the schema. */
 export function grantReadSql(role: string, schema: string): string {
   return [

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { grantReadSql, looksReadOnly, revokeSql, roleSummary, writeGrants, type Role, type TablePrivileges } from "./roles";
+import { grantReadSql, looksReadOnly, noSuperuserSql, revokeSql, roleSummary, writeGrants, type Role, type TablePrivileges } from "./roles";
 
 const role = (name: string, over: Partial<Role> = {}): Role => ({
   name,
@@ -61,5 +61,7 @@ describe("roles", () => {
     expect(grantReadSql("reporting", "sales")).toBe(
       'GRANT USAGE ON SCHEMA "sales" TO "reporting";\nGRANT SELECT ON ALL TABLES IN SCHEMA "sales" TO "reporting";',
     );
+    expect(noSuperuserSql("postgres")).toBe('ALTER ROLE "postgres" NOSUPERUSER;');
+    expect(noSuperuserSql('ad"min')).toBe('ALTER ROLE "ad""min" NOSUPERUSER;');
   });
 });
