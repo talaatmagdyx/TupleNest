@@ -57,7 +57,9 @@ export type Feature =
   | "explainAnalyze"
   | "csvImport"
   | "ssh"
-  | "tls";
+  | "tls"
+  | "backup"
+  | "roles";
 
 const SQLITE_LACKS: Record<Feature, string> = {
   monitor: "SQLite has no server, so there are no sessions or locks to monitor.",
@@ -69,6 +71,8 @@ const SQLITE_LACKS: Record<Feature, string> = {
   csvImport: "CSV import writes PostgreSQL casts; it does not import into SQLite yet.",
   ssh: "A SQLite database is a file on this machine: there is nothing to tunnel to.",
   tls: "A SQLite database is a file on this machine: there is no connection to encrypt.",
+  backup: "Backup and restore run PostgreSQL's pg_dump and pg_restore; a SQLite database is one file you can copy.",
+  roles: "SQLite has no users, roles or grants: whoever can read the file can read the database.",
 };
 
 /** Why `feature` is not available on `engine`, or null when it is. */

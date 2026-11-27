@@ -11,11 +11,14 @@ use tauri::Manager;
 use tuplenest_workspace_store::Store;
 
 mod assistant;
+mod backup;
 mod connections;
+mod dashboards;
 mod engine;
 mod export;
 mod guard;
 mod mcp;
+mod notebooks;
 mod pg;
 mod sort;
 mod trim;
@@ -51,7 +54,7 @@ fn app_get_info(app: tauri::AppHandle) -> AppInfo {
 /// send that to api.anthropic.com in the `x-api-key` header. Only the
 /// `assistant_*` commands read or write it.
 fn reserved_setting(key: &str) -> Result<(), String> {
-    if key == assistant::config::SETTINGS_KEY {
+    if key == assistant::config::SETTINGS_KEY || key == backup::TOOLS_SETTING {
         return Err(format!(
             "the `{key}` setting is managed by its own commands"
         ));
@@ -680,6 +683,7 @@ fn main() {
                 }
             });
             app.manage(ExportState::default());
+            app.manage(backup::BackupState::default());
             app.manage(assistant::AssistantState::default());
             Ok(())
         })
@@ -703,6 +707,21 @@ fn main() {
             snippet_save,
             snippet_delete,
             audit_list,
+            dashboards::dashboard_list,
+            dashboards::dashboard_save,
+            dashboards::dashboard_delete,
+            dashboards::dashboard_chart_add,
+            dashboards::dashboard_chart_delete,
+            notebooks::notebook_list,
+            notebooks::notebook_get,
+            notebooks::notebook_save,
+            notebooks::notebook_delete,
+            backup::backup_tools,
+            backup::backup_tools_set,
+            backup::backup_list,
+            backup::backup_start,
+            backup::backup_restore,
+            backup::backup_cancel,
             mcp::commands::mcp_info,
             mcp::commands::mcp_access_list,
             mcp::commands::mcp_access_set,
@@ -714,6 +733,7 @@ fn main() {
             pg::pg_connect,
             pg::pg_disconnect,
             pg::pg_query,
+            pg::pg_query_read,
             pg::pg_rows,
             pg::pg_chart,
             pg::pg_metadata,
@@ -721,6 +741,8 @@ fn main() {
             pg::pg_activity,
             pg::pg_relationships,
             pg::pg_admin_backend,
+            pg::pg_roles,
+            pg::pg_role_privileges,
             pg::pg_begin,
             pg::pg_in_transaction,
             pg::pg_commit,
@@ -792,6 +814,9 @@ mod reserved_setting_tests {
     #[test]
     fn the_assistant_row_is_closed_to_the_generic_commands() {
         assert!(super::reserved_setting("assistant").is_err());
+        // A folder the app executes pg_dump from: only `backup_tools_set`
+        // writes it, after checking it holds the tools.
+        assert!(super::reserved_setting(crate::backup::TOOLS_SETTING).is_err());
         assert!(super::reserved_setting("theme").is_ok());
     }
 }

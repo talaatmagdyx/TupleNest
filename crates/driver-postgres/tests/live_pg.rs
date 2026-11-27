@@ -3279,3 +3279,78 @@ async fn cancel_stops_a_running_fetch() {
         assert_eq!(summary.rows_returned, 1, "the session is usable after");
     }
 }
+
+/// Users and roles: the role list shows login, superuser and membership,
+/// and the privilege matrix counts a write granted through a group — the
+/// case the page warns about.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn roles_and_their_table_privileges() {
+    let mut session = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    let tag = std::process::id();
+    let (group, member, schema) = (
+        format!("tn_ro_group_{tag}"),
+        format!("tn_reporting_{tag}"),
+        format!("tn_roles_{tag}"),
+    );
+    let setup = format!(
+        "CREATE ROLE {group} NOLOGIN;
+         CREATE ROLE {member} LOGIN IN ROLE {group};
+         CREATE SCHEMA {schema};
+         CREATE TABLE {schema}.customers (id int);
+         CREATE TABLE {schema}.orders (id int);
+         GRANT SELECT, UPDATE ON {schema}.customers TO {group};
+         GRANT SELECT ON {schema}.orders TO {member}"
+    );
+    for stmt in setup.split(';').map(str::trim) {
+        session.execute(req(stmt), &NullSink).await.unwrap();
+    }
+
+    let roles = session.list_roles().await.unwrap();
+    let list = roles.as_array().unwrap();
+    let found = list
+        .iter()
+        .find(|r| r["name"] == member.as_str())
+        .expect("the new role is listed");
+    assert_eq!(found["canLogin"], true);
+    assert_eq!(found["superuser"], false);
+    assert_eq!(found["memberOf"], serde_json::json!([group.clone()]));
+    assert!(!list
+        .iter()
+        .any(|r| r["name"].as_str().unwrap().starts_with("pg_")));
+
+    let privs = session
+        .role_privileges(&member, Some(&schema))
+        .await
+        .unwrap();
+    assert_eq!(privs["schema"], schema.as_str());
+    let tables = privs["tables"].as_array().unwrap();
+    assert_eq!(tables.len(), 2);
+    assert_eq!(tables[0]["name"], "customers");
+    assert_eq!(tables[0]["select"], true);
+    assert_eq!(
+        tables[0]["update"], true,
+        "a grant through the group counts"
+    );
+    assert_eq!(tables[0]["insert"], false);
+    assert_eq!(tables[1]["name"], "orders");
+    assert_eq!(tables[1]["update"], false);
+
+    // No schema: the session's current one.
+    let current = session.role_privileges(&member, None).await.unwrap();
+    assert!(current["schema"].as_str().is_some());
+
+    // An unknown role is the server's error, not a panic.
+    assert!(session
+        .role_privileges("tn_no_such_role_x", Some(&schema))
+        .await
+        .is_err());
+
+    let teardown = format!("DROP SCHEMA {schema} CASCADE; DROP ROLE {member}; DROP ROLE {group}");
+    for stmt in teardown.split(';').map(str::trim) {
+        session.execute(req(stmt), &NullSink).await.unwrap();
+    }
+}

@@ -102,6 +102,24 @@ describe("ActivityRail", () => {
     expect(container.querySelectorAll(".rail-ind")).toHaveLength(1);
   });
 
+  it("opens dashboards and notebooks, with or without a connection, and marks the open one", async () => {
+    const onPage = vi.fn();
+    const { rerender } = render(<ActivityRail {...base} connected={false} onPage={onPage} />);
+    await userEvent.click(btn(/Dashboards/));
+    await userEvent.click(btn(/Notebooks/));
+    expect(onPage.mock.calls).toEqual([["dashboards"], ["notebooks"]]);
+    expect(btn(/Notebooks/)).not.toHaveClass("on");
+    rerender(<ActivityRail {...base} view="notebooks" onPage={onPage} />);
+    expect(btn(/Notebooks/)).toHaveClass("on");
+    expect(btn(/Dashboards/)).not.toHaveClass("on");
+  });
+
+  it("does nothing for a page with no handler", async () => {
+    render(<ActivityRail {...base} />);
+    await userEvent.click(btn(/Dashboards/));
+    expect(btn(/Dashboards/)).not.toHaveClass("on");
+  });
+
   it("shows no indicator when collapsed", () => {
     const { container } = render(<ActivityRail {...base} collapsed />);
     expect(container.querySelectorAll(".rail-ind")).toHaveLength(0);

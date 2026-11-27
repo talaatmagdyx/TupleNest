@@ -82,6 +82,15 @@ import { UpdateToast } from "./overlays/Overlays";
 import { McpSection } from "./settings/McpSection";
 import { ParamPrompt } from "./overlays/Overlays";
 import {
+  FirstRun,
+  PageHost,
+  isRegistryPage,
+  pageCommands,
+  type FirstRunRequest,
+  type Page,
+  type PageContext,
+} from "./pages/registry";
+import {
   coerceParam,
   EXPORT_CAPS,
   formatSQL,
@@ -195,6 +204,12 @@ export default function App() {
   if (welcome && (connected || !pristine)) setWelcome(false);
   const showWelcome = welcome && !connected && pristine;
   const [overlay, setOverlay] = useState<OverlayKind>(null);
+  /** What's new or the tour, asked for again from About. */
+  const [firstRun, setFirstRun] = useState<FirstRunRequest>(null);
+  const reopenFirstRun = (kind: NonNullable<FirstRunRequest>["kind"]) => {
+    setOverlay(null);
+    setFirstRun((r) => ({ kind, n: (r?.n ?? 0) + 1 }));
+  };
   // The assistant: a right-hand island panel. Everything it produces lands in
   // the editor only on the user's click, and runs only on the user's Run.
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -211,8 +226,9 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(272);
   const sidebarDragRef = useRef<{ x: number; w: number } | null>(null);
-  /** What the main area shows: the editor ("explorer"), or a page in its place. */
-  const [page, setPage] = useState<RailView>("explorer");
+  /** What the main area shows: the editor ("explorer"), or a page in its
+   *  place — the rail's own (history, saved) or one from pages/registry. */
+  const [page, setPage] = useState<RailView | Page>("explorer");
   const [connMenu, setConnMenu] = useState(false);
   const [exportMenu, setExportMenu] = useState(false);
   // CSV export neutralizes spreadsheet formulas by default (security FILE-01).
@@ -1637,7 +1653,7 @@ export default function App() {
         exec: () => setActiveSql(h.sqlText),
       }));
 
-    return [...items, ...live, ...connections, ...catalogItems, ...snippetItems, ...recent];
+    return [...items, ...pageCommands(setPage, lacks), ...live, ...connections, ...catalogItems, ...snippetItems, ...recent];
   }, [doRun, doFormat, saveSnippet, newTab, applyTheme, theme, newProfile, runExplain, openIntel, connected, connectedEnv, liveEngine, inTx, doDisconnect, doBegin, doCommit, doRollback, saved, selectProfile, objects, insertSelect, describeObject, snippets, historyItems, setActiveSql, showToast, loadHealth]);
 
   /* ---------------- render ---------------- */
@@ -1657,6 +1673,19 @@ export default function App() {
   const liveFile = liveEngine === "sqlite" ? (connected && connectedTo ? connectedTo.database : database) : null;
   const liveLabel = liveFile !== null ? fileName(liveFile) : `${liveUser || "?"}@${liveHost}`;
   const liveTarget = liveFile !== null ? liveFile : liveHost ? `${liveUser || "?"}@${liveHost}:${livePort}` : "";
+  const pageCtx = useMemo<PageContext>(
+    () => ({
+      live: connected,
+      engine: liveEngine,
+      env: connected ? connectedEnv : null,
+      liveProfile: connected ? liveProfile : null,
+      saved,
+      snippets,
+      currentSql,
+      toast: showToast,
+    }),
+    [connected, liveEngine, connectedEnv, liveProfile, saved, snippets, currentSql, showToast],
+  );
   // HUD design: two-state label — live when connected, cached otherwise.
   const explorerSource: "live" | "cached" | "—" =
     connected && !metaCached ? "live" : schemas !== null || metaCached ? "cached" : "—";
@@ -1769,6 +1798,7 @@ export default function App() {
           onDiagram={() => setOverlay("diagram")}
           onAudit={() => setOverlay("audit")}
           onSettings={() => setOverlay("settings")}
+          onPage={(next) => setPage((cur) => (cur === next ? "explorer" : next))}
         />
         <aside
           className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}
@@ -1815,6 +1845,7 @@ export default function App() {
             }}
           />
         )}
+        {isRegistryPage(page) && <PageHost page={page} ctx={pageCtx} onClose={() => setPage("explorer")} />}
         {/* Hidden rather than unmounted while a page is up: the editor keeps
             its scroll, selection and undo history for the way back. */}
         <main className="main-col" hidden={page !== "explorer"}>
@@ -2273,6 +2304,8 @@ export default function App() {
           version={info?.version ?? ""}
           os={info?.os ?? ""}
           onCheckUpdates={checkForUpdates}
+          onNews={() => reopenFirstRun("news")}
+          onTour={() => reopenFirstRun("tour")}
           mcp={<McpSection />}
           onClose={() => {
             setSettingsAssistant(false);
@@ -2325,8 +2358,11 @@ export default function App() {
           os={info?.os ?? ""}
           onCheckUpdates={checkForUpdates}
           onClose={() => setOverlay(null)}
+          onNews={() => reopenFirstRun("news")}
+          onTour={() => reopenFirstRun("tour")}
         />
       )}
+      <FirstRun version={info?.version ?? ""} request={firstRun} />
       {overlay === "inspect" && (
         <Inspector text={inspectText} colName={inspectCol} onClose={() => setOverlay(null)} />
       )}

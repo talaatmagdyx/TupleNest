@@ -143,6 +143,25 @@ impl Session {
             Self::Sqlite(_) => Err(unsupported(Engine::Sqlite, "The server monitor")),
         }
     }
+
+    /// The users-and-roles page. SQLite has no roles or grants.
+    pub async fn list_roles(&self) -> Result<serde_json::Value, Box<DriverError>> {
+        match self {
+            Self::Postgres(s) => s.list_roles().await,
+            Self::Sqlite(_) => Err(unsupported(Engine::Sqlite, "Users and roles")),
+        }
+    }
+
+    pub async fn role_privileges(
+        &self,
+        role: &str,
+        schema: Option<&str>,
+    ) -> Result<serde_json::Value, Box<DriverError>> {
+        match self {
+            Self::Postgres(s) => s.role_privileges(role, schema).await,
+            Self::Sqlite(_) => Err(unsupported(Engine::Sqlite, "Users and roles")),
+        }
+    }
 }
 
 #[async_trait]

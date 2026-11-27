@@ -1,10 +1,12 @@
 import {
   AuditRailIcon,
+  DashboardRailIcon,
   DiagramRailIcon,
   ExplorerRailIcon,
   GearIcon,
   HistoryRailIcon,
   MonitorRailIcon,
+  NotebookRailIcon,
   PastePlanRailIcon,
   SavedRailIcon,
 } from "../lib/icons";
@@ -13,9 +15,12 @@ import { kbd } from "../lib/platform";
 /** What the main area shows. "explorer" is the editor with the explorer
  *  beside it; the others are pages that take the editor's place. */
 export type RailView = "explorer" | "history" | "saved";
+/** Stage 6b pages the rail opens in place of the editor. */
+export type RailPage = "dashboards" | "notebooks";
 
 type Props = {
-  view: RailView;
+  /** The main area: a RailView, or a page from pages/registry. */
+  view: string;
   collapsed: boolean;
   connected: boolean;
   onView: (v: RailView) => void;
@@ -26,6 +31,7 @@ type Props = {
   onAudit: () => void;
   onPastePlan: () => void;
   onSettings: () => void;
+  onPage?: (page: RailPage) => void;
 };
 
 /**
@@ -93,6 +99,14 @@ export default function ActivityRail(p: Props) {
             reading what was run is most useful after the session is gone. */}
         <Item title="Audit log" onClick={p.onAudit}>
           <AuditRailIcon />
+        </Item>
+        {/* Open with no session too: each page says what it needs, and a
+            saved notebook can be read offline. */}
+        <Item title="Dashboards" active={p.view === "dashboards"} onClick={() => p.onPage?.("dashboards")}>
+          <DashboardRailIcon />
+        </Item>
+        <Item title="Notebooks" active={p.view === "notebooks"} onClick={() => p.onPage?.("notebooks")}>
+          <NotebookRailIcon />
         </Item>
         {/* Deliberately not gated on `connected`: the whole point is analysing
             a plan from somewhere this app cannot reach. */}

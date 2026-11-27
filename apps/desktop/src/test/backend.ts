@@ -110,7 +110,9 @@ export const PLAN_RESULT: QueryResult = {
 
 const defaults = (): Record<string, (args: Record<string, unknown>) => unknown> => ({
   app_get_info: () => ({ version: "0.1.0", os: "macos" }),
-  settings_get: () => null,
+  // The first-run tour counts as done, so it does not cover every App test;
+  // App.pages.test.tsx turns it back on.
+  settings_get: (a) => (a.key === "tour_done" ? true : null),
   settings_set: () => undefined,
   connection_list: () => [CONNECTION, PROD],
   connection_save: () => CONNECTION,
@@ -191,6 +193,11 @@ const defaults = (): Record<string, (args: Record<string, unknown>) => unknown> 
     defaultModel: null,
   }),
   assistant_cancel: () => true,
+  // Stage 6b pages: empty stores.
+  dashboard_list: () => [],
+  notebook_list: () => [],
+  backup_list: () => [],
+  backup_tools: () => ({ pgDump: "/usr/bin/pg_dump", pgRestore: "/usr/bin/pg_restore", configured: null }),
   pg_metadata: (a) => metadata(a),
   pg_metadata_cached: (a) => metadata((a.request ?? {}) as Record<string, unknown>),
 });

@@ -7,6 +7,13 @@ use std::path::Path;
 use rusqlite::{params, Connection, OptionalExtension};
 use thiserror::Error;
 
+mod dashboards;
+pub use dashboards::{DashboardChart, DashboardRecord, MAX_CHARTS, REFRESH_CHOICES};
+mod backups;
+pub use backups::BackupRecord;
+mod notebooks;
+pub use notebooks::{NotebookRecord, NotebookSummary, MAX_CELLS, RESULT_ROWS};
+
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error("database error: {0}")]
@@ -20,7 +27,7 @@ pub enum StoreError {
     Refused(String),
 }
 
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 12;
 
 const MIGRATION_V1: &str = r#"
 CREATE TABLE meta        (key TEXT PRIMARY KEY, value TEXT);
@@ -324,6 +331,15 @@ impl Store {
         }
         if current < 9 && !self.column_exists("connections", "engine")? {
             self.conn.execute_batch(MIGRATION_V9)?;
+        }
+        if current < 10 {
+            self.conn.execute_batch(dashboards::MIGRATION_V10)?;
+        }
+        if current < 11 {
+            self.conn.execute_batch(notebooks::MIGRATION_V11)?;
+        }
+        if current < 12 {
+            self.conn.execute_batch(backups::MIGRATION_V12)?;
         }
         if current < SCHEMA_VERSION {
             self.conn.execute(

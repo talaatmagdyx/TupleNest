@@ -595,7 +595,7 @@ export function Settings(p: {
   os?: string;
   onCheckUpdates?: () => Promise<void>;
   onClose: () => void;
-}) {
+} & HelpActions) {
   const nav: { id: SettingsSection; label: string }[] = [
     { id: "general", label: "General" },
     ...(p.children ? [{ id: "assistant" as const, label: "Assistant" }] : []),
@@ -685,7 +685,13 @@ export function Settings(p: {
               </div>
             )}
             {section === "about" && (
-              <AboutBody version={p.version ?? ""} os={p.os ?? ""} onCheckUpdates={p.onCheckUpdates} />
+              <AboutBody
+                version={p.version ?? ""}
+                os={p.os ?? ""}
+                onCheckUpdates={p.onCheckUpdates}
+                onTour={p.onTour}
+                onNews={p.onNews}
+              />
             )}
           </div>
         </div>
@@ -703,6 +709,7 @@ export function Settings(p: {
 export const ABOUT_LINKS = {
   author: "https://github.com/talaatmagdyx",
   claude: "https://claude.com",
+  /** About's "Changelog", and What's new's "Full changelog". */
   changelog: "https://github.com/talaatmagdyx/TupleNest/blob/main/CHANGELOG.md",
   issues: "https://github.com/talaatmagdyx/TupleNest/issues",
 } as const;
@@ -714,7 +721,7 @@ export const ABOUT_LINKS = {
  * replaces the UI with a web page and leaves no way back — there is no
  * chrome, no back button. `openUrl` sends it to the real browser instead.
  */
-async function openExternal(url: string): Promise<void> {
+export async function openExternal(url: string): Promise<void> {
   try {
     const { openUrl } = await import("@tauri-apps/plugin-opener");
     await openUrl(url);
@@ -725,8 +732,13 @@ async function openExternal(url: string): Promise<void> {
   }
 }
 
+/** Help: the first-run tour and the release notes, again. */
+type HelpActions = { onTour?: () => void; onNews?: () => void };
+
 /** What the About dialog and Settings › About both show. */
-function AboutBody(p: { version: string; os: string; sha?: string; onCheckUpdates?: () => Promise<void> }) {
+function AboutBody(
+  p: { version: string; os: string; sha?: string; onCheckUpdates?: () => Promise<void> } & HelpActions,
+) {
   const sha = p.sha ?? BUILD_SHA;
   const osLabel = { macos: "macOS", windows: "Windows", linux: "Linux" }[p.os] ?? p.os;
   const [checking, setChecking] = useState(false);
@@ -798,6 +810,16 @@ function AboutBody(p: { version: string; os: string; sha?: string; onCheckUpdate
         <button className="btn" onClick={() => void openExternal(ABOUT_LINKS.issues)}>
           Report a problem
         </button>
+        {p.onNews && (
+          <button className="btn" onClick={p.onNews}>
+            What&apos;s new
+          </button>
+        )}
+        {p.onTour && (
+          <button className="btn" onClick={p.onTour}>
+            Show the welcome tour
+          </button>
+        )}
         {p.onCheckUpdates && (
           <button
             className="btn primary"
@@ -831,13 +853,20 @@ export function About(p: {
   sha?: string;
   onCheckUpdates?: () => Promise<void>;
   onClose: () => void;
-}) {
+} & HelpActions) {
   return (
     <Overlay onClose={p.onClose}>
       <div className="modal about" style={{ width: 460 }}>
         <ModalHead title="About TupleNest" onClose={p.onClose} />
         <div className="modal-body">
-          <AboutBody version={p.version} os={p.os} sha={p.sha} onCheckUpdates={p.onCheckUpdates} />
+          <AboutBody
+            version={p.version}
+            os={p.os}
+            sha={p.sha}
+            onCheckUpdates={p.onCheckUpdates}
+            onTour={p.onTour}
+            onNews={p.onNews}
+          />
         </div>
       </div>
     </Overlay>

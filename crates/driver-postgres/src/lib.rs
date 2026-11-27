@@ -601,6 +601,94 @@ impl PostgresSession {
         Ok(row.get::<_, bool>(0))
     }
 
+    /// Every role but the built-in `pg_*` ones, with what it may do and what
+    /// it is a member of (built-in roles included there: membership of
+    /// `pg_write_all_data` is exactly what a role list must show).
+    pub async fn list_roles(&self) -> Result<serde_json::Value, Box<DriverError>> {
+        let rows = self
+            .client
+            .query(
+                "SELECT r.rolname::text, r.rolcanlogin, r.rolsuper, r.rolcreaterole, r.rolcreatedb,
+                        r.rolreplication, r.rolbypassrls,
+                        ARRAY(SELECT b.rolname::text FROM pg_auth_members m
+                              JOIN pg_roles b ON b.oid = m.roleid
+                              WHERE m.member = r.oid ORDER BY 1) AS member_of
+                 FROM pg_roles r
+                 WHERE r.rolname !~ '^pg_'
+                 ORDER BY r.rolname
+                 LIMIT 1000",
+                &[],
+            )
+            .await
+            .map_err(normalize_error)?;
+        Ok(serde_json::Value::Array(
+            rows.iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "name": r.get::<_, String>(0),
+                        "canLogin": r.get::<_, bool>(1),
+                        "superuser": r.get::<_, bool>(2),
+                        "createRole": r.get::<_, bool>(3),
+                        "createDb": r.get::<_, bool>(4),
+                        "replication": r.get::<_, bool>(5),
+                        "bypassRls": r.get::<_, bool>(6),
+                        "memberOf": r.get::<_, Vec<String>>(7),
+                    })
+                })
+                .collect(),
+        ))
+    }
+
+    /// What `role` may do to each table, view and foreign table in `schema`
+    /// (the session's current schema when None), by `has_table_privilege` —
+    /// so grants through role membership count, as the server would apply
+    /// them.
+    pub async fn role_privileges(
+        &self,
+        role: &str,
+        schema: Option<&str>,
+    ) -> Result<serde_json::Value, Box<DriverError>> {
+        let schema: String = self
+            .client
+            .query_one(
+                "SELECT COALESCE($1::text, current_schema()::text)",
+                &[&schema],
+            )
+            .await
+            .map_err(normalize_error)?
+            .get::<_, Option<String>>(0)
+            .unwrap_or_else(|| "public".into());
+        let rows = self
+            .client
+            .query(
+                "SELECT c.relname::text, c.relkind::text,
+                        has_table_privilege($1::text, c.oid, 'SELECT'),
+                        has_table_privilege($1::text, c.oid, 'INSERT'),
+                        has_table_privilege($1::text, c.oid, 'UPDATE'),
+                        has_table_privilege($1::text, c.oid, 'DELETE'),
+                        has_table_privilege($1::text, c.oid, 'TRUNCATE')
+                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE n.nspname = $2::text AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                 ORDER BY c.relname
+                 LIMIT 1000",
+                &[&role, &schema],
+            )
+            .await
+            .map_err(normalize_error)?;
+        Ok(serde_json::json!({
+            "schema": schema,
+            "tables": rows.iter().map(|r| serde_json::json!({
+                "name": r.get::<_, String>(0),
+                "kind": r.get::<_, String>(1),
+                "select": r.get::<_, bool>(2),
+                "insert": r.get::<_, bool>(3),
+                "update": r.get::<_, bool>(4),
+                "delete": r.get::<_, bool>(5),
+                "truncate": r.get::<_, bool>(6),
+            })).collect::<Vec<_>>(),
+        }))
+    }
+
     /// A future that resolves when this session's connection ends, saying
     /// whether the server or the network ended it (see [`CloseWatch::wait`]).
     ///
