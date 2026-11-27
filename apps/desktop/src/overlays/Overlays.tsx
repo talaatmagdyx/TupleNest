@@ -491,6 +491,9 @@ export function Settings(p: {
   /** Optional: the palette can reach About directly, so Settings offers it
    *  rather than owning it — this is just where people look for it. */
   onAbout?: () => void;
+  /** The MCP server section (settings/McpSection). A slot rather than a
+   *  child component so this dialog stays free of backend calls. */
+  mcp?: React.ReactNode;
   onClose: () => void;
 }) {
   return (
@@ -555,6 +558,7 @@ export function Settings(p: {
               <span className="knob" aria-hidden />
             </button>
           </div>
+          {p.mcp}
           {p.onAbout && (
             <div className="section-row">
               <div>

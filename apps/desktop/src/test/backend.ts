@@ -159,6 +159,9 @@ const defaults = (): Record<string, (args: Record<string, unknown>) => unknown> 
   }),
   pg_admin_backend: () => true,
   audit_list: () => [],
+  mcp_info: () => ({ command: "/Applications/TupleNest.app/Contents/MacOS/tuplenest-desktop", args: ["mcp"], config: "{}" }),
+  mcp_access_list: () => [],
+  mcp_access_set: () => undefined,
   // A detached run is EXPLAIN's: its rows come back inline and the stored
   // result (what pg_rows pages) is left as it was, as in pg.rs.
   pg_query: (a) => (a.detached ? PLAN_RESULT : RESULT),
