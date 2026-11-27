@@ -39,17 +39,65 @@ service.
 
 ## Why TupleNest?
 
-- **Safety.** Connections tagged `prod` or `staging` stop and ask before risky
-  statements, and the worst ones on prod make you type the table name.
-  Read-only profiles are enforced by the database session, not by a disabled
-  button.
-- **Privacy.** Passwords stay in the OS keychain. There is no telemetry. Every
-  network destination is listed [below](#privacy), with what it receives.
-- **Performance.** A native Rust core streams results into a virtualized grid
-  and stops reading at a 20,000-row limit. Measurements and how to reproduce
-  them are in [docs/benchmarks](docs/benchmarks/README.md).
-- **Simplicity.** Two engines, PostgreSQL 13+ and SQLite 3, with one safety
-  model for both. No other engines are planned.
+Most database clients assume you never make mistakes. TupleNest assumes
+production is one wrong tab away, and builds the safeguards in, without
+getting in the way when you're working on dev.
+
+### Safety you can see
+
+- **Risky statements stop and ask on `prod` and `staging`.** An `UPDATE` or
+  `DELETE` without a real `WHERE`, `DROP`, `TRUNCATE`, `ALTER` and more open a
+  confirmation first. Comments and strings are masked, so `WHERE 1=1` doesn't
+  slip through.
+- **The worst mistakes need the table name.** On prod, an unbounded delete or a
+  `DROP` keeps *Run anyway* disabled until you type the target's name.
+- **Read-only means read-only.** The database session itself is read-only and
+  re-checked before every statement; it isn't just a disabled button.
+- **Edits are reviewed, and transactions have one owner.** Grid edits become
+  `UPDATE` statements you read before they are sent. A transaction belongs to
+  the tab that opened it.
+- **Every prod statement is on record.** It is written to the audit log
+  *before* it runs. If the write fails, the statement isn't sent.
+
+### Privacy by default
+
+- **No account, no telemetry, no hosted service.** It's MIT-licensed, and
+  nothing of ours sits between you and your database.
+- **Secrets stay in the OS keychain.** Passwords, SSH passphrases and API keys
+  never reach the app window.
+- **Prod SQL stays out of history.** History keeps only timing, row count and
+  status for production connections.
+- **Every network destination is listed**, with what it receives
+  ([below](#privacy)).
+
+### AI on your terms
+
+- **The assistant never sees your rows.** It gets the question, the SQL and
+  schema names. It uses your own Anthropic key or a local Ollama model.
+- **It never runs anything by itself.** Suggestions go into the editor, and
+  you press Run.
+- **The MCP server starts Off for every connection.** When you turn it on for
+  Claude Desktop, Claude Code or Cursor, prod is read-only and risky
+  statements are refused.
+
+### Fast and small
+
+- **The database work happens in a native Rust core.** The window only draws.
+  Results stream into a virtualized grid, and reading stops at a 20,000-row
+  limit.
+- **Measured, not claimed.** On an M4 Pro:
+  - the window appears in about 0.3 s
+  - the app idles at about 120–130 MB
+  - the PostgreSQL driver reads 20,000 rows in about 22 ms
+
+  Details and the commands to rerun them are in
+  [docs/benchmarks](docs/benchmarks/README.md).
+
+### Focused
+
+- **Two engines, PostgreSQL 13+ and SQLite 3, with one safety model.** No other
+  engines are planned.
+- **It runs on macOS, Windows and Linux,** built from one codebase in CI.
 
 ## Features
 
