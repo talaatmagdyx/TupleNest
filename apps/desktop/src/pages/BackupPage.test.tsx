@@ -3,7 +3,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import BackupPage, { sizeText, type BackupRecord } from "./BackupPage";
+import BackupPage, { backupFileName, sizeText, type BackupRecord } from "./BackupPage";
 import type { PageContext } from "./context";
 import type { ConnectionRecord } from "../ipc/types";
 
@@ -74,6 +74,13 @@ describe("BackupPage", () => {
     expect(sizeText(512)).toBe("512 B");
     expect(sizeText(1536)).toBe("1.5 KB");
     expect(sizeText(432_013_312)).toBe("412 MB");
+  });
+
+  it("suggests a file name the save panel's .dump/.backup filter accepts", () => {
+    expect(backupFileName("tn_livetest", "2026-11-27")).toBe("tn_livetest-2026-11-27.dump");
+    expect(backupFileName("a/b:c", "2026-11-27")).toBe("a_b_c-2026-11-27.dump");
+    expect(backupFileName("", "2026-11-27")).toBe("backup-2026-11-27.dump");
+    expect(backupFileName("..hidden", "2026-11-27")).toBe("hidden-2026-11-27.dump");
   });
 
   it("lists recent runs and offers PostgreSQL profiles only", async () => {

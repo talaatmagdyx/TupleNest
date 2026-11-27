@@ -227,15 +227,69 @@ where
     Ok(())
 }
 
-/// The app's bundle identifier, from the same config Tauri builds with: the
-/// data directory and the keychain service both follow it.
-fn identifier() -> String {
-    let conf: Value = serde_json::from_str(include_str!("../../tauri.conf.json"))
-        .expect("tauri.conf.json is JSON");
-    conf["identifier"]
-        .as_str()
+/// The identifier this binary was compiled with: `tauri.conf.json`, unless
+/// the build overrode it (`tauri build --config '{"identifier":…}'`, which
+/// the Tauri CLI hands to the compiler as `TAURI_CONFIG`).
+fn compiled_identifier() -> String {
+    compiled_identifier_from(
+        option_env!("TAURI_CONFIG"),
+        include_str!("../../tauri.conf.json"),
+    )
+}
+
+fn compiled_identifier_from(override_json: Option<&str>, conf_json: &str) -> String {
+    let from = |json: &str| {
+        serde_json::from_str::<Value>(json)
+            .ok()
+            .and_then(|v| v["identifier"].as_str().map(str::to_string))
+            .filter(|id| valid_identifier(id))
+    };
+    override_json
+        .and_then(from)
+        .or_else(|| from(conf_json))
         .expect("tauri.conf.json has an identifier")
-        .to_string()
+}
+
+/// Reverse-DNS: what a bundle identifier may be, and all a path segment
+/// built from it may hold.
+fn valid_identifier(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 255
+        && !id.starts_with('.')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+}
+
+/// `CFBundleIdentifier` from an XML `Info.plist`, as the bundler writes it.
+fn plist_identifier(plist: &str) -> Option<String> {
+    let after = plist.split_once("<key>CFBundleIdentifier</key>")?.1;
+    let value = after.trim_start().strip_prefix("<string>")?;
+    let id = value.split_once("</string>")?.0.trim();
+    valid_identifier(id).then(|| id.to_string())
+}
+
+/// The identifier of the bundle `exe` runs from — `X.app/Contents/MacOS/exe`
+/// reads `X.app/Contents/Info.plist` — or `compiled` when it is not in one
+/// (a bare binary, Linux, Windows). A build made with another identifier
+/// (`…verify`) then opens its own data folder, not the installed app's.
+fn resolve_identifier(exe: Option<&std::path::Path>, compiled: &str) -> String {
+    exe.and_then(|exe| {
+        let macos = exe.parent()?;
+        let contents = macos.parent()?;
+        if macos.file_name()? != "MacOS" || contents.file_name()? != "Contents" {
+            return None;
+        }
+        plist_identifier(&std::fs::read_to_string(contents.join("Info.plist")).ok()?)
+    })
+    .unwrap_or_else(|| compiled.to_string())
+}
+
+/// The app's bundle identifier, as the running bundle has it: the data
+/// directory follows it.
+fn identifier() -> String {
+    let exe = std::env::current_exe().ok();
+    resolve_identifier(exe.as_deref(), &compiled_identifier())
 }
 
 /// Where the app keeps its data: Tauri's `app_data_dir`, which is the

@@ -582,11 +582,9 @@ impl PostgresSession {
         // server, and the read-only mode does not stop the functions that do
         // it. A read-only profile does not send them.
         if self.read_only {
-            return Err(DriverError::new(
-                ErrorCategory::Authorization,
-                "This connection is read-only: it does not cancel or terminate other                  sessions. Nothing was sent.",
-            )
-            .into());
+            return Err(
+                DriverError::new(ErrorCategory::Authorization, READ_ONLY_ADMIN_REFUSAL).into(),
+            );
         }
         let sql = if terminate {
             "SELECT pg_terminate_backend($1)"
@@ -1082,8 +1080,7 @@ impl DatabaseSession for PostgresSession {
             if first == "do" || first == "call" {
                 return Err(DriverError::new(
                     ErrorCategory::Authorization,
-                    "DO blocks and CALL are refused on a read-only connection: they can \
-                     commit and change the transaction mode from inside. Nothing was run.",
+                    READ_ONLY_DO_CALL_REFUSAL,
                 )
                 .into());
             }
@@ -1095,14 +1092,7 @@ impl DatabaseSession for PostgresSession {
             if !reads_only(first) {
                 return Err(DriverError::new(
                     ErrorCategory::Authorization,
-                    format!(
-                        "{} is refused on a read-only connection: only statements that read                          are sent, and PostgreSQL's own read-only mode would not stop this                          one. Nothing was run.",
-                        if first.is_empty() {
-                            "This statement".to_owned()
-                        } else {
-                            first.to_ascii_uppercase()
-                        }
-                    ),
+                    read_only_refusal(first),
                 )
                 .into());
             }
@@ -2959,6 +2949,53 @@ fn ends_transaction(sql: &str) -> bool {
         leading_words(sql, 1).first().map(String::as_str),
         Some("commit" | "rollback" | "end" | "abort")
     )
+}
+
+/// Refusals on a read-only profile. They reach the window and MCP clients
+/// word for word, so each is one plain sentence run: a string continuation
+/// must end its line with `\` or the next line's indentation lands inside.
+const READ_ONLY_ADMIN_REFUSAL: &str = "This connection is read-only: it does not cancel or \
+                                       terminate other sessions. Nothing was sent.";
+const READ_ONLY_DO_CALL_REFUSAL: &str = "DO blocks and CALL are refused on a read-only \
+                                         connection: they can commit and change the \
+                                         transaction mode from inside. Nothing was run.";
+
+/// Why a statement starting with `first` (lower-case) is refused on a
+/// read-only profile.
+fn read_only_refusal(first: &str) -> String {
+    let what = if first.is_empty() {
+        "This statement".to_owned()
+    } else {
+        first.to_ascii_uppercase()
+    };
+    format!(
+        "{what} is refused on a read-only connection: only statements that read are sent, \
+         and PostgreSQL's own read-only mode would not stop this one. Nothing was run."
+    )
+}
+
+#[cfg(test)]
+mod refusal_text_tests {
+    use super::*;
+
+    #[test]
+    fn refusal_messages_have_no_runs_of_spaces() {
+        for m in [
+            READ_ONLY_ADMIN_REFUSAL.to_string(),
+            READ_ONLY_DO_CALL_REFUSAL.to_string(),
+            read_only_refusal("insert"),
+            read_only_refusal(""),
+        ] {
+            assert!(!m.contains("  "), "double space in {m:?}");
+            assert!(!m.contains('\n'), "line break in {m:?}");
+            assert!(m.ends_with('.'), "{m:?}");
+        }
+        assert_eq!(
+            read_only_refusal("insert"),
+            "INSERT is refused on a read-only connection: only statements that read are sent, \
+             and PostgreSQL's own read-only mode would not stop this one. Nothing was run."
+        );
+    }
 }
 
 /// May a read-only profile send a statement that starts with this word?

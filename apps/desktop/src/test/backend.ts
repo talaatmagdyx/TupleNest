@@ -184,11 +184,13 @@ const defaults = (): Record<string, (args: Record<string, unknown>) => unknown> 
   // The assistant, unconfigured: no provider, so the panel shows its empty
   // state. Tests that ask it something install their own handlers.
   assistant_models: () => ({ options: [], defaultProvider: null, defaultModel: null, ollamaError: null }),
+  assistant_ollama_test: () => [],
   assistant_settings_get: () => ({
     anthropicConfigured: false,
     ollamaEnabled: false,
     ollamaUrl: "http://localhost:11434",
     ollamaAllowRemote: false,
+    ollamaAllowCloud: false,
     defaultProvider: null,
     defaultModel: null,
   }),

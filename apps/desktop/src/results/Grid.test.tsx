@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import Grid, { columnMaxima, keepNear, numberOf, type GridColumn } from "./Grid";
 import type { CellEdit, EditTarget } from "../lib/dml";
 
@@ -340,6 +342,25 @@ describe("Grid — keyboard and screen readers", () => {
     expect(heads[1]).toHaveAttribute("aria-sort", "none");
     await userEvent.click(heads[1]);
     expect(screen.getAllByRole("columnheader")[1]).toHaveAttribute("aria-sort", "ascending");
+  });
+
+  it("keeps a header's name and type inside its cell, with the full text as a title", async () => {
+    await gridRows();
+    const id = screen.getAllByRole("columnheader")[1];
+    // "id int8" spilled into the next column as "id intcustomer_id".
+    expect(id).toHaveAttribute("title", "id int8");
+    expect(id).toHaveClass("num");
+    const label = id.querySelector(".g-hlabel");
+    expect(label).not.toBeNull();
+    expect(label!.querySelector(".cn")).toHaveTextContent("id");
+    expect(label!.querySelector(".ct")).toHaveTextContent("int8");
+    // jsdom does no layout: hold the stylesheet to the clipping rules.
+    const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+    expect(css).toMatch(/\.g-hcell \{ overflow: hidden; \}/);
+    const rule = /\.g-hcell \.g-hlabel \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    for (const d of ["min-width: 0", "overflow: hidden", "text-overflow: ellipsis", "white-space: nowrap"]) {
+      expect(rule).toContain(d);
+    }
   });
 
   it("sorts from the keyboard as well as the mouse", async () => {

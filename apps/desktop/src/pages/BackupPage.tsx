@@ -40,6 +40,16 @@ export function sizeText(bytes: number | null): string {
 const today = () => new Date().toISOString().slice(0, 10);
 
 /**
+ * The name the save panel suggests: always ending in `.dump`, which its
+ * filter allows (macOS keeps Save disabled otherwise), with characters a
+ * file name cannot hold replaced.
+ */
+export function backupFileName(database: string, date: string): string {
+  const base = `${database.replace(/[/\\:*?"<>|]/g, "_").replace(/^\.+/, "").trim() || "backup"}-${date}`;
+  return /\.(dump|backup)$/i.test(base) ? base : `${base}.dump`;
+}
+
+/**
  * Backup and restore with the user's own pg_dump and pg_restore.
  *
  * The page never names a path: the backend opens the save or open panel, or
@@ -115,7 +125,7 @@ export default function BackupPage(p: { ctx: PageContext }) {
     start("backup", () =>
       invoke<Started | null>("backup_start", {
         connectionId: profile.id,
-        defaultName: `${profile.database}-${today()}.dump`,
+        defaultName: backupFileName(profile.database, today()),
       }),
     );
 

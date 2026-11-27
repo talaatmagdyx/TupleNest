@@ -92,8 +92,66 @@ pub fn decode(v: &serde_json::Value) -> Option<Piece> {
         .map(|t| Piece::Text(t.to_string()))
 }
 
-/// The model names in a `GET /api/tags` answer.
-pub fn parse_tags(body: &str) -> Result<Vec<String>, String> {
+/// One model from `GET /api/tags`.
+///
+/// Ollama can list "cloud" models next to pulled ones: their name ends in
+/// `:cloud` (or `-cloud`, as in `gpt-oss:120b-cloud`) and/or the entry carries
+/// a `remote_host` such as `https://ollama.com:443`. Ollama forwards those
+/// requests to that host, so the prompt leaves this computer even though the
+/// app only ever talks to localhost.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OllamaModel {
+    pub name: String,
+    /// Runs somewhere else: see the type's comment.
+    pub cloud: bool,
+    /// Where it runs, as Ollama reported it, when it said.
+    pub remote_host: Option<String>,
+}
+
+/// Where Ollama's cloud models run.
+pub const CLOUD_HOST: &str = "ollama.com";
+
+impl OllamaModel {
+    /// The host a cloud model's prompt goes to, for labels: `ollama.com`
+    /// unless Ollama named another.
+    pub fn cloud_host(&self) -> String {
+        self.remote_host
+            .as_deref()
+            .and_then(|h| reqwest::Url::parse(h).ok())
+            .and_then(|u| u.host_str().map(str::to_string))
+            .unwrap_or_else(|| CLOUD_HOST.to_string())
+    }
+
+    /// What the pickers show.
+    pub fn label(&self) -> String {
+        if self.cloud {
+            format!("{} · cloud via {}", self.name, self.cloud_host())
+        } else {
+            format!("{} · Ollama", self.name)
+        }
+    }
+}
+
+/// A name that marks a cloud model on its own: tag `cloud`, or a tag ending
+/// in `-cloud`.
+pub fn is_cloud_name(name: &str) -> bool {
+    let tag = name
+        .rsplit_once(':')
+        .map_or("", |(_, t)| t)
+        .to_ascii_lowercase();
+    tag == "cloud" || tag.ends_with("-cloud")
+}
+
+fn non_empty(v: &serde_json::Value) -> Option<String> {
+    v.as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// The models in a `GET /api/tags` answer, cloud ones marked.
+pub fn parse_tags(body: &str) -> Result<Vec<OllamaModel>, String> {
     let v: serde_json::Value = serde_json::from_str(body)
         .map_err(|_| "That server did not answer like Ollama does.".to_string())?;
     let models = v["models"]
@@ -101,9 +159,37 @@ pub fn parse_tags(body: &str) -> Result<Vec<String>, String> {
         .ok_or("That server did not answer like Ollama does.")?;
     Ok(models
         .iter()
-        .filter_map(|m| m["name"].as_str().or(m["model"].as_str()))
-        .map(str::to_string)
+        .filter_map(|m| {
+            let name = m["name"].as_str().or(m["model"].as_str())?.to_string();
+            let remote_host = non_empty(&m["remote_host"]);
+            let remote_model = non_empty(&m["remote_model"]);
+            let cloud = remote_host.is_some() || remote_model.is_some() || is_cloud_name(&name);
+            Some(OllamaModel {
+                name,
+                cloud,
+                remote_host,
+            })
+        })
         .collect())
+}
+
+/// Whether `model` may be sent to: a cloud model needs the opt-in. `listed`
+/// is what `/api/tags` says right now, so a cloud model that does not say so
+/// in its name is still caught by its `remote_host`.
+pub fn check_cloud(model: &str, listed: &[OllamaModel], allow_cloud: bool) -> Result<(), String> {
+    if allow_cloud {
+        return Ok(());
+    }
+    let found = listed.iter().find(|m| m.name == model);
+    if is_cloud_name(model) || found.is_some_and(|m| m.cloud) {
+        let host = found.map_or_else(|| CLOUD_HOST.to_string(), OllamaModel::cloud_host);
+        return Err(format!(
+            "{model} is an Ollama cloud model: it runs on {host}, not on this computer. Nothing \
+             was sent. To use it, turn on \"Allow Ollama cloud models\" in Settings › Assistant; \
+             your question, the query and table names are then sent to {host}."
+        ));
+    }
+    Ok(())
 }
 
 /// Plain words for a non-2xx answer.
@@ -214,12 +300,54 @@ mod tests {
     #[test]
     fn tags_list_the_model_names() {
         let body = r#"{"models":[{"name":"llama3.2:latest","size":1},{"model":"qwen:7b"}]}"#;
-        assert_eq!(
-            parse_tags(body).unwrap(),
-            vec!["llama3.2:latest", "qwen:7b"]
-        );
+        let models = parse_tags(body).unwrap();
+        let names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, vec!["llama3.2:latest", "qwen:7b"]);
+        assert!(models.iter().all(|m| !m.cloud));
         assert!(parse_tags("<html>").is_err());
         assert!(parse_tags("{}").is_err());
+    }
+
+    /// Shaped like `/api/tags` from an Ollama signed in to ollama.com.
+    const CLOUD_TAGS: &str = r#"{"models":[
+        {"name":"glm-5.2:cloud","model":"glm-5.2:cloud","remote_model":"glm-5.2","remote_host":"https://ollama.com:443","size":0},
+        {"name":"gpt-oss:120b-cloud","model":"gpt-oss:120b-cloud","size":0},
+        {"name":"kimi:latest","model":"kimi:latest","remote_host":"https://ollama.com:443"},
+        {"name":"llama3.2:latest","model":"llama3.2:latest","remote_host":"","size":2019393189}
+    ]}"#;
+
+    #[test]
+    fn cloud_models_are_marked_by_suffix_or_remote_host() {
+        let m = parse_tags(CLOUD_TAGS).unwrap();
+        let cloud: Vec<(&str, bool)> = m.iter().map(|x| (x.name.as_str(), x.cloud)).collect();
+        assert_eq!(
+            cloud,
+            vec![
+                ("glm-5.2:cloud", true),
+                ("gpt-oss:120b-cloud", true),
+                ("kimi:latest", true),
+                ("llama3.2:latest", false),
+            ]
+        );
+        assert_eq!(m[0].label(), "glm-5.2:cloud · cloud via ollama.com");
+        assert_eq!(m[1].label(), "gpt-oss:120b-cloud · cloud via ollama.com");
+        assert_eq!(m[3].label(), "llama3.2:latest · Ollama");
+        assert!(is_cloud_name("x:CLOUD"));
+        assert!(!is_cloud_name("cloudy:latest"));
+        assert!(!is_cloud_name("cloud"));
+    }
+
+    #[test]
+    fn a_cloud_model_is_refused_without_the_opt_in() {
+        let m = parse_tags(CLOUD_TAGS).unwrap();
+        for name in ["glm-5.2:cloud", "kimi:latest", "unlisted:cloud"] {
+            let err = check_cloud(name, &m, false).unwrap_err();
+            assert!(err.contains("ollama.com"), "{err}");
+            assert!(err.contains("Allow Ollama cloud models"), "{err}");
+            assert!(!err.contains("  "), "{err}");
+            assert!(check_cloud(name, &m, true).is_ok());
+        }
+        assert!(check_cloud("llama3.2:latest", &m, false).is_ok());
     }
 
     #[test]

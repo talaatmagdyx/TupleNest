@@ -94,12 +94,26 @@ describe("RolesPage", () => {
     const user = userEvent.setup();
     render(<RolesPage ctx={ctx()} />);
     await user.click(await screen.findByRole("button", { name: /readonly_admin/ }));
-    expect(await screen.findByRole("note")).toHaveTextContent("it is a superuser");
+    expect((await screen.findAllByRole("note"))[0]).toHaveTextContent("it is a superuser");
     expect(screen.getByText("superuser", { selector: ".chip" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /^readonly\s*group$/ }));
     await screen.findByText("orders");
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
     expect(screen.getByText("group", { selector: ".chip" })).toBeInTheDocument();
+  });
+
+  it("offers ALTER ROLE … NOSUPERUSER, not a REVOKE that would do nothing, for a superuser", async () => {
+    handlers.pg_roles = () => [r("postgres", { superuser: true })];
+    handlers.pg_role_privileges = () => ({ schema: "public", tables: [table("orders", true)] });
+    const user = userEvent.setup();
+    render(<RolesPage ctx={ctx()} />);
+    expect(await screen.findByText(/Table grants do not apply to postgres/)).toBeInTheDocument();
+    expect(screen.getByText('ALTER ROLE "postgres" NOSUPERUSER;')).toBeInTheDocument();
+    expect(screen.queryByText(/REVOKE UPDATE/)).not.toBeInTheDocument();
+    const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    await user.click(screen.getByRole("button", { name: "Copy" }));
+    expect(write.mock.calls[0][0]).toBe('ALTER ROLE "postgres" NOSUPERUSER;');
+    expect(invokeMock.mock.calls.map((x) => x[0])).not.toContain("pg_query");
   });
 
   it("asks for a PostgreSQL connection first", () => {

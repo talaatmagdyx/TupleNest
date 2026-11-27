@@ -419,6 +419,25 @@ trusting it.
 - The schema tree is one tab stop with arrow-key navigation; toasts are
   announced reliably.
 
+### Fixed (found by live testing)
+- **Ollama cloud models** (`…:cloud`, or listed with a `remote_host`) run on
+  ollama.com. They are now marked "cloud via ollama.com", never the default,
+  and refused by the Rust core until you turn on *Allow Ollama cloud models*;
+  Settings only says nothing leaves the computer for local models.
+- The backup save panel always suggests a `.dump` name, so Save is enabled.
+- A SQLite session's status bar reads "SQLite 3.x" and "local file", not
+  "PostgreSQL 3.x" and "plaintext".
+- A read-only session shows a "Read-only" chip in the title bar.
+- "Fix with the assistant" is offered only for real SQL errors, not for
+  read-only or guard refusals, cancels or lost connections.
+- Read-only refusal messages no longer contain runs of spaces.
+- Grid headers clip name and type to their own cell.
+- The Roles page offers `ALTER ROLE … NOSUPERUSER;` for a superuser instead
+  of a REVOKE that would do nothing.
+- The MCP server opens the data folder of the bundle it runs from.
+- Assistant answers render their Markdown; Settings lists Ollama's models as
+  soon as Ollama is on.
+
 ## [0.1.1-beta.12] — 2026-11-23
 
 A safety and correctness release, from an end-to-end audit. Several places

@@ -5,6 +5,7 @@ import {
   grantReadSql,
   looksReadOnly,
   revokeSql,
+  noSuperuserSql,
   roleSummary,
   writeGrants,
   type Role,
@@ -74,6 +75,16 @@ export default function RolesPage(p: { ctx: PageContext }) {
   const role = roles?.find((r) => r.name === selected) ?? null;
   const writes = matrix ? writeGrants(matrix.tables) : [];
   const warn = role && looksReadOnly(role) && (role.superuser || writes.length > 0);
+  // A superuser bypasses privileges: REVOKE would do nothing, so the one
+  // statement worth copying is the one that takes superuser away.
+  const sql =
+    role && matrix
+      ? role.superuser
+        ? noSuperuserSql(role.name)
+        : writes.length > 0
+          ? revokeSql(role.name, matrix.schema, writes)
+          : grantReadSql(role.name, matrix.schema)
+      : "";
   const copy = (text: string) =>
     navigator.clipboard.writeText(text).then(
       () => ctx.toast("Copied — nothing was run"),
@@ -169,24 +180,24 @@ export default function RolesPage(p: { ctx: PageContext }) {
                             .join(", ")}.`}
                     </div>
                   )}
+                  {role.superuser && (
+                    <div className="roles-warn" role="note">
+                      Table grants do not apply to {role.name}: a superuser bypasses every privilege check, so
+                      revoking one would change nothing. To limit it, take superuser away first.
+                    </div>
+                  )}
                   <div className="roles-sql">
                     <div className="roles-sql-head">
                       <span className="page-sub">
-                        {writes.length > 0 ? "Revoke the writes" : "Grant read access"} — text to copy; nothing here runs it.
+                        {role.superuser ? "Remove superuser" : writes.length > 0 ? "Revoke the writes" : "Grant read access"} —
+                        text to copy; nothing here runs it.
                       </span>
                       <div className="grow" />
-                      <button
-                        className="btn xs"
-                        onClick={() =>
-                          void copy(writes.length > 0 ? revokeSql(role.name, matrix.schema, writes) : grantReadSql(role.name, matrix.schema))
-                        }
-                      >
+                      <button className="btn xs" onClick={() => void copy(sql)}>
                         Copy
                       </button>
                     </div>
-                    <pre className="d-code">
-                      {writes.length > 0 ? revokeSql(role.name, matrix.schema, writes) : grantReadSql(role.name, matrix.schema)}
-                    </pre>
+                    <pre className="d-code">{sql}</pre>
                   </div>
                 </>
               )}

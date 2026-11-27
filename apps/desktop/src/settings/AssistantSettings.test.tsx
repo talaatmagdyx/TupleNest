@@ -13,11 +13,14 @@ const BASE: S = {
   ollamaEnabled: false,
   ollamaUrl: OLLAMA_DEFAULT_URL,
   ollamaAllowRemote: false,
+  ollamaAllowCloud: false,
   defaultProvider: null,
   defaultModel: null,
 };
 
-const isLocal = (u: string) => /^https?:\/\/(localhost|127\.|\[::1\])/.test(u);
+const local = (name: string) => ({ name, cloud: false, remoteHost: null });
+
+const isLocal =(u: string) => /^https?:\/\/(localhost|127\.|\[::1\])/.test(u);
 
 beforeEach(() => {
   be = backend();
@@ -120,7 +123,7 @@ describe("Settings › Assistant — Anthropic key", () => {
 
 describe("Settings › Assistant — Ollama", () => {
   it("lists models on Test and turns Ollama on", async () => {
-    be.on("assistant_ollama_test", () => ["llama3.2:latest", "qwen2.5-coder:7b"]);
+    be.on("assistant_ollama_test", () => [local("llama3.2:latest"), local("qwen2.5-coder:7b")]);
     const { user } = await mount();
     await user.click(screen.getByRole("button", { name: "Test Ollama" }));
     expect(await screen.findByText("Ollama is running: 2 models found.")).toBeInTheDocument();
@@ -129,6 +132,54 @@ describe("Settings › Assistant — Ollama", () => {
     await waitFor(() => expect(current.ollamaEnabled).toBe(true));
     await user.selectOptions(screen.getByRole("combobox", { name: "Default model" }), "ollama:qwen2.5-coder:7b");
     await waitFor(() => expect(current).toMatchObject({ defaultProvider: "ollama", defaultModel: "qwen2.5-coder:7b" }));
+  });
+
+  it("marks cloud models, never offers them as the default, and remembers the opt-in", async () => {
+    be.on("assistant_ollama_test", () => [
+      local("llama3.2:latest"),
+      { name: "glm-5.2:cloud", cloud: true, remoteHost: "https://ollama.com:443" },
+    ]);
+    current = { ...BASE, ollamaEnabled: true };
+    const { user } = await mount();
+    // Local models only: the claim is not made for cloud ones.
+    expect(screen.queryByText("Nothing leaves this computer.")).not.toBeInTheDocument();
+    expect(screen.getByText(/With a local model, nothing leaves this computer/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Test Ollama" }));
+    expect(await screen.findByText(/1 of them runs on ollama.com/)).toBeInTheDocument();
+    const list = screen.getByRole("list", { name: "Ollama models" });
+    expect(list).toHaveTextContent("glm-5.2:cloud · cloud via ollama.com");
+    expect(list).toHaveTextContent("llama3.2:latest · Ollama");
+    const picker = screen.getByRole("combobox", { name: "Default model" });
+    expect(picker.querySelector('option[value="ollama:glm-5.2:cloud"]')).toBeNull();
+    expect(picker.querySelector('option[value="ollama:llama3.2:latest"]')).not.toBeNull();
+
+    const optIn = screen.getByRole("checkbox", { name: /Allow Ollama cloud models/ });
+    expect(optIn).not.toBeChecked();
+    expect(optIn).toHaveAccessibleName(/sent to ollama.com/);
+    await user.click(optIn);
+    await waitFor(() => expect(current.ollamaAllowCloud).toBe(true));
+    expect(screen.getByRole("checkbox", { name: /Allow Ollama cloud models/ })).toBeChecked();
+  });
+
+  it("lists the models as soon as Ollama is switched on, without Test", async () => {
+    be.on("assistant_ollama_test", () => [local("llama3.2:latest")]);
+    const { user } = await mount();
+    expect(be.sent("assistant_ollama_test")).toHaveLength(0);
+    expect(screen.getByRole("combobox", { name: "Default model" })).toHaveTextContent("Set up a provider first");
+    await user.click(screen.getByRole("switch", { name: "Use Ollama" }));
+    expect(await screen.findByText("Ollama is running: 1 model found.")).toBeInTheDocument();
+    expect(be.sent("assistant_ollama_test")).toEqual([{ url: OLLAMA_DEFAULT_URL, allowRemote: false }]);
+    const picker = screen.getByRole("combobox", { name: "Default model" });
+    expect(picker.querySelector('option[value="ollama:llama3.2:latest"]')).not.toBeNull();
+  });
+
+  it("lists them on opening the section when Ollama is already on, and says inline when it is not running", async () => {
+    current = { ...BASE, ollamaEnabled: true };
+    be.on("assistant_ollama_test", () => {
+      throw new Error("Ollama is not running at http://localhost:11434. Start the Ollama app, or run `ollama serve`.");
+    });
+    await mount();
+    expect(await screen.findByRole("status")).toHaveTextContent(/Ollama is not running/);
   });
 
   it("says when Ollama has no models, or is not running", async () => {
@@ -145,7 +196,7 @@ describe("Settings › Assistant — Ollama", () => {
 
   it("refuses another computer until it is allowed, and says what that sends", async () => {
     const { user } = await mount();
-    expect(screen.getByText(/Nothing leaves this computer/)).toBeInTheDocument();
+    expect(screen.getByText(/nothing leaves this computer/)).toBeInTheDocument();
     const url = screen.getByRole("textbox", { name: "Ollama URL" });
     await user.clear(url);
     await user.type(url, "http://gpu-box.lan:11434");

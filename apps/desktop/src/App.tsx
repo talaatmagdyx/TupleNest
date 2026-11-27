@@ -1763,6 +1763,7 @@ export default function App() {
         activeUserHost={liveTarget}
         activeEnv={connected ? (connectedEnv ?? "dev") : environment}
         activeEngine={liveEngine}
+        readOnly={connected && !!connectedTo?.readOnly}
         saved={saved}
         activeId={liveId}
         connMenu={connMenu}
@@ -2011,6 +2012,7 @@ export default function App() {
         )}
       </div>
       <StatusBar
+        engine={liveEngine}
         connected={connected}
         isProd={isProd}
         connName={liveProfile?.name ?? liveLabel}

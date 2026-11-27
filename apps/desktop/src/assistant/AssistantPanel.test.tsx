@@ -91,6 +91,32 @@ describe("AssistantPanel — asking", () => {
     expect(select.querySelectorAll("optgroup")).toHaveLength(2);
   });
 
+  it("marks Ollama cloud models, never starts on one, and keeps them off until opted in", async () => {
+    const glm = {
+      provider: "ollama",
+      model: "glm-5.2:cloud",
+      label: "glm-5.2:cloud · cloud via ollama.com",
+      cloud: true,
+      available: false,
+    };
+    be.on("assistant_models", () => ({ ...CONFIGURED, options: [glm, CONFIGURED.options[2]], defaultModel: null }));
+    const { unmount } = render(<AssistantPanel {...props()} />);
+    const select = (await screen.findByRole("combobox", { name: "Model" })) as HTMLSelectElement;
+    expect(select.value).toBe("ollama:llama3.2:latest");
+    const cloud = within(select).getByRole("option", { name: /glm-5.2:cloud · cloud via ollama.com/ }) as HTMLOptionElement;
+    expect(cloud.disabled).toBe(true);
+    expect(select.querySelector('optgroup[label^="Cloud via ollama.com"]')).not.toBeNull();
+    unmount();
+
+    // Opted in, and the only model: still not picked for the user.
+    be.on("assistant_models", () => ({ ...CONFIGURED, options: [{ ...glm, available: true }], defaultModel: null }));
+    render(<AssistantPanel {...props()} />);
+    const again = (await screen.findByRole("combobox", { name: "Model" })) as HTMLSelectElement;
+    expect(again.value).toBe("");
+    await userEvent.selectOptions(again, "ollama:glm-5.2:cloud");
+    expect(screen.getByRole("note")).toHaveTextContent("runs on ollama.com");
+  });
+
   it("falls back to the first model when the default is gone", async () => {
     be.on("assistant_models", () => ({ ...CONFIGURED, defaultProvider: null, defaultModel: null }));
     render(<AssistantPanel {...props()} />);
@@ -253,6 +279,29 @@ describe("AssistantPanel — asking", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
     expect(await screen.findByText("ok then")).toBeInTheDocument();
     expect(be.sent("assistant_ask")[0].input).toMatchObject({ message: "line one\nline two" });
+  });
+
+  it("renders the answer's Markdown as elements, not as raw marks", async () => {
+    // As qwen2.5:0.5b answered through Ollama: headings, bold, lists, code.
+    answerWith(
+      "### Why it is slow\n\nThe **orders** table has no index on `customer_id`.\n\n- scans *every* row\n- sorts in memory\n\n1. add an index\n2. run it again\n\n<script>alert(1)</script>",
+    );
+    const user = userEvent.setup();
+    render(<AssistantPanel {...props()} />);
+    await screen.findByRole("combobox", { name: "Model" });
+    await user.type(screen.getByRole("textbox", { name: "Ask the assistant" }), "why{Enter}");
+    expect(await screen.findByRole("heading", { name: "Why it is slow" })).toBeInTheDocument();
+    expect(screen.getByText("orders", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.getByText("customer_id", { selector: "code" })).toBeInTheDocument();
+    expect(screen.getByText("every", { selector: "em" })).toBeInTheDocument();
+    const lists = screen.getAllByRole("list");
+    expect(lists.map((l) => l.tagName)).toEqual(["UL", "OL"]);
+    expect(within(lists[1]).getAllByRole("listitem")).toHaveLength(2);
+    const answer = document.querySelector(".ap-a")!;
+    expect(answer.textContent).not.toMatch(/###|\*\*|`/);
+    // No raw HTML: the tag is text.
+    expect(answer.querySelector("script")).toBeNull();
+    expect(screen.getByText("<script>alert(1)</script>")).toBeInTheDocument();
   });
 
   it("does not send an empty message", async () => {

@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
+import type { Engine } from "../lib/engine";
+
 type Props = {
+  /** The live session's engine. Absent is PostgreSQL. A SQLite session is a
+   *  local file: no TLS to report, and its version is SQLite's. */
+  engine?: Engine;
   connected: boolean;
   isProd: boolean;
   connName: string;
@@ -28,6 +33,7 @@ export default function StatusBar(p: Props) {
   const txSecs = p.txOpenSince ? Math.max(0, Math.floor((now - p.txOpenSince) / 1000)) : 0;
   const txLabel =
     txSecs >= 60 ? `${Math.floor(txSecs / 60)}m ${String(txSecs % 60).padStart(2, "0")}s` : `${txSecs}s`;
+  const sqlite = p.engine === "sqlite";
   return (
     <footer className={`statusbar ${p.connected ? "" : "off"}`}>
       <span className="item">
@@ -40,7 +46,9 @@ export default function StatusBar(p: Props) {
         {p.connected ? p.connName : "disconnected"}
       </span>
       <span className="bar-sep">|</span>
-      <span className="item lock">{p.tlsMode === "disabled" ? "plaintext" : `🔒 ${p.tlsMode}`}</span>
+      <span className="item lock">
+        {sqlite ? "local file" : p.tlsMode === "disabled" ? "plaintext" : `🔒 ${p.tlsMode}`}
+      </span>
       <span className="bar-sep">|</span>
       <span className="item">explorer: {p.explorerSource}</span>
       {p.rowsInfo && (
@@ -53,7 +61,7 @@ export default function StatusBar(p: Props) {
       {p.txOpenSince && <span className="item txwarn">⚠ tx open {txLabel}</span>}
       {p.serverVersion && (
         <span className="item">
-          PostgreSQL {p.serverVersion}
+          {sqlite ? "SQLite" : "PostgreSQL"} {p.serverVersion}
           {p.osLabel ? ` · ${p.osLabel}` : ""}
         </span>
       )}

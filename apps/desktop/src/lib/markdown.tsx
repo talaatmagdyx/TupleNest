@@ -1,14 +1,15 @@
 import type { ReactNode } from "react";
 
 /**
- * A small Markdown renderer for notebook text cells.
+ * A small Markdown renderer for notebook text cells and the assistant's prose.
  *
  * Safe by construction: it builds React elements, never an HTML string, so a
  * `<script>` or `<img onerror>` in a cell is shown as the text it is. Links
  * are not followed — this webview is the app, and a click would replace it —
  * so `[text](url)` shows the text with the address beside it.
  *
- * Covered: `#`–`###` headings, paragraphs, `-`/`*` lists, fenced code,
+ * Covered: `#`–`######` headings (four and more read as the smallest),
+ * paragraphs, `-`/`*` and `1.` lists, fenced code,
  * `inline code`, **bold** and *italic*. Anything else is plain text.
  */
 export function renderMarkdown(src: string): ReactNode[] {
@@ -26,9 +27,9 @@ export function renderMarkdown(src: string): ReactNode[] {
       out.push(<pre key={key++} className="md-code">{body.join("\n")}</pre>);
       continue;
     }
-    const h = /^(#{1,3})\s+(.*)$/.exec(line);
+    const h = /^(#{1,6})\s+(.*)$/.exec(line);
     if (h) {
-      const Tag = (["h3", "h4", "h5"] as const)[h[1].length - 1];
+      const Tag = (["h3", "h4", "h5"] as const)[Math.min(h[1].length, 3) - 1];
       out.push(<Tag key={key++}>{inline(h[2])}</Tag>);
       i++;
       continue;
@@ -45,12 +46,25 @@ export function renderMarkdown(src: string): ReactNode[] {
       );
       continue;
     }
+    if (/^\s*\d+[.)]\s+/.test(line)) {
+      const items: string[] = [];
+      const start = Number(/\d+/.exec(line)![0]);
+      while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*\d+[.)]\s+/, ""));
+      out.push(
+        <ol key={key++} start={start === 1 ? undefined : start}>
+          {items.map((t, j) => (
+            <li key={j}>{inline(t)}</li>
+          ))}
+        </ol>,
+      );
+      continue;
+    }
     if (line.trim() === "") {
       i++;
       continue;
     }
     const para: string[] = [lines[i++]];
-    while (i < lines.length && lines[i].trim() !== "" && !/^(```|#{1,3}\s|\s*[-*]\s)/.test(lines[i])) para.push(lines[i++]);
+    while (i < lines.length && lines[i].trim() !== "" && !/^(```|#{1,6}\s|\s*[-*]\s|\s*\d+[.)]\s)/.test(lines[i])) para.push(lines[i++]);
     out.push(<p key={key++}>{inline(para.join(" "))}</p>);
   }
   return out;

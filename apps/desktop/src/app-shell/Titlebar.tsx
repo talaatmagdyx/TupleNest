@@ -13,6 +13,8 @@ type Props = {
   activeEnv: string;
   /** The live session's engine, for the badge in the pill. */
   activeEngine?: Engine;
+  /** The live session refuses writes (the backend's effective flag). */
+  readOnly?: boolean;
   saved: ConnectionRecord[];
   activeId: string | null;
   connMenu: boolean;
@@ -82,6 +84,11 @@ export default function Titlebar(p: Props) {
                 {p.activeEnv}
               </span>
             ))}
+          {p.connected && p.readOnly && (
+            <span className="ro-pill" title="This connection is read-only: statements that write are refused">
+              Read-only
+            </span>
+          )}
           <span className="caret" aria-hidden>
             ▾
           </span>

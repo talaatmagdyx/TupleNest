@@ -247,6 +247,12 @@ a { color: var(--tn-accent); text-decoration: none; }
      width and the name gives way instead. */
   flex: none;
 }
+/* The live session refuses writes. Said in words; the green only repeats it. */
+.ro-pill {
+  font-size: 9px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 999px; flex: none;
+  color: var(--tn-success); background: var(--tn-success-tint);
+}
 .conn-menu {
   position: absolute; top: 34px; left: 0; z-index: 60; width: 300px;
   background: var(--tn-s1); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
@@ -601,7 +607,14 @@ a { color: var(--tn-accent); text-decoration: none; }
 .g-hcell .cn { font: 600 12px var(--tn-mono); color: var(--tn-tp); }
 .g-hcell .cn.sorted { color: var(--tn-accent); }
 .g-hcell .ct { font: 10px var(--tn-mono); color: var(--tn-tm); }
-.g-hcell .arrow { font: 9px var(--tn-mono); color: var(--tn-accent); }
+.g-hcell .arrow { font: 9px var(--tn-mono); color: var(--tn-accent); flex: none; }
+/* Name and type stay inside their own cell: a narrow column (a right-aligned
+   id int8) clips them with an ellipsis instead of spilling into the next. */
+.g-hcell { overflow: hidden; }
+.g-hcell .g-hlabel {
+  min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.g-hcell .g-hlabel .ct { margin-left: 6px; }
 .g-rownum {
   flex: none; position: sticky; left: 0; z-index: 1; height: 24px; line-height: 24px;
   text-align: right; padding: 0 9px; font: 11px var(--tn-mono);
@@ -2131,6 +2144,13 @@ h1, h2, h3, .modal-head .t, .dialog .d-title, .onboard .big, .about-name,
 }
 .ap-a { display: flex; flex-direction: column; gap: 8px; }
 .ap-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ap-text.md { white-space: normal; display: flex; flex-direction: column; gap: 6px; line-height: 1.5; }
+.ap-text.md > * { margin: 0; }
+.ap-text.md h3 { font: 700 15px var(--tn-display); }
+.ap-text.md h4 { font: 600 14px var(--tn-display); }
+.ap-text.md h5 { font: 600 13px var(--tn-sans); }
+.ap-text.md ul, .ap-text.md ol { padding-left: 20px; }
+.ap-text.md code { font: 12px var(--tn-mono); background: var(--tn-s2); border-radius: 4px; padding: 0 4px; }
 .ap-error, .as-err { color: var(--tn-danger); font-size: 12px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .ap-warn { color: var(--tn-warning); font-size: 12px; }
 .ap-card { border: 1px solid var(--tn-bh); border-radius: 12px; overflow: hidden; }
@@ -2181,6 +2201,8 @@ h1, h2, h3, .modal-head .t, .dialog .d-title, .onboard .big, .about-name,
 .as-input:focus { outline: none; border-color: var(--tn-accent); box-shadow: 0 0 0 3px var(--tn-as); }
 .as-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--tn-ts); }
 .as-hint { font-size: 11px; color: var(--tn-tm); }
+.as-models { margin: 0; padding-left: 18px; font-size: 12px; color: var(--tn-ts); }
+.as-models .as-cloud { color: var(--tn-warning); }
 .as-ok { color: var(--tn-success); font-size: 12px; }
 
 /* ============================================================

@@ -12,6 +12,13 @@ describe("renderMarkdown", () => {
     expect(html("## Two\n### Three")).toBe("<h4>Two</h4><h5>Three</h5>");
   });
 
+  it("renders numbered lists, keeping a start other than one, and deeper headings as the smallest", () => {
+    expect(html("1. add an index\n2) run it\n\nafter")).toBe("<ol><li>add an index</li><li>run it</li></ol><p>after</p>");
+    expect(html("3. third\n4. fourth")).toBe('<ol start="3"><li>third</li><li>fourth</li></ol>');
+    expect(html("text\n1. item")).toBe("<p>text</p><ol><li>item</li></ol>");
+    expect(html("#### Four")).toBe("<h5>Four</h5>");
+  });
+
   it("renders inline code, bold, italic, and a link as text beside its address", () => {
     expect(html("a `x*y*` **b** *c* [docs](https://example.com) end")).toBe(
       '<p>a <code>x*y*</code> <strong>b</strong> <em>c</em> <span class="md-link" title="https://example.com">docs <span class="md-url">(https://example.com)</span></span> end</p>',

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { errorText, listModels, PRIVACY_NOTE, type Action, type ModelOption } from "./api";
+import { renderMarkdown } from "../lib/markdown";
 import { isSqlBlock, splitAnswer } from "./answer";
 import CodeCard from "./CodeCard";
 import { useAssistant, type Message } from "./useAssistant";
@@ -34,6 +35,12 @@ type Props = {
 
 const keyOf = (o: ModelOption) => `${o.provider}:${o.model}`;
 
+const GROUPS = [
+  { provider: "anthropic", cloud: false, label: "Claude · your key" },
+  { provider: "ollama", cloud: false, label: "Local · Ollama" },
+  { provider: "ollama", cloud: true, label: "Cloud via ollama.com · leaves this computer" },
+] as const;
+
 const ACTION_WORDS: Record<Action, string> = {
   chat: "",
   explain: "Explain this query: what it does and why it might be slow.",
@@ -60,9 +67,12 @@ export default function AssistantPanel(p: Props) {
         setOptions(m.options);
         setOllamaError(m.ollamaError);
         setLoadError(null);
-        const preferred = m.options.find((o) => o.provider === m.defaultProvider && o.model === m.defaultModel);
-        const first = preferred ?? m.options.find((o) => o.provider === m.defaultProvider) ?? m.options[0];
-        setPick((cur) => (m.options.some((o) => keyOf(o) === cur) ? cur : first ? keyOf(first) : ""));
+        // A cloud model is never picked for the user: only by hand.
+        const local = m.options.filter((o) => !o.cloud);
+        const preferred = local.find((o) => o.provider === m.defaultProvider && o.model === m.defaultModel);
+        const first = preferred ?? local.find((o) => o.provider === m.defaultProvider) ?? local[0];
+        const usable = (cur: string) => m.options.some((o) => keyOf(o) === cur && o.available !== false);
+        setPick((cur) => (usable(cur) ? cur : first ? keyOf(first) : ""));
       })
       .catch((e) => {
         if (!live) return;
@@ -74,7 +84,7 @@ export default function AssistantPanel(p: Props) {
     };
   }, [p.reloadKey]);
 
-  const chosen = options?.find((o) => keyOf(o) === pick) ?? null;
+  const chosen = options?.find((o) => keyOf(o) === pick && o.available !== false) ?? null;
 
   // A question typed in the palette lands in the box, once per request. Set
   // while rendering rather than in an effect: it only follows a prop.
@@ -128,14 +138,15 @@ export default function AssistantPanel(p: Props) {
           <label className="ap-model">
             Model
             <select aria-label="Model" value={pick} onChange={(e) => setPick(e.target.value)} disabled={busy}>
-              {(["anthropic", "ollama"] as const).map((prov) => {
-                const group = options.filter((o) => o.provider === prov);
+              {!chosen && <option value="">Choose a model…</option>}
+              {GROUPS.map((g) => {
+                const group = options.filter((o) => o.provider === g.provider && !!o.cloud === g.cloud);
                 if (!group.length) return null;
                 return (
-                  <optgroup key={prov} label={prov === "anthropic" ? "Claude · your key" : "Local · Ollama"}>
+                  <optgroup key={g.label} label={g.label}>
                     {group.map((o) => (
-                      <option key={keyOf(o)} value={keyOf(o)}>
-                        {o.label}
+                      <option key={keyOf(o)} value={keyOf(o)} disabled={o.available === false}>
+                        {o.available === false ? `${o.label} (allow cloud models in Settings)` : o.label}
                       </option>
                     ))}
                   </optgroup>
@@ -171,6 +182,12 @@ export default function AssistantPanel(p: Props) {
           </div>
         )}
         {!empty && options !== null && ollamaError && <div className="ap-warn">{ollamaError}</div>}
+        {chosen?.cloud && (
+          <div className="ap-warn" role="note">
+            {chosen.model} runs on ollama.com, not this computer: your question, the query and table names are sent
+            there.
+          </div>
+        )}
         {!empty && options !== null && messages.length === 0 && (
           <div className="ap-intro">
             <p>Ask about the query in the editor or the tables in this database, or describe the query you want.</p>
@@ -263,8 +280,10 @@ function MessageView(p: {
     <div className="ap-a" aria-busy={streaming}>
       {segments.map((s, i) =>
         s.kind === "text" ? (
-          <div key={i} className="ap-text">
-            {s.text}
+          // Prose as a safe Markdown subset, built as React elements: a
+          // model's `<script>` is shown as text. Fenced code is a card below.
+          <div key={i} className="ap-text md">
+            {renderMarkdown(s.text)}
           </div>
         ) : isSqlBlock(s) ? (
           <CodeCard

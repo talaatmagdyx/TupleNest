@@ -18,6 +18,35 @@ export function isConnectionLost(message: string): boolean {
   return message.replace(/^Error:\s*/, "").startsWith(LOST_PREFIX);
 }
 
+/** Codes that are the server or file refusing, being stopped, or going away:
+ *  nothing in the statement for the assistant to fix. */
+const NOT_FIXABLE = [
+  /^08/, // connection exceptions
+  /^25006$/, // read_only_sql_transaction: PostgreSQL's own read-only refusal
+  /^28/, // invalid authorization
+  /^53/, // insufficient resources
+  /^57/, // operator intervention: canceled, shut down
+  /^58/, // system errors
+  /^SQLITE_(READONLY|INTERRUPT|BUSY|LOCKED|CANTOPEN|IOERR|FULL|NOMEM|AUTH|PERM|CORRUPT|NOTADB)/,
+];
+
+/**
+ * Is this a real SQL error from the server or engine — one the assistant
+ * could fix, such as a syntax error or an undefined column?
+ *
+ * The backend puts the engine's code on line one (` [SQLSTATE 42703]`,
+ * ` [SQLITE_ERROR]`); the app's own refusals (read-only, the guard), a
+ * cancel and a lost connection carry none, or a code that is not about the
+ * statement.
+ */
+export function isFixableError(message: string | null): boolean {
+  if (!message || isConnectionLost(message) || isCancelled(message)) return false;
+  const m = /\[(?:SQLSTATE ([0-9A-Z]{5})|(SQLITE_[A-Z_]+))\]/.exec(firstLine(message));
+  if (!m) return false;
+  const code = m[1] ?? m[2];
+  return !NOT_FIXABLE.some((re) => re.test(code));
+}
+
 /** The short title of a multi-line backend error — what fits in one line of UI. */
 export function firstLine(message: string): string {
   const nl = message.indexOf("\n");

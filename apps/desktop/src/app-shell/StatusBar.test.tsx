@@ -97,6 +97,23 @@ describe("StatusBar", () => {
   });
 });
 
+describe("StatusBar — SQLite", () => {
+  it("names SQLite's version as SQLite and shows no TLS badge for a local file", () => {
+    render(<StatusBar {...base} engine="sqlite" tlsMode="disabled" serverVersion="3.54.1" />);
+    expect(screen.getByText(/SQLite 3\.54\.1/)).toBeInTheDocument();
+    expect(screen.queryByText(/PostgreSQL/)).not.toBeInTheDocument();
+    expect(screen.queryByText("plaintext")).not.toBeInTheDocument();
+    expect(screen.queryByText(/🔒/)).not.toBeInTheDocument();
+    expect(screen.getByText("local file")).toBeInTheDocument();
+  });
+
+  it("keeps PostgreSQL's label and TLS badge for a server", () => {
+    render(<StatusBar {...base} engine="postgres" tlsMode="disabled" />);
+    expect(screen.getByText(/PostgreSQL 18\.0/)).toBeInTheDocument();
+    expect(screen.getByText("plaintext")).toBeInTheDocument();
+  });
+});
+
 describe("StatusBar — open transaction warning", () => {
   beforeEach(() => vi.useFakeTimers().setSystemTime(new Date("2026-07-16T00:00:00Z")));
   afterEach(() => vi.useRealTimers());
