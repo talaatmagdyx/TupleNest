@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import { CONNECTION, backend, type Backend } from "./test/backend";
@@ -87,6 +87,27 @@ describe("App — pages", () => {
     await palette(user, "Backup and restore");
     expect(await screen.findByRole("region", { name: "Backup and restore" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Back up…" })).toBeEnabled();
+  });
+
+  it("gives every page the same header: a heading, a back control, and Escape back to the editor", async () => {
+    const user = await mount();
+    const pages: [string, string][] = [
+      ["Open dashboards", "Dashboards"],
+      ["Open notebooks", "Notebooks"],
+      ["Backup and restore", "Backup and restore"],
+      ["Users and roles", "Users and roles"],
+      ["Show query history", "Query history"],
+      ["Show saved queries", "Saved queries"],
+    ];
+    for (const [command, region] of pages) {
+      await palette(user, command);
+      const page = await screen.findByRole("region", { name: region });
+      expect(within(page).getByRole("heading", { level: 1 })).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: "Back to the editor" })).toHaveLength(1);
+      screen.getByRole("button", { name: "Back to the editor" }).focus();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("region", { name: region })).not.toBeInTheDocument();
+    }
   });
 
   it("opens users and roles, which needs a PostgreSQL session", async () => {

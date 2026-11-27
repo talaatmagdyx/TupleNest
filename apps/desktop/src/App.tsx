@@ -88,7 +88,7 @@ import {
   pageCommands,
   type FirstRunRequest,
   type Page,
-  type PageContext,
+  type AppPageContext,
 } from "./pages/registry";
 import {
   coerceParam,
@@ -1673,7 +1673,7 @@ export default function App() {
   const liveFile = liveEngine === "sqlite" ? (connected && connectedTo ? connectedTo.database : database) : null;
   const liveLabel = liveFile !== null ? fileName(liveFile) : `${liveUser || "?"}@${liveHost}`;
   const liveTarget = liveFile !== null ? liveFile : liveHost ? `${liveUser || "?"}@${liveHost}:${livePort}` : "";
-  const pageCtx = useMemo<PageContext>(
+  const pageCtx = useMemo<AppPageContext>(
     () => ({
       live: connected,
       engine: liveEngine,

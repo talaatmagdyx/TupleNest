@@ -10,6 +10,7 @@ import {
   type Role,
   type TablePrivileges,
 } from "../lib/roles";
+import PageHeader from "./PageHeader";
 import { unsupported } from "../lib/engine";
 import { errText } from "../lib/text";
 import type { PageContext } from "./context";
@@ -58,8 +59,12 @@ export default function RolesPage(p: { ctx: PageContext }) {
   if (!ready) {
     return (
       <section className="page" aria-label="Users and roles">
+        <PageHeader
+          title="Users and roles"
+          sub="What each role may do to each table. Nothing here changes a grant."
+          onBack={ctx.back}
+        />
         <div className="page-empty">
-          <div className="big">Users and roles</div>
           <p>{lacking ?? "Connect to a PostgreSQL database to see its roles and what each may do."}</p>
         </div>
       </section>
@@ -77,9 +82,13 @@ export default function RolesPage(p: { ctx: PageContext }) {
 
   return (
     <section className="page" aria-label="Users and roles">
+      <PageHeader
+        title="Users and roles"
+        sub="What each role may do to each table. Nothing here changes a grant."
+        onBack={ctx.back}
+      />
       <div className="roles-cols">
         <nav className="roles-list" aria-label="Roles">
-          <div className="page-title">Users and roles</div>
           {roles?.map((r) => (
             <button
               key={r.name}

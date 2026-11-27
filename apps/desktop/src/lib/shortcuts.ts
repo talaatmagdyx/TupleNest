@@ -96,7 +96,7 @@ export const SHORTCUTS: Shortcut[] = [
   },
   {
     id: "escape",
-    label: "Close the overlay, else cancel the query",
+    label: "Close the overlay or page, else cancel the query",
     keys: ["Esc"],
     match: (e) => e.key === "Escape",
   },

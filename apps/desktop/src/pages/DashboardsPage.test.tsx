@@ -20,6 +20,7 @@ const ctx = (over: Partial<PageContext> = {}): PageContext => ({
   snippets: [{ id: "s1", name: "Orders by status", body: "select status, count(*)::int from orders group by 1", tags: null }],
   currentSql: "select 1 as n",
   toast: vi.fn(),
+  back: vi.fn(),
   ...over,
 });
 

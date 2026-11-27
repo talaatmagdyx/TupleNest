@@ -6,6 +6,7 @@ import { errText } from "../lib/text";
 import { DialogTitle, Overlay } from "../overlays/Overlays";
 import type { ConnectionRecord } from "../ipc/types";
 import { isPostgres, type PageContext } from "./context";
+import PageHeader from "./PageHeader";
 
 export type BackupRecord = {
   id: string;
@@ -132,10 +133,11 @@ export default function BackupPage(p: { ctx: PageContext }) {
 
   return (
     <section className="page" aria-label="Backup and restore">
-      <div className="page-head">
-        <h1 className="page-title">Backup and restore</h1>
-        <span className="page-sub">Uses pg_dump and pg_restore from your PostgreSQL install. Files stay on this computer.</span>
-      </div>
+      <PageHeader
+        title="Backup and restore"
+        sub="Uses pg_dump and pg_restore from your PostgreSQL install. Files stay on this computer."
+        onBack={ctx.back}
+      />
 
       <div className="bk-cols">
         <div className="bk-main">

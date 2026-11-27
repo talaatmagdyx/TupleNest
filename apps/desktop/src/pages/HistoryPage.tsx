@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { HistoryEntry } from "../ipc/types";
 import { hasWriteVerb, tokenizeLines } from "../lib/sql";
+import PageHeader, { onPageKeyDown } from "./PageHeader";
 
 export type HistoryFilter = "all" | "connection" | "writes" | "failed" | "today";
 
@@ -83,26 +84,18 @@ export default function HistoryPage(p: HistoryPageProps) {
   const sel = shown.find((h) => h.id === picked) ?? shown[0] ?? null;
 
   return (
-    <div
-      className="page history-page"
-      onKeyDown={(e) => {
-        // Stopped here: the window's own Escape would otherwise also cancel a
-        // running query, which is not what leaving a page means.
-        if (e.key === "Escape") {
-          e.stopPropagation();
-          p.onClose();
-        }
-      }}
-    >
+    <div className="page history-page" onKeyDown={onPageKeyDown(p.onClose)}>
       <section className="page-island grow-col" aria-label="Query history">
-        <div className="page-head">
-          <h1 className="page-title">History</h1>
-          <span className="page-sub">Every statement you ran, newest first. Query text on production is not kept.</span>
-          <div className="grow" />
-          <button className="btn" onClick={p.onClear} title="Clear non-favorites">
-            Clear
-          </button>
-        </div>
+        <PageHeader
+          title="History"
+          sub="Every statement you ran, newest first. Query text on production is not kept."
+          onBack={p.onClose}
+          actions={
+            <button className="btn" onClick={p.onClear} title="Clear non-favorites">
+              Clear
+            </button>
+          }
+        />
         <div className="page-tools">
           <label className="filter-box page-search">
             <span className="muted" aria-hidden>
