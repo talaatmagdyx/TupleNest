@@ -16,12 +16,23 @@ use tuplenest_driver_api::{
     BatchSink, CellValue, ConnectionConfig, DatabaseSession, DriverError, Environment, ExecutionId,
     MetadataRequest, QueryRequest, RowBatch, SecretRef, TlsMode,
 };
-use tuplenest_driver_postgres::{PgCancelHandle, PostgresDriver, PostgresSession};
+use tuplenest_driver_postgres::PostgresDriver;
+use tuplenest_driver_sqlite::SqliteDriver;
+
+use crate::engine::{CancelHandle, Engine, Session};
 
 /// Connection parameters as sent from the WebView. Never contains a password.
 #[derive(serde::Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PgParams {
+    /// "postgres" (the default, and every WebView before engines) or
+    /// "sqlite". For SQLite, `database` is the file's path; host, port,
+    /// user, password, TLS and SSH do not apply and are never used.
+    #[serde(default)]
+    pub engine: Option<String>,
+    /// SQLite only: create the file if it does not exist yet.
+    #[serde(default)]
+    pub create: Option<bool>,
     pub host: String,
     pub port: u16,
     pub database: String,
@@ -121,6 +132,26 @@ pub(crate) fn parse_tls_mode(s: Option<&str>) -> Result<TlsMode, String> {
 }
 
 impl PgParams {
+    pub(crate) fn engine(&self) -> Result<Engine, String> {
+        Engine::parse(self.engine.as_deref())
+    }
+
+    /// These parameters with everything their engine does not use removed.
+    /// A SQLite file has no password, server or tunnel: a secret ref or SSH
+    /// hop sent with one is dropped here, so no path below can resolve it.
+    fn for_engine(mut self) -> Result<Self, String> {
+        if self.engine()? == Engine::Sqlite {
+            self.secret_ref = None;
+            self.ssh = None;
+            self.host = String::new();
+            self.port = 0;
+            self.username = String::new();
+            self.tls_mode = None;
+            self.tls_ca_path = None;
+        }
+        Ok(self)
+    }
+
     fn to_config(&self) -> Result<ConnectionConfig, String> {
         self.to_config_endpoint(&self.host, self.port)
     }
@@ -128,9 +159,20 @@ impl PgParams {
     /// Build a config pointed at an override endpoint (the tunnel's local
     /// port) while keeping all other settings.
     fn to_config_endpoint(&self, host: &str, port: u16) -> Result<ConnectionConfig, String> {
+        let engine = self.engine()?;
+        let mut options = BTreeMap::new();
+        if engine == Engine::Sqlite && self.create == Some(true) {
+            options.insert(
+                tuplenest_driver_sqlite::OPTION_CREATE.to_string(),
+                "true".to_string(),
+            );
+        }
         Ok(ConnectionConfig {
-            driver_id: "postgres".into(),
-            name: format!("{}@{}/{}", self.username, self.host, self.database),
+            driver_id: engine.as_str().into(),
+            name: match engine {
+                Engine::Postgres => format!("{}@{}/{}", self.username, self.host, self.database),
+                Engine::Sqlite => self.database.clone(),
+            },
             environment: Environment::Dev,
             read_only: self.read_only.unwrap_or(false),
             host: host.to_string(),
@@ -140,7 +182,7 @@ impl PgParams {
             secret_ref: self.secret_ref.as_deref().map(SecretRef::new),
             tls_mode: parse_tls_mode(self.tls_mode.as_deref())?,
             tls_ca_path: self.tls_ca_path.clone(),
-            options: BTreeMap::new(),
+            options,
             // Was hard-coded to 0, which made the driver's statement_timeout
             // support unreachable: the feature existed, was tested against a
             // live server, and could not be switched on from the app.
@@ -150,8 +192,8 @@ impl PgParams {
 }
 
 pub struct PgState {
-    session: AsyncMutex<Option<PostgresSession>>,
-    cancel: StdMutex<Option<PgCancelHandle>>,
+    session: AsyncMutex<Option<Session>>,
+    cancel: StdMutex<Option<CancelHandle>>,
     /// Metadata cache (E1.3): instant explorer loads + offline browsing.
     cache: StdMutex<tuplenest_metadata_cache::MetadataCache>,
     /// Cache key of the currently connected session.
@@ -335,12 +377,42 @@ fn watch_session_close(
 
 /// Stable, secret-free cache identity for a connection target.
 fn cache_key_of(p: &PgParams) -> String {
-    cache_key(&p.username, &p.host, p.port, &p.database)
+    match p.engine() {
+        Ok(Engine::Sqlite) => sqlite_cache_key(&p.database),
+        _ => cache_key(&p.username, &p.host, p.port, &p.database),
+    }
+}
+
+/// The metadata cache's (and history's) key for a saved profile.
+pub fn record_cache_key(r: &tuplenest_workspace_store::ConnectionRecord) -> String {
+    match Engine::parse(Some(&r.engine)) {
+        Ok(Engine::Sqlite) => sqlite_cache_key(&r.database),
+        _ => cache_key(&r.username, &r.host, r.port, &r.database),
+    }
 }
 
 /// The metadata cache's key for one database as one user.
 pub fn cache_key(username: &str, host: &str, port: u16, database: &str) -> String {
     format!("{username}@{host}:{port}/{database}")
+}
+
+/// A SQLite file's key: its path, marked so it can never equal a server's.
+fn sqlite_cache_key(path: &str) -> String {
+    format!("sqlite:{}", path.trim())
+}
+
+/// Do two paths name the same file? Equal text, or the same file once
+/// resolved (`./a.db` and `/home/me/a.db`). A file that does not exist yet
+/// is only ever equal to its own spelling.
+fn same_file(a: &str, b: &str) -> bool {
+    let (a, b) = (a.trim(), b.trim());
+    if a == b {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 /*
@@ -438,6 +510,17 @@ pub fn profile_owns_secret(r: &tuplenest_workspace_store::ConnectionRecord, key:
  * cleartext auth.
  */
 pub fn profile_matches(r: &tuplenest_workspace_store::ConnectionRecord, p: &PgParams) -> bool {
+    // A different engine is never the same connection; a SQLite profile is
+    // its file, and nothing else about it means anything.
+    let (Ok(theirs), Ok(ours)) = (Engine::parse(Some(&r.engine)), p.engine()) else {
+        return false;
+    };
+    if theirs != ours {
+        return false;
+    }
+    if ours == Engine::Sqlite {
+        return same_file(&r.database, &p.database);
+    }
     let tls = |m: Option<&str>| {
         m.filter(|m| !m.is_empty())
             .unwrap_or("verify-full")
@@ -550,7 +633,7 @@ async fn resolve_passphrase(ssh: &SshParams) -> Result<Option<String>, String> {
 /// lost:", which the WebView recognises — it used to notice only on Run, so
 /// a failed Commit or Begin left it showing a live session and an open
 /// transaction that no longer existed.
-fn lost_or_error(state: &PgState, slot: &mut Option<PostgresSession>, e: &DriverError) -> String {
+fn lost_or_error(state: &PgState, slot: &mut Option<Session>, e: &DriverError) -> String {
     let msg = err_to_string(e);
     if !matches!(e.category, tuplenest_driver_api::ErrorCategory::Network) {
         return msg;
@@ -572,10 +655,20 @@ fn lost_or_error(state: &PgState, slot: &mut Option<PostgresSession>, e: &Driver
     format!("Connection lost: {msg} — the session was closed. Reconnect to continue; nothing was re-run.")
 }
 
+/// ` [SQLSTATE 23505]` for PostgreSQL; SQLite's extended result code goes
+/// in the same place under its own name: ` [SQLITE_CONSTRAINT_UNIQUE]`.
+fn native_code_label(code: &str) -> String {
+    if code.starts_with("SQLITE_") {
+        format!(" [{code}]")
+    } else {
+        format!(" [SQLSTATE {code}]")
+    }
+}
+
 pub(crate) fn err_to_string(e: &DriverError) -> String {
     let mut out = e.title.clone();
     if let Some(code) = &e.native_code {
-        out.push_str(&format!(" [SQLSTATE {code}]"));
+        out.push_str(&native_code_label(code));
     }
     if let Some(msg) = &e.original_message {
         if msg != &e.title {
@@ -609,7 +702,7 @@ pub(crate) fn err_to_string(e: &DriverError) -> String {
 pub(crate) fn persisted_error(e: &DriverError) -> String {
     let mut s = e.title.clone();
     if let Some(code) = &e.native_code {
-        s.push_str(&format!(" [SQLSTATE {code}]"));
+        s.push_str(&native_code_label(code));
     }
     if let Ok(cat) = serde_json::to_string(&e.category) {
         s.push_str(&format!(" ({})", cat.trim_matches('"')));
@@ -903,6 +996,17 @@ pub async fn pg_test(
     state: tauri::State<'_, PgState>,
     params: PgParams,
 ) -> Result<TestReportOut, String> {
+    let params = params.for_engine()?;
+    if params.engine()? == Engine::Sqlite {
+        // A file: no network to probe, no tunnel, no password.
+        let report = tuplenest_driver_api::DatabaseDriver::test(&SqliteDriver, params.to_config()?)
+            .await
+            .map_err(|e| err_to_string(&e))?;
+        return Ok(TestReportOut {
+            server_version: report.server_version,
+            stages: report.stages.into_iter().map(stage_out).collect(),
+        });
+    }
     authorize_secret(&app, &state, &params)?;
     let (probe_host, probe_port) = match &params.ssh {
         Some(ssh) => (ssh.host.clone(), ssh.port),
@@ -996,6 +1100,7 @@ pub async fn pg_test(
 #[derive(serde::Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Connected {
+    engine: Engine,
     environment: Option<String>,
     read_only: bool,
     /// Identifies this session in a later [`CONNECTION_LOST_EVENT`].
@@ -1009,8 +1114,24 @@ pub async fn pg_connect(
     state: tauri::State<'_, PgState>,
     params: PgParams,
 ) -> Result<Connected, String> {
+    let params = params.for_engine()?;
     authorize_secret(&app, &state, &params)?;
     let params = with_profile_policy(&app, params);
+    let (session, tunnel) = open_session(&params).await?;
+    install_session(handle, &state, &params, session, tunnel).await
+}
+
+/// Opens the session `params` describe, on its engine.
+async fn open_session(
+    params: &PgParams,
+) -> Result<(Session, Option<tuplenest_ssh_core::SshTunnel>), String> {
+    if params.engine()? == Engine::Sqlite {
+        let session = SqliteDriver
+            .connect_concrete(params.to_config()?)
+            .await
+            .map_err(|e| err_to_string(&e))?;
+        return Ok((session.into(), None));
+    }
     // The keychain can block — on a permission prompt, for as long as the
     // user takes — so it runs off the async workers.
     let secret_ref = params.secret_ref.clone();
@@ -1036,15 +1157,32 @@ pub async fn pg_connect(
         None => (None, params.to_config()?),
     };
 
-    let mut session = PostgresDriver
+    let session = PostgresDriver
         .connect_concrete_with_password(config, password.as_ref().map(|s| s.expose()))
         .await
         .map_err(|e| err_to_string(&e))?;
-    let close_watch = session.take_close_watch();
+    Ok((session.into(), tunnel))
+}
+
+/// Puts a freshly opened session in the slot, with everything that belongs
+/// to it, and says what the backend settled on.
+async fn install_session(
+    handle: tauri::AppHandle,
+    state: &PgState,
+    params: &PgParams,
+    mut session: Session,
+    tunnel: Option<tuplenest_ssh_core::SshTunnel>,
+) -> Result<Connected, String> {
+    // Only PostgreSQL has a connection that can end by itself.
+    let close_watch = match &mut session {
+        Session::Postgres(s) => s.take_close_watch(),
+        Session::Sqlite(_) => None,
+    };
+    let engine = session.engine();
     // Take the session slot first, then publish the new cancel handle. The
     // other order pointed Cancel at the new, idle backend while the old
     // session's query was still running (and still holding the lock).
-    let mut slot = lock_session(&state).await?;
+    let mut slot = lock_session(state).await?;
     *slot = Some(session);
     // Under the lock, so the watch below can only ever act on this session.
     let generation = state.next_generation();
@@ -1058,8 +1196,8 @@ pub async fn pg_connect(
     *state.cancel.lock().map_err(|_| "cancel lock poisoned")? =
         slot.as_ref().map(|s| s.cancel_handle());
     *state.tunnel.lock().map_err(|_| "tunnel lock poisoned")? = tunnel;
-    *state.cache_key.lock().map_err(|_| "key lock poisoned")? = Some(cache_key_of(&params));
-    *state.live_key.lock().map_err(|_| "key lock poisoned")? = Some(cache_key_of(&params));
+    *state.cache_key.lock().map_err(|_| "key lock poisoned")? = Some(cache_key_of(params));
+    *state.live_key.lock().map_err(|_| "key lock poisoned")? = Some(cache_key_of(params));
     *state
         .connected_env
         .lock()
@@ -1074,14 +1212,20 @@ pub async fn pg_connect(
         drop(old);
         crate::trim::release_free_memory();
     }
-    tracing::info!(
-        component = "pg",
-        host = %params.host,
-        db = %params.database,
-        tunneled = params.ssh.is_some(),
-        "session opened"
-    );
+    // A SQLite path is the user's file system: not written to the log.
+    if engine == Engine::Postgres {
+        tracing::info!(
+            component = "pg",
+            host = %params.host,
+            db = %params.database,
+            tunneled = params.ssh.is_some(),
+            "session opened"
+        );
+    } else {
+        tracing::info!(component = "pg", engine = engine.as_str(), "session opened");
+    }
     Ok(Connected {
+        engine,
         environment: params.environment.clone(),
         read_only: params.read_only.unwrap_or(false),
         generation,
@@ -2746,8 +2890,7 @@ pub async fn pg_rollback(state: tauri::State<'_, PgState>) -> Result<(), String>
  */
 async fn lock_session<'a>(
     state: &'a PgState,
-) -> Result<tokio::sync::MutexGuard<'a, Option<tuplenest_driver_postgres::PostgresSession>>, String>
-{
+) -> Result<tokio::sync::MutexGuard<'a, Option<Session>>, String> {
     if let Ok(guard) = state.session.try_lock() {
         return Ok(guard);
     }
@@ -2773,7 +2916,8 @@ async fn lock_session<'a>(
     Err("The running query did not stop after three cancel requests. Try again, or restart the app if the server is unreachable.".into())
 }
 
-/// Cancels the in-flight query via the wire-protocol cancel key. Does not
+/// Cancels the in-flight query: PostgreSQL's wire-protocol cancel key, or
+/// SQLite's `sqlite3_interrupt`. Does not
 /// require the session lock, so it works while `pg_query` is blocked.
 #[tauri::command]
 pub async fn pg_cancel(state: tauri::State<'_, PgState>) -> Result<(), String> {
@@ -2897,7 +3041,7 @@ mod tests {
             .await
             .unwrap();
         let state = empty_state();
-        *state.session.lock().await = Some(session);
+        *state.session.lock().await = Some(session.into());
         let g = state.next_generation();
 
         assert!(killer.admin_backend(pid, true).await.unwrap());
@@ -2940,8 +3084,8 @@ mod tests {
         let state = std::sync::Arc::new(PgState::new(
             tuplenest_metadata_cache::MetadataCache::open_in_memory().unwrap(),
         ));
-        *state.cancel.lock().unwrap() = Some(session.cancel_handle());
-        *state.session.lock().await = Some(session);
+        *state.cancel.lock().unwrap() = Some(CancelHandle::Postgres(session.cancel_handle()));
+        *state.session.lock().await = Some(session.into());
 
         // One query running, and a second one queued behind it on the lock —
         // tokio's mutex is FIFO, so the queued one gets the lock next and has
@@ -2993,7 +3137,7 @@ mod tests {
             .connection_upsert(&tuplenest_workspace_store::ConnectionRecord {
                 id: "p1".into(),
                 name: "prod".into(),
-                driver: "postgres".into(),
+                engine: "postgres".into(),
                 environment: Some("prod".into()),
                 color: None,
                 read_only: false,
@@ -3088,7 +3232,7 @@ mod tests {
             .connection_upsert(&tuplenest_workspace_store::ConnectionRecord {
                 id: "p2".into(),
                 name: "prod via bastion".into(),
-                driver: "postgres".into(),
+                engine: "postgres".into(),
                 environment: Some("prod".into()),
                 color: None,
                 read_only: true,
@@ -3419,7 +3563,7 @@ mod tests {
             tuplenest_workspace_store::ConnectionRecord {
                 id: id.into(),
                 name: id.into(),
-                driver: "postgres".into(),
+                engine: "postgres".into(),
                 environment: env.map(str::to_owned),
                 color: None,
                 read_only,
@@ -4176,7 +4320,7 @@ mod pending_secret_tests {
         ConnectionRecord {
             id: id.into(),
             name: id.into(),
-            driver: "postgres".into(),
+            engine: "postgres".into(),
             environment: Some("dev".into()),
             color: None,
             read_only: false,
@@ -4336,5 +4480,194 @@ mod pending_secret_tests {
         assert_eq!(sweeping.join().unwrap(), 1);
         // The old entry is off the list; the one added meanwhile is still on it.
         assert_eq!(pending(&store), ["tn-new"]);
+    }
+}
+
+/// The commands route by the session's engine: a SQLite profile opens the
+/// SQLite driver, never resolves a secret or a tunnel, and keeps its saved
+/// environment and read-only flag like any profile.
+#[cfg(test)]
+mod engine_routing_tests {
+    use super::*;
+    use tuplenest_driver_api::ErrorCategory;
+
+    fn sqlite_params(path: &str) -> PgParams {
+        serde_json::from_value(serde_json::json!({
+            "engine": "sqlite", "host": "", "port": 0, "database": path,
+            "username": "", "secretRef": null, "tlsMode": "disabled"
+        }))
+        .unwrap()
+    }
+
+    fn app_with_sqlite_profile(path: &str) -> crate::AppState {
+        let store = tuplenest_workspace_store::Store::open_in_memory().unwrap();
+        store
+            .connection_upsert(&tuplenest_workspace_store::ConnectionRecord {
+                id: "s1".into(),
+                name: "prod file".into(),
+                engine: "sqlite".into(),
+                environment: Some("prod".into()),
+                color: None,
+                read_only: true,
+                host: String::new(),
+                port: 0,
+                database: path.into(),
+                username: String::new(),
+                secret_ref: None,
+                tls_mode: "disabled".into(),
+                tls_ca_path: None,
+                ssh_json: None,
+                options_json: None,
+                statement_timeout_ms: 0,
+            })
+            .unwrap();
+        crate::AppState {
+            store: std::sync::Mutex::new(store),
+            _log_guard: None,
+        }
+    }
+
+    #[test]
+    fn a_webview_without_engines_is_postgres() {
+        let p: PgParams = serde_json::from_value(serde_json::json!({
+            "host": "h", "port": 5432, "database": "d", "username": "u",
+            "secretRef": null, "tlsMode": "verify-full"
+        }))
+        .unwrap();
+        assert_eq!(p.engine().unwrap(), Engine::Postgres);
+        assert_eq!(p.to_config().unwrap().driver_id, "postgres");
+        let mut bad = p.clone();
+        bad.engine = Some("oracle".into());
+        assert!(bad.to_config().is_err());
+    }
+
+    #[test]
+    fn a_sqlite_target_carries_no_secret_tunnel_or_server() {
+        let mut p = sqlite_params("/tmp/x.db");
+        p.secret_ref = Some("tn-secret-prod".into());
+        p.host = "prod.db".into();
+        p.ssh = Some(SshParams {
+            host: "bastion".into(),
+            port: 22,
+            username: "u".into(),
+            key_path: "k".into(),
+            fingerprint: String::new(),
+            passphrase_ref: Some("tn-pp".into()),
+        });
+        p.create = Some(true);
+        let p = p.for_engine().unwrap();
+        assert!(p.secret_ref.is_none() && p.ssh.is_none() && p.host.is_empty());
+        let config = p.to_config().unwrap();
+        assert_eq!(config.driver_id, "sqlite");
+        assert_eq!(config.database, "/tmp/x.db");
+        assert_eq!(
+            config
+                .options
+                .get(tuplenest_driver_sqlite::OPTION_CREATE)
+                .map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(cache_key_of(&p), "sqlite:/tmp/x.db");
+    }
+
+    #[test]
+    fn a_saved_sqlite_profile_keeps_its_tag_and_read_only_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.db");
+        std::fs::write(&path, b"").unwrap();
+        let app = app_with_sqlite_profile(&path.display().to_string());
+        // The same file, spelled differently, is the same profile.
+        let roundabout = format!("{}/./app.db", dir.path().display());
+        let mut p = sqlite_params(&roundabout);
+        p.environment = Some("dev".into());
+        p.read_only = Some(false);
+        let p = with_profile_policy(&app, p);
+        assert_eq!(p.environment.as_deref(), Some("prod"));
+        assert_eq!(p.read_only, Some(true));
+        // Another file is not.
+        let other = with_profile_policy(&app, sqlite_params("/elsewhere/other.db"));
+        assert_eq!(other.read_only, None);
+        // A PostgreSQL target never matches a SQLite profile.
+        let r = app
+            .store
+            .lock()
+            .unwrap()
+            .connection_get("s1")
+            .unwrap()
+            .unwrap();
+        let mut pg = sqlite_params(&path.display().to_string());
+        pg.engine = None;
+        assert!(!profile_matches(&r, &pg));
+        assert_eq!(record_cache_key(&r), format!("sqlite:{}", path.display()));
+    }
+
+    struct Rows(StdMutex<Vec<Vec<CellValue>>>);
+
+    #[async_trait]
+    impl BatchSink for Rows {
+        async fn deliver(&self, batch: RowBatch) -> Result<(), Box<DriverError>> {
+            self.0.lock().unwrap().extend(batch.rows);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn the_session_slot_runs_queries_transactions_and_cancel_on_sqlite() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new.db").display().to_string();
+        let mut p = sqlite_params(&path);
+        p.create = Some(true);
+        let (session, tunnel) = open_session(&p.for_engine().unwrap()).await.unwrap();
+        assert!(tunnel.is_none());
+        assert_eq!(session.engine(), Engine::Sqlite);
+        let state =
+            PgState::new(tuplenest_metadata_cache::MetadataCache::open_in_memory().unwrap());
+        *state.cancel.lock().unwrap() = Some(session.cancel_handle());
+        *state.session.lock().await = Some(session);
+
+        let mut slot = lock_session(&state).await.unwrap();
+        let s = slot.as_mut().unwrap();
+        let run = |sql: &str| QueryRequest {
+            execution_id: ExecutionId::new(),
+            sql: sql.into(),
+            params: vec![],
+            row_limit: RESULT_STORE_CAP as u64,
+        };
+        let sink = Rows(StdMutex::new(vec![]));
+        s.execute(run("CREATE TABLE t (x)"), &sink).await.unwrap();
+        s.begin(Default::default()).await.unwrap();
+        assert!(s.server_in_transaction().await.unwrap());
+        s.execute(run("INSERT INTO t VALUES (1)"), &sink)
+            .await
+            .unwrap();
+        s.rollback().await.unwrap();
+        assert!(!s.server_in_transaction().await.unwrap());
+        s.execute(run("SELECT count(*) FROM t"), &sink)
+            .await
+            .unwrap();
+        assert_eq!(*sink.0.lock().unwrap(), vec![vec![CellValue::Int(0)]]);
+        // PostgreSQL-only: refused with a reason, not a broken answer.
+        let e = s.admin_backend(1, false).await.unwrap_err();
+        assert_eq!(e.category, ErrorCategory::Unsupported);
+        let e = s
+            .metadata(MetadataRequest::ServerActivity)
+            .await
+            .unwrap_err();
+        assert_eq!(e.category, ErrorCategory::Unsupported);
+        drop(slot);
+        // Cancel goes to the SQLite interrupt; nothing running is not an error.
+        let handle = state.cancel.lock().unwrap().clone().unwrap();
+        handle.cancel().await.unwrap();
+    }
+
+    #[test]
+    fn a_sqlite_code_is_shown_by_name_where_a_sqlstate_goes() {
+        let e = DriverError::new(ErrorCategory::ConstraintViolation, "Constraint violation")
+            .with_native_code("SQLITE_CONSTRAINT_UNIQUE");
+        assert_eq!(
+            err_to_string(&e),
+            "Constraint violation [SQLITE_CONSTRAINT_UNIQUE]"
+        );
+        assert!(persisted_error(&e).starts_with("Constraint violation [SQLITE_CONSTRAINT_UNIQUE]"));
     }
 }

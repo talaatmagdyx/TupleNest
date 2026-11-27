@@ -12,6 +12,7 @@ use tuplenest_workspace_store::Store;
 
 mod assistant;
 mod connections;
+mod engine;
 mod export;
 mod guard;
 mod mcp;
