@@ -139,7 +139,7 @@ describe("App — the titlebar", () => {
     // The rail has a Settings too; this is the titlebar's.
     const titlebar = document.querySelector(".titlebar") as HTMLElement;
     await user.click(within(titlebar).getByTitle("Settings"));
-    expect(await screen.findByText(/Telemetry/i)).toBeInTheDocument();
+    expect(await screen.findByText("Telemetry")).toBeInTheDocument();
   });
 });
 

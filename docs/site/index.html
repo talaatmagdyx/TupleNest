@@ -94,7 +94,7 @@
         <h3>Local-first</h3><p>No account and no telemetry. Passwords in the OS keychain. Prod query text never written to history.</p></div>
       <div class="card reveal">
         <div class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="5"/></svg></div>
-        <h3>AI on your terms</h3><p>Your own Anthropic key or a local Ollama model. It never sees result rows and never runs anything by itself.</p></div>
+        <h3>AI on your terms</h3><p>Your own Anthropic key or a local Ollama model. It is never sent result rows and never runs anything by itself.</p></div>
     </div>
   </div>
 </section>
@@ -254,7 +254,7 @@
     <div class="kicker center">FAQ</div>
     <h2 class="center">Frequently asked questions</h2>
     <div class="faq" style="margin-top:40px">
-      <div class="qa"><button>Which databases does it support?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>PostgreSQL 13+ and SQLite 3. No other engine is planned.</p></div></div>
+      <div class="qa"><button>Which databases does it support?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>PostgreSQL 13+ and SQLite 3. TupleNest is currently focused on these two.</p></div></div>
       <div class="qa"><button>Is it free? Do I need an account?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>It is MIT-licensed and free, with no account, sign-in or hosted service.</p></div></div>
       <div class="qa"><button>Does it send telemetry?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>No. The telemetry setting is off and no code sends anything. The app talks to your databases, GitHub once at startup for an update check, and the assistant's model only if you set one up and ask it something.</p></div></div>
       <div class="qa"><button>Does the AI see my data?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>The assistant never sends result rows: only your question, the editor's SQL, error text with row-quoting lines removed, and schema names and types. The MCP server is different by design: an AI tool you connect gets what its queries return, which is why every connection starts Off and prod and staging are read-only at most.</p></div></div>

@@ -58,9 +58,9 @@
     <div class="kicker">Product principles</div>
     <h2>How we decide what to build</h2>
     <div class="grid3" style="margin-top:20px">
-      <div class="card"><h4>Two engines, done properly</h4><p>PostgreSQL and SQLite, and no others. Depth beats shallow support for ten.</p></div>
+      <div class="card"><h4>Depth before breadth</h4><p>Currently focused on PostgreSQL and SQLite. An engine is added only when it can get the same safety model.</p></div>
       <div class="card"><h4>Safety before convenience</h4><p>A feature that makes accidents easier doesn't ship.</p></div>
-      <div class="card"><h4>Local-first</h4><p>Your data and credentials stay on your machine.</p></div>
+      <div class="card"><h4>Local-first</h4><p>Credentials stay in your OS keychain, and nothing leaves your machine except to destinations you set up.</p></div>
       <div class="card"><h4>Native performance</h4><p>A Rust core, bounded memory, fast startup.</p></div>
       <div class="card"><h4>Honest claims</h4><p>If it isn't built and tested, it's marked planned.</p></div>
       <div class="card"><h4>Open development</h4><p>Built in public, decided in the open.</p></div>
@@ -120,9 +120,8 @@
     <p class="lede">Saying no keeps the product focused. These are deliberate non-goals.</p>
     <div class="grid2">
       <div class="card"><ul>
-        <li><b>Other database engines.</b> No MySQL, MariaDB, SQL Server, MongoDB or Redis: PostgreSQL and SQLite only</li>
         <li><b>A hosted or cloud service.</b> No cloud-hosted query execution, no cloud sync, no server of ours in between</li>
-        <li><b>Sending your data to an AI.</b> The assistant sends your question, the query and schema names only, never rows</li>
+        <li><b>Sending your data to an AI behind your back.</b> The assistant sends your question, the query and schema names, never rows; an MCP tool gets rows only from connections you turn on for it</li>
       </ul></div>
       <div class="card"><ul>
         <li>Advertising-based monetization</li>

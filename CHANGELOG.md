@@ -10,7 +10,7 @@ JetBrains Mono); SQLite beside PostgreSQL; the assistant; an MCP server for AI
 tools; History, Saved queries, Dashboards, Notebooks, Backup and restore, and
 Users and roles as pages; Settings with a section list; What's new and a
 first-run tour; and a plain read that stops at the 20,000-row limit. The
-engines are PostgreSQL and SQLite only: no other engine is planned.
+engines today are PostgreSQL and SQLite.
 
 ### Changed
 - The engine picker in the connection form offers PostgreSQL and SQLite and

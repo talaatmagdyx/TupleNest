@@ -68,17 +68,25 @@ The SQL redaction is **best-effort, not a guarantee.** It catches the common
 secret shapes (`PASSWORD '…'` and `IDENTIFIED BY '…'` however the literal is
 quoted, literals passed to `crypt`, `pgp_sym_encrypt` and their relatives,
 `key=value`, connection strings), but a novel phrasing could slip a secret
-through. For a statement you
-know is sensitive, use `-- tuplenest:no-history` so it is never written at all,
-or run it on a prod-tagged connection (which stores no history SQL). Do not
-rely on redaction as a substitute for those.
+through. Do not rely on it for a statement you know is sensitive. Keep three things
+apart:
+
+- **Keeping a statement out of history:** start it with
+  `-- tuplenest:no-history`, or run it on a prod-tagged connection, where
+  history stores no SQL.
+- **Keeping it out of the audit log:** not possible on a prod-tagged
+  connection. The audit log records every statement there, and
+  `-- tuplenest:no-history` does not skip it.
+- **Keeping it off the disk entirely:** run it on a connection that is not
+  tagged prod, with `-- tuplenest:no-history`. Don't put it in anything you
+  save yourself: a saved query, a notebook, a dashboard or an export.
 
 ## Telemetry
 
-There is a telemetry toggle in Settings. It is **off by default and currently
-collects nothing** — no code sends anything anywhere. It exists ahead of a
-feature that does not yet exist. If that changes, it will be described here
-first, it will stay opt-in, and it will never include query text or row data.
+TupleNest has **no telemetry**: no code collects or sends usage data, and
+there is no setting for it, because there is nothing to switch on. If that
+ever changes, it will be described here first and will be opt-in. It will
+never include query text or row data.
 
 ## The network
 
@@ -128,6 +136,15 @@ window never makes one itself and never holds your key.
 **Never sent:** row data or any result cell, query history, the audit log,
 the connection's host, port, user name or password, SSH settings, other
 connections' schemas, or anything from another tab.
+
+**"No rows" is not the same as "nothing sensitive".** Values can still reach
+the provider in three ways:
+
+- a value written into the SQL, such as a literal in `WHERE email = '…'`
+- a value you type into your message
+- a value quoted in an error's main message line, which is sent for Fix
+
+Use a local model for work where that matters.
 
 **When it goes:**
 

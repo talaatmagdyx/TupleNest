@@ -45,13 +45,12 @@ describe("App — overlays that need no connection", () => {
     expect(screen.getByRole("navigation", { name: "Settings sections" })).toBeInTheDocument();
   });
 
-  it("stores a telemetry change rather than only ticking the box", async () => {
+  it("states there is no telemetry, with nothing to switch or store", async () => {
     const user = await mount();
     await palette(user, "Open settings");
-    const box = await screen.findByRole("switch", { name: /telemetry/i });
-    expect(box).toHaveAttribute("aria-checked", "false");
-    await user.click(box);
-    await waitFor(() => expect(be.sent("settings_set")).toContainEqual({ key: "telemetry", value: true }));
+    expect(await screen.findByText(/has no telemetry/)).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /telemetry/i })).not.toBeInTheDocument();
+    expect(be.sent("settings_get")).not.toContainEqual({ key: "telemetry" });
   });
 
   it("opens the import wizard", async () => {

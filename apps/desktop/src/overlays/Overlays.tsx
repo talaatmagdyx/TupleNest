@@ -579,9 +579,7 @@ function SettingRow(p: { title: string; help: string; children: React.ReactNode 
 
 export function Settings(p: {
   theme: "dark" | "light";
-  telemetry: boolean;
   onTheme: (t: "dark" | "light") => void;
-  onTelemetry: (v: boolean) => void;
   /** Settings › Assistant (settings/AssistantSettings). A slot, like `mcp`,
    *  so this dialog makes no backend calls. */
   children?: React.ReactNode;
@@ -659,19 +657,10 @@ export function Settings(p: {
                   <SettingRow title="History retention" help="Favorites always survive.">
                     <span className="set-value">newest 1,000</span>
                   </SettingRow>
-                  <SettingRow title="Anonymous telemetry" help="Collects nothing today. If it ever does, it will be opt-in and never include query text or data.">
-                    {/* The knob is the whole button, so without these a screen
-                        reader announces "button" — no name, and no way to tell
-                        on from off. */}
-                    <button
-                      className={`toggle ${p.telemetry ? "on" : ""}`}
-                      role="switch"
-                      aria-checked={p.telemetry}
-                      aria-label="Anonymous telemetry"
-                      onClick={() => p.onTelemetry(!p.telemetry)}
-                    >
-                      <span className="knob" aria-hidden />
-                    </button>
+                  {/* A statement, not a switch: there is no telemetry code, so
+                      a toggle would only suggest there is something to turn on. */}
+                  <SettingRow title="Telemetry" help="TupleNest has no telemetry and collects no usage data.">
+                    <span className="set-value">none</span>
                   </SettingRow>
                 </div>
               </>
