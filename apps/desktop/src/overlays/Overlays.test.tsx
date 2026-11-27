@@ -617,6 +617,20 @@ describe("Settings", () => {
 });
 
 describe("About", () => {
+  it("offers what's new and the tour again, when given them", async () => {
+    const onNews = vi.fn();
+    const onTour = vi.fn();
+    const { rerender } = render(<About version="0.1.0" os="macos" onClose={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "What's new" })).not.toBeInTheDocument();
+    rerender(<About version="0.1.0" os="macos" onClose={vi.fn()} onNews={onNews} />);
+    expect(screen.queryByRole("button", { name: "Show the welcome tour" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "What's new" }));
+    expect(onNews).toHaveBeenCalled();
+    rerender(<About version="0.1.0" os="macos" onClose={vi.fn()} onTour={onTour} />);
+    await userEvent.click(screen.getByRole("button", { name: "Show the welcome tour" }));
+    expect(onTour).toHaveBeenCalled();
+  });
+
   it("shows the version and the OS it is running on", () => {
     render(<About version="0.1.0" os="macos" onClose={vi.fn()} />);
     // "macos" is what Rust's std::env::consts::OS returns; nobody writes it
@@ -659,9 +673,16 @@ describe("About", () => {
   });
 
   it("only ever opens URLs the capability file allows", async () => {
-    // These two must match capabilities/default.json. A URL in one and not the
-    // other is rejected at runtime, which no type check would catch.
-    const allowed = ["https://github.com/talaatmagdyx", "https://claude.com"];
+    // These must match capabilities/default.json, read here rather than
+    // copied: a URL in one and not the other is rejected at runtime, which no
+    // type check would catch.
+    const { readFileSync } = await import("node:fs");
+    const caps = JSON.parse(readFileSync("src-tauri/capabilities/default.json", "utf8")) as {
+      permissions: (string | { identifier: string; allow: { url: string }[] })[];
+    };
+    const opener = caps.permissions.find((p) => typeof p !== "string" && p.identifier === "opener:allow-open-url");
+    const allowed = typeof opener === "object" ? opener.allow.map((a) => a.url) : [];
+    expect(allowed).toContain("https://claude.com");
     expect(Object.values(ABOUT_LINKS).sort()).toEqual([...allowed].sort());
   });
 

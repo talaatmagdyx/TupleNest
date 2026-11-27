@@ -14,6 +14,7 @@ import RolesPage from "./RolesPage";
 import type { PageContext } from "./context";
 
 export type { PageContext } from "./context";
+export { default as FirstRun, type FirstRunRequest } from "./FirstRun";
 export { isPostgres } from "./context";
 
 export type Page = "dashboards" | "notebooks" | "backup" | "roles";

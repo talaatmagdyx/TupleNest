@@ -78,7 +78,15 @@ import {
 import { UpdateToast } from "./overlays/Overlays";
 import { McpSection } from "./settings/McpSection";
 import { ParamPrompt } from "./overlays/Overlays";
-import { PageHost, isPostgres, pageCommands, type Page, type PageContext } from "./pages/registry";
+import {
+  FirstRun,
+  PageHost,
+  isPostgres,
+  pageCommands,
+  type FirstRunRequest,
+  type Page,
+  type PageContext,
+} from "./pages/registry";
 import {
   coerceParam,
   EXPORT_CAPS,
@@ -192,6 +200,12 @@ export default function App() {
   const [overlay, setOverlay] = useState<OverlayKind>(null);
   /** A page shown in place of the editor (dashboards, notebooks, …). */
   const [page, setPage] = useState<Page | null>(null);
+  /** What's new or the tour, asked for again from About. */
+  const [firstRun, setFirstRun] = useState<FirstRunRequest>(null);
+  const reopenFirstRun = (kind: NonNullable<FirstRunRequest>["kind"]) => {
+    setOverlay(null);
+    setFirstRun((r) => ({ kind, n: (r?.n ?? 0) + 1 }));
+  };
   // The assistant: a right-hand island panel. Everything it produces lands in
   // the editor only on the user's click, and runs only on the user's Run.
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -2216,8 +2230,10 @@ export default function App() {
           version={info?.version ?? ""}
           os={info?.os ?? ""}
           onClose={() => setOverlay(null)}
+          onNews={() => reopenFirstRun("news")}
         />
       )}
+      <FirstRun version={info?.version ?? ""} request={firstRun} />
       {overlay === "inspect" && (
         <Inspector text={inspectText} colName={inspectCol} onClose={() => setOverlay(null)} />
       )}

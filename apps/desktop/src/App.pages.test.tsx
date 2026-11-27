@@ -26,6 +26,17 @@ const palette = async (user: ReturnType<typeof userEvent.setup>, term: string) =
   await user.keyboard("{Enter}");
 };
 
+describe("App — first run", () => {
+  it("opens what's new again from About", async () => {
+    const user = await mount();
+    await palette(user, "About TupleNest");
+    await user.click(await screen.findByRole("button", { name: "What's new" }));
+    expect(await screen.findByRole("dialog", { name: "What's new" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Got it" }));
+    expect(screen.queryByRole("dialog", { name: "What's new" })).not.toBeInTheDocument();
+  });
+});
+
 describe("App — pages", () => {
   it("opens dashboards in place of the editor and goes back", async () => {
     const user = await mount();

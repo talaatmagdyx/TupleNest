@@ -617,6 +617,8 @@ export function Settings(p: {
 export const ABOUT_LINKS = {
   author: "https://github.com/talaatmagdyx",
   claude: "https://claude.com",
+  /** The What's new dialog's "Full changelog". */
+  changelog: "https://github.com/talaatmagdyx/TupleNest/blob/main/CHANGELOG.md",
 } as const;
 
 /**
@@ -626,7 +628,7 @@ export const ABOUT_LINKS = {
  * replaces the UI with a web page and leaves no way back — there is no
  * chrome, no back button. `openUrl` sends it to the real browser instead.
  */
-async function openExternal(url: string): Promise<void> {
+export async function openExternal(url: string): Promise<void> {
   try {
     const { openUrl } = await import("@tauri-apps/plugin-opener");
     await openUrl(url);
@@ -637,7 +639,14 @@ async function openExternal(url: string): Promise<void> {
   }
 }
 
-export function About(p: { version: string; os: string; onClose: () => void }) {
+export function About(p: {
+  version: string;
+  os: string;
+  onClose: () => void;
+  /** Help: the first-run tour and the release notes, again. */
+  onTour?: () => void;
+  onNews?: () => void;
+}) {
   const osLabel = { macos: "macOS", windows: "Windows", linux: "Linux" }[p.os] ?? p.os;
   return (
     <Overlay onClose={p.onClose}>
@@ -702,6 +711,20 @@ export function About(p: { version: string; os: string; onClose: () => void }) {
             Not affiliated with Microsoft, JetBrains, Anthropic or the PostgreSQL Global Development
             Group. PostgreSQL is a trademark of the PostgreSQL Community Association.
           </p>
+          {(p.onTour || p.onNews) && (
+            <div className="d-actions">
+              {p.onTour && (
+                <button className="btn" onClick={p.onTour}>
+                  Show the welcome tour
+                </button>
+              )}
+              {p.onNews && (
+                <button className="btn" onClick={p.onNews}>
+                  What&apos;s new
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </Overlay>

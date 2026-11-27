@@ -2448,4 +2448,22 @@ h1, h2, h3, .modal-head .t, .dialog .d-title, .onboard .big, .about-name,
 .roles-warn b { color: var(--tn-warning); }
 .roles-sql { display: flex; flex-direction: column; gap: 6px; }
 .roles-sql-head { display: flex; align-items: center; gap: 8px; }
+.dialog.whatsnew { width: 560px; display: flex; flex-direction: column; gap: 10px; }
+.wn-badge {
+  align-self: flex-start; padding: 3px 9px; border-radius: 999px;
+  background: var(--tn-as); color: var(--tn-accent); font-size: 12px; font-weight: 600;
+}
+.dialog.whatsnew .d-title { font: 600 26px var(--tn-display); letter-spacing: -.02em; }
+.wn-list { display: flex; flex-direction: column; gap: 10px; }
+.wn-item { display: flex; gap: 12px; padding: 12px; border-radius: 12px; background: var(--tn-s2); }
+.wn-icon {
+  flex: none; display: inline-flex; width: 34px; height: 34px; border-radius: 10px;
+  align-items: center; justify-content: center; font-weight: 700;
+}
+.wn-icon.accent { background: var(--tn-as); color: var(--tn-accent); }
+.wn-icon.info { background: var(--tn-info-tint); color: var(--tn-info); }
+.wn-icon.success { background: var(--tn-success-tint); color: var(--tn-success); }
+.wn-icon.warn { background: var(--tn-warn-tint); color: var(--tn-warning); }
+.wn-title { font-weight: 600; color: var(--tn-tp); }
+.wn-text { font-size: 12px; line-height: 1.5; color: var(--tn-ts); }
 .roles-sql pre { margin: 0; padding: 12px; border-radius: 10px; background: var(--tn-desk); font: 12px/1.6 var(--tn-mono); color: var(--tn-tp); white-space: pre-wrap; }
