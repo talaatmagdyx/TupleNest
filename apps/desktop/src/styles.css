@@ -607,7 +607,14 @@ a { color: var(--tn-accent); text-decoration: none; }
 .g-hcell .cn { font: 600 12px var(--tn-mono); color: var(--tn-tp); }
 .g-hcell .cn.sorted { color: var(--tn-accent); }
 .g-hcell .ct { font: 10px var(--tn-mono); color: var(--tn-tm); }
-.g-hcell .arrow { font: 9px var(--tn-mono); color: var(--tn-accent); }
+.g-hcell .arrow { font: 9px var(--tn-mono); color: var(--tn-accent); flex: none; }
+/* Name and type stay inside their own cell: a narrow column (a right-aligned
+   id int8) clips them with an ellipsis instead of spilling into the next. */
+.g-hcell { overflow: hidden; }
+.g-hcell .g-hlabel {
+  min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.g-hcell .g-hlabel .ct { margin-left: 6px; }
 .g-rownum {
   flex: none; position: sticky; left: 0; z-index: 1; height: 24px; line-height: 24px;
   text-align: right; padding: 0 9px; font: 11px var(--tn-mono);

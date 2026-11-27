@@ -644,6 +644,7 @@ export default function Grid(p: Props) {
             role="columnheader"
             aria-sort={sortCol === ci && sortDir ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
             style={{ width: widths[ci] }}
+            title={`${c.name} ${c.dbType}`.trim()}
             tabIndex={0}
             onClick={() => sortBy(ci)}
             onKeyDown={(e) => {
@@ -656,8 +657,10 @@ export default function Grid(p: Props) {
               }
             }}
           >
-            <span className={`cn ${sortCol === ci && sortDir ? "sorted" : ""}`}>{c.name}</span>
-            <span className="ct">{c.dbType}</span>
+            <span className="g-hlabel">
+              <span className={`cn ${sortCol === ci && sortDir ? "sorted" : ""}`}>{c.name}</span>
+              <span className="ct">{c.dbType}</span>
+            </span>
             {sortCol === ci && sortDir && <span className="arrow">{sortDir === "asc" ? "▲" : "▼"}</span>}
           </div>
         ))}
