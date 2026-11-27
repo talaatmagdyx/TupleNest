@@ -8,7 +8,9 @@ databases you point it at, and — once, at startup — GitHub, to ask whether a
 newer release exists. That check sends no data about you or your work, and it
 currently cannot be turned off. The assistant is off until you add a provider
 in Settings › Assistant; what it sends, and when, is spelled out under
-[The assistant](#the-assistant).
+[The assistant](#the-assistant). The MCP server, for AI tools you run
+yourself, is off for every connection until you turn it on; see
+[The MCP server](#the-mcp-server).
 
 This document says where things are kept so you can go and look, or delete
 them.
@@ -28,14 +30,18 @@ Windows, `~/.local/share/app.tuplenest.desktop` on Linux.
 | **Query history** | `<data>` SQLite | Newest 1,000. **On prod-tagged connections the SQL text is not recorded** — only timing, row counts, and status. On other environments the SQL is stored with a best-effort scrub of secret literals (`PASSWORD '…'`, `IDENTIFIED BY '…'`, `key=…`, connection-string URLs → `[REDACTED]`). Add a `-- tuplenest:no-history` comment to a statement to skip its history row entirely. When a query fails, only a reduced error is stored (title, SQLSTATE, category); the server's DETAIL/HINT — which can quote row values like `Key (email)=(…)` — is shown on screen but **not** written to disk. |
 | **Production audit log** | `<data>` SQLite | Separate from history and deliberately the opposite trade: on prod-tagged connections the SQL is **retained in full** (secret literals still scrubbed) so there is a record of what was run against production. This is an accountability record: `-- tuplenest:no-history` does **not** suppress it. If you do not want it, do not tag the connection prod. Each row is written before its statement is sent, so it records what was submitted, including statements that then failed or were cut off; if the row cannot be written, the statement is not sent. |
 | **Cached schema** | `<data>` SQLite | The shape of the database, so the explorer works offline: schema, table, column, constraint, type and routine names, with what describes them (column types and defaults, comments, enum labels, partition bounds). Not row data, and not query text: health figures, server activity, index usage, object sizes and search terms are live-only and are never stored. |
-| **Snippets, layout, settings** | `<data>` SQLite | |
+| **Snippets, layout, settings** | `<data>` SQLite | Includes each connection's MCP access (off, read only, read and write). |
+| **Dashboards** | `<data>` SQLite | Names, the connection, the refresh interval, and each chart's title, kind and SQL. **Not their results**: a chart re-runs its query each time. |
+| **Notebooks** | `<data>` SQLite | Text, SQL and chart cells, and **the last result of each SQL cell, up to 200 rows**, so a notebook reopens as you left it. This is row data on disk, unencrypted. Delete the notebook (or clear the cell) to remove it. Export to Markdown writes it where you choose. |
+| **Backups** | wherever you choose; the list in `<data>` SQLite | `pg_dump` writes the file to the path you pick. The app records each run's connection, database, file path, status and size (the most recent runs), not the contents. |
 | **Logs** | `<data>/logs/tuplenest.log.*` | One file a day, the last 14 kept. Session events — connected/disconnected, with host and database name — timings, row counts and redacted errors. **Never query text**, never passwords. |
 | **Crash reports** | `<data>/crashes/*.txt` | Written locally on a panic. **Never uploaded.** Timestamp, thread, source location, panic message. Delete them freely. |
 | **Exports** | wherever you choose | CSV/JSON/Markdown go only where the save dialog puts them. |
 
 Row data from your database is held in memory while a result is on screen,
 and is dropped when you run the next query, switch connection or close the
-app. A result keeps at most 20,000 rows or 128 MB, compressed. **One case
+app. The exceptions are the ones you make: a notebook's SQL cells keep their
+last 200 rows, and exports and backups are files you saved. A result keeps at most 20,000 rows or 128 MB, compressed. **One case
 touches disk:** when the compressed rows pass 16 MB, the rest are written to
 a temporary file in the operating system's temp directory. That file has no
 name — it is unlinked the moment it is created (macOS, Linux) or marked
@@ -81,6 +87,9 @@ TupleNest makes exactly these connections:
    by default, which never leaves this computer. See below.
 4. **Nothing else.** Following a link in the About box hands the URL to your
    browser and is the only other outbound traffic, and only if you click it.
+   Backup and restore run your own `pg_dump` and `pg_restore` against the
+   database you picked; the MCP server talks to the AI tool that started it
+   over stdin/stdout and opens no connection but to your databases.
 
 ## The assistant
 
@@ -103,7 +112,8 @@ window never makes one itself and never holds your key.
   connected to, with their column names and types, from the explorer's
   cache. Capped at 12,000 characters; tables your query names go first.
   Comments, index definitions, sizes and row estimates are not included.
-  Nothing is sent about a database you are not connected to.
+  On a SQLite session the digest also says it is SQLite. Nothing is sent
+  about a database you are not connected to.
 
 **Never sent:** row data or any result cell, query history, the audit log,
 the connection's host, port, user name or password, SSH settings, other
@@ -128,9 +138,30 @@ editor only when you press Insert into editor or Apply the fix, and runs only
 when you press Run — through the same read-only check, production guard and
 audit log as anything you type.
 
+## The MCP server
+
+`tuplenest-desktop mcp` lets an AI tool you run yourself (Claude Desktop,
+Claude Code, Cursor) query your saved connections. It is the opposite of the
+assistant in one respect, so it is spelled out here: **what a query returns
+goes to that tool**, and from there to wherever the tool sends it, its own
+model provider included. That is what MCP is for.
+
+- **Every connection is off** until you choose *Read only* or *Read and
+  write* for it in Settings › MCP server. An off connection is not listed,
+  and naming it gets the same answer as a name that does not exist.
+- **Read only** is the same server-enforced read-only session a read-only
+  profile gets (SQLite's own read-only mode for a SQLite file). **Read and
+  write** refuses everything the destructive-statement guard would ask
+  about, and is not available on prod, staging or read-only connections.
+- A tool gets at most 500 rows (or 1 MB) per query, marked when cut off.
+  Passwords are read from the keychain by TupleNest and never returned.
+- Statements are recorded in query history, and on prod and staging in the
+  audit log before they run, with the sender as `MCP · <client>`.
+
 ## Deleting your data
 
-- **Profiles, history, audit log, cache** — delete the `<data>` directory.
+- **Profiles, history, audit log, cache, dashboards, notebooks** — delete the
+  `<data>` directory.
 - **Passwords and SSH key passphrases** — these are the keychain's, not ours;
   remove entries named `tn-secret-*` in Keychain Access, Credential Manager, or
   Seahorse. Deleting a profile in the app removes its keychain entries too,

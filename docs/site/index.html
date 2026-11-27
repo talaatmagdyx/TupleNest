@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TupleNest — the PostgreSQL IDE that asks before it writes</title>
-<meta name="description" content="A local-first, open-source PostgreSQL IDE for engineers who take production safety seriously. Streaming results, schema-aware autocomplete, TLS that fails closed, credentials in your OS keychain. Free, MIT, no cloud, no telemetry.">
-<meta property="og:title" content="TupleNest — the PostgreSQL IDE that asks before it writes">
-<meta property="og:description" content="Local-first PostgreSQL IDE. Streaming results, schema-aware autocomplete, read-only production mode, TLS that fails closed. Rust + Tauri. MIT. No accounts, no cloud, no telemetry.">
+<title>TupleNest — the PostgreSQL and SQLite IDE that asks before it writes</title>
+<meta name="description" content="A local-first, open-source IDE for PostgreSQL and SQLite, for engineers who take production safety seriously. Streaming results, schema-aware autocomplete, TLS that fails closed, credentials in your OS keychain. Free, MIT, no cloud, no telemetry.">
+<meta property="og:title" content="TupleNest — the PostgreSQL and SQLite IDE that asks before it writes">
+<meta property="og:description" content="Local-first PostgreSQL and SQLite IDE. Streaming results, schema-aware autocomplete, read-only production mode, TLS that fails closed. Rust + Tauri. MIT. No accounts, no cloud, no telemetry.">
 <meta property="og:image" content="https://talaatmagdyx.github.io/TupleNest/shots/hero.png">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://talaatmagdyx.github.io/TupleNest/">
@@ -47,7 +47,7 @@
   <div class="wrap">
     <span class="tagpill"><span class="dot"></span> v0.1.0-beta.11 · Public Beta</span>
     <h1>The PostgreSQL IDE<br>that <em>asks before it writes.</em></h1>
-    <p class="sub">A local-first, open-source PostgreSQL IDE built for engineers who work with real data and take production safety seriously.</p>
+    <p class="sub">A local-first, open-source IDE for PostgreSQL — and SQLite files — built for engineers who work with real data and take production safety seriously.</p>
     <div class="cta">
       <a class="btn primary" data-download href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Download</a>
       <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest">View on GitHub</a>
@@ -68,7 +68,7 @@
 <section class="tight">
   <div class="wrap">
     <div class="trust reveal">
-      <div class="t"><div class="ico">🖥️</div><h4>100% local-first</h4><p>The app talks to your database and nothing else. No backend of ours sits in the middle.</p></div>
+      <div class="t"><div class="ico">🖥️</div><h4>100% local-first</h4><p>The app talks to your database, GitHub once for an update check, and the assistant's model only if you set one up. No backend of ours sits in the middle.</p></div>
       <div class="t"><div class="ico">🛡️</div><h4>PostgreSQL-enforced safety</h4><p>Read-only mode uses a real Postgres session characteristic — the server refuses writes, not just the UI.</p></div>
       <div class="t"><div class="ico">🔑</div><h4>Credentials in the OS keychain</h4><p>Passwords live in the macOS Keychain, Windows Credential Manager, or the Secret Service — never in a config file.</p></div>
       <div class="t"><div class="ico">✍️</div><h4>Signed releases</h4><p>Every file except the macOS <code class="inline">.dmg</code> ships with a minisign signature, plus SHA-256 checksums, an SBOM, and GitHub build provenance.</p></div>
@@ -82,8 +82,8 @@
 <section>
   <div class="wrap">
     <div class="kicker">Why TupleNest</div>
-    <h2>Most database tools try to support everything.<br>TupleNest focuses on PostgreSQL.</h2>
-    <p class="lede">Built around the workflows PostgreSQL engineers use every day: writing queries, exploring schemas, inspecting production data, and avoiding expensive mistakes.</p>
+    <h2>Most database tools try to support everything.<br>TupleNest supports two engines.</h2>
+    <p class="lede">PostgreSQL in depth, and SQLite files with the same safety model — no others are planned. Built around the work engineers do every day: writing queries, exploring schemas, inspecting production data, and avoiding expensive mistakes.</p>
     <div class="grid3">
       <div class="card reveal"><div class="ico">🛡️</div><h3>Safety first</h3>
         <ul><li>Read-only profiles, enforced by the server</li><li>Destructive-statement warnings</li><li>Clear environment labels</li><li>Production-aware workflows</li></ul></div>
@@ -117,7 +117,7 @@
   <div class="wrap">
     <div class="kicker">The feature set</div>
     <h2>Everything you need.<br>Nothing you don't.</h2>
-    <p class="lede">A focused PostgreSQL environment — not a database administration suite trying to do everything for every engine.</p>
+    <p class="lede">A focused environment for PostgreSQL and SQLite — not a database administration suite trying to do everything for every engine.</p>
     <div class="grid3">
       <div class="fcard reveal"><div class="cap"><img src="shots/complete.png" alt="Schema-aware autocomplete popup in the SQL editor"></div>
         <div class="body"><h3>Smart SQL editor</h3><ul><li>Schema-aware completion</li><li>Syntax highlighting &amp; formatting</li><li>Multiple tabs</li><li>Query history</li><li>Snippets &amp; parameters</li></ul></div></div>
@@ -135,14 +135,31 @@
   </div>
 </section>
 
+<!-- 6b. NEW -->
+<section>
+  <div class="wrap">
+    <div class="kicker">New in the next release</div>
+    <h2>More than an editor.<br>Still one window.</h2>
+    <p class="lede">Each of these goes through the same read-only checks, guard and audit log as a query you type.</p>
+    <div class="grid3">
+      <div class="card reveal"><h3>SQLite</h3><p>A file on this machine, beside your PostgreSQL connections. Read-only is enforced by SQLite itself; the guard, environment tags and audit log apply as they do for PostgreSQL.</p></div>
+      <div class="card reveal"><h3>The assistant</h3><p>Ask, explain, fix or write SQL with your own Anthropic key or a local Ollama model. It sends your question, the query and schema names only — <b>never row data</b> — and nothing it writes runs until you press Run.</p></div>
+      <div class="card reveal"><h3>MCP server</h3><p>Let Claude Desktop, Claude Code or Cursor query the connections you choose. Every connection starts off; read-only is server-enforced; prod and staging are read-only at most, and audited.</p></div>
+      <div class="card reveal"><h3>Dashboards &amp; notebooks</h3><p>Pin saved queries that read as charts, refreshed on open or on a timer. Keep notes, SQL and charts in a notebook; a cell runs only when you press its Run.</p></div>
+      <div class="card reveal"><h3>Backup &amp; restore</h3><p>Your own <code class="inline">pg_dump</code> and <code class="inline">pg_restore</code>, no shell, no password on the command line. Restoring into prod or staging asks you to type the database name.</p></div>
+      <div class="card reveal"><h3>Users &amp; roles</h3><p>What each PostgreSQL role may do to each table, with a warning when a "read-only" role can write. It changes nothing; the fix is SQL to copy.</p></div>
+    </div>
+  </div>
+</section>
+
 <!-- 7. REAL WORKFLOW -->
 <section>
   <div class="wrap">
     <div class="kicker">The workflow</div>
     <h2>From connection to insight.<br>All in one place.</h2>
-    <p class="lede">Five steps, one window — the loop a PostgreSQL engineer actually runs all day.</p>
+    <p class="lede">Five steps, one window — the loop you actually run all day.</p>
     <div class="flow">
-      <div class="step reveal"><div class="num">1</div><h4>Connect</h4><ul><li>PostgreSQL connection</li><li>TLS settings</li><li>SSH tunnel</li><li>Environment class</li></ul></div>
+      <div class="step reveal"><div class="num">1</div><h4>Connect</h4><ul><li>PostgreSQL server or SQLite file</li><li>TLS settings</li><li>SSH tunnel</li><li>Environment class</li></ul></div>
       <div class="step reveal"><div class="num">2</div><h4>Explore</h4><ul><li>Databases &amp; schemas</li><li>Tables &amp; views</li><li>Functions</li><li>Indexes</li></ul></div>
       <div class="step reveal"><div class="num">3</div><h4>Write</h4><ul><li>Autocomplete</li><li>Formatting</li><li>Multiple tabs</li><li>History &amp; shortcuts</li></ul></div>
       <div class="step reveal"><div class="num">4</div><h4>Execute</h4><ul><li>Query timing</li><li>Notices &amp; errors</li><li>Row count</li><li>Cancellation</li></ul></div>
@@ -305,14 +322,16 @@
     <div class="faq" style="margin-top:40px">
       <div class="qa"><button>Is TupleNest free?<span class="plus">+</span></button><div class="a"><p>Yes — free forever and MIT-licensed. No paid tier gates the core product, no account required.</p></div></div>
       <div class="qa"><button>Is it open source?<span class="plus">+</span></button><div class="a"><p>Yes. The full source is on GitHub under the MIT license, with a public issue tracker and security policy.</p></div></div>
-      <div class="qa"><button>Does it send telemetry?<span class="plus">+</span></button><div class="a"><p>No. There is no analytics SDK, no phone-home, and no crash upload. The only network destinations are the PostgreSQL host you connect to, an SSH host if you configure a tunnel, and the GitHub endpoint used to check for updates.</p></div></div>
+      <div class="qa"><button>Does it send telemetry?<span class="plus">+</span></button><div class="a"><p>No. There is no analytics SDK, no phone-home, and no crash upload. The only network destinations are the PostgreSQL host you connect to, an SSH host if you configure a tunnel, the GitHub endpoint used to check for updates, and — only if you set up the assistant and ask it something — Anthropic with your own key or your Ollama server.</p></div></div>
+      <div class="qa"><button>Does the AI see my data?<span class="plus">+</span></button><div class="a"><p>The assistant does not: it sends your question, the query in the editor, a failed statement's error with row values removed, and the names and types of your schemas, tables and columns. Never a result row. The MCP server is different by design: an AI tool you connect gets what the connections you turn on for it return, so every connection starts off, and prod and staging can be read-only at most.</p></div></div>
+      <div class="qa"><button>Which databases does it support?<span class="plus">+</span></button><div class="a"><p>PostgreSQL 13+ and SQLite 3. No other engine is planned — not MySQL, MariaDB, SQL Server, MongoDB or Redis.</p></div></div>
       <div class="qa"><button>Where are passwords stored?<span class="plus">+</span></button><div class="a"><p>In your operating system's keychain — macOS Keychain, Windows Credential Manager, or the Linux Secret Service. The app database stores only an opaque reference, never the password itself, and the password is never returned to the WebView.</p></div></div>
       <div class="qa"><button>Can I use it with production databases?<span class="plus">+</span></button><div class="a"><p>Yes, and it's designed for exactly that. Classify a connection as production, turn on read-only mode, and destructive statements require confirmation. For strict enforcement, connect with a database role that has no write privileges — that's the real boundary.</p></div></div>
       <div class="qa"><button>Does it support SSH tunnels?<span class="plus">+</span></button><div class="a"><p>Yes, with host-key verification. A changed host key is rejected rather than silently trusted.</p></div></div>
       <div class="qa"><button>Which PostgreSQL versions are supported?<span class="plus">+</span></button><div class="a"><p>Modern PostgreSQL. Contract tests run against PostgreSQL 13, 15, and 17 in CI, with TLS enabled.</p></div></div>
       <div class="qa"><button>Does it work with hosted PostgreSQL providers?<span class="plus">+</span></button><div class="a"><p>If the provider speaks the standard PostgreSQL wire protocol and accepts TLS and (optionally) SSH tunnels, it should work. TupleNest is a standard client.</p></div></div>
       <div class="qa"><button>Does it work on Windows, macOS, and Linux?<span class="plus">+</span></button><div class="a"><p>Yes — all three, each built on its own runner and released together.</p></div></div>
-      <div class="qa"><button>Is it a replacement for pgAdmin or DBeaver?<span class="plus">+</span></button><div class="a"><p>It's a focused alternative for PostgreSQL query and exploration work with a strong safety posture. It's not trying to be a full multi-engine administration suite — see the Roadmap for what's explicitly not planned.</p></div></div>
+      <div class="qa"><button>Is it a replacement for pgAdmin or DBeaver?<span class="plus">+</span></button><div class="a"><p>It's a focused alternative for PostgreSQL (and SQLite) query and exploration work with a strong safety posture. It's not trying to be a full multi-engine administration suite — see the Roadmap for what's explicitly not planned.</p></div></div>
       <div class="qa"><button>Can I build it from source?<span class="plus">+</span></button><div class="a"><p>Yes. You need Rust, Node, and the Tauri prerequisites for your platform. Steps are on the Download page.</p></div></div>
       <div class="qa"><button>How are updates verified?<span class="plus">+</span></button><div class="a"><p>Updates are served over HTTPS with signed artifacts and an embedded public key, and the app refuses an update advertised below a compiled-in minimum version. You can also verify any download by hand with the published checksum and signature.</p></div></div>
     </div>
@@ -338,7 +357,7 @@
 <footer class="site">
   <div class="wrap">
     <div class="cols">
-      <div class="fbrand"><img src="logo.png" alt=""><p>The PostgreSQL IDE that asks before it writes. Local-first, open-source, MIT.</p></div>
+      <div class="fbrand"><img src="logo.png" alt=""><p>The PostgreSQL and SQLite IDE that asks before it writes. Local-first, open-source, MIT.</p></div>
       <div><h5>Product</h5><a href="features.html">Features</a><a href="security.html">Security</a><a href="download.html">Download</a><a href="roadmap.html">Roadmap</a><a href="changelog.html">Changelog</a></div>
       <div><h5>Resources</h5><a href="docs.html">Documentation</a><a href="docs.html#getting-started">Getting Started</a><a href="docs.html#shortcuts">Keyboard Shortcuts</a><a href="docs.html#troubleshooting">Troubleshooting</a><a href="blog.html">Blog</a></div>
       <div><h5>Community</h5><a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a><a href="https://github.com/talaatmagdyx/TupleNest/discussions">Discussions</a><a href="https://github.com/talaatmagdyx/TupleNest/issues">Issues</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a></div>

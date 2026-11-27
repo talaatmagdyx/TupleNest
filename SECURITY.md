@@ -54,6 +54,18 @@ Things we want to hear about:
   broader than `capabilities/default.json` claims.
 - The updater accepting an artifact not signed with our key.
 - Row editing writing to something other than the reviewed row.
+- The assistant sending anything beyond what PRIVACY.md lists — a result
+  cell, history, a connection's host, user or password, another
+  connection's schema — or the Anthropic key reaching the WebView, a log or
+  any destination other than `api.anthropic.com`. Ollama traffic leaving
+  this computer without *Allow a server on another computer*.
+- The MCP server listing or querying a connection whose access is off; a
+  *Read only* grant executing a write; *Read and write* running a statement
+  the guard would ask about, or being granted on a prod, staging or
+  read-only connection; a prod or staging statement running without its
+  audit row.
+- Backup or restore putting a password in a process's arguments, or
+  restoring into a read-only profile.
 
 ## What is already known, and is not a vulnerability
 
@@ -71,6 +83,17 @@ Reporting these is not useful; they are documented decisions.
   and PostgreSQL refuses writes to tables and the catalog. Neither can see
   inside `SELECT pg_terminate_backend(…)`, `pg_reload_conf()` or `lo_unlink(…)`:
   whether those run is the role's privileges.
+- **An AI tool given MCP access sees what it queries.** Rows a tool reads go
+  to that tool and wherever it sends them. That is the feature; the control
+  is the per-connection access level, off by default, and the database role
+  the profile uses. The rules cannot see inside a function with side effects
+  called from a `SELECT`, exactly as for a read-only profile.
+- **The assistant sends the query you wrote and your schema's names to the
+  provider you chose.** With Claude that is Anthropic under your own
+  agreement with them; with a remote Ollama you allowed, that server. A
+  table or column name that is itself sensitive goes too.
+- **Notebooks keep up to 200 rows of each SQL cell's last result** in the
+  workspace database, unencrypted, like the rest of that file.
 - **An SSH tunnel's local port is reachable by other local processes** while
   it is open, exactly like `ssh -L`: it listens on `127.0.0.1` on a random
   port. It has to accept more than one connection (query cancellation dials

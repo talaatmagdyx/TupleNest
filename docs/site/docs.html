@@ -52,7 +52,7 @@
       <h5>Connections</h5>
       <a href="#connections">Connection profiles</a><a href="#tls">TLS modes</a><a href="#ssh">SSH tunnels</a><a href="#credentials">Password storage</a>
       <h5>Editor &amp; Results</h5>
-      <a href="#editor">SQL editor</a><a href="#results">Result grid</a><a href="#plans">Query plans</a><a href="#migrations">Migrations</a><a href="#io">Import &amp; export</a><a href="#shortcuts">Keyboard shortcuts</a>
+      <a href="#editor">SQL editor</a><a href="#results">Result grid</a><a href="#plans">Query plans</a><a href="#migrations">Migrations</a><a href="#io">Import &amp; export</a><a href="#pages">Pages</a><a href="#assistant">The assistant</a><a href="#mcp">MCP server</a><a href="#shortcuts">Keyboard shortcuts</a>
       <h5>Safety &amp; Security</h5>
       <a href="#read-only">Read-only mode</a><a href="#dangerous">Dangerous statements</a><a href="#privacy">Security &amp; privacy</a>
       <h5>More</h5>
@@ -61,7 +61,7 @@
 
     <div class="doccontent">
       <h2 id="getting-started">Introduction</h2>
-      <p>TupleNest is a local-first PostgreSQL IDE. It runs entirely on your machine, talks directly to your database over the PostgreSQL wire protocol, and stores credentials in your operating system's keychain. There is no account, no cloud, and no telemetry.</p>
+      <p>TupleNest is a local-first IDE for PostgreSQL and SQLite. It runs entirely on your machine, talks directly to your database (over the PostgreSQL wire protocol, or by opening the SQLite file), and stores credentials in your operating system's keychain. There is no account, no cloud, and no telemetry. Those are the two engines; no other is planned.</p>
       <p>This page is a hub. Each section is a short, practical walkthrough; where a topic is broad, it links to the relevant Features or Security section for depth.</p>
 
       <h2 id="install">Installation</h2>
@@ -74,7 +74,8 @@
       <p>Prefer to build it yourself? The <a href="download.html#build">build-from-source</a> steps are on the Download page.</p>
 
       <h2 id="first-connection">Create your first connection</h2>
-      <p>Open the connection editor and fill in host, port, database, and username. Choose an environment (development, staging, or production) — production connections are shown distinctly so you always know where a query will run.</p>
+      <p>Open the connection editor and pick the engine. For PostgreSQL, fill in host, port, database, and username. For SQLite, type the file's path or press <b>Choose…</b>; turn on <b>Create a new file</b> to make an empty database there on connect. Choose an environment (development, test, staging, or production) — production connections are shown distinctly so you always know where a query will run.</p>
+      <p>On a first launch a three-step tour walks through connecting, the safety model, and the assistant and MCP; after an update, What's new shows once. About opens either again.</p>
       <p>Click <b>Test</b> to run a staged check (DNS → TCP → authentication) before you commit. When you save, the password goes to the OS keychain and the profile stores only an opaque reference.</p>
       <div class="callout info">New profiles default to <b>verify-full</b> TLS — they fail closed until you deliberately relax them.</div>
 
@@ -101,7 +102,7 @@
       <p>Schema-aware completion, formatting, multiple tabs, query history, snippets, and parameter binding. The editor understands PostgreSQL literals (dollar-quoting, nested comments), which is what makes the safety guard reliable.</p>
 
       <h2 id="results">Result grid</h2>
-      <p>Streaming rows, virtualized rendering, sorting by column, explicit NULLs, copy cell/row/selection, and export. Large results are bounded by row, byte, and per-cell limits, with clear truncation indicators.</p>
+      <p>Streaming rows, virtualized rendering, sorting by column, explicit NULLs, copy cell/row/selection, and export. Large results are bounded by row, byte, and per-cell limits, with clear truncation indicators. A result keeps 20,000 rows; a plain read (one <code class="inline">SELECT</code>, <code class="inline">VALUES</code>, <code class="inline">TABLE</code> or <code class="inline">WITH … SELECT</code> that writes and locks nothing) stops at the limit on the server instead of reading the rest, and the footer says <em>"20,000+ rows (stopped at the limit)"</em>. Other statements run to the end.</p>
 
       <h2 id="plans">Query plans</h2>
       <p>Run <code class="inline">EXPLAIN</code> on the current statement from the command palette. Toggle <b>ANALYZE</b> to execute it and get real timings, and <b>BUFFERS</b> to see which nodes read from disk. ANALYZE defaults on for a plain <code class="inline">SELECT</code> and off for anything that writes — it really runs the statement.</p>
@@ -158,6 +159,22 @@
       <p>The file is streamed rather than loaded, so its size is not bounded by RAM: a 358&nbsp;MB CSV of 6,000,001 rows imports with roughly 15&nbsp;MB of peak memory growth. Only one batch of rows is held at a time.</p>
       <p>The preview reads the first 500 rows — enough to map headers and infer types — which is why a large file says <em>"first 500 rows sampled"</em> rather than a total. Progress during the import is the percentage of the file read, because the row count genuinely is not known until it has been read; the count in the final message is what was actually inserted. <b>Cancel</b> during an import stops the read and rolls the transaction back.</p>
 
+      <h2 id="pages">Pages</h2>
+      <p>History, Saved queries, Dashboards, Notebooks, Backup and restore, and Users and roles each take the editor's place; the editor stays open behind them. Every page has the same header — <b>← Editor</b>, the title, a line saying what it is, and its actions — and <span class="kbd">Esc</span> goes back from any of them. Open them from the left rail or the command palette.</p>
+      <ul>
+        <li><b>Dashboards</b> — pin a saved query as a bar, line or single-number chart. Charts re-run when the page opens and, if you choose, every 1, 5 or 15 minutes while the dashboard's connection is live. Only a query that reads can be pinned, and each run keeps 1,000 rows.</li>
+        <li><b>Notebooks</b> — text, SQL and chart cells. Nothing runs when a notebook opens; a SQL cell runs on its own <b>Run</b>, on the notebook's connection, through the guard and audit log. Each SQL cell keeps its last 200 rows in the local database so the notebook reopens as you left it.</li>
+        <li><b>Backup and restore</b> (PostgreSQL) — runs your own <code class="inline">pg_dump</code> (custom format) and <code class="inline">pg_restore</code>, found in a folder you set, on <code class="inline">PATH</code>, or in the usual install locations. The password is passed in a private temporary pgpass file, never on the command line. Restoring into prod or staging asks you to type the database name; a read-only profile is never restored into. Profiles that use an SSH tunnel are not supported yet.</li>
+        <li><b>Users and roles</b> (PostgreSQL) — each role's SELECT, INSERT, UPDATE, DELETE and TRUNCATE on each table of a schema, with a warning when a role that looks read-only can write or is a superuser. Nothing here changes a grant: the matching SQL is shown to copy.</li>
+      </ul>
+
+      <h2 id="assistant">The assistant</h2>
+      <p>Open it from the title bar or with <span class="kbd">⌘J</span>. Add a provider in <b>Settings › Assistant</b>: your own Anthropic API key (kept in the OS keychain), or an Ollama server — <code class="inline">http://localhost:11434</code> by default; one on another computer only if you allow it.</p>
+      <p>A request contains your message and the recent turns of that conversation, the editor's SQL for Ask, Explain and Fix, a failed statement's error with its <code class="inline">DETAIL</code> and <code class="inline">CONTEXT</code> lines removed, and the connected database's schema, table and column names and types, capped. It never contains row data, history, the connection's host, user or password, or other connections. A suggestion runs only when you insert it and press Run. The full list is in <a href="https://github.com/talaatmagdyx/TupleNest/blob/main/PRIVACY.md#the-assistant">PRIVACY.md</a>.</p>
+
+      <h2 id="mcp">MCP server</h2>
+      <p>Start the app as <code class="inline">tuplenest-desktop mcp</code> from an AI tool (Claude Desktop, Claude Code, Cursor); <b>Settings › MCP server</b> shows the configuration with this install's path. Each connection is <b>Off</b> until you set it to <b>Read only</b> or <b>Read and write</b>; Read and write refuses anything the guard would ask about and is not offered on prod, staging or read-only connections. One statement per call, at most 500 rows back, audited first on prod and staging. What a query returns goes to the tool that asked.</p>
+
       <h2 id="shortcuts">Keyboard shortcuts</h2>
       <div class="keys">
         <div class="key"><span class="kbd">⌘K</span><span class="kl">Command palette</span></div>
@@ -168,23 +185,27 @@
         <div class="key"><span class="kbd">⌘O</span><span class="kl">Open connection</span></div>
         <div class="key"><span class="kbd">⌘B</span><span class="kl">Show or hide the sidebar</span></div>
         <div class="key"><span class="kbd">⇧⌘L</span><span class="kl">Switch light / dark</span></div>
+        <div class="key"><span class="kbd">⌘J</span><span class="kl">Show or hide the assistant</span></div>
         <div class="key"><span class="kbd">⌘C</span><span class="kl">Copy the selected cell</span></div>
-        <div class="key"><span class="kbd">Esc</span><span class="kl">Close the overlay, else cancel the query</span></div>
+        <div class="key"><span class="kbd">⌘F</span><span class="kl">Find and replace</span></div>
+        <div class="key"><span class="kbd">⌘/</span><span class="kl">Comment or uncomment the selected lines</span></div>
+        <div class="key"><span class="kbd">Esc</span><span class="kl">Close the overlay or page, else cancel the query</span></div>
         <div class="key"><span class="kbd">?</span><span class="kl">This cheatsheet</span></div>
       </div>
       <p style="margin-top:12px">On Windows and Linux, use Ctrl in place of ⌘. This is the same list the app shows for <code class="inline">?</code>; both come from one table in the source, so a binding cannot exist without appearing in both.</p>
 
       <h2 id="read-only">Read-only mode</h2>
-      <p>Turn on read-only for a connection and TupleNest issues a PostgreSQL read-only session characteristic — the <em>server</em> refuses writes, not just the UI. TupleNest also sends only statements that read, because the server's read-only mode would still run <code class="inline">VACUUM</code>, <code class="inline">ANALYZE</code>, <code class="inline">CHECKPOINT</code> and <code class="inline">COPY … TO PROGRAM</code>. A function with a side effect called from a <code class="inline">SELECT</code> is not stopped. It's an accident guardrail; for strict enforcement, use a database role without write privileges.</p>
+      <p>On SQLite, read-only opens the file read-only, sets <code class="inline">PRAGMA query_only</code> before every statement, and refuses a statement SQLite says would write.</p>
+      <p>Turn on read-only for a PostgreSQL connection and TupleNest issues a PostgreSQL read-only session characteristic — the <em>server</em> refuses writes, not just the UI. TupleNest also sends only statements that read, because the server's read-only mode would still run <code class="inline">VACUUM</code>, <code class="inline">ANALYZE</code>, <code class="inline">CHECKPOINT</code> and <code class="inline">COPY … TO PROGRAM</code>. A function with a side effect called from a <code class="inline">SELECT</code> is not stopped. It's an accident guardrail; for strict enforcement, use a database role without write privileges.</p>
 
       <h2 id="dangerous">Dangerous statements</h2>
-      <p>Statements like <code class="inline">DELETE</code>/<code class="inline">UPDATE</code> without a WHERE, or <code class="inline">DROP</code>/<code class="inline">TRUNCATE</code>, trigger a confirmation. The check masks comments and strings first, so a commented-out WHERE can't disarm it.</p>
+      <p>On connections tagged prod or staging, statements like <code class="inline">DELETE</code>/<code class="inline">UPDATE</code> without a WHERE, or <code class="inline">DROP</code>/<code class="inline">TRUNCATE</code>, trigger a confirmation. The check masks comments and strings first, so a commented-out WHERE can't disarm it.</p>
 
       <h2 id="privacy">Security &amp; privacy</h2>
-      <p>No telemetry, no account, no cloud. The only network destinations are your PostgreSQL host, your SSH host (if configured), and the GitHub update endpoint. The full model is on the <a href="security.html">Security page</a>.</p>
+      <p>No telemetry, no account, no cloud. The only network destinations are your PostgreSQL host, your SSH host (if configured), the GitHub update endpoint, and the assistant's model if you set one up and ask it something. The full model is on the <a href="security.html">Security page</a>.</p>
 
       <h2 id="settings">Settings</h2>
-      <p>Settings holds the theme and the telemetry switch, and shows two fixed limits: explorer-generated SELECTs use <code class="inline">LIMIT 100</code>, and history keeps the newest 1,000 statements (favourites are never dropped). The production audit log keeps the newest 5,000. Neither limit is configurable yet, and the update check at startup cannot be turned off.</p>
+      <p>Settings has a section list: <b>General</b> (appearance, results, privacy and updates), <b>Assistant</b>, <b>MCP server</b>, <b>Shortcuts</b> and <b>About</b>. General holds the theme and the telemetry switch, and shows two fixed limits: explorer-generated SELECTs use <code class="inline">LIMIT 100</code>, and history keeps the newest 1,000 statements (favourites are never dropped). The production audit log keeps the newest 5,000. Neither limit is configurable yet, and the update check at startup cannot be turned off.</p>
 
       <h2 id="troubleshooting">Troubleshooting</h2>
       <ul>
@@ -209,7 +230,7 @@
 <footer class="site">
   <div class="wrap">
     <div class="cols">
-      <div class="fbrand"><img src="logo.png" alt=""><p>The PostgreSQL IDE that asks before it writes. Local-first, open-source, MIT.</p></div>
+      <div class="fbrand"><img src="logo.png" alt=""><p>The PostgreSQL and SQLite IDE that asks before it writes. Local-first, open-source, MIT.</p></div>
       <div><h5>Product</h5><a href="features.html">Features</a><a href="security.html">Security</a><a href="download.html">Download</a><a href="roadmap.html">Roadmap</a><a href="changelog.html">Changelog</a></div>
       <div><h5>Resources</h5><a href="docs.html">Documentation</a><a href="docs.html#getting-started">Getting Started</a><a href="docs.html#shortcuts">Keyboard Shortcuts</a><a href="docs.html#troubleshooting">Troubleshooting</a><a href="blog.html">Blog</a></div>
       <div><h5>Community</h5><a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a><a href="https://github.com/talaatmagdyx/TupleNest/discussions">Discussions</a><a href="https://github.com/talaatmagdyx/TupleNest/issues">Issues</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a></div>

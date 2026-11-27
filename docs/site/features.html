@@ -33,9 +33,9 @@
 <section class="hero sm">
   <div class="glow g1"></div>
   <div class="wrap">
-    <span class="tagpill"><span class="dot"></span> A focused PostgreSQL environment</span>
+    <span class="tagpill"><span class="dot"></span> PostgreSQL and SQLite</span>
     <h1>Everything you need.<br><em>Nothing you don't.</em></h1>
-    <p class="sub">A focused PostgreSQL environment for writing queries, exploring schemas, understanding performance, and working safely with real databases.</p>
+    <p class="sub">A focused environment for PostgreSQL and SQLite: writing queries, exploring schemas, understanding performance, and working safely with real databases.</p>
     <div class="shot reveal" style="max-width:1000px">
       <div class="bar"><i class="r"></i><i class="y"></i><i class="g"></i><span>TupleNest — the full IDE</span></div>
       <img src="shots/hero.png" alt="The full TupleNest IDE.">
@@ -47,7 +47,8 @@
   <div class="wrap" style="display:flex;gap:8px;flex-wrap:wrap">
     <a href="#editor">SQL Editor</a><a href="#results">Results</a><a href="#performance">Performance</a>
     <a href="#migrations">Migrations</a><a href="#schema">Schema</a><a href="#er">ER Diagrams</a><a href="#safety">Safety</a>
-    <a href="#connections">Connections</a><a href="#paste">Paste a plan</a><a href="#io">Import &amp; Export</a><a href="#productivity">Productivity</a><a href="#native">Native</a>
+    <a href="#connections">Connections</a><a href="#engines">Engines</a><a href="#assistant">Assistant</a><a href="#mcp">MCP</a><a href="#pages">Pages</a>
+    <a href="#paste">Paste a plan</a><a href="#io">Import &amp; Export</a><a href="#productivity">Productivity</a><a href="#native">Native</a>
   </div>
 </div>
 
@@ -117,10 +118,10 @@
         <li><b>Node-by-node plan comparison</b> — which node got slower, not just the query</li>
         <li>Schema diff, and generated migration DDL</li>
       </ul></div>
-      <div class="card"><span class="pill plan">Planned</span><ul style="margin-top:12px">
-        <li>Join/sort inspection panel</li>
-        <li>A dedicated standalone query profiler</li>
-        <li>Plan history across runs of the same query</li>
+      <div class="card"><span class="pill">On PostgreSQL</span><ul style="margin-top:12px">
+        <li>The plan view, <code class="inline">ANALYZE</code> and plan comparison read PostgreSQL's JSON plans</li>
+        <li>On SQLite, EXPLAIN shows <code class="inline">EXPLAIN QUERY PLAN</code> as rows in the grid: there are no costs to compare</li>
+        <li>What comes next is on the <a href="roadmap.html">roadmap</a></li>
       </ul></div>
     </div>
     <div class="grid2" style="margin-top:20px">
@@ -246,7 +247,7 @@
         <ul>
           <li>Table cards laid out with foreign-key links drawn between them</li>
           <li>Every relationship also listed in full underneath, so nothing depends on reading the picture</li>
-          <li><span class="pill plan">Planned</span> Pan, zoom, focusing a table and expanding its neighbours — the diagram is currently a static view</li>
+          <li>The diagram is a static view; panning and zooming are <a href="roadmap.html">planned</a></li>
         </ul>
       </div>
     </div>
@@ -282,6 +283,85 @@
       <div class="card"><h4>Profiles</h4><ul><li>Saved profiles</li><li>Dev / test / staging / production classification</li><li>Passwords never stored in the profile itself</li></ul></div>
       <div class="card"><h4>Transport</h4><ul><li>Four TLS modes</li><li>Custom CA certificate</li><li>SSH tunnels with host-key verification</li></ul></div>
       <div class="card"><h4>Credentials</h4><ul><li>Keychain-backed passwords</li><li>Staged connection test: DNS → TCP → SSH → auth, stopping at the first failure</li><li>Each test stage bounded by its own timeout</li></ul></div>
+    </div>
+  </div>
+</section>
+
+<!-- ENGINES -->
+<section id="engines">
+  <div class="wrap">
+    <div class="kicker">Engines</div>
+    <h2>PostgreSQL and SQLite. No others.</h2>
+    <p class="lede">A new connection starts by picking one of the two. No other engine is planned. Both get the same safety model: environment tags, read-only profiles, the destructive-statement guard, the production audit log, and MCP access that is off until you turn it on.</p>
+    <div class="grid2">
+      <div class="card"><h4>PostgreSQL 13+</h4><ul>
+        <li>Everything on this page</li>
+        <li>TLS that fails closed, SSH tunnels with host-key verification</li>
+        <li>Contract tests against PostgreSQL 13, 15 and 17</li>
+      </ul></div>
+      <div class="card"><h4>SQLite 3</h4><ul>
+        <li>A file on this machine — type the path or choose it; optionally create it on connect</li>
+        <li>Read-only enforced by SQLite: a read-only open, <code class="inline">PRAGMA query_only</code> before every statement, and writing statements refused, so <code class="inline">ATTACH</code> or <code class="inline">VACUUM INTO</code> cannot get around it</li>
+        <li>Explorer, search, ER diagram, row editing (by primary key or rowid), dashboards and notebooks</li>
+        <li>Not for SQLite, and hidden or disabled with the reason: server monitor, health, partitions, schema and plan compare, the plan view, CSV import, backup, roles, TLS and SSH</li>
+      </ul></div>
+    </div>
+  </div>
+</section>
+
+<!-- ASSISTANT -->
+<section id="assistant">
+  <div class="wrap">
+    <div class="kicker">The assistant</div>
+    <h2>Ask about the query, not about your data.</h2>
+    <p class="lede">Ask about the query and schema, explain a slow query, fix a failed one (shown as a diff), or write SQL from a plain-English request. Open it from the title bar or with <code class="inline">⌘J</code>.</p>
+    <div class="grid2">
+      <div class="card"><h4>Your provider, your key</h4><ul>
+        <li><b>Claude</b> with your own Anthropic API key, kept in the OS keychain like a database password</li>
+        <li><b>A local model</b> through Ollama, <code class="inline">localhost:11434</code> by default; another computer only if you allow it</li>
+        <li>Off until you add a provider in Settings › Assistant</li>
+      </ul></div>
+      <div class="card"><h4>Exactly what is sent</h4><ul>
+        <li>Your message and the recent turns of that conversation</li>
+        <li>The editor's SQL, for Ask, Explain and Fix</li>
+        <li>For Fix, the error with the server's <code class="inline">DETAIL</code> and <code class="inline">CONTEXT</code> lines removed — they can quote row values</li>
+        <li>Schema, table and column names and types of the connected database, capped</li>
+        <li><b>Never:</b> row data, history, the connection's host, user or password, other connections</li>
+      </ul></div>
+    </div>
+    <div class="callout ok" style="margin-top:20px"><b>Nothing it writes runs by itself.</b> A suggestion goes into the editor only when you press Insert or Apply the fix, and runs only when you press Run — through the same read-only check, guard and audit log as anything you type.</div>
+  </div>
+</section>
+
+<!-- MCP -->
+<section id="mcp">
+  <div class="wrap">
+    <div class="kicker">MCP server</div>
+    <h2>Let AI tools query — on your terms.</h2>
+    <p class="lede"><code class="inline">tuplenest-desktop mcp</code> serves the Model Context Protocol on stdin/stdout, with no window, so Claude Desktop, Claude Code or Cursor can query your saved connections through TupleNest's rules. Settings › MCP server shows the config to copy.</p>
+    <table style="margin-top:8px">
+      <tr><th>Access</th><th>What an AI tool can do</th></tr>
+      <tr><td>Off (default)</td><td class="how">Nothing. The connection is not listed, and naming it gets the same answer as a name that does not exist</td></tr>
+      <tr><td>Read only</td><td class="how">The server-enforced read-only session a read-only profile gets, plus the allowlist of statements that only read</td></tr>
+      <tr><td>Read and write</td><td class="how">Writes run, but anything the guard would ask about is refused, since no one can confirm it. Not available on prod, staging or read-only connections</td></tr>
+    </table>
+    <div class="callout info" style="margin-top:20px">One statement per call, at most 500 rows or 1 MB back. On prod and staging every statement is written to the audit log before it runs, and refused if that write fails; history and audit record the sender as <code class="inline">MCP · &lt;client&gt;</code>. <b>Rows a tool reads go to that tool</b>, and wherever it sends them — that is what MCP is for, and why every connection starts off.</div>
+  </div>
+</section>
+
+<!-- PAGES -->
+<section id="pages">
+  <div class="wrap">
+    <div class="kicker">Pages</div>
+    <h2>Beyond the editor, one header away.</h2>
+    <p class="lede">Each page takes the editor's place, which stays open behind it. Every page has the same header and a way back; <code class="inline">Esc</code> returns to the editor from any of them.</p>
+    <div class="grid3">
+      <div class="card"><h4>History &amp; Saved queries</h4><ul><li>Search and filters: this connection, writes, failed, today</li><li>Who sent each statement, including MCP clients</li><li>Saved queries as cards, with tags</li></ul></div>
+      <div class="card"><h4>Dashboards</h4><ul><li>Saved queries as bar, line or single-number charts</li><li>Re-run on open, or every 1, 5 or 15 minutes</li><li>Only a query that reads can be pinned; 1,000 rows per run</li></ul></div>
+      <div class="card"><h4>Notebooks</h4><ul><li>Text, SQL and chart cells in one document</li><li>A SQL cell runs only on its own Run, through the guard and audit log</li><li>Each SQL cell keeps its last 200 rows, on disk; export to Markdown</li></ul></div>
+      <div class="card"><h4>Backup &amp; restore</h4><ul><li>Your own <code class="inline">pg_dump</code> (custom format) and <code class="inline">pg_restore</code>, no shell</li><li>The password never on the command line</li><li>Typing the database name to restore into prod or staging; never into a read-only profile</li></ul></div>
+      <div class="card"><h4>Users &amp; roles</h4><ul><li>Each role's table privileges, membership included</li><li>A warning when a role that looks read-only can write</li><li>Changes nothing: the <code class="inline">REVOKE</code> or <code class="inline">GRANT</code> is text to copy</li></ul></div>
+      <div class="card"><h4>Settings &amp; onboarding</h4><ul><li>General, Assistant, MCP server, Shortcuts, About</li><li>What's new once after an update</li><li>A three-step tour on a first launch</li></ul></div>
     </div>
   </div>
 </section>
@@ -348,7 +428,8 @@
       <div class="key"><span class="kbd">⌘C</span><span class="kl">Copy the selected cell</span></div>
       <div class="key"><span class="kbd">⌘O</span><span class="kl">Open connection</span></div>
       <div class="key"><span class="kbd">⌘B</span><span class="kl">Toggle explorer</span></div>
-      <div class="key"><span class="kbd">Esc</span><span class="kl">Close overlay, then cancel query</span></div>
+      <div class="key"><span class="kbd">⌘J</span><span class="kl">Show or hide the assistant</span></div>
+      <div class="key"><span class="kbd">Esc</span><span class="kl">Close the overlay or page, else cancel the query</span></div>
       <div class="key"><span class="kbd">⇧⌘L</span><span class="kl">Switch theme</span></div>
       <div class="key"><span class="kbd">?</span><span class="kl">Shortcut cheatsheet</span></div>
     </div>
@@ -362,7 +443,7 @@
     <div class="kicker">Native performance</div>
     <h2>A Rust core in a Tauri shell</h2>
     <div class="grid4">
-      <div class="card"><h4>Rust backend</h4><p>Speaks the PostgreSQL wire protocol directly.</p></div>
+      <div class="card"><h4>Rust backend</h4><p>Speaks the PostgreSQL wire protocol directly, and reads SQLite files in-process.</p></div>
       <div class="card"><h4>Streaming architecture</h4><p>Rows flow through a bounded store, not one giant buffer.</p></div>
       <div class="card"><h4>Bounded memory</h4><p>Row, byte, and per-cell limits keep RAM in check.</p></div>
       <div class="card"><h4>Fast startup</h4><p>A native shell, not a bundled browser runtime.</p></div>
@@ -375,7 +456,7 @@
 <section>
   <div class="wrap">
     <div class="ctabanner">
-      <h2>See how TupleNest fits your PostgreSQL workflow.</h2>
+      <h2>See how TupleNest fits your workflow.</h2>
       <div class="cta" style="justify-content:center;margin-top:22px">
         <a class="btn primary" data-download href="https://github.com/talaatmagdyx/TupleNest/releases/latest">Download TupleNest</a>
         <a class="btn ghost" href="docs.html">Read the docs</a>
@@ -388,7 +469,7 @@
 <footer class="site">
   <div class="wrap">
     <div class="cols">
-      <div class="fbrand"><img src="logo.png" alt=""><p>The PostgreSQL IDE that asks before it writes. Local-first, open-source, MIT.</p></div>
+      <div class="fbrand"><img src="logo.png" alt=""><p>The PostgreSQL and SQLite IDE that asks before it writes. Local-first, open-source, MIT.</p></div>
       <div><h5>Product</h5><a href="features.html">Features</a><a href="security.html">Security</a><a href="download.html">Download</a><a href="roadmap.html">Roadmap</a><a href="changelog.html">Changelog</a></div>
       <div><h5>Resources</h5><a href="docs.html">Documentation</a><a href="docs.html#getting-started">Getting Started</a><a href="docs.html#shortcuts">Keyboard Shortcuts</a><a href="docs.html#troubleshooting">Troubleshooting</a><a href="blog.html">Blog</a></div>
       <div><h5>Community</h5><a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a><a href="https://github.com/talaatmagdyx/TupleNest/discussions">Discussions</a><a href="https://github.com/talaatmagdyx/TupleNest/issues">Issues</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a></div>
