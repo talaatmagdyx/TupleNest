@@ -21,6 +21,9 @@ export type ConnectedTo = {
   host: string;
   port: number;
   tlsMode: string;
+  /** The session refuses writes: what the backend settled on, which can be
+   *  stricter than the profile asked for. */
+  readOnly: boolean;
 };
 
 export type Connection = {
@@ -106,7 +109,9 @@ export function useConnection(): Connection {
         // be more protective than the one asked for: two saved profiles for
         // one database, one tagged prod. The window follows the backend, so
         // the banner and the statement guard match the audit log.
-        const settled = await invoke<{ environment?: string | null; generation?: number } | null | undefined>(
+        const settled = await invoke<
+          { environment?: string | null; readOnly?: boolean; generation?: number } | null | undefined
+        >(
           "pg_connect",
           { params },
         );
@@ -121,6 +126,7 @@ export function useConnection(): Connection {
           host: params.host,
           port: params.port,
           tlsMode: params.tlsMode,
+          readOnly: settled?.readOnly ?? !!params.readOnly,
         });
         setStatus("Connected");
         void loadServerVersion();

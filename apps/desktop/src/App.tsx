@@ -1763,6 +1763,7 @@ export default function App() {
         activeUserHost={liveTarget}
         activeEnv={connected ? (connectedEnv ?? "dev") : environment}
         activeEngine={liveEngine}
+        readOnly={connected && !!connectedTo?.readOnly}
         saved={saved}
         activeId={liveId}
         connMenu={connMenu}

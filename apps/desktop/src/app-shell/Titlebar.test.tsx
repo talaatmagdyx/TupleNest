@@ -36,6 +36,23 @@ const base = {
   onOpenSettings: vi.fn(),
 };
 
+describe("Titlebar — read-only", () => {
+  it("says Read-only in words for a read-only session", () => {
+    render(<Titlebar {...base} readOnly />);
+    const chip = screen.getByText("Read-only");
+    expect(chip).toHaveClass("ro-pill");
+    expect(chip).toHaveAttribute("title", expect.stringMatching(/writes? are refused/));
+  });
+
+  it("shows no chip for a writable session, or when disconnected", () => {
+    const { unmount } = render(<Titlebar {...base} />);
+    expect(screen.queryByText("Read-only")).not.toBeInTheDocument();
+    unmount();
+    render(<Titlebar {...base} connected={false} readOnly />);
+    expect(screen.queryByText("Read-only")).not.toBeInTheDocument();
+  });
+});
+
 describe("Titlebar", () => {
   it("shows the brand", () => {
     render(<Titlebar {...base} />);

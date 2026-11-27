@@ -247,6 +247,12 @@ a { color: var(--tn-accent); text-decoration: none; }
      width and the name gives way instead. */
   flex: none;
 }
+/* The live session refuses writes. Said in words; the green only repeats it. */
+.ro-pill {
+  font-size: 9px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 999px; flex: none;
+  color: var(--tn-success); background: var(--tn-success-tint);
+}
 .conn-menu {
   position: absolute; top: 34px; left: 0; z-index: 60; width: 300px;
   background: var(--tn-s1); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);

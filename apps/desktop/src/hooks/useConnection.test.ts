@@ -53,7 +53,15 @@ describe("useConnection — where the live session goes", () => {
       host: PARAMS.host,
       port: PARAMS.port,
       tlsMode: PARAMS.tlsMode,
+      readOnly: false,
     });
+  });
+
+  it("takes the read-only flag the backend settled on, which can be stricter than asked", async () => {
+    invokeMock.mockImplementation(async (cmd: string) => (cmd === "pg_connect" ? { readOnly: true, generation: 1 } : undefined));
+    const { result } = renderHook(() => useConnection());
+    await act(async () => void (await result.current.connect({ ...PARAMS, readOnly: false }, "dev", "c1")));
+    expect(result.current.connectedTo?.readOnly).toBe(true);
   });
 
   it("records a SQLite session as its engine and file, and reads its version", async () => {
