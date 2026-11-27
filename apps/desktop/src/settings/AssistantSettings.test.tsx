@@ -161,6 +161,27 @@ describe("Settings › Assistant — Ollama", () => {
     expect(screen.getByRole("checkbox", { name: /Allow Ollama cloud models/ })).toBeChecked();
   });
 
+  it("lists the models as soon as Ollama is switched on, without Test", async () => {
+    be.on("assistant_ollama_test", () => [local("llama3.2:latest")]);
+    const { user } = await mount();
+    expect(be.sent("assistant_ollama_test")).toHaveLength(0);
+    expect(screen.getByRole("combobox", { name: "Default model" })).toHaveTextContent("Set up a provider first");
+    await user.click(screen.getByRole("switch", { name: "Use Ollama" }));
+    expect(await screen.findByText("Ollama is running: 1 model found.")).toBeInTheDocument();
+    expect(be.sent("assistant_ollama_test")).toEqual([{ url: OLLAMA_DEFAULT_URL, allowRemote: false }]);
+    const picker = screen.getByRole("combobox", { name: "Default model" });
+    expect(picker.querySelector('option[value="ollama:llama3.2:latest"]')).not.toBeNull();
+  });
+
+  it("lists them on opening the section when Ollama is already on, and says inline when it is not running", async () => {
+    current = { ...BASE, ollamaEnabled: true };
+    be.on("assistant_ollama_test", () => {
+      throw new Error("Ollama is not running at http://localhost:11434. Start the Ollama app, or run `ollama serve`.");
+    });
+    await mount();
+    expect(await screen.findByRole("status")).toHaveTextContent(/Ollama is not running/);
+  });
+
   it("says when Ollama has no models, or is not running", async () => {
     be.on("assistant_ollama_test", () => []);
     const { user } = await mount();

@@ -18,6 +18,14 @@ type Note = { ok: boolean; text: string } | null;
 
 export const OLLAMA_DEFAULT_URL = "http://localhost:11434";
 
+/** What a model listing says, cloud models counted apart. */
+function modelsNote(models: OllamaModel[]): Note {
+  if (!models.length) return { ok: false, text: "Ollama is running but has no models. Pull one with `ollama pull llama3.2`." };
+  const cloud = models.filter((m) => m.cloud).length;
+  const cloudText = cloud ? ` (${cloud} of them run${cloud === 1 ? "s" : ""} on ollama.com, not this computer)` : "";
+  return { ok: true, text: `Ollama is running: ${models.length} model${models.length === 1 ? "" : "s"} found${cloudText}.` };
+}
+
 /**
  * Settings › Assistant. The key goes straight to the Rust side and into the
  * OS keychain; this component never holds it after Save, and is never told
@@ -44,6 +52,27 @@ export default function AssistantSettings(p: { onChanged?: () => void; focus?: b
       })
       .catch((e) => setLoadError(errorText(e)));
   }, []);
+
+  // With Ollama on, list its models without waiting for Test — when it is
+  // switched on, and on opening the section with it already on — so the
+  // default-model picker is not stuck on "Set up a provider first".
+  const enabled = s?.ollamaEnabled ?? false;
+  const savedUrl = s?.ollamaUrl ?? "";
+  const allowRemote = s?.ollamaAllowRemote ?? false;
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true;
+    testOllama(savedUrl, allowRemote)
+      .then((models) => {
+        if (!live) return;
+        setOllamaModels(models);
+        setOllamaNote(modelsNote(models));
+      })
+      .catch((e) => live && setOllamaNote({ ok: false, text: errorText(e) }));
+    return () => {
+      live = false;
+    };
+  }, [enabled, savedUrl, allowRemote]);
 
   useEffect(() => {
     if (p.focus && ref.current && typeof ref.current.scrollIntoView === "function") {
@@ -137,13 +166,7 @@ export default function AssistantSettings(p: { onChanged?: () => void; focus?: b
     try {
       const models = await testOllama(url, s.ollamaAllowRemote);
       setOllamaModels(models);
-      const cloud = models.filter((m) => m.cloud).length;
-      const cloudText = cloud ? ` (${cloud} of them run${cloud === 1 ? "s" : ""} on ollama.com, not this computer)` : "";
-      setOllamaNote(
-        models.length
-          ? { ok: true, text: `Ollama is running: ${models.length} model${models.length === 1 ? "" : "s"} found${cloudText}.` }
-          : { ok: false, text: "Ollama is running but has no models. Pull one with `ollama pull llama3.2`." },
-      );
+      setOllamaNote(modelsNote(models));
     } catch (e) {
       setOllamaNote({ ok: false, text: errorText(e) });
     } finally {
