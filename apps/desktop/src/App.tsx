@@ -2011,6 +2011,7 @@ export default function App() {
         )}
       </div>
       <StatusBar
+        engine={liveEngine}
         connected={connected}
         isProd={isProd}
         connName={liveProfile?.name ?? liveLabel}
