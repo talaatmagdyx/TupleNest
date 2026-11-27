@@ -11,6 +11,7 @@ use tauri::Manager;
 use tuplenest_workspace_store::Store;
 
 mod assistant;
+mod backup;
 mod connections;
 mod dashboards;
 mod export;
@@ -52,7 +53,7 @@ fn app_get_info(app: tauri::AppHandle) -> AppInfo {
 /// send that to api.anthropic.com in the `x-api-key` header. Only the
 /// `assistant_*` commands read or write it.
 fn reserved_setting(key: &str) -> Result<(), String> {
-    if key == assistant::config::SETTINGS_KEY {
+    if key == assistant::config::SETTINGS_KEY || key == backup::TOOLS_SETTING {
         return Err(format!(
             "the `{key}` setting is managed by its own commands"
         ));
@@ -652,6 +653,7 @@ fn main() {
                 }
             });
             app.manage(ExportState::default());
+            app.manage(backup::BackupState::default());
             app.manage(assistant::AssistantState::default());
             Ok(())
         })
@@ -683,6 +685,12 @@ fn main() {
             notebooks::notebook_get,
             notebooks::notebook_save,
             notebooks::notebook_delete,
+            backup::backup_tools,
+            backup::backup_tools_set,
+            backup::backup_list,
+            backup::backup_start,
+            backup::backup_restore,
+            backup::backup_cancel,
             mcp::commands::mcp_info,
             mcp::commands::mcp_access_list,
             mcp::commands::mcp_access_set,
@@ -773,6 +781,9 @@ mod reserved_setting_tests {
     #[test]
     fn the_assistant_row_is_closed_to_the_generic_commands() {
         assert!(super::reserved_setting("assistant").is_err());
+        // A folder the app executes pg_dump from: only `backup_tools_set`
+        // writes it, after checking it holds the tools.
+        assert!(super::reserved_setting(crate::backup::TOOLS_SETTING).is_err());
         assert!(super::reserved_setting("theme").is_ok());
     }
 }

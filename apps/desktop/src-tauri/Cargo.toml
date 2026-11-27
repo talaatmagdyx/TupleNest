@@ -33,7 +33,7 @@ tuplenest-result-stream = { path = "../../../crates/result-stream" }
 tuplenest-ssh-core = { path = "../../../crates/ssh-core" }
 tracing = { workspace = true }
 # io-util/io-std: the MCP server (`tuplenest-desktop mcp`) speaks over stdio.
-tokio = { workspace = true, features = ["io-util", "io-std"] }
+tokio = { workspace = true, features = ["io-util", "io-std", "process"] }
 # The platform data directory, for the MCP server, which has no Tauri app to
 # ask for `app_data_dir`. Already in the tree through Tauri.
 dirs = "7"
@@ -50,12 +50,15 @@ tauri-plugin-opener = "2.5.4"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 futures-util = { version = "0.3", default-features = false }
+# Backup and restore: the private directory (0700) that holds the PGPASSFILE
+# for one pg_dump / pg_restore run, removed when the run ends. Already in the
+# tree as a dev-dependency.
+tempfile = "3"
 
 [dev-dependencies]
 # MemoryStore: the MCP and assistant tests must never touch the real keychain.
 tuplenest-credential-store = { path = "../../../crates/credential-store", features = ["test-support"] }
 # To make the audit write fail on purpose (a trigger on audit_log).
 rusqlite = { workspace = true }
-tempfile = "3"
 # A loopback mock HTTP server for the assistant's provider tests: no real network.
 tokio = { workspace = true, features = ["net", "io-util"] }

@@ -194,6 +194,8 @@ const defaults = (): Record<string, (args: Record<string, unknown>) => unknown> 
   // Stage 6b pages: empty stores.
   dashboard_list: () => [],
   notebook_list: () => [],
+  backup_list: () => [],
+  backup_tools: () => ({ pgDump: "/usr/bin/pg_dump", pgRestore: "/usr/bin/pg_restore", configured: null }),
   pg_metadata: (a) => metadata(a),
   pg_metadata_cached: (a) => metadata((a.request ?? {}) as Record<string, unknown>),
 });

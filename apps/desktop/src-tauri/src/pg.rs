@@ -513,7 +513,7 @@ fn environment_rank(environment: &str) -> u8 {
     }
 }
 
-fn resolve_password(secret_ref: &Option<String>) -> Result<Option<Secret>, String> {
+pub(crate) fn resolve_password(secret_ref: &Option<String>) -> Result<Option<Secret>, String> {
     match secret_ref {
         None => Ok(None),
         Some(key) => KeychainStore::new()

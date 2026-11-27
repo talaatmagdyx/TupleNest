@@ -42,4 +42,11 @@ describe("App — pages", () => {
     expect(await screen.findByRole("region", { name: "Notebooks" })).toBeInTheDocument();
     expect(await screen.findByText("No notebooks yet")).toBeInTheDocument();
   });
+
+  it("opens backup and restore from the palette", async () => {
+    const user = await mount();
+    await palette(user, "Backup and restore");
+    expect(await screen.findByRole("region", { name: "Backup and restore" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Back up…" })).toBeEnabled();
+  });
 });
