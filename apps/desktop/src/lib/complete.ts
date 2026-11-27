@@ -18,6 +18,9 @@ export type Catalog = {
   columns: Record<string, DbColumn[]>;
   /** Schema to assume for unqualified names (usually "public"). */
   searchPath: string[];
+  /** The engine the catalog describes; absent is PostgreSQL. Decides the
+   *  SQL dialect a row edit is written in (see `buildUpdate`). */
+  engine?: "postgres" | "sqlite";
 };
 
 export type CompletionKind = "keyword" | "schema" | "table" | "view" | "column" | "function";

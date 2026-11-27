@@ -59,6 +59,7 @@ import { useConnection } from "./hooks/useConnection";
 import { suggestName, useSnippets } from "./hooks/useSnippets";
 import type { HealthTab } from "./overlays/HealthModal";
 import { analyzeEditability, qualifiedName } from "./lib/dml";
+import { fileName, unsupported, type Engine, type Feature } from "./lib/engine";
 import type { SchemaExtra } from "./overlays/SchemaModal";
 import {
   AuditModal,
@@ -143,7 +144,7 @@ export default function App() {
     host, port, database, username, password, secretRef, tlsMode, tlsCaPath,
     sshEnabled, sshHost, sshPort, sshUser, sshKeyPath, sshFingerprint,
     sshPassphrase, sshPassphraseRef,
-    profileId, profileName, environment,
+    profileId, profileName, environment, engine,
   } = form;
 
   const [saved, setSaved] = useState<ConnectionRecord[]>([]);
@@ -152,6 +153,9 @@ export default function App() {
   // owns that rule.
   const session = useConnection();
   const { connected, connectedEnv, connectedTo, serverVersion, status, setStatus, stages, testing, testSummary } = session;
+  /** The live session's engine: what the explorer, the guard's dialect and
+   *  the PostgreSQL-only panels follow. */
+  const liveEngine: Engine = connected && connectedTo ? connectedTo.engine : engine;
   const [updateInfo, setUpdateInfo] = useState<{ version: string; notes: string } | null>(null);
   // Execution and its result state live in a hook; App keeps the overlays.
   const query = useQuery();
@@ -397,11 +401,11 @@ export default function App() {
     async (request: Record<string, unknown>): Promise<MetadataOut<unknown> | null> => {
       if (connected) return await invoke<MetadataOut<unknown>>("pg_metadata", { request });
       return await invoke<MetadataOut<unknown> | null>("pg_metadata_cached", {
-        params: { host, port, database, username, secretRef: null, tlsMode, tlsCaPath: null },
+        params: { engine, host, port, database, username, secretRef: null, tlsMode, tlsCaPath: null },
         request,
       });
     },
-    [connected, host, port, database, username, tlsMode]
+    [connected, engine, host, port, database, username, tlsMode]
   );
 
   /** The lazy schema tree. Declared after `metaFetch` because it takes it. */
@@ -464,8 +468,8 @@ export default function App() {
     }
     forgetSession(); // connecting replaces whatever session there was
     afterConnect();
-    showToast(`Connected — ${username}@${host}/${database}`);
-  }, [session, withSecret, environment, profileId, forgetSession, afterConnect, showToast, username, host, database]);
+    showToast(`Connected — ${engine === "sqlite" ? fileName(database) : `${username}@${host}/${database}`}`);
+  }, [session, withSecret, environment, profileId, forgetSession, afterConnect, showToast, engine, username, host, database]);
 
   const reallyDisconnect = useCallback(async () => {
     await session.disconnect();
@@ -509,6 +513,7 @@ export default function App() {
       // Cached metadata is keyed by the target, not the credentials.
       invoke<MetadataOut<string[]> | null>("pg_metadata_cached", {
         params: {
+          engine: c.engine,
           host: c.host,
           port: c.port,
           database: c.database,
@@ -544,6 +549,7 @@ export default function App() {
       const ssh = c.sshJson ? (JSON.parse(c.sshJson) as SshParams) : null;
       const out = await session.connect(
         {
+          engine: c.engine,
           host: c.host,
           port: c.port,
           database: c.database,
@@ -582,7 +588,10 @@ export default function App() {
       const rec = await invoke<ConnectionRecord>("connection_save", {
         input: {
           id: profileId,
-          name: profileName || `${username || "user"}@${host}/${database}`,
+          engine,
+          name:
+            profileName ||
+            (engine === "sqlite" ? fileName(database) || "SQLite file" : `${username || "user"}@${host}/${database}`),
           environment,
           color: null,
           readOnly: form.readOnly,
@@ -616,7 +625,7 @@ export default function App() {
       setStatus(`Save error: ${errText(e)}`);
       return null;
     }
-  }, [profileId, profileName, environment, host, port, database, username, password, secretRef, sshPassphrase, sshPassphraseRef, tlsMode, tlsCaPath, form, refreshSaved, setStatus]);
+  }, [profileId, engine, profileName, environment, host, port, database, username, password, secretRef, sshPassphrase, sshPassphraseRef, tlsMode, tlsCaPath, form, refreshSaved, setStatus]);
 
   const saveAndConnect = useCallback(async () => {
     const rec = await doSaveProfile();
@@ -632,6 +641,8 @@ export default function App() {
   }, []);
 
   const newProfile = useCallback(() => {
+    // A new connection starts on PostgreSQL; the picker is at the top.
+    form.chooseEngine("postgres");
     form.set("profileId", null);
     form.set("profileName", "");
     form.set("secretRef", null);
@@ -757,8 +768,8 @@ export default function App() {
     for (const [schema, objs] of Object.entries(objects)) {
       for (const o of objs) tables.push({ schema, name: o.name, kind: o.kind });
     }
-    return { schemas, tables, columns, searchPath };
-  }, [schemas, objects, columns, searchPath]);
+    return { schemas, tables, columns, searchPath, engine: liveEngine };
+  }, [schemas, objects, columns, searchPath, liveEngine]);
 
   /** Load object lists / column lists the editor needs but the explorer
    *  hasn't lazily opened yet. Guarded so each key is fetched once. */
@@ -1143,6 +1154,14 @@ export default function App() {
         return;
       }
       const title = tabs[activeTab]?.name ?? "query";
+      // SQLite has no plan JSON to draw: its plan is EXPLAIN QUERY PLAN's
+      // rows, shown in the grid like any result. Never run, only planned.
+      if (connected && liveEngine === "sqlite") {
+        const sql = (tabs[activeTab]?.sql ?? "").trim().replace(/;\s*$/, "");
+        if (!sql) return;
+        await doRun(false, undefined, `EXPLAIN QUERY PLAN ${sql}`);
+        return;
+      }
       const out = await runExplainRaw({
         sql: tabs[activeTab]?.sql ?? "",
         title,
@@ -1167,7 +1186,7 @@ export default function App() {
         );
       }
     },
-    [tabs, activeTab, connected, connectedEnv, runExplainRaw, catalog, showToast],
+    [tabs, activeTab, connected, connectedEnv, liveEngine, doRun, runExplainRaw, catalog, showToast],
   );
 
   /** Everything the exporters need from the current plan. */
@@ -1497,6 +1516,9 @@ export default function App() {
    * second to draw a list nobody had opened.
    */
   const paletteItems = useMemo<PaletteItem[]>(() => {
+    // A PostgreSQL-only command is not offered on a session of another
+    // engine: it would open a panel that can only fail.
+    const lacks = (f: Feature) => connected && unsupported(liveEngine, f) !== null;
     const items: PaletteItem[] = [
       { icon: "▶", label: "Run query", type: "Action", kbd: kbd("mod", "enter"), exec: () => doRun() },
       { icon: "⧉", label: "Format SQL", type: "Action", kbd: kbd("mod", "shift", "F"), exec: doFormat },
@@ -1508,10 +1530,10 @@ export default function App() {
       { icon: "📋", label: "Analyze a pasted plan…", type: "Action", exec: () => setOverlay("pastePlan") },
       { icon: "＋", label: "New connection…", type: "Action", exec: newProfile },
       { icon: "⌥", label: "Show EXPLAIN plan", type: "Action", exec: () => runExplain() },
-      { icon: "⤓", label: "Import CSV…", type: "Action", exec: () => setOverlay("import") },
+      ...(lacks("csvImport") ? [] : [{ icon: "⤓", label: "Import CSV…", type: "Action", exec: () => setOverlay("import") } as PaletteItem]),
       { icon: "⌕", label: "Find usages & rename…", type: "Action", exec: () => openIntel("usages") },
-      { icon: "⇄", label: "Compare schemas…", type: "Action", exec: () => openIntel("diff") },
-      { icon: "◫", label: "Compare EXPLAIN plans…", type: "Action", exec: () => openIntel("plans") },
+      ...(lacks("schemaCompare") ? [] : [{ icon: "⇄", label: "Compare schemas…", type: "Action", exec: () => openIntel("diff") } as PaletteItem]),
+      ...(lacks("planCompare") ? [] : [{ icon: "◫", label: "Compare EXPLAIN plans…", type: "Action", exec: () => openIntel("plans") } as PaletteItem]),
       { icon: "⚙", label: "Open settings", type: "Action", exec: () => setOverlay("settings") },
       { icon: "◈", label: "About TupleNest", type: "Action", exec: () => setOverlay("about") },
     ];
@@ -1522,10 +1544,10 @@ export default function App() {
       ? []
       : [
           { icon: "⌕", label: "Find anything (all schemas)…", type: "Action", kbd: kbd("mod", "P"), exec: () => setOverlay("search") },
-          { icon: "◱", label: "Index health (unused & recoverable)…", type: "Action", exec: () => loadHealth("indexes") },
-          { icon: "☰", label: "Vacuum & bloat…", type: "Action", exec: () => loadHealth("tables") },
-          { icon: "⏱", label: "Top queries…", type: "Action", exec: () => loadHealth("queries") },
-          { icon: "📊", label: "Server monitor (sessions & locks)", type: "Action", exec: () => setOverlay("monitor") },
+          ...(lacks("health") ? [] : [{ icon: "◱", label: "Index health (unused & recoverable)…", type: "Action", exec: () => loadHealth("indexes") } as PaletteItem]),
+          ...(lacks("health") ? [] : [{ icon: "☰", label: "Vacuum & bloat…", type: "Action", exec: () => loadHealth("tables") } as PaletteItem]),
+          ...(lacks("health") ? [] : [{ icon: "⏱", label: "Top queries…", type: "Action", exec: () => loadHealth("queries") } as PaletteItem]),
+          ...(lacks("monitor") ? [] : [{ icon: "📊", label: "Server monitor (sessions & locks)", type: "Action", exec: () => setOverlay("monitor") } as PaletteItem]),
           { icon: "◫", label: "ER diagram (relationships)", type: "Action", exec: () => setOverlay("diagram") },
           // The log only records statements run against prod.
           ...(connectedEnv === "prod"
@@ -1585,7 +1607,7 @@ export default function App() {
       }));
 
     return [...items, ...live, ...connections, ...catalogItems, ...snippetItems, ...recent];
-  }, [doRun, doFormat, saveSnippet, newTab, applyTheme, theme, newProfile, runExplain, openIntel, connected, connectedEnv, inTx, doDisconnect, doBegin, doCommit, doRollback, saved, selectProfile, objects, insertSelect, describeObject, snippets, historyItems, setActiveSql, showToast, loadHealth]);
+  }, [doRun, doFormat, saveSnippet, newTab, applyTheme, theme, newProfile, runExplain, openIntel, connected, connectedEnv, liveEngine, inTx, doDisconnect, doBegin, doCommit, doRollback, saved, selectProfile, objects, insertSelect, describeObject, snippets, historyItems, setActiveSql, showToast, loadHealth]);
 
   /* ---------------- render ---------------- */
 
@@ -1600,6 +1622,10 @@ export default function App() {
   const livePort = connected && connectedTo ? connectedTo.port : port;
   const liveTls = connected && connectedTo ? connectedTo.tlsMode : tlsMode;
   const liveProfile = saved.find((c) => c.id === liveId) ?? null;
+  // A SQLite session is named by its file; there is no user or host.
+  const liveFile = liveEngine === "sqlite" ? (connected && connectedTo ? connectedTo.database : database) : null;
+  const liveLabel = liveFile !== null ? fileName(liveFile) : `${liveUser || "?"}@${liveHost}`;
+  const liveTarget = liveFile !== null ? liveFile : liveHost ? `${liveUser || "?"}@${liveHost}:${livePort}` : "";
   // HUD design: two-state label — live when connected, cached otherwise.
   const explorerSource: "live" | "cached" | "—" =
     connected && !metaCached ? "live" : schemas !== null || metaCached ? "cached" : "—";
@@ -1657,9 +1683,10 @@ export default function App() {
       <Titlebar
         theme={theme}
         connected={connected}
-        activeName={liveProfile?.name ?? (connected ? `${liveUser || "?"}@${liveHost}` : profileName || "No connection")}
-        activeUserHost={liveHost ? `${liveUser || "?"}@${liveHost}:${livePort}` : ""}
+        activeName={liveProfile?.name ?? (connected ? liveLabel : profileName || "No connection")}
+        activeUserHost={liveTarget}
         activeEnv={connected ? (connectedEnv ?? "dev") : environment}
+        activeEngine={liveEngine}
         saved={saved}
         activeId={liveId}
         connMenu={connMenu}
@@ -1690,6 +1717,7 @@ export default function App() {
           connected={connected}
           onView={handleRailView}
           onMonitor={() => setOverlay("monitor")}
+          monitorUnavailable={connected ? unsupported(liveEngine, "monitor") : null}
           onPastePlan={() => setOverlay("pastePlan")}
           onDiagram={() => setOverlay("diagram")}
           onSettings={() => setOverlay("settings")}
@@ -1893,7 +1921,7 @@ export default function App() {
       <StatusBar
         connected={connected}
         isProd={isProd}
-        connName={liveProfile?.name ?? `${liveUser || "?"}@${liveHost}`}
+        connName={liveProfile?.name ?? liveLabel}
         tlsMode={liveTls}
         explorerSource={explorerSource}
         rowsInfo={result && result.columns.length > 0 ? rowsInfo : ""}
@@ -1954,6 +1982,20 @@ export default function App() {
       )}
       {overlay === "connEditor" && (
         <ConnectionForm
+          engine={engine}
+          onEngine={form.chooseEngine}
+          createFile={form.createFile}
+          onCreateFile={(v) => form.set("createFile", v)}
+          onChooseFile={async () => {
+            try {
+              // The native panel runs in the backend; only the chosen path
+              // comes back. A new file is picked with the save panel.
+              const path = await invoke<string | null>("sqlite_choose_file", { create: form.createFile });
+              if (path) form.set("database", path);
+            } catch (e) {
+              setStatus(`Could not open the file chooser: ${errText(e)}`);
+            }
+          }}
           isEdit={profileId !== null}
           profileName={profileName}
           environment={environment}

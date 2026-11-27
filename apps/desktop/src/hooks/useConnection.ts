@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { errText } from "../lib/text";
 import { invoke } from "@tauri-apps/api/core";
 import type { MetadataOut, PgParams, TestReport, TestStage } from "../ipc/types";
+import { engineOf, type Engine } from "../lib/engine";
 
 /** Gap between revealed test stages. Progressive reveal is the HUD design:
  *  the probe is staged, so the report reads as it happens rather than
@@ -13,6 +14,9 @@ export type ConnectOutcome = { ok: true } | { ok: false; message: string };
 /** Where the live session goes: taken from what was sent to `pg_connect`. */
 export type ConnectedTo = {
   profileId: string | null;
+  engine: Engine;
+  /** The database name, or for SQLite the file's path. */
+  database: string;
   username: string;
   host: string;
   port: number;
@@ -85,7 +89,7 @@ export function useConnection(): Connection {
       const r = await invoke<MetadataOut<{ version: string }>>("pg_metadata", {
         request: { kind: "server_info" },
       });
-      const m = /PostgreSQL ([\d.]+)/.exec(r.payload.version ?? "");
+      const m = /(?:PostgreSQL|SQLite) ([\d.]+)/.exec(r.payload.version ?? "");
       setServerVersion(m ? m[1] : null);
     } catch {
       // Only the version chip depends on this. A session that works but can't
@@ -111,6 +115,8 @@ export function useConnection(): Connection {
         setConnectedEnv(settled?.environment ?? environment);
         setConnectedTo({
           profileId,
+          engine: engineOf(params.engine),
+          database: params.database,
           username: params.username,
           host: params.host,
           port: params.port,

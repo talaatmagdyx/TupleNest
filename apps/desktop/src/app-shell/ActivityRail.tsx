@@ -16,6 +16,8 @@ type Props = {
   connected: boolean;
   onView: (v: RailView) => void;
   onMonitor: () => void;
+  /** Why the live session's engine has no server monitor, or null. */
+  monitorUnavailable?: string | null;
   onDiagram: () => void;
   onPastePlan: () => void;
   onSettings: () => void;
@@ -71,7 +73,11 @@ export default function ActivityRail(p: Props) {
         >
           <HistoryRailIcon />
         </Item>
-        <Item title="Server monitor" disabled={!p.connected} onClick={p.onMonitor}>
+        <Item
+          title={p.monitorUnavailable ? `Server monitor — ${p.monitorUnavailable}` : "Server monitor"}
+          disabled={!p.connected || !!p.monitorUnavailable}
+          onClick={p.onMonitor}
+        >
           <MonitorRailIcon />
         </Item>
         <Item title="ER diagram" disabled={!p.connected} onClick={p.onDiagram}>

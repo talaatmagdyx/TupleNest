@@ -553,7 +553,8 @@ export default function ExplorerTree(p: Props) {
                 UNUSED
               </span>
             )}
-            <span className="ct">{fmtBytes(ix.bytes)}</span>
+            {/* SQLite keeps no index sizes: nothing rather than "0 B". */}
+            {ix.bytes != null && <span className="ct">{fmtBytes(ix.bytes)}</span>}
           </div>
         );
       }

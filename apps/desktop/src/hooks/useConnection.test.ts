@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import type { PgParams, TestReport, TestStage } from "../ipc/types";
 import { STAGE_REVEAL_MS, useConnection } from "./useConnection";
@@ -47,11 +47,25 @@ describe("useConnection — where the live session goes", () => {
     await act(async () => void (await result.current.connect(PARAMS, "dev", "c1")));
     expect(result.current.connectedTo).toEqual({
       profileId: "c1",
+      engine: "postgres",
+      database: PARAMS.database,
       username: PARAMS.username,
       host: PARAMS.host,
       port: PARAMS.port,
       tlsMode: PARAMS.tlsMode,
     });
+  });
+
+  it("records a SQLite session as its engine and file, and reads its version", async () => {
+    invokeMock.mockImplementation(async (cmd: string) =>
+      cmd === "pg_metadata" ? { payload: { version: "SQLite 3.54.1" }, cached: false, fetchedAt: null } : { generation: 1 },
+    );
+    const { result } = renderHook(() => useConnection());
+    const sqlite = { ...PARAMS, engine: "sqlite", host: "", port: 0, username: "", database: "/data/app.db" };
+    await act(async () => void (await result.current.connect(sqlite, "dev", "s1")));
+    expect(result.current.connectedTo?.engine).toBe("sqlite");
+    expect(result.current.connectedTo?.database).toBe("/data/app.db");
+    await waitFor(() => expect(result.current.serverVersion).toBe("3.54.1"));
   });
 
   it("has no profile for a connection made straight from the form", async () => {
