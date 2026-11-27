@@ -6466,6 +6466,7 @@ dependencies = [
  "tuplenest-credential-store",
  "tuplenest-driver-api",
  "tuplenest-driver-postgres",
+ "tuplenest-driver-sqlite",
  "tuplenest-metadata-cache",
  "tuplenest-result-stream",
  "tuplenest-ssh-core",
@@ -6503,6 +6504,18 @@ dependencies = [
  "tokio-postgres-rustls",
  "tuplenest-driver-api",
  "uuid",
+]
+
+[[package]]
+name = "tuplenest-driver-sqlite"
+version = "0.1.1"
+dependencies = [
+ "async-trait",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tuplenest-driver-api",
 ]
 
 [[package]]
