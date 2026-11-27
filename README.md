@@ -1,260 +1,229 @@
 <div align="center">
 
-<img src="docs/site/logo.png" width="110" alt="TupleNest logo" />
+<img src="docs/brand/tuplenest-logo.png" width="420" alt="TupleNest" />
 
-# TupleNest
+**A careful desktop IDE for PostgreSQL and SQLite — it asks before it writes.**
 
-### The PostgreSQL and SQLite IDE that **asks before it writes.**
+[![Release](https://img.shields.io/github/v/release/talaatmagdyx/TupleNest?include_prereleases&label=release&color=1A6DFF)](https://github.com/talaatmagdyx/TupleNest/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/talaatmagdyx/TupleNest/ci.yml?branch=main&label=CI)](https://github.com/talaatmagdyx/TupleNest/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/talaatmagdyx/TupleNest?color=1A6DFF)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-0B1F5C)](#install)
 
-*Fast. Local. Safe by architecture. Simple on purpose.*
-
-<br/>
-
-[![Release](https://img.shields.io/github/v/release/talaatmagdyx/TupleNest?include_prereleases&label=release&color=e8590c)](https://github.com/talaatmagdyx/TupleNest/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/talaatmagdyx/TupleNest/total?color=e8590c)](https://github.com/talaatmagdyx/TupleNest/releases)
-[![CI](https://github.com/talaatmagdyx/TupleNest/actions/workflows/ci.yml/badge.svg)](https://github.com/talaatmagdyx/TupleNest/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/talaatmagdyx/TupleNest/actions/workflows/codeql.yml/badge.svg)](https://github.com/talaatmagdyx/TupleNest/actions/workflows/codeql.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-
-![Rust](https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white)
-![Tauri 2](https://img.shields.io/badge/Tauri_2-24C8DB?logo=tauri&logoColor=black)
-![React](https://img.shields.io/badge/React-087EA4?logo=react&logoColor=white)
-![PostgreSQL 13+](https://img.shields.io/badge/PostgreSQL-13%2B-4169E1?logo=postgresql&logoColor=white)
-![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)
-![Windows](https://img.shields.io/badge/Windows-0078D4)
-![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)
+[Website](https://talaatmagdyx.github.io/TupleNest/) ·
+[Download](https://github.com/talaatmagdyx/TupleNest/releases) ·
+[Features](#features) ·
+[Safety](#the-safety-model) ·
+[Assistant](#the-assistant) ·
+[MCP](#mcp-server) ·
+[Install](#install) ·
+[Build](#build-from-source) ·
+[FAQ](#faq)
 
 <br/>
 
-**[⬇️ Download](https://github.com/talaatmagdyx/TupleNest/releases/latest)** ·
-[🌐 Website](https://talaatmagdyx.github.io/TupleNest/) ·
-[🚀 Quick start](#-sixty-seconds-to-your-first-query) ·
-[🛡 Safety model](#-the-safety-model) ·
-[⌨️ Keyboard](#%EF%B8%8F-the-keyboard) ·
-[🧭 Honest limits](#-what-tuplenest-is-not-yet)
-
-<br/>
-
-<img src="docs/site/shots/hero.png" width="920" alt="TupleNest — query editor with a formatted SQL join and a streaming results grid, connected over verify-full TLS" />
+<img src="docs/site/shots/hero.gif" width="880" alt="TupleNest in use: the welcome screen, schema-aware autocomplete in the editor, running a query, the results grid with value bars, and a chart of the same result" />
 
 </div>
 
 <br/>
 
-> It's 5 p.m. on a Friday. You type `DELETE FROM orders`, forget the `WHERE`,
-> and your cursor is hovering over **Run** — on **production**.
->
-> Most database tools run it. **TupleNest is built around the other answer.**
+TupleNest is an open-source desktop app (Tauri 2, Rust, React) for writing
+queries, exploring schemas and looking after PostgreSQL servers and SQLite
+files. It runs on your machine: no account, no cloud service, nothing of ours
+between you and your database.
 
-Every destructive path in the app **asks first, refuses with a reason, or is
-enforced by PostgreSQL itself** — never by a client-side promise. And every one
-of those guarantees has a test that executes the misuse and asserts the
-refusal, so the claims on this page aren't copy. They're pinned behavior that
-CI would catch regressing.
+> **Beta software.** Releases are pre-releases and nothing is code-signed yet,
+> so your OS will warn once on first launch — see [Install](#install).
 
-> ⚠️ **Early software, stated plainly.** This is a v0.1.1 beta — tested far
-> more than it has been *used*. 2,000+ frontend tests, contract tests against
-> live PostgreSQL 13/15/17, SSH tunnel tests against a real sshd. What it
-> hasn't had is people living in it. **That's the part you'd be contributing.**
+## Why TupleNest
 
-<br/>
+- **Production is treated as production.** Tag a connection `prod` or
+  `staging` and risky statements stop and ask; the worst ones on prod make you
+  type the table name. Read-only profiles are enforced by the database, not by
+  a disabled button.
+- **Your data stays on your machine.** Passwords live in the OS keychain.
+  Query text on prod connections is never written to history. There is no
+  telemetry. The [network table](#what-leaves-your-machine) lists every
+  destination.
+- **Two engines, done properly.** PostgreSQL 13+ and SQLite 3, with the same
+  safety model on both. No other engines are planned.
+- **AI on your terms.** The assistant uses your own Anthropic key or a local
+  Ollama model, never sees result rows, and never runs anything by itself. The
+  MCP server is off for every connection until you turn it on.
 
-## 🪶 Simple on purpose
+## Features
 
-<table>
-<tr>
-<td width="25%" align="center"><h3>0</h3><b>accounts</b><br/><sub>No sign-up, no license key, no cloud. Download, open, connect.</sub></td>
-<td width="25%" align="center"><h3>60s</h3><b>to first query</b><br/><sub>One dialog between you and <code>SELECT</code>. Passwords go to the OS keychain, not a config file.</sub></td>
-<td width="25%" align="center"><h3>1</h3><b>window</b><br/><sub>One window, one session, tabs inside it. No workspace files, no project setup.</sub></td>
-<td width="25%" align="center"><h3>2</h3><b>network destinations</b><br/><sub>Your databases + one startup version check to GitHub. A third only if you set up the assistant. That's the <a href="PRIVACY.md">entire network story</a>.</sub></td>
-</tr>
-</table>
-
-## 🚀 Sixty seconds to your first query
-
-```
-1 · Download  →  2 · Press ⌘O, pick PostgreSQL or SQLite  →  3 · Test (staged probe)  →  4 · ⌘↵
-```
-
-For PostgreSQL, fill in host, database and user; for SQLite, pick a file. The
-**Test** button runs a staged probe — `DNS ✓ TCP ✓ auth ✓ server version ✓` —
-so when something is wrong you learn **which layer**, not just *"could not
-connect"*. A first launch opens a three-step tour; an update shows what's new
-once.
-
-> Nothing is code-signed yet, so your OS will object once on first launch.
-> [Install](#-install) has the exact click-path through every dialog you'll see.
-
-<br/>
-
-## 👀 The tour
+### Editor, results and charts
 
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="docs/site/shots/connection.png" alt="New connection dialog: environment picker (dev/test/staging/prod), TLS verify-full with CA file, and a staged connection test" />
-<p align="center"><b>Connecting is a diagnosis, not a coin flip</b></p>
-<sub>Pick dev / test / staging / <b>prod</b> and the whole window knows it — the frame tints, prod gets a banner, and dangerous verbs ask harder questions. TLS <code>verify-full</code> is the <i>default</i> and fails closed.</sub>
+<img src="docs/site/shots/screen-query-3.jpg" alt="A query on a production connection: the red production banner, the SQL editor, and a results grid with inline value bars on the numeric columns" />
 </td>
 <td width="50%" valign="top">
-<img src="docs/site/shots/complete.png" alt="Schema-aware autocomplete suggesting the books table mid-keystroke" />
-<p align="center"><b>Autocomplete that has read your schema</b></p>
-<sub>Tables after <code>FROM</code>. In-scope columns in <code>WHERE</code>. <code>alias.</code> → that table's columns. Comments and strings are masked <i>first</i>, so a table name in a comment never poisons suggestions.</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<img src="docs/site/shots/explorer.png" alt="Schema explorer expanded to a table's columns beside live query results" />
-<p align="center"><b>The schema is a place you walk around in</b></p>
-<sub>Lazy tree of schemas → tables → columns / indexes / constraints, PK badges inline, backed by a cache that serves instantly — and keeps serving read-only when the connection drops.</sub>
-</td>
-<td width="50%" valign="top">
-<img src="docs/site/shots/er-diagram.png" alt="ER diagram: authors, books, orders, order_items joined by their three foreign keys" />
-<p align="center"><b>The picture and the receipts</b></p>
-<sub>The ER view draws the foreign-key graph and names every constraint. Schema diff, find-usages, rename, and EXPLAIN plan comparison live one panel over.</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<img src="docs/site/shots/monitor.png" alt="Server activity monitor: backends, DB size, cache hit, commits, rollbacks, blocked locks, session list" />
-<p align="center"><b>Operate, not just query</b></p>
-<sub>Backends, cache hit ratio, blocked locks, per-session state — with cancel and terminate. Terminating always asks. On prod, it makes you <b>type the pid</b>.</sub>
-</td>
-<td width="50%" valign="top">
-<p align="center"><br/><br/><b>Results stream — they don't "load"</b></p>
-<sub>The grid is virtualized and backpressured: bounded batches, a row cap <i>and</i> a byte budget, and a footer that tells the truth about truncation. A checksum test pins that nothing is lost or duplicated in transit.<br/><br/>One decoding rule with teeth: values are decoded from what the type <b>is</b>, never guessed from what the bytes look like. A <code>money</code> value renders as money or as visibly-raw hex — <b>never as a plausible wrong number</b>.</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<img src="docs/site/shots/index-advisor.png" alt="Query plan with a Seq Scan flagged as the bottleneck, and three runnable CREATE INDEX statements beside it" />
-<p align="center"><b>The plan writes the fix, not just the diagnosis</b></p>
-<sub>A sequential scan applying a filter gets you a runnable <code>CREATE INDEX</code> with a copy button — equality columns first, then one range column, the only ordering a btree can seek on. Filters a plain index can't serve get an expression index, preserved character for character because the planner only uses one that matches verbatim.<br/><br/>It reads the column's <i>real type</i> to decide: <code>date_trunc('day', ts)</code> is offered on a <code>timestamp</code> and declined on a <code>timestamptz</code>, which reads the session time zone and so <b>cannot be indexed at all</b>.</sub>
-</td>
-<td width="50%" valign="top">
-<p align="center"><br/><b>…and it shuts up when it isn't sure</b></p>
-<sub>Silence on an <code>OR</code> (the planner wants an index per branch), a join condition, an inequality a btree can't seek, or an expression it has no volatility evidence for. <b>A suggestion that errors out costs more than no suggestion</b> — it costs the time to run it and the trust to read the next one.<br/><br/>Every case is round-tripped against a live server: build it, re-run <code>EXPLAIN</code>, confirm the planner actually abandons the seq scan. That round trip caught a statement PostgreSQL refuses outright. 17/17 now, 1.9×–1461× faster where an index is offered.</sub>
+<img src="docs/site/shots/screen-query-4-chart.jpg" alt="The same result drawn as a chart in the results panel's Chart tab" />
 </td>
 </tr>
 </table>
 
+- **Editor** — schema-aware autocomplete (tables after `FROM`, in-scope
+  columns, `alias.` columns), format (<kbd>⇧⌘F</kbd>), find and replace,
+  comment toggling, `$1…$n` parameters bound as real parameters, multiple tabs.
+- **Run and cancel** — <kbd>⌘↵</kbd> runs, Cancel stops it on the server.
+  A per-connection statement timeout is enforced by the server.
+- **Transactions** — *Begin transaction* opens one owned by that tab;
+  committing from another tab is refused, and closing mid-transaction asks.
+- **Explain** — the plan view highlights the node that costs the time and,
+  for a sequential scan with a filter, offers candidate `CREATE INDEX`
+  statements to copy. You can also paste a plan (psql text or JSON) and have
+  it analysed without a connection. Nothing is uploaded.
+- **Results grid** — streamed, virtualized, keyboard-navigable; numeric
+  columns get value bars. A result keeps up to 20,000 rows, and a plain read
+  **stops at the limit** instead of reading the rest ("20,000+ rows (stopped
+  at the limit)").
+- **Row editing with review** — single-table results that include the full
+  primary key (or SQLite rowid) can be edited; you review the exact `UPDATE`
+  statements before anything is sent.
+- **Charts and export** — draw a result as a chart from the results panel's
+  Chart tab; export to CSV, JSON or Markdown.
+
+### Pages beyond the editor
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/site/shots/screen-dashboard.jpg" alt="A dashboard named Sales overview with a horizontal bar chart of revenue by month, and controls to refresh, rename and add charts" />
+<p align="center"><b>Dashboards</b></p>
+<sub>Saved queries that read, pinned as bar, line or single-number charts. They re-run when the page opens and, if you choose, every 1, 5 or 15 minutes. Each run keeps at most 1,000 rows.</sub>
+</td>
+<td width="50%" valign="top">
+<img src="docs/site/shots/screen-history.jpg" alt="The History page on a production connection: each entry shows '(query text hidden — prod)' with its row count, timing and status" />
+<p align="center"><b>History</b></p>
+<sub>Search and filter (this connection, writes, failed, today), with the sender of each statement. On prod connections the SQL text is <b>not stored</b> — only timing, row count and status.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/site/shots/screen-sqlite.jpg" alt="A SQLite file open in TupleNest: a query over 20,000 rows stopped at the limit, with a note that the result is read-only until the primary key is selected" />
+<p align="center"><b>SQLite</b></p>
+<sub>A profile is a file path. Read-only is enforced by SQLite itself: the file is opened read-only and <code>PRAGMA query_only</code> is set before every statement.</sub>
+</td>
+<td width="50%" valign="top">
+<img src="docs/site/shots/screen-light.jpg" alt="TupleNest in the light theme" />
+<p align="center"><b>Light and dark</b></p>
+<sub>Both themes are held to WCAG AA contrast by a test. Switch with <kbd>⇧⌘L</kbd>.</sub>
+</td>
+</tr>
+</table>
+
+| Area | What you get |
+|---|---|
+| **Saved queries and snippets** | Saved queries as cards with tags; reusable snippets in the editor |
+| **SQL notebooks** | Text, SQL and chart cells in one document. A SQL cell runs only on its own Run, through the guard and audit log, and keeps its last 200 rows. Export to Markdown |
+| **Schema** | Lazy explorer (schemas, tables, columns, indexes, constraints), global object search (<kbd>⌘P</kbd>), ER diagram from real foreign keys, schema diff with generated `ALTER` scripts (destructive lines commented out, never run) |
+| **Backup and restore** (PostgreSQL) | Your own `pg_dump` (custom format) and `pg_restore`, run without a shell; the password goes in a private temporary pgpass file. Restoring into prod or staging asks you to type the database name |
+| **Users and roles** (PostgreSQL) | Each role's table privileges, with a warning when a role that looks read-only can write. The matching `GRANT`/`REVOKE` is text to copy; nothing is changed |
+| **Server monitor** (PostgreSQL) | Backends, cache hit ratio, blocked locks, sessions with cancel and terminate (terminate asks; on prod you type the process id) |
+| **Audit log** | On prod connections, the full SQL of each statement, written **before** it runs |
+| **Command palette** | <kbd>⌘K</kbd> for every command; <kbd>?</kbd> for the shortcut cheatsheet |
+
+## The safety model
+
+<div align="center">
+<img src="docs/site/shots/guard.gif" width="760" alt="A DELETE without a WHERE clause on a production connection opens a confirmation dialog, and Run anyway stays disabled until the table name is typed" />
+</div>
+
 <br/>
 
-## 🛡 The safety model
+| Protection | How it is enforced |
+|---|---|
+| **Read-only profiles (PostgreSQL)** | The session is set read-only on the server (`SET SESSION CHARACTERISTICS … READ ONLY`) and its mode is **re-checked before every statement**. The app also sends only statements that read, because PostgreSQL's read-only mode still allows `VACUUM`, `CHECKPOINT` or `COPY … TO PROGRAM` |
+| **Read-only profiles (SQLite)** | The file is opened read-only, `PRAGMA query_only` is set before every statement, and a statement SQLite reports as writing is refused before it runs |
+| **Destructive-statement guard** | On connections tagged **prod** or **staging**: `UPDATE`/`DELETE` without a real `WHERE` (including `WHERE 1=1`), `DROP`, `TRUNCATE`, `ALTER`, `CREATE`, `GRANT`, `REVOKE`, `MERGE`, `DO`, `CALL`, `COPY … FROM`, and `EXPLAIN ANALYZE` of any of them, ask first. Comments and strings are masked before matching |
+| **Type the name** | On **prod**, an unbounded `UPDATE`/`DELETE`, a `DROP` or a `TRUNCATE` keeps *Run anyway* disabled until you type the target's name |
+| **Audit before run** | On prod, each statement is written to the audit log before it is sent; if that write fails, the statement is not sent |
+| **History without prod SQL** | Prod query text is never stored in history; elsewhere, common secret literals are scrubbed. `-- tuplenest:no-history` skips a statement entirely |
+| **Stop at the limit** | A result keeps at most 20,000 rows; a plain read stops there rather than streaming the rest |
+| **TLS** | `verify-full` is the default for new PostgreSQL connections and fails closed |
+| **SSH tunnels** | Host keys are verified; key files with a passphrase are supported, the passphrase kept in the keychain |
+| **Credentials** | Passwords and passphrases live in the OS keychain (Keychain, Credential Manager, Secret Service). The window never receives them |
 
-Five layers — each one names **what actually enforces it**, because *"we're
-careful"* is not an architecture:
+The guard is a best-effort check, not a security boundary. For production
+data that must not change, connect as a database role without write
+privileges. A function with side effects called from a `SELECT` is not
+something any client-side check can see. Details: [SECURITY.md](SECURITY.md).
 
-| Layer | What it does | What enforces it |
-|---|---|---|
-| 🔒 **Read-only profiles** | Writes are refused | **PostgreSQL itself** (`SET SESSION CHARACTERISTICS … READ ONLY`), with the transaction's mode re-checked on the server before every statement, so the editor can't switch it back. The app also sends only statements that read: PostgreSQL's read-only mode would let `VACUUM`, `ANALYZE`, `REINDEX`, `CHECKPOINT` and `COPY … TO PROGRAM` through. A function with a side effect called from a `SELECT` (`pg_terminate_backend`, …) is not stopped by either. A role without those privileges is the hard boundary |
-| ⚠️ **Destructive-statement guard** | On connections tagged prod or staging — **not** dev or test, which is what a new profile starts as — these ask before running: `UPDATE`/`DELETE` with no `WHERE` or an always-true one (`WHERE 1=1`), `DROP`, `TRUNCATE`, `ALTER`, `CREATE`, `GRANT`, `REVOKE`, `MERGE`, `DO`, `CALL`, `COPY … FROM`, and `EXPLAIN ANALYZE` of any of them. `INSERT`, a bounded `UPDATE`/`DELETE`, and a function with side effects called from a `SELECT` do **not** ask | SQL is masked (comments, strings, dollar-quotes) before matching — `-- where` can't disarm it. Best-effort by design: the seatbelt *light*, not the seatbelt |
-| ✏️ **Safe row editing** | Only single-table SELECTs with the full primary key are editable; joins, CTEs, groups refused *with a reason* | You review the exact `UPDATE`s first. Parameter-bound, keyed by the full PK, guarded with `IS NOT DISTINCT FROM` — a racing edit affects 0 rows and is **refused**, not silently won |
-| 🔁 **Transactions** | The tab that opened a transaction owns it | Committing from another tab is refused and names the owner. Closing mid-transaction always prompts |
-| 📦 **Auto-update** | Payloads verified against a minisign key compiled into the binary | The release host only serves bytes — it never holds the key. Updating is refused mid-transaction |
+## The assistant
 
-**Every row has a test that executes the misuse and asserts the refusal** —
-including thirteen adversarial bypass attempts on the guard, the comma-join
-editability hole, and the zero-row concurrent write.
+<div align="center">
+<img src="docs/site/shots/assistant.gif" width="760" alt="The assistant panel explaining the query in the editor, answered by a local model through Ollama" />
+</div>
 
 <br/>
 
-## ✦ The assistant
+Open it with **Assistant** in the title bar or <kbd>⌘J</kbd>. Ask about the
+query or your tables, **explain** a query, **write SQL** from a plain-English
+request, or **fix** a failed statement (shown as a diff). Set up a provider in
+**Settings › Assistant**:
 
-Ask about the query in the editor or the tables in your database, have it
-**explain** a slow query, **fix** a failed one from the error view (the fix
-comes back as a diff), or **write SQL** from a plain-English request. Open it
-with the **Assistant** button in the title bar or <kbd>⌘J</kbd>.
-
-Two providers, chosen per request from the panel's model picker — set them up
-in **Settings › Assistant**:
-
-- **Claude, with your own Anthropic API key.** Sonnet 5.5 by default; Opus 5.5
-  and Haiku 5.5 on offer. The key is kept in the OS keychain exactly like a
-  database password; removing the provider deletes it.
-- **A local model through [Ollama](https://ollama.com).** `http://localhost:11434`
-  by default. A URL on another computer is refused unless you turn on *Allow a
-  server on another computer* — the point of a local model is that nothing
-  leaves the machine. Ollama's *cloud* models (`…:cloud`, or listed with a
-  `remote_host`) run on ollama.com, so they are marked "cloud via
-  ollama.com", never chosen as the default, and refused until you turn on
+- **Claude, with your own Anthropic API key** — the key is stored in the OS
+  keychain and deleted when you remove the provider.
+- **A local model through [Ollama](https://ollama.com)** — `http://localhost:11434`
+  by default. A server on another computer needs *Allow a server on another
+  computer*. Ollama **cloud** models run on ollama.com, so they are labelled
+  as cloud models that leave this computer, never the default, and refused until you turn on
   *Allow Ollama cloud models*.
 
-**What is sent:** your message (and the earlier turns of that panel
-conversation), the editor's SQL when the action uses it, the error's message
-and SQLSTATE for a Fix — with the server's `DETAIL`/`CONTEXT` lines, which can
-quote row values, removed — and the **names and types** of the connected
-database's schemas, tables and columns, capped in size (and, on a SQLite
-session, that it is SQLite).
-**What is never sent:** row data or result cells, query history, the
-connection's host, user or password, or anything about other connections.
-The rule is enforced in the Rust core, which makes every request; the window
-never touches the network or the key. [PRIVACY.md](PRIVACY.md#the-assistant)
-has the full list.
+**Sent:** your message and the earlier turns of that conversation, the
+editor's SQL (for ask, explain and fix), a failed statement's error with the
+`DETAIL`/`CONTEXT` lines removed (they can quote row values), and the names
+and types of the connected database's schemas, tables and columns, capped in
+size.
+**Never sent:** result rows, history, the audit log, the connection's host,
+user or password, SSH settings, or anything about other connections.
 
-**Nothing it writes runs by itself.** Each SQL suggestion is a card that says
-whether it reads or writes, with **Insert into editor** (or **Apply the fix**)
-and **Copy**. It runs only when you press Run — through the same read-only
-check, production guard and audit log as anything you type.
+**Nothing runs automatically.** A suggestion goes into the editor only when
+you press *Insert into editor* or *Apply the fix*, and runs only when you press
+Run — through the same read-only check, guard and audit log as anything you
+type. Requests are made by the Rust core; the window never holds your key. The
+full list is in [PRIVACY.md](PRIVACY.md#the-assistant).
 
-<br/>
+## What leaves your machine
 
-## 🗄 Engines
+| Path | Destination | When | What |
+|---|---|---|---|
+| **Your databases** | The hosts you configure, directly or over your SSH tunnel | When you connect and run | Your queries |
+| **Assistant** | `api.anthropic.com` with your key, or your Ollama URL (local by default) | Only when you send a message, press Explain or Fix, or press Test | Your question, the editor's SQL, error text without row values, schema names and types. **No rows** |
+| **MCP server** | The AI tool that started it, over stdin/stdout | Only for connections you turned on, when the tool calls | What the tool's queries return, **including rows** — and from there wherever that tool sends them |
+| **Update check** | `github.com` | Once at startup | An unauthenticated request for `latest.json`; no identifier |
+| **Telemetry** | Nowhere | Never | The setting exists, is off, and no code sends anything |
 
-TupleNest supports two engines, PostgreSQL and SQLite, and no others are
-planned. A new connection starts by picking one. Both get the same safety
-model: environment tags, read-only profiles, the destructive-statement guard,
-the production audit log, and MCP access that is off until you turn it on.
+Everything else — profiles, history, cache, logs, crash reports — stays in
+local files. [PRIVACY.md](PRIVACY.md) says where each one lives.
 
-| Engine | Notes |
-|---|---|
-| **PostgreSQL** 13+ | Everything in this README |
-| **SQLite** 3 | A file on this machine: no server, password, TLS or SSH |
-
-**SQLite.** A profile is a file path — type it, or **Choose…** for the
-system file panel; **Create a new file** makes an empty database there on
-connect (off by default, so a mistyped path is an error rather than a new
-empty file). Values come back as stored: `INTEGER`, `REAL`, `TEXT`, `BLOB`
-(as hex, like `bytea`) and `NULL`, with declared types as the column types.
-Errors carry SQLite's extended result code where a SQLSTATE goes
-(`[SQLITE_CONSTRAINT_UNIQUE]`). Declared foreign keys are enforced.
-
-- **Read-only** is enforced by SQLite: the file is opened read-only (an
-  `ATTACH`ed file inherits that), `PRAGMA query_only` is set again before
-  every statement, and a statement SQLite says would write is refused before
-  it runs — so a typed `PRAGMA query_only = OFF` changes nothing and
-  `VACUUM INTO 'copy.db'` does not write a copy.
-- **The explorer** reads `sqlite_schema` and the table-valued pragmas, every
-  name bound as a parameter: `main` and any attached databases, tables,
-  views, columns, indexes, keys and foreign keys.
-- **Row editing** keys on the `INTEGER PRIMARY KEY`, or the declared primary
-  key, with the same review step and "exactly one row" rule. A table with
-  neither is edited by its rowid: select it (`SELECT rowid, * FROM t`).
-- **EXPLAIN** shows `EXPLAIN QUERY PLAN` as rows in the grid.
-- **Not for SQLite**, so hidden or disabled with the reason: the server
-  monitor, index and table health and top queries (`pg_stat`), partitions,
-  schema and plan comparison, the plan view and `EXPLAIN ANALYZE`, CSV
-  import, backup and restore (the database is one file you can copy), users
-  and roles, TLS and SSH. Dashboards and notebooks work on both engines.
-
-<br/>
-
-## 🤖 Use TupleNest from AI tools (MCP)
+## MCP server
 
 TupleNest is also an [MCP](https://modelcontextprotocol.io) server, so an AI
-tool — Claude Desktop, Claude Code, Cursor — can query your **saved
-connections through TupleNest**, under the same safety rules. The app binary
-runs it when started as `tuplenest-desktop mcp`: no window, protocol on
-stdin/stdout, logs in the app's log file. Passwords come from the keychain
-entries TupleNest already keeps and are never returned to the tool.
+tool such as **Claude Desktop**, **Claude Code** or **Cursor** can query your
+saved connections through TupleNest's safety rules. The app's own binary runs
+it as `tuplenest-desktop mcp`: no window, the protocol on stdio. Passwords are
+read from the keychain and never returned to the tool.
 
-**Nothing is exposed until you choose.** Every connection starts **Off**. In
-**Settings → MCP server** pick, per connection, *Off*, *Read only* or *Read
-and write*. The same panel shows the configuration to copy, with this
-install's real binary path.
+**Every connection starts Off.** In **Settings › MCP server** choose, per
+connection, *Off*, *Read only* or *Read and write*. The same panel shows the
+configuration for your install's real path.
 
-**Claude Desktop** (`claude_desktop_config.json`) and **Cursor**
-(`~/.cursor/mcp.json`):
+| Access | What the AI tool can do |
+|---|---|
+| **Off** (default) | Nothing. The connection is not listed, and naming it gets the same answer as a name that does not exist |
+| **Read only** | A server-enforced read-only session (SQLite's own read-only mode for a file) plus the read-only statement allowlist |
+| **Read and write** | Writes run, but anything the guard would ask about is **refused with the reason**, since no one is there to confirm. Not available on prod, staging or read-only connections — those are read-only at most |
+
+One statement per call, at most 500 rows (or 1 MB) per result, marked when cut
+off. On prod and staging, statements are written to the audit log before they
+run; audit and history record the sender as `MCP · <client name>`.
+
+**Claude Desktop** (`claude_desktop_config.json`) or **Cursor** (`~/.cursor/mcp.json`):
 
 ```json
 {
@@ -270,322 +239,178 @@ install's real binary path.
 **Claude Code:**
 
 ```sh
-claude mcp add tuplenest -- /Applications/TupleNest.app/Contents/MacOS/tuplenest-desktop mcp
+claude mcp add tuplenest -- "/Applications/TupleNest.app/Contents/MacOS/tuplenest-desktop" mcp
 ```
 
-(The path above is macOS's default; Settings shows the one for your machine.)
+The path above is a macOS placeholder; copy the one Settings shows for your
+machine. Tools: `list_connections`, `list_schemas`, `list_tables`,
+`describe_table`, `run_query`, `explain` (plain `EXPLAIN`, never `ANALYZE`).
 
-Tools: `list_connections`, `list_schemas`, `list_tables`, `describe_table`,
-`run_query` (one statement, optional `$1…` params, at most 500 rows with a
-`truncated` flag) and `explain` (plain `EXPLAIN`, never `ANALYZE`).
-SQLite connections work the same way, under the same access levels:
-`list_connections` gives their `engine` and file `path`, `list_schemas` is
-`main` plus any attached databases, read-only is SQLite's own (see
-[Engines](#-engines)), and `explain` is `EXPLAIN QUERY PLAN`.
+## Install
 
-The rules, all enforced in the backend:
+Download from the [releases page](https://github.com/talaatmagdyx/TupleNest/releases).
+Every platform is built from the same source in CI.
 
-| Access | What an AI tool can do |
-|---|---|
-| **Off** (default) | Nothing. The connection is not listed, and naming it gets the same answer as a name that does not exist |
-| **Read only** | The same server-enforced read-only session a read-only profile gets (`SET SESSION CHARACTERISTICS … READ ONLY`, re-checked before every statement) plus the allowlist of statements that only read |
-| **Read and write** | Writes run, but everything the destructive-statement guard would ask about — `UPDATE`/`DELETE` without a real `WHERE`, `DROP`, `TRUNCATE`, `ALTER`, `CREATE`, `GRANT`/`REVOKE`, `DO`, `CALL`, `MERGE`, `COPY … FROM`, `EXPLAIN ANALYZE` of those — is **refused with the reason**: there is no one to confirm it. Not available on connections tagged prod or staging, or marked read-only |
+| Platform | Files | Notes |
+|---|---|---|
+| **macOS** 10.15+ | `.dmg` for Apple Silicon or Intel | Drag TupleNest into Applications, then launch it from there |
+| **Windows** 10+ | `.exe` (NSIS) or `.msi` | WebView2 is installed if missing |
+| **Linux** (glibc 2.35+) | `.AppImage`, `.deb`, `.rpm` | Needs `webkit2gtk-4.1`; saving passwords needs a keyring daemon (GNOME Keyring or KWallet) |
 
-For every access: one statement per call, no `BEGIN`/`COMMIT` (each call is
-its own transaction), and statements on **prod and staging are written to the
-audit log before they run** — if that write fails, the statement is not sent.
-Statements also go to query history; both record the sender as
-`MCP · <client name>`. As in the app, a function with side effects called
-from a `SELECT` is not something these rules can see: give an AI tool a
-database role that can only do what you want it to do.
+> [!NOTE]
+> **Builds are not code-signed yet.** On macOS, Gatekeeper blocks the first
+> launch: right-click the app in Applications and choose **Open**, then
+> **Open** again. If it says the app "is damaged", that is Gatekeeper's
+> message for a quarantined unsigned app:
+> `xattr -dr com.apple.quarantine /Applications/TupleNest.app`.
+> On Windows, SmartScreen shows "Windows protected your PC": choose
+> **More info → Run anyway**.
 
-**What a query returns goes to the AI tool that asked**, and from there to
-wherever that tool sends it, its own model provider included. That is what MCP
-is for, and why every connection starts Off. This is the one path by which row
-data reaches an AI; the assistant above never sends any. The MCP server itself
-opens no network connection other than to your databases.
-
-<br/>
-
-## ⌨️ The keyboard
-
-Press <kbd>?</kbd> anywhere for the in-app cheatsheet. <kbd>⌘</kbd> = <kbd>Ctrl</kbd> on Windows/Linux.
-
-| | | | |
-|---|---|---|---|
-| <kbd>⌘↵</kbd> Run | <kbd>Esc</kbd> Close / back / cancel | <kbd>⌘K</kbd> Command palette | <kbd>⌘P</kbd> Object search |
-| <kbd>⌘T</kbd> New tab | <kbd>⌘O</kbd> Connections | <kbd>⌘B</kbd> Sidebar | <kbd>⇧⌘F</kbd> Format SQL |
-| <kbd>⇧⌘L</kbd> Dark ↔ light | <kbd>⌘C</kbd> Copy cell | <kbd>⌘J</kbd> Assistant | |
-
-Full keyboard grid navigation with real `role="grid"` semantics · every modal
-is a real `role="dialog"` with a focus trap · `prefers-reduced-motion`
-respected.
-
-<br/>
-
-## 🧰 Everything else in the box
-
-| | |
-|---|---|
-| **📝 Query work** | Format SQL · EXPLAIN / ANALYZE plan tab · **candidate `CREATE INDEX` statements from the plan** · find & replace (`⌘F`) and comment toggling (`⌘/`) · a per-connection query timeout the *server* enforces · `$1..$n` parameter binding · **prod audit log** (full SQL of everything run on prod) · CSV/JSON export with an honest truncation note · one-click charts · a result keeps 20,000 rows, and a plain read **stops at the limit** instead of reading the rest ("20,000+ rows (stopped at the limit)") |
-| **🗂 Pages** | **History** (search, filters for this connection, writes, failed and today, the sender of each statement) and **Saved queries** (cards with tags) take the editor's place, with one header and a way back (or <kbd>Esc</kbd>) · **Settings** with a section list: General (appearance, results, privacy and updates), Assistant, MCP server, Shortcuts, About |
-| **📊 Dashboards & notebooks** | **Dashboards**: saved queries pinned as bar, line or single-number charts, re-run on open and, if you choose, every 1, 5 or 15 minutes. Only a query that reads can be pinned; each run is capped at 1,000 rows · **Notebooks**: text, SQL and chart cells in one document. A SQL cell runs only when you press its Run, through the guard and audit log, and keeps its last 200 rows so the notebook reopens as you left it · Both work on PostgreSQL and SQLite |
-| **🗃 Backup & roles** (PostgreSQL) | **Backup and restore** with your own `pg_dump` (custom format) and `pg_restore`, run without a shell; the password goes in a private temporary pgpass file, never on the command line. Restoring into prod or staging asks you to type the database name; a read-only profile is never restored into; SSH-tunnelled profiles are not supported yet · **Users and roles**: each role's SELECT/INSERT/UPDATE/DELETE/TRUNCATE on each table, with a warning when a role that looks read-only can write. It changes nothing: the matching `REVOKE` or `GRANT` is text to copy |
-| **🗺 Schema work** | Global object search · column-by-column schema diff · find-usages & rename across tabs (unicode-aware) · **node-by-node EXPLAIN comparison** (which node got slower, and an *ambiguous* label when the pairing is a guess) · **generated `ALTER` migration scripts** — destructive statements come back commented out, and TupleNest never runs them · partition tree browsing |
-| **🩺 Health** | Index health report · vacuum & bloat panel · `pg_stat_statements` top queries |
-| **📥 Data in** | CSV import wizard — **streams the file, so it is not bounded by RAM** (358 MB / 6M rows imports with ~15 MB peak growth) · RFC-4180 parsing, type inference **you review before anything runs**, batched inserts in one transaction, cancel-and-roll-back mid-import |
-| **✨ Fit & finish** | Environment-reactive window frame — dev/staging/prod get different ambient colors, so *the wrong window is visibly the wrong window* · dark, dense, flat — deliberately an IDE, not a dashboard |
-
-<br/>
-
-## 🧭 What TupleNest is *not* (yet)
-
-Marketing pages don't have this section — which is exactly why you should
-trust a README that does.
-
-- **Two engines, and only two.** PostgreSQL 13+ and SQLite. There will be no
-  MySQL, SQL Server, MongoDB or Redis support. Need one of those? TupleNest
-  isn't your tool.
-- **The statement guard is best-effort.** It survived thirteen bypass
-  attempts, but it's the seatbelt light. Read-only profiles are the seatbelt —
-  the *server* enforces those. The airbag is a database role with no write
-  privileges: use one for production if a write must be impossible.
-- **Nothing is code-signed.** Each OS objects once; the docs walk you through
-  it, and the [attestation check](#-verifying-a-download) proves more than the
-  dialogs do.
-- **No hosted service.** No account, no cloud sync, nothing run by this
-  project between you and your database. The [roadmap](https://talaatmagdyx.github.io/TupleNest/roadmap.html)
-  says what is next and what is not planned.
-- **Saved passwords on Linux need a keyring daemon** (GNOME Keyring /
-  KWallet). Connecting works without one; *saving* doesn't.
-
-<br/>
-
-## 📦 Install
-
-**[Download the latest release](https://github.com/talaatmagdyx/TupleNest/releases/latest).**
-Every platform builds from the same source in CI: Linux and Windows on their
-own runners, both macOS builds on Apple Silicon (Intel is cross-compiled, and
-its binary is not run in CI).
-
-Nothing is code-signed yet, so **every OS objects once** — each dialog and its
-exact click-path is below, written from what the first beta testers actually
-hit.
-
-<details>
-<summary><b>🍎 macOS</b> — <code>.dmg</code> (Apple Silicon or Intel) · macOS 10.15+</summary>
-<br/>
-
-1. Open the `.dmg`.
-2. **Drag TupleNest.app onto the Applications shortcut inside it** — this step
-   *is* the install.
-3. Eject the DMG, launch from Applications (not from the DMG).
-4. First launch: **right-click → Open → Open**. Double-clicking shows
-   "unidentified developer" with no way through; the right-click path is the
-   only one that offers **Open**.
-
-Or the whole thing in a terminal:
+To check a download came from this repository's release workflow:
 
 ```sh
-cp -R /Volumes/TupleNest/TupleNest.app /Applications/
-xattr -dr com.apple.quarantine /Applications/TupleNest.app   # skips step 4
-open -a TupleNest
-```
-
-**"You can't open TupleNest because it is in the Trash"** — the app isn't in
-the Trash; your Dock/Launchpad icon points at an older copy you moved there.
-Drag the dead icon off the Dock, install from the DMG, launch from
-`/Applications` once.
-
-**"TupleNest is damaged and can't be opened"** — not damage: Gatekeeper's
-message for an unsigned app it quarantined. `xattr -dr com.apple.quarantine
-/Applications/TupleNest.app`. The [attestation check](#-verifying-a-download)
-is a stronger guarantee than the dialog you're dismissing.
-
-</details>
-
-<details>
-<summary><b>🐧 Linux</b> — <code>.AppImage</code> (recommended), <code>.deb</code>, <code>.rpm</code> · glibc 2.35+</summary>
-<br/>
-
-**The AppImage is the fast path** — no root, no package manager:
-
-```sh
-chmod +x TupleNest_0.1.0_amd64.AppImage
-./TupleNest_0.1.0_amd64.AppImage
-```
-
-The `.deb` / `.rpm` integrate with your menus, at the cost of root:
-
-```sh
-sudo apt install ./TupleNest_0.1.0_amd64.deb     # Debian/Ubuntu
-sudo dnf install ./TupleNest-0.1.0-1.x86_64.rpm  # Fedora/RHEL
-```
-
-Needs `webkit2gtk-4.1`. **Saved passwords need a keyring daemon** (GNOME
-Keyring / KWallet) — connecting works without one, saving doesn't.
-
-**"Could not get lock /var/lib/dpkg/lock-frontend … (unattended-upgr)"** —
-that's Ubuntu's automatic security updater holding the lock *legitimately*,
-usually for 1–5 minutes. **Do not delete the lock file.** Use the AppImage, or
-wait, or stop it gracefully:
-
-```sh
-sudo systemctl stop unattended-upgrades
-sudo apt install ./TupleNest_0.1.0_amd64.deb
-sudo systemctl start unattended-upgrades
-```
-
-</details>
-
-<details>
-<summary><b>🪟 Windows</b> — <code>.exe</code> (NSIS) or <code>.msi</code> · Windows 10+</summary>
-<br/>
-
-WebView2 installs automatically if missing.
-
-The installer is unsigned, so SmartScreen shows **"Windows protected your
-PC"** / **"Unknown publisher"**: click **More info → Run anyway**.
-
-Why not just buy a certificate? Because it wouldn't do what you'd expect: a
-standard certificate puts a real publisher name on the installer but the
-warning *stays* until the file builds download reputation — which resets every
-release. Only an EV certificate skips the wait.
-[Verify the download instead](#-verifying-a-download); it proves more than the
-dialog does.
-
-</details>
-
-> **Auto-update** points at this repo's releases. While every release is a
-> pre-release (all betas), the endpoint 404s and the check fails silently by
-> design — upgrading means downloading the next build by hand.
-
-<br/>
-
-## ✅ Verifying a download
-
-```sh
-# catches a corrupted or truncated download
 shasum -a 256 -c SHA256SUMS --ignore-missing
-
-# proves this exact file came out of this repo's release workflow, at this commit
-gh attestation verify TupleNest_0.1.0_aarch64.dmg --repo talaatmagdyx/TupleNest
+gh attestation verify <downloaded-file> --repo talaatmagdyx/TupleNest
 ```
 
-Be clear about what each proves: `SHA256SUMS` sits *next to* the installer, so
-it can't defend against a tampered release host — the **attestation** can,
-because it's signed by GitHub's OIDC identity, not by anything in the release.
-CycloneDX SBOMs (`*.cdx.json`) are attached for anyone auditing dependencies.
+## Build from source
 
-Auto-updates are separately signed with a **minisign key compiled into the
-binary** — the release host only ever serves bytes.
-
-<br/>
-
-## 🔬 The receipts
-
-The claims on this page are only as good as what checks them. What runs in CI,
-on every push:
-
-- **2,000+ frontend tests** — including a suite that *executes each documented
-  misuse* (guard bypasses, editability holes, the racing edit, the cross-tab
-  commit) and asserts the refusal.
-- **Contract tests against live PostgreSQL 13, 15, 17** — a real server, real
-  TLS with a CA the tests mint themselves, real cancellation. Not mocks.
-- **SSH tunnel tests against a real sshd**, including fails-closed host-key
-  paths.
-- **A capability test born from a shipped bug:** beta.1's close button
-  silently did nothing — one missing ACL permission, rejection swallowed.
-  There's now a test cross-checking every window API call against the
-  permissions file. This README tells you that story instead of hiding it,
-  **because that's the deal here.**
-- CodeQL · `cargo deny` (licenses + advisories) · typos · dependency pinning ·
-  coverage gate.
-
-<br/>
-
-## 🏗 Under the hood
-
-```
-apps/desktop/   Tauri 2 shell — React/TypeScript frontend, Rust commands
-crates/         driver-api · driver-postgres · driver-sqlite · connection-core · credential-store
-                ssh-core · workspace-store · metadata-cache · result-stream · telemetry
-docs/           plans, releasing runbook, landing page
-```
-
-Three rules hold the shape:
-
-1. **The frontend never sees a password.** The credential store is an
-   opaque-reference API over the OS keychain; secrets never cross IPC.
-2. **Writes are never built by string concatenation.** Parameter binding,
-   everywhere, no exceptions.
-3. **Safety predicates are pure functions** with adversarial test corpora —
-   because a safety check you can't unit-test is a safety *vibe*.
+You need **Rust stable** (install with [rustup](https://rustup.rs); a Homebrew
+`rustc` ignores `rust-toolchain.toml`), **Node 22+**, and the
+[Tauri prerequisites](https://tauri.app/start/prerequisites/) for your OS.
 
 ```sh
-# build from source
-cd apps/desktop
-npm ci --include=dev                  # NOT plain npm ci — see note
-npm run build:app -- --bundles app    # no updater artifacts, so no signing key needed
+git clone https://github.com/talaatmagdyx/TupleNest
+cd TupleNest/apps/desktop
+npm ci --include=dev      # --include=dev: NODE_ENV=production would drop vite and vitest
+npm run tauri dev         # run in development
+npm run build:app -- --bundles app   # a local app bundle, no updater signing key needed
 ```
 
-The app lands in `target/release/bundle/` at the repository root. Plain
-`npm run tauri build` is what the release workflow runs: it also signs updater
-artifacts, and fails at that step without the release key.
+The bundle lands in `target/release/bundle/`. Tests:
+
+```sh
+cargo test --workspace                 # Rust
+cd apps/desktop && npm test            # frontend (vitest)
+```
+
+Tests that need a live PostgreSQL or sshd are ignored by default;
+[CONTRIBUTING.md](CONTRIBUTING.md) shows how to run them.
+
+## Keyboard shortcuts
+
+<kbd>⌘</kbd> is <kbd>Ctrl</kbd> on Windows and Linux. Press <kbd>?</kbd> in the app for the full list.
+
+| Keys | Action | Keys | Action |
+|---|---|---|---|
+| <kbd>⌘</kbd> <kbd>↵</kbd> | Run query | <kbd>⌘</kbd> <kbd>K</kbd> | Command palette |
+| <kbd>⌘</kbd> <kbd>T</kbd> | New query tab | <kbd>⌘</kbd> <kbd>P</kbd> | Search database objects |
+| <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>F</kbd> | Format SQL | <kbd>⌘</kbd> <kbd>O</kbd> | Open connection |
+| <kbd>⌘</kbd> <kbd>F</kbd> | Find and replace (editor) | <kbd>⌘</kbd> <kbd>B</kbd> | Show or hide the sidebar |
+| <kbd>⌘</kbd> <kbd>/</kbd> | Comment lines (editor) | <kbd>⌘</kbd> <kbd>J</kbd> | Show or hide the assistant |
+| <kbd>⌘</kbd> <kbd>C</kbd> | Copy the selected cell | <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>L</kbd> | Switch light / dark |
+| <kbd>Esc</kbd> | Close overlay or page, else cancel the query | <kbd>?</kbd> | Shortcut cheatsheet |
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph App["TupleNest desktop app"]
+    UI["WebView<br/>React + TypeScript"]
+    CMD["Tauri commands<br/>(Rust)"]
+    CORE["Rust core<br/>guard · audit · history<br/>keychain · SSH · TLS"]
+    DRV["Drivers<br/>driver-postgres · driver-sqlite"]
+    UI -- "invoke (IPC)<br/>no secrets cross" --> CMD
+    CMD --> CORE
+    CORE --> DRV
+  end
+  DRV --> PG[("PostgreSQL 13+")]
+  DRV --> SQ[("SQLite file")]
+  MCPC["AI tool<br/>Claude Desktop · Claude Code · Cursor"] -- "stdio<br/>tuplenest-desktop mcp" --> CORE
+  CORE -- "HTTPS, your key" --> ANT["Anthropic API"]
+  CORE -- "HTTP, local by default" --> OLLAMA["Ollama"]
+  KC[["OS keychain"]] --- CORE
+```
+
+```
+apps/desktop/      Tauri 2 app: React/TypeScript frontend (src/), Rust backend (src-tauri/)
+crates/            driver-api · driver-postgres · driver-sqlite · connection-core
+                   credential-store · ssh-core · workspace-store · metadata-cache
+                   result-stream · telemetry
+docs/              website (docs/site), brand assets, release runbook
+```
+
+- **The window never sees a password.** The credential store hands out opaque
+  references; secrets stay in the Rust core and the OS keychain.
+- **Writes are parameter-bound**, never built by string concatenation.
+- **Safety checks are pure functions** with adversarial test cases.
+
+## FAQ
 
 <details>
-<summary><b>The <code>NODE_ENV</code> gotcha</b> (read before your first build)</summary>
+<summary><b>Which databases are supported?</b></summary>
 <br/>
-
-If your shell exports `NODE_ENV=production`, npm silently strips `vite`,
-`vitest` and `typescript` from the install. Always install with
-`--include=dev`. Do **not** "fix" it by exporting `NODE_ENV=development` —
-Vite reads that at build time and bundles React's development build into the
-release (≈ +400 kB, slower). Install with `--include=dev`; build with
-`NODE_ENV` left at production.
-
+PostgreSQL 13 and later, and SQLite 3. No other engines are planned.
 </details>
 
-```sh
-# test suites
-cargo test --workspace                                          # Rust
-cd apps/desktop && npm test                                     # 2,000+ frontend
-cargo test -p tuplenest-driver-postgres -- --include-ignored    # needs live PG
-```
-
-**Supported PostgreSQL: 13+.** Anything older is refused with a reason rather
-than half-working — 13 is the oldest version the contract tests actually run
-against.
-
-More: [`SECURITY.md`](SECURITY.md) · [`PRIVACY.md`](PRIVACY.md) ·
-[`CONTRIBUTING.md`](CONTRIBUTING.md) · [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) ·
-[`docs/releasing.md`](docs/releasing.md) · [`CHANGELOG.md`](CHANGELOG.md) ·
-[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)
-
+<details>
+<summary><b>Is it free? Do I need an account?</b></summary>
 <br/>
+It is MIT-licensed and free. There is no account, sign-in or hosted service.
+</details>
 
-## 💬 Feedback is the point
-
-This is a beta because the questions that matter now can't be answered by a
-test suite: is the editor comfortable, are the shortcuts findable, does it
-break on your machine.
-
-| | |
-|---|---|
-| 🐞 | **[Something broke](../../issues/new?template=bug_report.yml)** |
-| 🤔 | **[Nothing broke — it just felt wrong](../../issues/new?template=ux_feedback.yml)** ← *the one that matters most* |
-| 💬 | **[Discussions](../../discussions)** for anything shaped like a conversation |
-
+<details>
+<summary><b>Does the assistant see my data?</b></summary>
 <br/>
+No result rows are ever sent. It sends your question, the editor's SQL, error
+text with row-quoting lines removed, and schema names and types. With a local
+Ollama model, nothing leaves your computer. The MCP server is different by
+design: an AI tool you connect gets what its queries return, which is why
+every connection starts Off.
+</details>
 
-<div align="center">
+<details>
+<summary><b>Can it stop me from damaging production?</b></summary>
+<br/>
+It makes it much harder: read-only profiles enforced by the server, the
+statement guard, type-the-name confirmations and an audit log on prod. The
+hard boundary is still a database role without write privileges; use one for
+production data that must not change.
+</details>
 
-**[MIT](LICENSE)** © [Talaat Magdy](https://github.com/talaatmagdyx) — one shipped component is not MIT, see [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)
+<details>
+<summary><b>Why does my OS warn when I open it?</b></summary>
+<br/>
+The builds are not code-signed yet. See <a href="#install">Install</a> for the
+click-path, and <code>gh attestation verify</code> to check a file came from
+this repository's CI.
+</details>
 
-<sub>Built with amazing help from <a href="https://claude.com">Claude</a> · design inspired by VS Code</sub>
+<details>
+<summary><b>Where are my settings and history?</b></summary>
+<br/>
+In a local SQLite file in your OS application-data directory; passwords are in
+the OS keychain. <a href="PRIVACY.md">PRIVACY.md</a> lists every file and how
+to delete it.
+</details>
 
-<br/><br/>
+## Contributing
 
-**If the safety model resonates, ⭐ the repo — it tells us to keep going.**
+Bug reports, docs fixes and "this felt wrong" feedback are all welcome. Start
+with [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
-</div>
+- [Report a bug](https://github.com/talaatmagdyx/TupleNest/issues/new?template=bug_report.yml)
+- [Something felt wrong](https://github.com/talaatmagdyx/TupleNest/issues/new?template=ux_feedback.yml)
+- [Discussions](https://github.com/talaatmagdyx/TupleNest/discussions)
+
+## Security
+
+Please report vulnerabilities privately, as described in
+[SECURITY.md](SECURITY.md) — not in a public issue.
+
+## Licence
+
+[MIT](LICENSE). One bundled component has its own licence; see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). Changes are listed in
+[CHANGELOG.md](CHANGELOG.md).

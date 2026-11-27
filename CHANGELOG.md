@@ -28,6 +28,15 @@ engines are PostgreSQL and SQLite only: no other engine is planned.
   dashboards, notebooks (whose SQL cells keep their last 200 rows on disk),
   backup and restore, users and roles. The roadmap lives on the website;
   `docs/ROADMAP.md` points to it.
+- New logo, rewritten README, and a rebuilt website in the new brand (dark
+  first, with a light theme that follows the system setting), using current
+  screenshots. The old-design screenshots are gone.
+
+### Fixed
+- Settings › MCP server: each connection's access menu showed as a blank white
+  box in the dark theme, with no visible value. It now uses the theme's colours.
+- Settings › MCP server: the configuration snippet pushed the settings pane
+  wider than the window. It now scrolls inside its own box.
 
 ### Added
 - **Pages.** History and Saved queries take the editor's place, reached from

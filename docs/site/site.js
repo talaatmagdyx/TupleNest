@@ -7,7 +7,9 @@
 (function () {
   "use strict";
   var REPO = "talaatmagdyx/TupleNest";
-  var LATEST = "https://github.com/" + REPO + "/releases/latest";
+  // The releases list, not /releases/latest: "latest" skips pre-releases, and
+  // every release so far is one.
+  var LATEST = "https://github.com/" + REPO + "/releases";
 
   /* ---- sticky nav: transparent over hero, solid after scroll ---- */
   var nav = document.querySelector("header.nav");
@@ -23,11 +25,16 @@
   var toggle = document.querySelector(".menu-toggle");
   var menu = document.querySelector(".mobile-menu");
   if (toggle && menu) {
+    toggle.setAttribute("aria-expanded", "false");
     toggle.addEventListener("click", function () {
-      menu.classList.toggle("open");
+      var open = menu.classList.toggle("open");
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
     });
     menu.addEventListener("click", function (e) {
-      if (e.target.tagName === "A") menu.classList.remove("open");
+      if (e.target.tagName === "A") {
+        menu.classList.remove("open");
+        toggle.setAttribute("aria-expanded", "false");
+      }
     });
   }
 
@@ -69,8 +76,10 @@
 
   /* ---- FAQ accordion ---- */
   document.querySelectorAll(".qa button").forEach(function (btn) {
+    btn.setAttribute("aria-expanded", "false");
     btn.addEventListener("click", function () {
-      btn.parentElement.classList.toggle("open");
+      var open = btn.parentElement.classList.toggle("open");
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
     });
   });
 
