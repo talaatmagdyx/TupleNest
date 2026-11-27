@@ -2320,3 +2320,34 @@ h1, h2, h3, .modal-head .t, .dialog .d-title, .onboard .big, .about-name,
   min-width: 0; color: var(--tn-ts); font-size: 12px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* ---------- database engines ----------
+   The connection form's engine picker (the design's "Choose a database
+   engine") and the PG / SQ badges in the sidebar and title bar. Engines are
+   told apart by existing tokens only: PostgreSQL the accent, SQLite the info
+   hue, engines still to come muted. */
+.engine-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.engine-card {
+  display: flex; align-items: center; gap: 10px; padding: 9px 10px; text-align: left;
+  border-radius: 8px; border: 1px solid var(--tn-bs); background: var(--tn-s2); color: var(--tn-tp);
+  font: inherit; cursor: pointer;
+}
+.engine-card.on { border-color: var(--tn-accent); background: var(--tn-as); }
+.engine-card:disabled { cursor: default; }
+.engine-card:disabled .engine-name { color: var(--tn-ts); }
+.engine-badge {
+  flex: none; width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+  font: 800 10px var(--tn-mono); color: var(--tn-tm); background: var(--tn-bg);
+}
+.engine-badge.engine-pg { color: var(--tn-accent); background: var(--tn-as); }
+.engine-badge.engine-sq { color: var(--tn-info); background: var(--tn-info-tint); }
+.engine-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.engine-name { font-size: 12px; font-weight: 650; }
+.engine-status { font-size: 10.5px; color: var(--tn-tm); }
+.engine-status.available { color: var(--tn-success); }
+.pg-avatar.sq { color: var(--tn-info); background: var(--tn-info-tint); }
+.engine-pill {
+  font: 800 9px var(--tn-mono); padding: 1px 5px; border-radius: 4px;
+  color: var(--tn-accent); background: var(--tn-as);
+}
+.engine-pill.sq { color: var(--tn-info); background: var(--tn-info-tint); }

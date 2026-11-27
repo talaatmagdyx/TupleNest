@@ -148,10 +148,24 @@ export function firstKeyword(sql: string): string | null {
  * Guarded environments are prod *and* staging: staging is where people rehearse
  * the destructive thing, and it is usually a restore of prod.
  */
+/**
+ * Blank the inside of SQLite's other identifier quotes, `[name]` and
+ * `` `name` ``, in text `maskLiterals` has already masked: `DELETE FROM
+ * [where]` deletes every row, and must not read as bounded. In PostgreSQL
+ * `[…]` is an array subscript; blanking one can only hide a WHERE, which errs
+ * towards stopping. `mask_bracket_quotes` in `guard.rs`; change both.
+ */
+export function maskBracketQuotes(masked: string): string {
+  return masked.replace(/\[[^\]]*\]?|`[^`]*`?/g, (m) => {
+    const close = m.length > 1 && (m.endsWith("]") || (m.startsWith("`") && m.endsWith("`"))) ? 1 : 0;
+    return m[0] + m.slice(1, m.length - close).replace(/[^\n]/g, " ") + (close ? m[m.length - 1] : "");
+  });
+}
+
 export function guardReason(sql: string, env: string | null): GuardReason | null {
   if (env !== "prod" && env !== "staging") return null;
 
-  const masked = maskLiterals(sql);
+  const masked = maskBracketQuotes(maskLiterals(sql));
   const verb = firstKeyword(sql);
   if (!verb) return null;
 

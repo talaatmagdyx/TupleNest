@@ -1,6 +1,7 @@
 import { useId } from "react";
 import type { TestStage } from "../ipc/types";
 import { ModalHead, Overlay } from "../overlays/Overlays";
+import { ENGINE_CHOICES, STATUS_LABEL, type Engine } from "../lib/engine";
 
 /**
  * Attributes for every field holding a machine identifier — hostname, database,
@@ -35,6 +36,14 @@ export function isLocalHost(host: string): boolean {
 }
 
 type Props = {
+  /** Which engine the form is for. Absent: PostgreSQL. */
+  engine?: Engine;
+  onEngine?: (e: Engine) => void;
+  /** SQLite: create the file on connect if it does not exist. */
+  createFile?: boolean;
+  onCreateFile?: (v: boolean) => void;
+  /** SQLite: the native file panel (run by the backend) for the path. */
+  onChooseFile?: () => void;
   isEdit: boolean;
   profileName: string;
   environment: string;
@@ -95,12 +104,43 @@ export default function ConnectionForm(p: Props) {
   // even if two of these are ever on screen at once.
   const uid = useId();
   const f = (name: string) => `${uid}-${name}`;
+  const engine: Engine = p.engine ?? "postgres";
+  const sqlite = engine === "sqlite";
 
   return (
     <Overlay onClose={p.onClose}>
       <div className="modal" style={{ width: 620 }}>
         <ModalHead title={p.isEdit ? "Edit connection" : "New connection"} onClose={p.onClose} />
         <div className="modal-body">
+          {/* The design's "Choose a database engine": every engine gets the
+              same safety rules, and the ones still to come say so instead of
+              being clickable and failing. */}
+          <div className="field">
+            <label id={f("engine")}>Database engine</label>
+            <div className="engine-grid" role="group" aria-labelledby={f("engine")}>
+              {ENGINE_CHOICES.map((c) => {
+                const on = c.engine === engine;
+                return (
+                  <button
+                    key={c.code}
+                    type="button"
+                    className={`engine-card ${on ? "on" : ""}`}
+                    aria-pressed={on}
+                    disabled={!c.engine || !p.onEngine}
+                    onClick={() => c.engine && p.onEngine?.(c.engine)}
+                  >
+                    <span className={`engine-badge engine-${c.code.toLowerCase()}`} aria-hidden>
+                      {c.code}
+                    </span>
+                    <span className="engine-meta">
+                      <span className="engine-name">{c.name}</span>
+                      <span className={`engine-status ${c.status}`}>{STATUS_LABEL[c.status]}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           <div className="frow">
             <div className="field">
               <label htmlFor={f("name")}>Name</label>
@@ -125,9 +165,19 @@ export default function ConnectionForm(p: Props) {
             <div>
               <div className="st">Read-only connection</div>
               <div className="sd">
-                Asks PostgreSQL to refuse writes for the whole session, and sends only statements that
-                read. Writes are refused by the server; maintenance commands the server would allow
-                (VACUUM, COPY, DO, CALL) are not sent.
+                {sqlite ? (
+                  <>
+                    Opens the file read-only and sets <span className="mono">query_only</span>, so
+                    SQLite itself refuses writes — through ATTACH and pragmas too. Statements that
+                    would write (including VACUUM INTO) are not run.
+                  </>
+                ) : (
+                  <>
+                    Asks PostgreSQL to refuse writes for the whole session, and sends only statements
+                    that read. Writes are refused by the server; maintenance commands the server would
+                    allow (VACUUM, COPY, DO, CALL) are not sent.
+                  </>
+                )}
               </div>
             </div>
             {/* Without these it is announced as an unlabelled button, and its
@@ -162,7 +212,11 @@ export default function ConnectionForm(p: Props) {
             </div>
             <div className="field" style={{ alignSelf: "end" }}>
               <div className="sd" style={{ marginBottom: 6 }}>
-                {p.statementTimeoutSec > 0 ? (
+                {p.statementTimeoutSec > 0 && sqlite ? (
+                  <>
+                    Any statement still running after <b>{p.statementTimeoutSec}s</b> is interrupted.
+                  </>
+                ) : p.statementTimeoutSec > 0 ? (
                   <>
                     PostgreSQL cancels any statement still running after{" "}
                     <b>{p.statementTimeoutSec}s</b>. The server's own timer, so it fires even if the
@@ -178,6 +232,56 @@ export default function ConnectionForm(p: Props) {
             </div>
           </div>
 
+          {sqlite ? (
+            <>
+              <div className="frow">
+                <div className="field">
+                  <label htmlFor={f("path")}>Database file</label>
+                  <input
+                    id={f("path")}
+                    className="mono"
+                    {...IDENT}
+                    placeholder="/Users/me/data/app.db"
+                    value={p.database}
+                    onChange={(e) => p.onDatabase(e.target.value)}
+                  />
+                </div>
+                {p.onChooseFile && (
+                  <div className="field" style={{ flex: "0 0 auto", alignSelf: "end" }}>
+                    <button className="btn" type="button" onClick={p.onChooseFile}>
+                      Choose…
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="section-row">
+                <div>
+                  <div className="st">Create a new file</div>
+                  <div className="sd">
+                    {p.readOnly
+                      ? "A read-only connection never creates a file."
+                      : "Creates an empty database at this path on connect if there is no file there. Off, a mistyped path is an error, not a new empty database."}
+                  </div>
+                </div>
+                <button
+                  className={`toggle ${p.createFile && !p.readOnly ? "on" : ""}`}
+                  role="switch"
+                  aria-checked={!!p.createFile && !p.readOnly}
+                  aria-label="Create a new file"
+                  disabled={p.readOnly || !p.onCreateFile}
+                  onClick={() => p.onCreateFile?.(!p.createFile)}
+                >
+                  <span className="knob" />
+                </button>
+              </div>
+              <div className="hint">
+                A file on this machine: no server, password, TLS or SSH tunnel. The environment tag,
+                read-only flag, confirmation before risky writes and the production audit log apply
+                as for any connection.
+              </div>
+            </>
+          ) : (
+            <>
           <div className="frow">
             <div className="field">
               <label htmlFor={f("host")}>Host</label>
@@ -296,6 +400,8 @@ export default function ConnectionForm(p: Props) {
                 <label htmlFor={f("sshfp")}>Host-key SHA256 fingerprint</label>
                 <input id={f("sshfp")} className="mono" {...IDENT} placeholder="empty → known_hosts" value={p.sshFingerprint} onChange={(e) => p.onSshFingerprint(e.target.value)} />
               </div>
+            </>
+          )}
             </>
           )}
           {(p.stages || p.testing) && (
