@@ -182,8 +182,10 @@ func summary(_ name: String, _ xs: [Double]) {
     let v = xs.filter { !$0.isNaN }.sorted()
     guard !v.isEmpty else { print("\(name): no data"); return }
     let med = v.count % 2 == 1 ? v[v.count / 2] : (v[v.count / 2 - 1] + v[v.count / 2]) / 2
-    print(String(format: "%@: median %.0f ms, min %.0f, max %.0f (n=%d)",
-                 name, med, v.first!, v.last!, v.count))
+    // Nearest-rank p95; equals the maximum below 20 samples.
+    let p95 = v[min(v.count, Int((0.95 * Double(v.count)).rounded(.up))) - 1]
+    print(String(format: "%@: median %.0f ms, p95 %.0f, min %.0f, max %.0f (n=%d)",
+                 name, med, p95, v.first!, v.last!, v.count))
 }
 print("")
 summary("window on screen", windowTimes)

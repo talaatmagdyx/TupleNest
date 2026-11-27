@@ -9,7 +9,7 @@
 //! dataset in docs/benchmarks/README.md has 50,000). It is opened read-only.
 //!
 //! Every measurement is repeated `TUPLENEST_BENCH_RUNS` times (default 10)
-//! after one warm-up run, and reported as median / min / max.
+//! after one warm-up run, and reported as median, p95, p99, min and max.
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -72,8 +72,13 @@ fn report(name: &str, mut ms: Vec<f64>) {
     } else {
         (ms[n / 2 - 1] + ms[n / 2]) / 2.0
     };
+    // Nearest-rank percentiles; with fewer than 20 samples p95 and p99 are
+    // simply the maximum, so read them only from a run with enough repeats.
+    let pct = |p: f64| ms[((p * n as f64).ceil() as usize).clamp(1, n) - 1];
     println!(
-        "BENCH\t{name}\tmedian {median:.2} ms\tmin {:.2}\tmax {:.2}\tn={n}",
+        "BENCH\t{name}\tmedian {median:.2} ms\tp95 {:.2}\tp99 {:.2}\tmin {:.2}\tmax {:.2}\tn={n}",
+        pct(0.95),
+        pct(0.99),
         ms[0],
         ms[n - 1]
     );
