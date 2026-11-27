@@ -9,6 +9,7 @@ import SqlEditor from "./SqlEditor";
 import { PlayIcon } from "../lib/icons";
 import { Menu, MenuGroup, TabList, tabPanelProps } from "../lib/a11y";
 import { QUERY_PANEL_ID } from "./TabsBar";
+import { isFixableError } from "../hooks/useQuery";
 
 export type ResultTab = "results" | "chart" | "messages" | "history";
 export type ChartDatum = { label: string; v: number };
@@ -278,7 +279,7 @@ export default function QueryPanel(p: Props) {
           {p.resultTab === "results" && (
             <>
               {p.lastError && <div className="error-box">{p.lastError}</div>}
-              {p.lastError && p.onFix && (
+              {p.lastError && p.onFix && isFixableError(p.lastError) && (
                 <div className="error-acts">
                   <button className="btn primary xs" onClick={p.onFix}>
                     Fix with the assistant

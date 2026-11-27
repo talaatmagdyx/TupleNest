@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
-import { announceText, isCancelled, isConnectionLost, statusText, useQuery } from "./useQuery";
+import { announceText, isCancelled, isConnectionLost, isFixableError, statusText, useQuery } from "./useQuery";
 import type { QueryResult } from "../ipc/types";
 
 const invokeMock = vi.mocked(invoke);
@@ -31,6 +31,33 @@ const failOnce = (msg: string) => {
 };
 
 const dev = { env: "dev" as string | null };
+
+describe("isFixableError — only real SQL errors from the engine", () => {
+  it("offers a fix for syntax errors and undefined columns", () => {
+    expect(isFixableError('Syntax error [SQLSTATE 42601]\nsyntax error at or near "selec"')).toBe(true);
+    expect(isFixableError('Undefined column [SQLSTATE 42703]\ncolumn "totl" does not exist')).toBe(true);
+    expect(isFixableError("SQL error [SQLITE_ERROR]\nno such column: totl")).toBe(true);
+  });
+
+  it("does not for the app's refusals, cancels, read-only modes or a lost connection", () => {
+    for (const m of [
+      "INSERT is refused on a read-only connection: only statements that read are sent. Nothing was run.",
+      "DO blocks and CALL are refused on a read-only connection. Nothing was run.",
+      "Refused by the production guard: UPDATE without WHERE.",
+      "Query cancelled [SQLSTATE 57014]",
+      "Error: Query cancelled",
+      "Read-only transaction [SQLSTATE 25006]\ncannot execute INSERT in a read-only transaction",
+      "Connection lost: Network error [SQLSTATE 08006] — the session was closed.",
+      "Connection failure [SQLSTATE 08001]",
+      "Read-only database [SQLITE_READONLY]",
+      "Interrupted [SQLITE_INTERRUPT]",
+      "",
+    ]) {
+      expect(isFixableError(m), m).toBe(false);
+    }
+    expect(isFixableError(null)).toBe(false);
+  });
+});
 
 describe("statusText", () => {
   it("counts rows and time for a select", () => {

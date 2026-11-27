@@ -104,6 +104,20 @@ describe("App — assistant", () => {
     expect(be.sent("pg_query")).toHaveLength(1);
   });
 
+  it("does not offer a fix for a read-only refusal: nothing was run, nothing to fix", async () => {
+    configure("unused");
+    be.on("pg_query", () => {
+      throw new Error(
+        "INSERT is refused on a read-only connection: only statements that read are sent, and PostgreSQL's own read-only mode would not stop this one. Nothing was run.",
+      );
+    });
+    const user = await connected();
+    await type(user, "insert into orders values (1)");
+    await user.keyboard("{Meta>}{Enter}{/Meta}");
+    expect((await screen.findAllByText(/refused on a read-only connection/)).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Fix with the assistant" })).not.toBeInTheDocument();
+  });
+
   it("inserts a suggestion after what the editor holds", async () => {
     configure("```sql\nselect 2\n```");
     const user = await connected();
