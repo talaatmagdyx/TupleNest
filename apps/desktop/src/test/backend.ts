@@ -193,6 +193,7 @@ const defaults = (): Record<string, (args: Record<string, unknown>) => unknown> 
   assistant_cancel: () => true,
   // Stage 6b pages: empty stores.
   dashboard_list: () => [],
+  notebook_list: () => [],
   pg_metadata: (a) => metadata(a),
   pg_metadata_cached: (a) => metadata((a.request ?? {}) as Record<string, unknown>),
 });

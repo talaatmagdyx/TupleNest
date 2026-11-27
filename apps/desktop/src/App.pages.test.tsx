@@ -35,4 +35,11 @@ describe("App — pages", () => {
     await user.click(screen.getByRole("button", { name: /Back to the editor/ }));
     expect(screen.queryByRole("region", { name: "Dashboards" })).not.toBeInTheDocument();
   });
+
+  it("opens notebooks", async () => {
+    const user = await mount();
+    await palette(user, "Open notebooks");
+    expect(await screen.findByRole("region", { name: "Notebooks" })).toBeInTheDocument();
+    expect(await screen.findByText("No notebooks yet")).toBeInTheDocument();
+  });
 });

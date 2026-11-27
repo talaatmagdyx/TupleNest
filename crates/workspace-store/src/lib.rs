@@ -9,6 +9,8 @@ use thiserror::Error;
 
 mod dashboards;
 pub use dashboards::{DashboardChart, DashboardRecord, MAX_CHARTS, REFRESH_CHOICES};
+mod notebooks;
+pub use notebooks::{NotebookRecord, NotebookSummary, MAX_CELLS, RESULT_ROWS};
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -23,7 +25,7 @@ pub enum StoreError {
     Refused(String),
 }
 
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 
 const MIGRATION_V1: &str = r#"
 CREATE TABLE meta        (key TEXT PRIMARY KEY, value TEXT);
@@ -313,6 +315,9 @@ impl Store {
         }
         if current < 9 {
             self.conn.execute_batch(dashboards::MIGRATION_V9)?;
+        }
+        if current < 10 {
+            self.conn.execute_batch(notebooks::MIGRATION_V10)?;
         }
         if current < SCHEMA_VERSION {
             self.conn.execute(

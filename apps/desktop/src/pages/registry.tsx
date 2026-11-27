@@ -8,21 +8,26 @@
  */
 import type { PaletteItem } from "../overlays/Overlays";
 import DashboardsPage from "./DashboardsPage";
+import NotebooksPage from "./NotebooksPage";
 import type { PageContext } from "./context";
 
 export type { PageContext } from "./context";
 export { isPostgres } from "./context";
 
-export type Page = "dashboards";
+export type Page = "dashboards" | "notebooks";
 
 export const PAGE_TITLES: Record<Page, string> = {
   dashboards: "Dashboards",
+  notebooks: "Notebooks",
 };
 
 /** Palette entries. Every page is PostgreSQL-only; one opened with no session
  *  says what it needs rather than being hidden. */
 export function pageCommands(open: (page: Page) => void): PaletteItem[] {
-  return [{ icon: "▦", label: "Open dashboards", type: "Action", exec: () => open("dashboards") }];
+  return [
+    { icon: "▦", label: "Open dashboards", type: "Action", exec: () => open("dashboards") },
+    { icon: "▤", label: "Open notebooks", type: "Action", exec: () => open("notebooks") },
+  ];
 }
 
 /** The open page, in place of the editor. The editor stays mounted behind it
@@ -37,6 +42,7 @@ export function PageHost(p: { page: Page; ctx: PageContext; onClose: () => void 
         <span className="page-sub">{PAGE_TITLES[p.page]}</span>
       </div>
       {p.page === "dashboards" && <DashboardsPage ctx={p.ctx} />}
+      {p.page === "notebooks" && <NotebooksPage ctx={p.ctx} />}
     </main>
   );
 }

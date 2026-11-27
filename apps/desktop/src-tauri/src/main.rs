@@ -16,6 +16,7 @@ mod dashboards;
 mod export;
 mod guard;
 mod mcp;
+mod notebooks;
 mod pg;
 mod sort;
 mod trim;
@@ -678,6 +679,10 @@ fn main() {
             dashboards::dashboard_delete,
             dashboards::dashboard_chart_add,
             dashboards::dashboard_chart_delete,
+            notebooks::notebook_list,
+            notebooks::notebook_get,
+            notebooks::notebook_save,
+            notebooks::notebook_delete,
             mcp::commands::mcp_info,
             mcp::commands::mcp_access_list,
             mcp::commands::mcp_access_set,

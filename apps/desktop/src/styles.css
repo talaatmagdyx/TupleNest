@@ -2364,3 +2364,30 @@ h1, h2, h3, .modal-head .t, .dialog .d-title, .onboard .big, .about-name,
 .chart-line path { fill: none; stroke: var(--tn-accent); stroke-width: 3; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .chart-big { font: 700 44px var(--tn-display); letter-spacing: -.03em; color: var(--tn-tp); }
 .chart-empty { padding: 20px; }
+.nb-doc { display: flex; flex-direction: column; gap: 10px; width: min(880px, 100%); align-self: center; }
+.nb-cell {
+  display: flex; flex-direction: column; gap: 8px; padding: 12px;
+  border-radius: var(--tn-island-r); background: var(--tn-s1); border: 1px solid var(--tn-bh);
+}
+.nb-cell header { display: flex; align-items: center; gap: 8px; }
+.nb-kind { font: 600 11px var(--tn-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--tn-tm); }
+.nb-cell textarea {
+  width: 100%; resize: vertical; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--tn-bc); background: var(--tn-desk); color: var(--tn-tp); font: 13px/1.55 var(--tn-sans);
+}
+.nb-cell textarea.mono { font: 12px/1.6 var(--tn-mono); }
+.nb-md { color: var(--tn-tp); line-height: 1.6; display: flex; flex-direction: column; gap: 8px; }
+.nb-md h3 { font: 700 22px var(--tn-display); letter-spacing: -.02em; }
+.nb-md h4 { font: 600 17px var(--tn-display); }
+.nb-md h5 { font: 600 14px var(--tn-sans); }
+.nb-md ul { padding-left: 20px; }
+.nb-md code, .md-code { font: 12px var(--tn-mono); background: var(--tn-s2); border-radius: 4px; padding: 0 4px; }
+.md-code { display: block; padding: 10px 12px; white-space: pre-wrap; }
+.md-url { color: var(--tn-ts); font-size: 11px; }
+.nb-result { max-height: 280px; overflow: auto; border: 1px solid var(--tn-bs); border-radius: 10px; }
+.nb-result table { width: 100%; border-collapse: collapse; font: 12px var(--tn-mono); }
+.nb-result th { position: sticky; top: 0; text-align: left; padding: 6px 10px; background: var(--tn-s2); color: var(--tn-ts); font-weight: 500; }
+.nb-result td { padding: 5px 10px; border-top: 1px solid var(--tn-bs); color: var(--tn-tp); white-space: nowrap; }
+.nb-add { display: flex; gap: 8px; }
+.nb-add .btn { border: 1px dashed var(--tn-bc); }
+.nb-chart-opts { padding: 0; border: 0; background: none; }
