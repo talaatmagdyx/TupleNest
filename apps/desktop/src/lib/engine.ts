@@ -82,6 +82,18 @@ export function fileName(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
+/** The key the backend files a session's history and audit rows under
+ *  (`cache_key` and `sqlite_cache_key` in src-tauri/src/pg.rs). */
+export function sessionKey(t: {
+  engine: Engine;
+  database: string;
+  username: string;
+  host: string;
+  port: number;
+}): string {
+  return t.engine === "sqlite" ? `sqlite:${t.database.trim()}` : `${t.username}@${t.host}:${t.port}/${t.database}`;
+}
+
 /** Where a saved profile points, for one line under its name. */
 export function profileTarget(c: {
   engine?: string | null;

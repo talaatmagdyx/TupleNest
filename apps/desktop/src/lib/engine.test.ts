@@ -6,6 +6,7 @@ import {
   engineOf,
   fileName,
   profileTarget,
+  sessionKey,
   unsupported,
   type Feature,
 } from "./engine";
@@ -21,6 +22,14 @@ const FEATURES: Feature[] = [
   "ssh",
   "tls",
 ];
+
+describe("sessionKey", () => {
+  const t = { database: "shop", username: "ada", host: "db", port: 5432 };
+  it("matches the backend's key for a server and for a file", () => {
+    expect(sessionKey({ ...t, engine: "postgres" })).toBe("ada@db:5432/shop");
+    expect(sessionKey({ ...t, engine: "sqlite", database: " /data/app.db " })).toBe("sqlite:/data/app.db");
+  });
+});
 
 describe("engine", () => {
   it("anything but sqlite is PostgreSQL, as every profile before engines", () => {

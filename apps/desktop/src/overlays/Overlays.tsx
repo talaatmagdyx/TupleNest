@@ -4,6 +4,7 @@ import { SHORTCUTS } from "../lib/shortcuts";
 import { BrandMark, OfflineIcon, WarnIcon } from "../lib/icons";
 import { prettyJson } from "../lib/text";
 import { guardReason, guardTarget } from "../lib/sql";
+import { BUILD_SHA } from "../lib/build";
 
 /* ---------- shared ---------- */
 
@@ -186,6 +187,31 @@ export type PaletteItem = {
   exec: () => void | Promise<void>;
 };
 
+/** How each item type is headed in the list. */
+const PALETTE_GROUPS: Record<string, string> = {
+  Action: "Commands",
+  Table: "Tables",
+  Snippet: "Saved queries",
+  Connection: "Connections",
+  Recent: "Recent",
+  Assistant: "Assistant",
+};
+/** With nothing typed, the commands lead — the list is a menu then. Once a
+ *  query is typed it is usually a name, so the tables and saved queries it
+ *  matches lead instead. */
+const ORDER_IDLE = ["Action", "Connection", "Snippet", "Table", "Recent"];
+const ORDER_SEARCH = ["Table", "Snippet", "Action", "Connection", "Recent"];
+
+/** The filtered items, grouped by type in display order. */
+export function groupPalette(items: PaletteItem[], q: string): { type: string; items: PaletteItem[] }[] {
+  const filtered = items.filter((x) => x.label.toLowerCase().includes(q.toLowerCase()));
+  const order = q.trim() ? ORDER_SEARCH : ORDER_IDLE;
+  const types = [...order, ...new Set(filtered.map((x) => x.type).filter((t) => !order.includes(t)))];
+  return types
+    .map((type) => ({ type, items: filtered.filter((x) => x.type === type) }))
+    .filter((g) => g.items.length > 0);
+}
+
 export function Palette(p: {
   items: PaletteItem[];
   q: string;
@@ -194,10 +220,19 @@ export function Palette(p: {
   onIdx: (i: number) => void;
   onPick: (it: PaletteItem) => void;
   onClose: () => void;
+  /** Offered as the last entry whenever something is typed: hands the text
+   *  to the assistant panel. */
+  onAsk?: (q: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => inputRef.current?.focus(), []);
-  const filtered = p.items.filter((x) => x.label.toLowerCase().includes(p.q.toLowerCase()));
+  const q = p.q.trim();
+  const ask: PaletteItem[] =
+    p.onAsk && q
+      ? [{ icon: "?", label: `Ask the assistant: “${q}”`, type: "Assistant", exec: () => p.onAsk?.(q) }]
+      : [];
+  const groups = [...groupPalette(p.items, p.q), ...(ask.length ? [{ type: "Assistant", items: ask }] : [])];
+  const filtered = groups.flatMap((g) => g.items);
   const idx = Math.max(0, Math.min(p.idx, filtered.length - 1));
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
@@ -242,26 +277,42 @@ export function Palette(p: {
           />
         </div>
         <div className="pal-list" role="listbox" id={listId} aria-label="Commands and tables">
-          {filtered.map((x, i) => (
-            <button
-              key={i}
-              id={optId(i)}
-              role="option"
-              aria-selected={i === idx}
-              // Out of the tab order: the input is the palette's one stop, and
-              // the arrows move the highlight.
-              tabIndex={-1}
-              className={`pal-item ${i === idx ? "on" : ""}`}
-              onClick={() => p.onPick(x)}
-            >
-              <span className="pic" aria-hidden>
-                {x.icon}
-              </span>
-              <span className="plabel">{x.label}</span>
-              <span className="ptype">{x.type}</span>
-              {x.kbd && <span className="kbd">{x.kbd}</span>}
-            </button>
-          ))}
+          {groups.map((g) => {
+            const headId = `${listId}-h-${g.type}`;
+            return (
+              // A group per heading, labelled by it, so a screen reader says
+              // "Tables" on entering the first table rather than reading a
+              // heading out of the option order.
+              <div key={g.type} role="group" aria-labelledby={headId}>
+                <div className="pal-head" id={headId} role="presentation">
+                  {PALETTE_GROUPS[g.type] ?? g.type}
+                </div>
+                {g.items.map((x) => {
+                  const i = filtered.indexOf(x);
+                  return (
+                    <button
+                      key={i}
+                      id={optId(i)}
+                      role="option"
+                      aria-selected={i === idx}
+                      // Out of the tab order: the input is the palette's one
+                      // stop, and the arrows move the highlight.
+                      tabIndex={-1}
+                      className={`pal-item ${i === idx ? "on" : ""}`}
+                      onClick={() => p.onPick(x)}
+                    >
+                      <span className={`pic t-${x.type.toLowerCase()}`} aria-hidden>
+                        {x.icon}
+                      </span>
+                      <span className="plabel">{x.label}</span>
+                      <span className="ptype">{x.type}</span>
+                      {x.kbd && <span className="kbd">{x.kbd}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
           {filtered.length === 0 && (
             <div className="pal-empty" role="option" aria-selected="false" aria-disabled="true">
               No matches
@@ -511,97 +562,132 @@ export function ConnLost(p: { detail: string; onReconnect: () => void; onClose: 
 
 /* ---------- settings ---------- */
 
+export type SettingsSection = "general" | "assistant" | "mcp" | "shortcuts" | "about";
+
+/** One setting: a label and its help on the left, its control on the right. */
+function SettingRow(p: { title: string; help: string; children: React.ReactNode }) {
+  return (
+    <div className="set-row">
+      <div className="set-text">
+        <div className="st">{p.title}</div>
+        <div className="sd">{p.help}</div>
+      </div>
+      {p.children}
+    </div>
+  );
+}
+
 export function Settings(p: {
   theme: "dark" | "light";
   telemetry: boolean;
   onTheme: (t: "dark" | "light") => void;
   onTelemetry: (v: boolean) => void;
-  /** Optional: the palette can reach About directly, so Settings offers it
-   *  rather than owning it — this is just where people look for it. */
-  onAbout?: () => void;
-  /** Settings › Assistant (settings/AssistantSettings), below the general
-   *  sections. A slot, like `mcp`, so this dialog makes no backend calls. */
+  /** Settings › Assistant (settings/AssistantSettings). A slot, like `mcp`,
+   *  so this dialog makes no backend calls. */
   children?: React.ReactNode;
   /** The MCP server section (settings/McpSection). A slot rather than a
    *  child component so this dialog stays free of backend calls. */
   mcp?: React.ReactNode;
+  /** Which section is showing when the dialog opens. */
+  section?: SettingsSection;
+  /** For the About section. */
+  version?: string;
+  os?: string;
+  onCheckUpdates?: () => Promise<void>;
   onClose: () => void;
 }) {
+  const nav: { id: SettingsSection; label: string }[] = [
+    { id: "general", label: "General" },
+    ...(p.children ? [{ id: "assistant" as const, label: "Assistant" }] : []),
+    ...(p.mcp ? [{ id: "mcp" as const, label: "MCP server" }] : []),
+    { id: "shortcuts", label: "Shortcuts" },
+    { id: "about", label: "About" },
+  ];
+  const [picked, setPicked] = useState<SettingsSection>(p.section ?? "general");
+  // A section whose slot was not given falls back to General rather than an
+  // empty pane.
+  const section = nav.some((n) => n.id === picked) ? picked : "general";
   return (
     <Overlay onClose={p.onClose}>
-      <div className="modal settings-modal" style={{ width: p.children ? 620 : 520 }}>
+      <div className="modal settings-modal">
         <ModalHead title="Settings" onClose={p.onClose} />
-        <div className="modal-body">
-          <div className="section-row" style={{ borderTop: "none" }}>
-            <div>
-              <div className="st">Theme</div>
-              <div className="sd">Dark ships first; light is a token swap.</div>
-            </div>
-            <div className="seg" style={{ width: 160 }}>
+        <div className="set-layout">
+          <nav className="set-nav" aria-label="Settings sections">
+            {nav.map((n) => (
               <button
-                className={p.theme === "dark" ? "on" : ""}
-                aria-pressed={p.theme === "dark"}
-                onClick={() => p.onTheme("dark")}
+                key={n.id}
+                className={`set-nav-btn ${section === n.id ? "on" : ""}`}
+                aria-current={section === n.id ? "page" : undefined}
+                onClick={() => setPicked(n.id)}
               >
-                Dark
+                {n.label}
               </button>
-              <button
-                className={p.theme === "light" ? "on" : ""}
-                aria-pressed={p.theme === "light"}
-                onClick={() => p.onTheme("light")}
-              >
-                Light
-              </button>
-            </div>
-          </div>
-          <div className="section-row">
-            <div>
-              <div className="st">Default row limit</div>
-              <div className="sd">Applied to explorer select statements.</div>
-            </div>
-            <span className="kbd" style={{ fontSize: 11 }}>
-              100
-            </span>
-          </div>
-          <div className="section-row">
-            <div>
-              <div className="st">History retention</div>
-              <div className="sd">Favorites always survive.</div>
-            </div>
-            <span className="kbd" style={{ fontSize: 11 }}>
-              newest 1,000
-            </span>
-          </div>
-          <div className="section-row">
-            <div>
-              <div className="st">Anonymous telemetry</div>
-              <div className="sd">No query text or data ever leaves the device.</div>
-            </div>
-            {/* The knob is the whole button, so without these a screen reader
-                announces "button" — no name, and no way to tell on from off. */}
-            <button
-              className={`toggle ${p.telemetry ? "on" : ""}`}
-              role="switch"
-              aria-checked={p.telemetry}
-              aria-label="Anonymous telemetry"
-              onClick={() => p.onTelemetry(!p.telemetry)}
-            >
-              <span className="knob" aria-hidden />
-            </button>
-          </div>
-          {p.children}
-          {p.mcp}
-          {p.onAbout && (
-            <div className="section-row">
-              <div>
-                <div className="st">About TupleNest</div>
-                <div className="sd">Version, credits and licences.</div>
+            ))}
+          </nav>
+          <div className="modal-body set-body">
+            {section === "general" && (
+              <>
+                <div className="set-group">
+                  <h3 className="set-h">Appearance</h3>
+                  <SettingRow title="Theme" help="Dark or light. Switch any time with the shortcut too.">
+                    <div className="seg" style={{ width: 160 }}>
+                      <button
+                        className={p.theme === "dark" ? "on" : ""}
+                        aria-pressed={p.theme === "dark"}
+                        onClick={() => p.onTheme("dark")}
+                      >
+                        Dark
+                      </button>
+                      <button
+                        className={p.theme === "light" ? "on" : ""}
+                        aria-pressed={p.theme === "light"}
+                        onClick={() => p.onTheme("light")}
+                      >
+                        Light
+                      </button>
+                    </div>
+                  </SettingRow>
+                </div>
+                <div className="set-group">
+                  <h3 className="set-h">Results</h3>
+                  <SettingRow title="Default row limit" help="Applied to explorer select statements.">
+                    <span className="set-value">100</span>
+                  </SettingRow>
+                </div>
+                <div className="set-group">
+                  <h3 className="set-h">Privacy and updates</h3>
+                  <SettingRow title="History retention" help="Favorites always survive.">
+                    <span className="set-value">newest 1,000</span>
+                  </SettingRow>
+                  <SettingRow title="Anonymous telemetry" help="No query text or data ever leaves the device.">
+                    {/* The knob is the whole button, so without these a screen
+                        reader announces "button" — no name, and no way to tell
+                        on from off. */}
+                    <button
+                      className={`toggle ${p.telemetry ? "on" : ""}`}
+                      role="switch"
+                      aria-checked={p.telemetry}
+                      aria-label="Anonymous telemetry"
+                      onClick={() => p.onTelemetry(!p.telemetry)}
+                    >
+                      <span className="knob" aria-hidden />
+                    </button>
+                  </SettingRow>
+                </div>
+              </>
+            )}
+            {section === "assistant" && p.children}
+            {section === "mcp" && p.mcp}
+            {section === "shortcuts" && (
+              <div className="set-group">
+                <h3 className="set-h">Keyboard shortcuts</h3>
+                <ShortcutList grid />
               </div>
-              <button className="btn" onClick={p.onAbout}>
-                About
-              </button>
-            </div>
-          )}
+            )}
+            {section === "about" && (
+              <AboutBody version={p.version ?? ""} os={p.os ?? ""} onCheckUpdates={p.onCheckUpdates} />
+            )}
+          </div>
         </div>
       </div>
     </Overlay>
@@ -611,12 +697,14 @@ export function Settings(p: {
 /* ---------- about ---------- */
 
 /** Where the About box is willing to send you. Kept next to the component so
- *  it is obvious these two must stay in step with the `opener:allow-open-url`
+ *  it is obvious these must stay in step with the `opener:allow-open-url`
  *  scope in capabilities/default.json — a URL that isn't in both is a runtime
  *  rejection, not a compile error. */
 export const ABOUT_LINKS = {
   author: "https://github.com/talaatmagdyx",
   claude: "https://claude.com",
+  changelog: "https://github.com/talaatmagdyx/TupleNest/blob/main/CHANGELOG.md",
+  issues: "https://github.com/talaatmagdyx/TupleNest/issues",
 } as const;
 
 /**
@@ -637,71 +725,119 @@ async function openExternal(url: string): Promise<void> {
   }
 }
 
-export function About(p: { version: string; os: string; onClose: () => void }) {
+/** What the About dialog and Settings › About both show. */
+function AboutBody(p: { version: string; os: string; sha?: string; onCheckUpdates?: () => Promise<void> }) {
+  const sha = p.sha ?? BUILD_SHA;
   const osLabel = { macos: "macOS", windows: "Windows", linux: "Linux" }[p.os] ?? p.os;
+  const [checking, setChecking] = useState(false);
+  return (
+    <div className="about-body">
+      <div className="about-hero">
+        <BrandMark size={64} />
+        <div className="about-name">TupleNest</div>
+        {/* No engine named on purpose. It speaks Postgres today and the plan
+            is for it not to stop there — a tagline outlives the release that
+            made it true. */}
+        <div className="about-tag">A home for your tuples. Careful by default.</div>
+        <div className="about-chips">
+          {/* Mono: a version is a string to be read exactly and quoted back in
+              a bug report, not prose. */}
+          <span className="about-ver mono">
+            Version {p.version || "—"}
+            {p.os ? ` · ${osLabel}` : ""}
+          </span>
+          {sha && (
+            <span className="about-ver mono" title="The commit this build was made from">
+              {sha}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="about-rows">
+        <div className="about-row">
+          <span className="al">Created by</span>
+          <span className="av">
+            Talaat Magdy
+            <button
+              className="about-link"
+              onClick={() => void openExternal(ABOUT_LINKS.author)}
+              title="Open github.com/talaatmagdyx in your browser"
+            >
+              github.com/talaatmagdyx
+            </button>
+          </span>
+        </div>
+        <div className="about-row">
+          <span className="al">Built with</span>
+          <span className="av">
+            Claude
+            <button
+              className="about-link"
+              onClick={() => void openExternal(ABOUT_LINKS.claude)}
+              title="Open claude.com in your browser"
+            >
+              claude.com
+            </button>
+          </span>
+        </div>
+        <div className="about-row">
+          <span className="al">Interface</span>
+          <span className="av">Inspired by Visual Studio Code</span>
+        </div>
+        <div className="about-row">
+          <span className="al">Built on</span>
+          <span className="av">Tauri · Rust · React · JetBrains Mono</span>
+        </div>
+      </div>
+
+      <div className="about-actions">
+        <button className="btn" onClick={() => void openExternal(ABOUT_LINKS.changelog)}>
+          Changelog
+        </button>
+        <button className="btn" onClick={() => void openExternal(ABOUT_LINKS.issues)}>
+          Report a problem
+        </button>
+        {p.onCheckUpdates && (
+          <button
+            className="btn primary"
+            disabled={checking}
+            onClick={async () => {
+              setChecking(true);
+              try {
+                await p.onCheckUpdates?.();
+              } finally {
+                setChecking(false);
+              }
+            }}
+          >
+            {checking ? "Checking…" : "Check for updates"}
+          </button>
+        )}
+      </div>
+
+      <p className="about-foot">
+        Not affiliated with Microsoft, JetBrains, Anthropic or the PostgreSQL Global Development Group.
+        PostgreSQL is a trademark of the PostgreSQL Community Association.
+      </p>
+    </div>
+  );
+}
+
+export function About(p: {
+  version: string;
+  os: string;
+  /** The commit; the build's own when not given. */
+  sha?: string;
+  onCheckUpdates?: () => Promise<void>;
+  onClose: () => void;
+}) {
   return (
     <Overlay onClose={p.onClose}>
       <div className="modal about" style={{ width: 460 }}>
         <ModalHead title="About TupleNest" onClose={p.onClose} />
         <div className="modal-body">
-          <div className="about-hero">
-            <BrandMark size={44} />
-            <div className="about-id">
-              <div className="about-name">TupleNest</div>
-              {/* No engine named on purpose. It speaks Postgres today and the
-                  plan is for it not to stop there — a tagline outlives the
-                  release that made it true. */}
-              <div className="about-tag">A home for your tuples. Careful by default.</div>
-              {/* Mono: a version is a string to be read exactly and quoted back
-                  in a bug report, not prose. */}
-              <div className="about-ver mono">
-                Version {p.version || "—"}
-                {p.os ? ` · ${osLabel}` : ""}
-              </div>
-            </div>
-          </div>
-
-          <div className="about-rows">
-            <div className="about-row">
-              <span className="al">Created by</span>
-              <span className="av">
-                Talaat Magdy
-                <button
-                  className="about-link"
-                  onClick={() => void openExternal(ABOUT_LINKS.author)}
-                  title="Open github.com/talaatmagdyx in your browser"
-                >
-                  github.com/talaatmagdyx
-                </button>
-              </span>
-            </div>
-            <div className="about-row">
-              <span className="al">Built with</span>
-              <span className="av">
-                Claude
-                <button
-                  className="about-link"
-                  onClick={() => void openExternal(ABOUT_LINKS.claude)}
-                  title="Open claude.com in your browser"
-                >
-                  claude.com
-                </button>
-              </span>
-            </div>
-            <div className="about-row">
-              <span className="al">Interface</span>
-              <span className="av">Inspired by Visual Studio Code</span>
-            </div>
-            <div className="about-row">
-              <span className="al">Built on</span>
-              <span className="av">Tauri · Rust · React · JetBrains Mono</span>
-            </div>
-          </div>
-
-          <p className="about-foot">
-            Not affiliated with Microsoft, JetBrains, Anthropic or the PostgreSQL Global Development
-            Group. PostgreSQL is a trademark of the PostgreSQL Community Association.
-          </p>
+          <AboutBody version={p.version} os={p.os} sha={p.sha} onCheckUpdates={p.onCheckUpdates} />
         </div>
       </div>
     </Overlay>
@@ -714,21 +850,31 @@ export function About(p: { version: string; os: string; onClose: () => void }) {
    what each key does. This screen's whole job is saying which keys exist, so
    it is the last place that should keep its own copy of the answer. */
 
+/** Every shortcut and its keys, from lib/shortcuts. Shared by the cheatsheet
+ *  and Settings › Shortcuts so the two cannot disagree. */
+function ShortcutList(p: { grid?: boolean }) {
+  return (
+    <div className={p.grid ? "sc-grid" : undefined}>
+      {SHORTCUTS.map((sc) => (
+        <div key={sc.id} className="kv-row">
+          <span className="kl">
+            {sc.label}
+            {sc.note && <span className="kn"> — {sc.note}</span>}
+          </span>
+          <span className="kbd">{kbd(...sc.keys)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function Cheatsheet(p: { onClose: () => void }) {
   return (
     <Overlay onClose={p.onClose}>
       <div className="modal" style={{ width: 420 }}>
         <ModalHead title="Keyboard shortcuts" onClose={p.onClose} />
         <div className="modal-body">
-          {SHORTCUTS.map((sc) => (
-            <div key={sc.id} className="kv-row">
-              <span className="kl">
-                {sc.label}
-                {sc.note && <span className="kn"> — {sc.note}</span>}
-              </span>
-              <span className="kbd">{kbd(...sc.keys)}</span>
-            </div>
-          ))}
+          <ShortcutList />
         </div>
       </div>
     </Overlay>

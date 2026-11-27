@@ -324,6 +324,18 @@ describe("AssistantPanel — Fix", () => {
     await waitFor(() => expect(be.sent("assistant_ask")).toHaveLength(2));
   });
 
+  it("puts a question from the palette in the box and sends nothing", async () => {
+    const p = props({ request: { n: 1, action: "chat", sql: "", draft: "why is this slow?" } });
+    const { rerender } = render(<AssistantPanel {...p} />);
+    const box = await screen.findByDisplayValue("why is this slow?");
+    expect(box).toBeInTheDocument();
+    // The same request again does not overwrite what has been typed since.
+    await userEvent.clear(box);
+    rerender(<AssistantPanel {...p} request={{ ...p.request!, draft: "why is this slow?" }} />);
+    expect(box).toHaveValue("");
+    expect(be.sent("assistant_ask")).toHaveLength(0);
+  });
+
   it("re-reads the models when Settings change them", async () => {
     const p = props();
     const { rerender } = render(<AssistantPanel {...p} reloadKey={0} />);

@@ -76,7 +76,8 @@ describe("App — SQLite", () => {
     await user.keyboard("{Escape}");
     for (const term of ["Index health", "Vacuum", "Top queries", "Compare schemas", "Compare EXPLAIN", "Import CSV"]) {
       await openPalette(user, term);
-      expect(screen.queryByText(new RegExp(term)), term).not.toBeInTheDocument();
+      // Anchored: the palette's "Ask the assistant: “…”" entry quotes the term.
+      expect(screen.queryByText(new RegExp(`^${term}`)), term).not.toBeInTheDocument();
       await user.keyboard("{Escape}");
     }
     const rail = screen.getByTitle(/^Server monitor — SQLite has no server/);

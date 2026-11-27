@@ -79,6 +79,8 @@ type Props = {
 };
 
 const TYPES: InferredType[] = ["int8", "numeric", "boolean", "timestamptz", "date", "text"];
+/** How the summary line names the separator. */
+const DELIMITERS: Record<string, string> = { ",": "comma", "\t": "tab", ";": "semicolon", "|": "pipe" };
 const BATCH = 500;
 /** Brackets an import inside the user's own transaction. */
 const SAVEPOINT = "tuplenest_import";
@@ -250,6 +252,9 @@ export default function ImportModal(p: Props) {
   };
 
   const isProd = p.env === "prod";
+  // Where the wizard is: choosing a file, mapping its columns, importing.
+  const step = busy ? 3 : table ? 2 : 1;
+  const steps = ["File", "Columns", "Import"];
 
   return (
     // The shared Overlay: focus trap, role="dialog", and an Escape that stops
@@ -260,7 +265,27 @@ export default function ImportModal(p: Props) {
         {/* Was the fourth hand-rolled copy of ModalHead, kept because the close
             button has to refuse mid-import. ModalHead now takes that, and its
             title is what names this dialog. */}
-        <ModalHead title="Import CSV" onClose={p.onClose} closeDisabled={busy} />
+        <ModalHead
+          title="Import CSV"
+          actions={
+            <ol className="imp-steps" aria-label="Steps">
+              {steps.map((s, i) => (
+                <li
+                  key={s}
+                  className={`imp-step ${i + 1 === step ? "on" : i + 1 < step ? "done" : ""}`}
+                  aria-current={i + 1 === step ? "step" : undefined}
+                >
+                  <span className="imp-step-n" aria-hidden>
+                    {i + 1 < step ? "✓" : i + 1}
+                  </span>
+                  {s}
+                </li>
+              ))}
+            </ol>
+          }
+          onClose={p.onClose}
+          closeDisabled={busy}
+        />
 
         <div className="modal-body">
           {!table && (
@@ -299,10 +324,14 @@ export default function ImportModal(p: Props) {
 
           {table && (
             <>
-              <div className="intel-row">
+              <div className="intel-row imp-summary">
                 <span className="imp-file">{fileName}</span>
                 <span className="imp-count">
                   {more ? `first ${table.rows.length.toLocaleString()} rows sampled` : `${table.rows.length.toLocaleString()} rows`}
+                </span>
+                <span className="imp-meta">
+                  UTF-8 · {DELIMITERS[delimiter]} · header row · {names.length}{" "}
+                  {names.length === 1 ? "column" : "columns"}
                 </span>
                 <div className="grow" />
                 <button className="btn" onClick={() => setTable(null)} disabled={busy}>
@@ -368,8 +397,13 @@ export default function ImportModal(p: Props) {
                 <table>
                   <thead>
                     <tr>
+                      {/* The mapping, read across: the file's column over the
+                          column it becomes. */}
                       {names.map((n, i) => (
-                        <th key={i}>{n}</th>
+                        <th key={i} scope="col">
+                          <span className="imp-from">{displayCell(table.header[i])}</span>
+                          <span className="imp-to">→ {n}</span>
+                        </th>
                       ))}
                     </tr>
                   </thead>
@@ -404,7 +438,7 @@ export default function ImportModal(p: Props) {
                 Read {progress.toFixed(0)}% of the file · {inserted.toLocaleString()} rows inserted…
               </span>
             ) : (
-              <span className="er-note">One transaction — any failure rolls back the whole import.</span>
+              <span className="er-note">Runs in one transaction — any failure rolls back the whole import.</span>
             )}
             <div className="grow" />
             <button

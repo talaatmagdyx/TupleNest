@@ -13,7 +13,6 @@ import Titlebar from "./app-shell/Titlebar";
 import StatusBar from "./app-shell/StatusBar";
 import ActivityRail, { type RailView } from "./app-shell/ActivityRail";
 import Welcome from "./app-shell/Welcome";
-import HistoryPanel from "./history/HistoryPanel";
 import SavedList from "./connections/SavedList";
 import ConnectionForm from "./connections/ConnectionForm";
 import ExplorerTree from "./explorer/ExplorerTree";
@@ -40,6 +39,9 @@ import { FILTERS, abortSave, baseName, beginSave, finishSave, saveText } from ".
 import { MAX_BARS, chartSubtitle, chartTitle, pickChartColumns } from "./lib/chart";
 import type { Pane as IntelPane } from "./overlays/IntelModal";
 import type { ObjectDetails } from "./overlays/DetailsModal";
+import { HAS_STRUCTURE, loadStructure, type TableStructure } from "./lib/structure";
+import HistoryPage from "./pages/HistoryPage";
+import SavedPage from "./pages/SavedPage";
 import { FIRST_TAB, useQueryTabs } from "./hooks/useQueryTabs";
 import { useSearch } from "./hooks/useSearch";
 import { useHealth } from "./hooks/useHealth";
@@ -59,7 +61,7 @@ import { useConnection } from "./hooks/useConnection";
 import { suggestName, useSnippets } from "./hooks/useSnippets";
 import type { HealthTab } from "./overlays/HealthModal";
 import { analyzeEditability, qualifiedName } from "./lib/dml";
-import { fileName, unsupported, type Engine, type Feature } from "./lib/engine";
+import { fileName, sessionKey, unsupported, type Engine, type Feature } from "./lib/engine";
 import type { SchemaExtra } from "./overlays/SchemaModal";
 import {
   AuditModal,
@@ -209,7 +211,8 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(272);
   const sidebarDragRef = useRef<{ x: number; w: number } | null>(null);
-  const [railView, setRailView] = useState<RailView>("explorer");
+  /** What the main area shows: the editor ("explorer"), or a page in its place. */
+  const [page, setPage] = useState<RailView>("explorer");
   const [connMenu, setConnMenu] = useState(false);
   const [exportMenu, setExportMenu] = useState(false);
   // CSV export neutralizes spreadsheet formulas by default (security FILE-01).
@@ -233,6 +236,8 @@ export default function App() {
   const [schemaExtra, setSchemaExtra] = useState<SchemaExtra | null>(null);
   const [inspectCol, setInspectCol] = useState<string | undefined>(undefined);
   const [snippetName, setSnippetName] = useState("");
+  /** What the name prompt saves when it is not the editor's text. */
+  const [snippetBody, setSnippetBody] = useState<string | null>(null);
   const {
     explain,
     opts: explainOpts,
@@ -247,8 +252,11 @@ export default function App() {
   const [schemasError, setSchemasError] = useState<string | null>(null);
   const [details, setDetails] = useState<{
     schema: string;
+    name: string;
     data: ObjectDetails | null;
     error: string | null;
+    /** Undefined for kinds without columns; null while it loads. */
+    structure?: TableStructure | null;
   } | null>(null);
 
   // Health + global search
@@ -319,10 +327,8 @@ export default function App() {
     invoke<boolean | null>("settings_get", { key: "telemetry" })
       .then((v) => setTelemetry(!!v))
       .catch(() => {});
-    /* `refreshSaved` awaits the IPC call before it sets anything, so nothing
-       here is synchronous — the rule follows the setState inside it but not the
-       await in front of it. Loading on mount is what an effect is for. */
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // Loading on mount is what an effect is for: both await their IPC call
+    // before setting anything.
     void refreshSaved();
     void refreshSnippets();
   }, [refreshSaved, refreshSnippets]);
@@ -704,18 +710,27 @@ export default function App() {
    *  is just a stale number wearing a confident face. */
   const showDetails = useCallback(
     async (schema: string, name: string, kind: string) => {
-      setDetails({ schema, data: null, error: null });
+      const tabular = HAS_STRUCTURE.has(kind);
+      setDetails({ schema, name, data: null, error: null, structure: tabular ? null : undefined });
       setOverlay("details");
+      // Only the answer for the object still on screen is kept: a slow read
+      // for the last table must not fill in the next one's dialog.
+      const mine = (d: { schema: string; name: string }) => d.schema === schema && d.name === name;
+      if (tabular) {
+        void loadStructure(metaFetch, schema, name).then((s) =>
+          setDetails((d) => (d && mine(d) ? { ...d, structure: s } : d)),
+        );
+      }
       try {
         const r = await invoke<MetadataOut<ObjectDetails>>("pg_metadata", {
           request: { kind: "object_details", schema, name, objectKind: kind },
         });
-        setDetails({ schema, data: r.payload, error: null });
+        setDetails((d) => (d && mine(d) ? { ...d, data: r.payload, error: null } : d));
       } catch (e) {
-        setDetails({ schema, data: null, error: String(e) });
+        setDetails((d) => (d && mine(d) ? { ...d, data: null, error: String(e) } : d));
       }
     },
-    []
+    [metaFetch]
   );
 
   /** Open the health report on a tab. The fetching and caching live in the
@@ -837,18 +852,27 @@ export default function App() {
       showToast("Nothing to save");
       return;
     }
+    setSnippetBody(null);
     setSnippetName(suggestName(body));
     setOverlay("snippetName");
   }, [tabs, activeTab, showToast]);
 
+  /** The same prompt for a statement that is not in the editor — one picked
+   *  on the history page. Callers only offer it for a statement with text. */
+  const saveSnippetFrom = useCallback((body: string) => {
+    setSnippetBody(body);
+    setSnippetName(suggestName(body));
+    setOverlay("snippetName");
+  }, []);
+
   const commitSnippet = useCallback(async () => {
-    const body = tabs[activeTab]?.sql ?? "";
+    const body = snippetBody ?? tabs[activeTab]?.sql ?? "";
     const name = snippetName.trim();
     if (!name || !body.trim()) return;
     setOverlay(null);
     const out = await saveSnippetRecord({ name, body });
     showToast(out.ok ? `Saved snippet "${name}"` : out.message.slice(0, 70));
-  }, [tabs, activeTab, snippetName, showToast, saveSnippetRecord]);
+  }, [tabs, activeTab, snippetBody, snippetName, showToast, saveSnippetRecord]);
 
   /* ---------------- tabs ---------------- */
 
@@ -1405,16 +1429,20 @@ export default function App() {
     };
   }, []);
 
-  // Clicking the active rail view collapses the sidebar; another view expands.
+  // Explorer: clicking it while it shows collapses the sidebar, otherwise it
+  // brings the editor and the sidebar back. A page: clicking it opens it, and
+  // clicking it again goes back to the editor.
   const handleRailView = useCallback(
     (v: RailView) => {
-      if (v === railView && !sidebarCollapsed) setSidebarCollapsed(true);
-      else {
-        setRailView(v);
-        setSidebarCollapsed(false);
-      }
+      if (v === "explorer") {
+        if (page === "explorer" && !sidebarCollapsed) setSidebarCollapsed(true);
+        else {
+          setPage("explorer");
+          setSidebarCollapsed(false);
+        }
+      } else setPage(page === v ? "explorer" : v);
     },
-    [railView, sidebarCollapsed]
+    [page, sidebarCollapsed]
   );
 
   useEffect(() => {
@@ -1493,7 +1521,8 @@ export default function App() {
             // run, and it closed the import while its inserts carried on with
             // no progress and no Cancel button.
             if (!writingRef.current) setOverlay(null);
-          } else if (running) void doCancel();
+          } else if (page !== "explorer") setPage("explorer");
+          else if (running) void doCancel();
           else {
             setConnMenu(false);
             setExportMenu(false);
@@ -1503,7 +1532,7 @@ export default function App() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [doRun, newTab, overlay, running, doCancel, showToast, doFormat, applyTheme, theme, connected, search]);
+  }, [doRun, newTab, overlay, page, running, doCancel, showToast, doFormat, applyTheme, theme, connected, search]);
 
   /**
    * Everything the palette can do.
@@ -1534,6 +1563,8 @@ export default function App() {
       { icon: "⌕", label: "Find usages & rename…", type: "Action", exec: () => openIntel("usages") },
       ...(lacks("schemaCompare") ? [] : [{ icon: "⇄", label: "Compare schemas…", type: "Action", exec: () => openIntel("diff") } as PaletteItem]),
       ...(lacks("planCompare") ? [] : [{ icon: "◫", label: "Compare EXPLAIN plans…", type: "Action", exec: () => openIntel("plans") } as PaletteItem]),
+      { icon: "↺", label: "Show query history", type: "Action", exec: () => setPage("history") },
+      { icon: "★", label: "Show saved queries", type: "Action", exec: () => setPage("saved") },
       { icon: "⚙", label: "Open settings", type: "Action", exec: () => setOverlay("settings") },
       { icon: "◈", label: "About TupleNest", type: "Action", exec: () => setOverlay("about") },
     ];
@@ -1659,6 +1690,22 @@ export default function App() {
     };
   }, []);
 
+  /** "Check for updates" in About. Unlike the quiet check at start-up, this
+   *  one was asked for, so it always says what it found. */
+  const checkForUpdates = useCallback(async () => {
+    try {
+      const up = await check();
+      if (!up || !meetsUpdateFloor(up.version)) {
+        showToast("TupleNest is up to date");
+        return;
+      }
+      pendingUpdate.current = up;
+      setUpdateInfo({ version: up.version, notes: up.body ?? "" });
+    } catch (e) {
+      showToast(`Could not check for updates: ${errText(e).slice(0, 60)}`);
+    }
+  }, [showToast]);
+
   const installUpdate = useCallback(async () => {
     const up = pendingUpdate.current;
     if (!up) return;
@@ -1712,7 +1759,7 @@ export default function App() {
       )}
       <div className="body">
         <ActivityRail
-          view={railView}
+          view={page}
           collapsed={sidebarCollapsed}
           connected={connected}
           onView={handleRailView}
@@ -1720,66 +1767,43 @@ export default function App() {
           monitorUnavailable={connected ? unsupported(liveEngine, "monitor") : null}
           onPastePlan={() => setOverlay("pastePlan")}
           onDiagram={() => setOverlay("diagram")}
+          onAudit={() => setOverlay("audit")}
           onSettings={() => setOverlay("settings")}
         />
         <aside
           className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}
           style={{ width: sidebarCollapsed ? 0 : sidebarWidth }}
         >
-          {railView === "explorer" ? (
-            <>
-              <SavedList
-                saved={saved}
-                activeId={liveId}
-                connected={connected}
-                onLoad={editProfile}
-                onNew={newProfile}
-                onDelete={doDeleteProfile}
-              />
-              <div className="side-sep" />
-              <ExplorerTree
-                schemas={schemas}
-                loadError={schemasError}
-                onRetry={afterConnect}
-                metaCached={metaCached}
-                connected={connected}
-                open={openNodes}
-                onToggle={toggleNode}
-                objects={objects}
-                columns={columns}
-                indexes={indexes}
-                constraints={constraints}
-                partitions={partitions}
-                types={types}
-                routines={routines}
-                onInsertSelect={insertSelect}
-                onDescribe={describeObject}
-                onDetails={showDetails}
-                onPartitions={showPartitions}
-                onConnect={saved.length ? () => setConnMenu(true) : newProfile}
-              />
-            </>
-          ) : (
-            <>
-              <div className="side-head">
-                <span className="label">History</span>
-              </div>
-              <HistoryPanel
-                items={historyItems}
-                search={historySearch}
-                onSearch={setHistorySearch}
-                onClear={async () => {
-                  await clearHistory();
-                  showToast("Cleared history — favorites kept");
-                }}
-                onToggleFavorite={(h) => toggleHistoryFavorite(h.id, !h.favorite)}
-                onLoad={(sql) => {
-                  setActiveSql(sql);
-                  showToast("Loaded into editor");
-                }}
-              />
-            </>
-          )}
+          <SavedList
+            saved={saved}
+            activeId={liveId}
+            connected={connected}
+            onLoad={editProfile}
+            onNew={newProfile}
+            onDelete={doDeleteProfile}
+          />
+          <div className="side-sep" />
+          <ExplorerTree
+            schemas={schemas}
+            loadError={schemasError}
+            onRetry={afterConnect}
+            metaCached={metaCached}
+            connected={connected}
+            open={openNodes}
+            onToggle={toggleNode}
+            objects={objects}
+            columns={columns}
+            indexes={indexes}
+            constraints={constraints}
+            partitions={partitions}
+            types={types}
+            routines={routines}
+            onInsertSelect={insertSelect}
+            onDescribe={describeObject}
+            onDetails={showDetails}
+            onPartitions={showPartitions}
+            onConnect={saved.length ? () => setConnMenu(true) : newProfile}
+          />
         </aside>
         {!sidebarCollapsed && (
           <div
@@ -1791,7 +1815,9 @@ export default function App() {
             }}
           />
         )}
-        <main className="main-col">
+        {/* Hidden rather than unmounted while a page is up: the editor keeps
+            its scroll, selection and undo history for the way back. */}
+        <main className="main-col" hidden={page !== "explorer"}>
           <TabsBar
             tabs={tabs}
             active={activeTab}
@@ -1901,6 +1927,41 @@ export default function App() {
             />
           )}
         </main>
+        {page === "history" && (
+          <HistoryPage
+            items={historyItems}
+            search={historySearch}
+            onSearch={setHistorySearch}
+            connectionKey={connected && connectedTo ? sessionKey(connectedTo) : null}
+            onClear={async () => {
+              await clearHistory();
+              showToast("Cleared history — favorites kept");
+            }}
+            onToggleFavorite={(h) => toggleHistoryFavorite(h.id, !h.favorite)}
+            onOpen={(sql) => {
+              setActiveSql(sql);
+              setPage("explorer");
+              showToast("Loaded into editor");
+            }}
+            onSave={saveSnippetFrom}
+            onClose={() => setPage("explorer")}
+          />
+        )}
+        {page === "saved" && (
+          <SavedPage
+            items={snippets}
+            onOpen={(sn) => {
+              setActiveSql(sn.body);
+              setPage("explorer");
+              showToast(`Inserted snippet "${sn.name}"`);
+            }}
+            onNew={() => {
+              newTab();
+              setPage("explorer");
+            }}
+            onClose={() => setPage("explorer")}
+          />
+        )}
         {assistantOpen && (
           <AssistantPanel
             sql={currentSql}
@@ -1975,7 +2036,14 @@ export default function App() {
           onIdx={setPaletteIdx}
           onPick={(it) => {
             setOverlay(null);
+            // Nearly everything here acts on the editor, so it comes back
+            // into view first; the page commands below set their page after.
+            setPage("explorer");
             void it.exec();
+          }}
+          onAsk={(text) => {
+            setAssistantOpen(true);
+            setAssistantReq((r) => ({ n: (r?.n ?? 0) + 1, action: "chat", sql: currentSql, draft: text }));
           }}
           onClose={() => setOverlay(null)}
         />
@@ -2087,6 +2155,17 @@ export default function App() {
           schema={details.schema}
           details={details.data}
           error={details.error}
+          structure={details.structure}
+          onQuery={
+            details.structure !== undefined
+              ? () => {
+                  insertSelect(details.schema, details.name);
+                  setPage("explorer");
+                  setOverlay(null);
+                }
+              : undefined
+          }
+          onDiagram={connected ? () => setOverlay("diagram") : undefined}
           onClose={() => setOverlay(null)}
         />
       )}
@@ -2190,7 +2269,10 @@ export default function App() {
           telemetry={telemetry}
           onTheme={applyTheme}
           onTelemetry={applyTelemetry}
-          onAbout={() => setOverlay("about")}
+          section={settingsAssistant ? "assistant" : "general"}
+          version={info?.version ?? ""}
+          os={info?.os ?? ""}
+          onCheckUpdates={checkForUpdates}
           mcp={<McpSection />}
           onClose={() => {
             setSettingsAssistant(false);
@@ -2241,6 +2323,7 @@ export default function App() {
         <About
           version={info?.version ?? ""}
           os={info?.os ?? ""}
+          onCheckUpdates={checkForUpdates}
           onClose={() => setOverlay(null)}
         />
       )}
