@@ -2231,6 +2231,7 @@ export default function App() {
           os={info?.os ?? ""}
           onClose={() => setOverlay(null)}
           onNews={() => reopenFirstRun("news")}
+          onTour={() => reopenFirstRun("tour")}
         />
       )}
       <FirstRun version={info?.version ?? ""} request={firstRun} />

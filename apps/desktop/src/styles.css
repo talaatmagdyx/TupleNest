@@ -2466,4 +2466,22 @@ h1, h2, h3, .modal-head .t, .dialog .d-title, .onboard .big, .about-name,
 .wn-icon.warn { background: var(--tn-warn-tint); color: var(--tn-warning); }
 .wn-title { font-weight: 600; color: var(--tn-tp); }
 .wn-text { font-size: 12px; line-height: 1.5; color: var(--tn-ts); }
+.modal.tour { width: 720px; max-width: calc(100vw - 32px); display: flex; flex-direction: row; overflow: hidden; border-radius: 18px; }
+.tour-side {
+  width: 260px; flex: none; padding: 28px; display: flex; flex-direction: column; gap: 14px;
+  background: var(--tn-accent); color: var(--tn-on-accent);
+}
+.tour-step { font: 700 13px var(--tn-display); letter-spacing: .04em; }
+.tour-name { font: 700 32px/1.05 var(--tn-display); letter-spacing: -.03em; }
+.tour-dots { display: flex; gap: 6px; }
+.tour-dots span { width: 22px; height: 6px; border-radius: 3px; background: var(--tn-on-accent); opacity: .35; }
+.tour-dots span.on { opacity: 1; }
+.tour-body { flex: 1; min-width: 0; padding: 28px; display: flex; flex-direction: column; gap: 12px; min-height: 320px; }
+.tour-body .d-title { font: 600 20px var(--tn-display); }
+.tour-points { list-style: none; display: flex; flex-direction: column; gap: 10px; line-height: 1.5; color: var(--tn-tp); }
+.tour-points li { display: flex; gap: 10px; }
+.tour-check {
+  flex: none; width: 22px; height: 22px; border-radius: 11px; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--tn-success-tint); color: var(--tn-success); font-weight: 700; font-size: 12px;
+}
 .roles-sql pre { margin: 0; padding: 12px; border-radius: 10px; background: var(--tn-desk); font: 12px/1.6 var(--tn-mono); color: var(--tn-tp); white-space: pre-wrap; }

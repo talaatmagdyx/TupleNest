@@ -42,16 +42,28 @@ export function notesFor(version: string): NewsItem[] {
   return RELEASE_NOTES[version] ?? [];
 }
 
-/** Settings key: the version whose notes were last seen. */
+/** Settings keys: the version whose notes were last seen, and whether the
+ *  first-run tour has been finished or skipped. */
 export const SEEN_VERSION_KEY = "whats_new_seen";
+export const TOUR_DONE_KEY = "tour_done";
 
 /**
- * What to show at start-up, given the stored settings: what's new, for a
- * version not seen before that has notes. A first launch (nothing seen yet)
- * shows nothing — a new user has nothing to compare with.
+ * What to show at start-up, given the stored settings.
+ *
+ * - The first launch — no tour finished or skipped, and no saved
+ *   connection — shows the tour. Someone upgrading from a build before the
+ *   tour has connections, so it is not their first launch and they get what's
+ *   new instead.
+ * - Otherwise what's new, for a version not seen before that has notes; never
+ *   for a new user, who has nothing to compare with.
  */
-export function startupDialog(version: string, seenVersion: string | null): "news" | null {
-  if (!version || seenVersion === null) return null;
-  if (seenVersion !== version && notesFor(version).length > 0) return "news";
+export function startupDialog(
+  version: string,
+  seen: { tourDone: boolean; version: string | null; hasProfiles: boolean },
+): "tour" | "news" | null {
+  if (!version) return null;
+  if (!seen.tourDone && !seen.hasProfiles) return "tour";
+  const known = seen.version !== null || seen.hasProfiles;
+  if (known && seen.version !== version && notesFor(version).length > 0) return "news";
   return null;
 }

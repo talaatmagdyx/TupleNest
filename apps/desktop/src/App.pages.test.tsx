@@ -2,15 +2,16 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
-import { CONNECTION, backend } from "./test/backend";
+import { CONNECTION, backend, type Backend } from "./test/backend";
 
 /**
  * The stage 6b pages, as App wires them: opened from the palette, drawn in
  * place of the editor, and closed back to it with the editor as it was.
  */
 
+let be: Backend;
 beforeEach(() => {
-  backend();
+  be = backend();
 });
 
 const mount = async () => {
@@ -34,6 +35,22 @@ describe("App — first run", () => {
     expect(await screen.findByRole("dialog", { name: "What's new" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Got it" }));
     expect(screen.queryByRole("dialog", { name: "What's new" })).not.toBeInTheDocument();
+  });
+
+  it("opens the tour again from About", async () => {
+    const user = await mount();
+    await palette(user, "About TupleNest");
+    await user.click(await screen.findByRole("button", { name: "Show the welcome tour" }));
+    expect(await screen.findByText("STEP 1 OF 3")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Skip the tour" }));
+    expect(screen.queryByText("STEP 1 OF 3")).not.toBeInTheDocument();
+  });
+
+  it("shows the tour on a first launch, with nothing saved yet", async () => {
+    be.on("settings_get", () => null);
+    be.on("connection_list", () => []);
+    render(<App />);
+    expect(await screen.findByText("STEP 1 OF 3")).toBeInTheDocument();
   });
 });
 
