@@ -2518,7 +2518,29 @@ h1, h2, h3, .modal-head .t, .dialog .d-title, .onboard .big, .about-name,
 }
 .set-nav-btn:hover { color: var(--tn-tp); background: var(--tn-s2); }
 .set-nav-btn.on { background: var(--tn-as); color: var(--tn-accent); font-weight: 600; }
-.set-body { padding: 20px 24px; display: flex; flex-direction: column; gap: 18px; }
+/* min-width: 0 so a long unbreakable line inside a section (the MCP binary
+   path) scrolls in its own box instead of widening the pane past the modal. */
+.set-body { padding: 20px 24px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+
+/* ===== Settings › MCP server ===== */
+.mcp-config {
+  display: block; max-width: 100%; margin: 6px 0 8px; padding: 10px 12px; overflow-x: auto;
+  border-radius: 8px; border: 1px solid var(--tn-bs); background: var(--tn-desk);
+  font: 11px/1.55 var(--tn-mono); color: var(--tn-tp); white-space: pre; user-select: text;
+}
+.mcp-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.mcp-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+/* The native control drew the OS's white box with our light text on it, so the
+   value was invisible in the dark theme. Themed with the tokens, and
+   color-scheme makes the open list follow the theme too. */
+.mcp-select {
+  height: 28px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--tn-bc);
+  background: var(--tn-s2); color: var(--tn-tp); font: 12px var(--tn-sans); color-scheme: dark;
+}
+[data-tn-theme="light"] .mcp-select { color-scheme: light; }
+.mcp-select option { background: var(--tn-s2); color: var(--tn-tp); }
+.mcp-select option:disabled { color: var(--tn-tm); }
+.mcp-select:focus { border-color: var(--tn-accent); box-shadow: 0 0 0 3px var(--tn-as); }
 .set-group { display: flex; flex-direction: column; gap: 8px; }
 .set-h { font: 600 17px var(--tn-display); }
 .set-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; background: var(--tn-s2); }

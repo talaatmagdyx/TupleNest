@@ -94,7 +94,9 @@ export function McpSection() {
       {info && (
         <>
           <div className="sd">Add this to the AI tool's MCP configuration (Claude Desktop, Cursor):</div>
-          <pre className="mono" aria-label="MCP configuration" style={{ whiteSpace: "pre-wrap", fontSize: 11 }}>
+          {/* Its own scrolling box: the binary path is one unbreakable run,
+              and without this it pushed the whole settings pane wider. */}
+          <pre className="mono mcp-config" aria-label="MCP configuration" tabIndex={0}>
             {info.config}
           </pre>
           <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
@@ -109,12 +111,13 @@ export function McpSection() {
       )}
       {rows && rows.length === 0 && <div className="sd">No saved connections yet.</div>}
       {(rows ?? []).map((r) => (
-        <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
-          <span style={{ flex: 1 }}>
+        <div key={r.id} className="mcp-row">
+          <span className="mcp-name">
             {r.name}
             {r.environment && <span className="hmeta"> · {r.environment}</span>}
           </span>
           <select
+            className="mcp-select"
             aria-label={`MCP access for ${r.name}`}
             value={r.access}
             onChange={(e) => void change(r, e.target.value as McpAccess)}

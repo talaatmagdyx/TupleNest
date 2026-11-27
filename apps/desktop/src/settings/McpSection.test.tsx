@@ -2,9 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { McpSection, claudeCodeCommand, type McpAccessRow, type McpInfo } from "./McpSection";
 
 const invokeMock = vi.mocked(invoke);
+
+// Vitest runs from apps/desktop; under jsdom import.meta.url is not a file URL.
+const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 
 const INFO: McpInfo = {
   command: "/Applications/TupleNest.app/Contents/MacOS/tuplenest-desktop",
@@ -122,6 +127,43 @@ describe("McpSection", () => {
     render(<McpSection />);
     await user.click(await screen.findByRole("button", { name: "Copy configuration" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/Could not copy/);
+  });
+});
+
+/** The rule bodies for `selector` in the stylesheet, joined. */
+function cssRule(selector: string): string {
+  const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [...css.matchAll(new RegExp(`(?:^|\\n|\\})\\s*${esc}\\s*\\{([^}]*)\\}`, "g"))].map((m) => m[1]).join(";");
+}
+
+describe("McpSection styling", () => {
+  it("themes each access select with tokens, so its value shows in the dark theme", async () => {
+    backend();
+    render(<McpSection />);
+    const dev = await screen.findByLabelText("MCP access for local dev");
+    expect(dev).toHaveClass("mcp-select");
+    // The current value is the selected option's label, not a blank box.
+    expect((dev as HTMLSelectElement).selectedOptions[0].textContent).toBe("Off");
+    const rule = cssRule(".mcp-select");
+    expect(rule).toMatch(/background:\s*var\(--tn-s2\)/);
+    expect(rule).toMatch(/color:\s*var\(--tn-tp\)/);
+    expect(rule).toMatch(/color-scheme:\s*dark/);
+    expect(cssRule('[data-tn-theme="light"] .mcp-select')).toMatch(/color-scheme:\s*light/);
+    expect(cssRule(".mcp-select option")).toMatch(/background:\s*var\(--tn-s2\)/);
+  });
+
+  it("keeps the configuration inside its own scrolling box", async () => {
+    backend();
+    render(<McpSection />);
+    const pre = await screen.findByLabelText("MCP configuration");
+    expect(pre).toHaveClass("mcp-config");
+    // Reachable by keyboard so the scrolled-off part can be read.
+    expect(pre).toHaveAttribute("tabindex", "0");
+    const rule = cssRule(".mcp-config");
+    expect(rule).toMatch(/max-width:\s*100%/);
+    expect(rule).toMatch(/overflow-x:\s*auto/);
+    // The pane it sits in may shrink below its content, or the box never scrolls.
+    expect(cssRule(".set-body")).toMatch(/min-width:\s*0/);
   });
 });
 
