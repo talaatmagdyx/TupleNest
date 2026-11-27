@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="docs/brand/tuplenest-logo.png" width="420" alt="TupleNest" />
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/tuplenest-logo-dark.png" />
+  <img src="docs/brand/tuplenest-logo-light.png" width="420" alt="TupleNest" />
+</picture>
 
 **A careful desktop IDE for PostgreSQL and SQLite — it asks before it writes.**
 
