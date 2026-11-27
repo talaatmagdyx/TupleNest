@@ -2144,6 +2144,13 @@ h1, h2, h3, .modal-head .t, .dialog .d-title, .onboard .big, .about-name,
 }
 .ap-a { display: flex; flex-direction: column; gap: 8px; }
 .ap-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ap-text.md { white-space: normal; display: flex; flex-direction: column; gap: 6px; line-height: 1.5; }
+.ap-text.md > * { margin: 0; }
+.ap-text.md h3 { font: 700 15px var(--tn-display); }
+.ap-text.md h4 { font: 600 14px var(--tn-display); }
+.ap-text.md h5 { font: 600 13px var(--tn-sans); }
+.ap-text.md ul, .ap-text.md ol { padding-left: 20px; }
+.ap-text.md code { font: 12px var(--tn-mono); background: var(--tn-s2); border-radius: 4px; padding: 0 4px; }
 .ap-error, .as-err { color: var(--tn-danger); font-size: 12px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .ap-warn { color: var(--tn-warning); font-size: 12px; }
 .ap-card { border: 1px solid var(--tn-bh); border-radius: 12px; overflow: hidden; }

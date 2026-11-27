@@ -281,6 +281,29 @@ describe("AssistantPanel — asking", () => {
     expect(be.sent("assistant_ask")[0].input).toMatchObject({ message: "line one\nline two" });
   });
 
+  it("renders the answer's Markdown as elements, not as raw marks", async () => {
+    // As qwen2.5:0.5b answered through Ollama: headings, bold, lists, code.
+    answerWith(
+      "### Why it is slow\n\nThe **orders** table has no index on `customer_id`.\n\n- scans *every* row\n- sorts in memory\n\n1. add an index\n2. run it again\n\n<script>alert(1)</script>",
+    );
+    const user = userEvent.setup();
+    render(<AssistantPanel {...props()} />);
+    await screen.findByRole("combobox", { name: "Model" });
+    await user.type(screen.getByRole("textbox", { name: "Ask the assistant" }), "why{Enter}");
+    expect(await screen.findByRole("heading", { name: "Why it is slow" })).toBeInTheDocument();
+    expect(screen.getByText("orders", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.getByText("customer_id", { selector: "code" })).toBeInTheDocument();
+    expect(screen.getByText("every", { selector: "em" })).toBeInTheDocument();
+    const lists = screen.getAllByRole("list");
+    expect(lists.map((l) => l.tagName)).toEqual(["UL", "OL"]);
+    expect(within(lists[1]).getAllByRole("listitem")).toHaveLength(2);
+    const answer = document.querySelector(".ap-a")!;
+    expect(answer.textContent).not.toMatch(/###|\*\*|`/);
+    // No raw HTML: the tag is text.
+    expect(answer.querySelector("script")).toBeNull();
+    expect(screen.getByText("<script>alert(1)</script>")).toBeInTheDocument();
+  });
+
   it("does not send an empty message", async () => {
     const user = userEvent.setup();
     render(<AssistantPanel {...props()} />);

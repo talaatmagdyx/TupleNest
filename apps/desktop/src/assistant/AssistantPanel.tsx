@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { errorText, listModels, PRIVACY_NOTE, type Action, type ModelOption } from "./api";
+import { renderMarkdown } from "../lib/markdown";
 import { isSqlBlock, splitAnswer } from "./answer";
 import CodeCard from "./CodeCard";
 import { useAssistant, type Message } from "./useAssistant";
@@ -279,8 +280,10 @@ function MessageView(p: {
     <div className="ap-a" aria-busy={streaming}>
       {segments.map((s, i) =>
         s.kind === "text" ? (
-          <div key={i} className="ap-text">
-            {s.text}
+          // Prose as a safe Markdown subset, built as React elements: a
+          // model's `<script>` is shown as text. Fenced code is a card below.
+          <div key={i} className="ap-text md">
+            {renderMarkdown(s.text)}
           </div>
         ) : isSqlBlock(s) ? (
           <CodeCard
