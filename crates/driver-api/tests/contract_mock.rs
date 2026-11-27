@@ -145,6 +145,7 @@ impl DatabaseSession for MockSession {
             status: ExecutionStatus::Success,
             rows_affected: None,
             rows_returned,
+            more_rows: false,
             duration_ms: 1,
             messages: vec![],
         })
@@ -229,7 +230,6 @@ async fn connection_contract_connect_and_execute() {
                 sql: "SELECT 1".into(),
                 params: vec![],
                 row_limit: 0,
-                timeout_ms: 0,
             },
             &sink,
         )
@@ -259,7 +259,6 @@ async fn error_contract_normalized_syntax_error() {
                 sql: "syntax error here".into(),
                 params: vec![],
                 row_limit: 0,
-                timeout_ms: 0,
             },
             &sink,
         )
@@ -286,7 +285,6 @@ async fn cancellation_contract() {
                 sql: "SELECT slow".into(),
                 params: vec![],
                 row_limit: 0,
-                timeout_ms: 0,
             },
             &sink,
         )

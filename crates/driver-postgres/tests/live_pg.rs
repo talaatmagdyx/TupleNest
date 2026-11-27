@@ -44,7 +44,6 @@ fn req(sql: impl Into<String>) -> QueryRequest {
         sql: sql.into(),
         params: vec![],
         row_limit: 0,
-        timeout_ms: 0,
     }
 }
 
@@ -1149,7 +1148,6 @@ fn req_params(sql: impl Into<String>, params: Vec<ParamValue>) -> QueryRequest {
         sql: sql.into(),
         params,
         row_limit: 0,
-        timeout_ms: 0,
     }
 }
 
@@ -2995,4 +2993,289 @@ async fn a_statement_timeout_is_not_reported_as_a_cancel() {
         .unwrap_err();
     canceller.await.unwrap().unwrap();
     assert_eq!(err.category, ErrorCategory::Cancelled, "{err:?}");
+}
+
+fn limited(sql: impl Into<String>, row_limit: u64) -> QueryRequest {
+    QueryRequest {
+        row_limit,
+        ..req(sql)
+    }
+}
+
+/// A plain read past the limit stops at it on the server: the rows kept are
+/// the first `row_limit`, the summary says there were more, and it is fast
+/// because the other 980,000 rows are never produced.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn a_read_past_the_row_limit_stops_at_it() {
+    let mut s = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    let sink = CountingSink::default();
+    let started = Instant::now();
+    let summary = s
+        .execute(
+            limited("SELECT g FROM generate_series(1, 1000000) g", 20_000),
+            &sink,
+        )
+        .await
+        .unwrap();
+    let took = started.elapsed();
+    eprintln!("1,000,000-row select, row_limit 20,000: {took:?}");
+    assert_eq!(summary.rows_returned, 20_000);
+    assert!(summary.more_rows);
+    assert_eq!(sink.rows.load(Ordering::SeqCst), 20_000);
+    // The first 20,000 of the series, in order: 1 + … + 20,000.
+    assert_eq!(sink.checksum.load(Ordering::SeqCst), 20_000 * 20_001 / 2);
+    assert!(took < Duration::from_secs(2), "took {took:?}");
+    // Our own transaction was ended.
+    assert!(!s.server_in_transaction().await.unwrap());
+
+    // The same statement without a limit still reads to the end.
+    let sink = CountingSink::default();
+    let started = Instant::now();
+    let summary = s
+        .execute(req("SELECT g FROM generate_series(1, 1000000) g"), &sink)
+        .await
+        .unwrap();
+    eprintln!(
+        "1,000,000-row select, no row_limit: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(summary.rows_returned, 1_000_000);
+    assert!(!summary.more_rows);
+}
+
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn at_or_under_the_row_limit_the_count_is_exact() {
+    let mut s = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    for (n, limit) in [
+        (20_000u64, 20_000u64),
+        (19_999, 20_000),
+        (0, 20_000),
+        (1, 1),
+    ] {
+        let sink = CountingSink::default();
+        let summary = s
+            .execute(
+                limited(format!("SELECT g FROM generate_series(1, {n}) g"), limit),
+                &sink,
+            )
+            .await
+            .unwrap();
+        assert_eq!(summary.rows_returned, n, "n={n} limit={limit}");
+        assert!(!summary.more_rows, "n={n} limit={limit}");
+        assert_eq!(sink.rows.load(Ordering::SeqCst), n);
+        assert_eq!(summary.rows_affected, Some(n));
+    }
+    // One over is "more", and only the limit is handed over.
+    let sink = CountingSink::default();
+    let summary = s
+        .execute(limited("SELECT g FROM generate_series(1, 3) g", 2), &sink)
+        .await
+        .unwrap();
+    assert_eq!((summary.rows_returned, summary.more_rows), (2, true));
+    assert_eq!(sink.rows.load(Ordering::SeqCst), 2);
+}
+
+/// Inside the user's own transaction the cursor is declared and closed there:
+/// the transaction stays open, sees its own uncommitted rows, and can still
+/// be rolled back.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn inside_a_transaction_the_cursor_leaves_it_open_and_usable() {
+    let mut s = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    s.execute(req("BEGIN"), &NullSink).await.unwrap();
+    s.execute(
+        req("CREATE TEMP TABLE cursor_txn AS SELECT g FROM generate_series(1, 50) g"),
+        &NullSink,
+    )
+    .await
+    .unwrap();
+    for _ in 0..3 {
+        let summary = s
+            .execute(
+                limited("SELECT g FROM cursor_txn ORDER BY g", 10),
+                &NullSink,
+            )
+            .await
+            .unwrap();
+        assert_eq!((summary.rows_returned, summary.more_rows), (10, true));
+        assert!(s.server_in_transaction().await.unwrap(), "still open");
+    }
+    // No cursor is left behind (the unnamed portal running this is listed too).
+    let sink = CollectSink::default();
+    s.execute(
+        req("SELECT count(*)::int8 FROM pg_cursors WHERE name LIKE 'tuplenest_cursor_%'"),
+        &sink,
+    )
+    .await
+    .unwrap();
+    assert_eq!(sink.rows.lock().unwrap()[0][0], CellValue::Int(0));
+    // A failure inside the cursor aborts the transaction as the statement
+    // itself would have, and ROLLBACK still ends it.
+    let err = s
+        .execute(
+            limited("SELECT 1 / (g - 5) FROM cursor_txn", 100),
+            &NullSink,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.native_code.as_deref(), Some("22012"), "{err:?}");
+    assert!(s.server_in_transaction().await.unwrap());
+    s.execute(req("ROLLBACK"), &NullSink).await.unwrap();
+    assert!(!s.server_in_transaction().await.unwrap());
+    let gone = s
+        .execute(limited("SELECT * FROM cursor_txn", 10), &NullSink)
+        .await
+        .unwrap_err();
+    assert_eq!(gone.native_code.as_deref(), Some("42P01"), "rolled back");
+}
+
+/// A write is never cut short by the limit, RETURNING or not.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn a_write_with_returning_over_the_limit_runs_to_the_end() {
+    let mut s = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    s.execute(req("CREATE TEMP TABLE cursor_write (g int)"), &NullSink)
+        .await
+        .unwrap();
+    let summary = s
+        .execute(
+            limited(
+                "INSERT INTO cursor_write SELECT g FROM generate_series(1, 500) g RETURNING g",
+                100,
+            ),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+    assert_eq!(summary.rows_returned, 500);
+    assert!(!summary.more_rows);
+    assert_eq!(summary.rows_affected, Some(500));
+    let summary = s
+        .execute(
+            limited(
+                "WITH d AS (DELETE FROM cursor_write WHERE g > 200 RETURNING g) SELECT g FROM d",
+                100,
+            ),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+    assert_eq!((summary.rows_returned, summary.more_rows), (300, false));
+    let sink = CollectSink::default();
+    s.execute(req("SELECT count(*)::int8 FROM cursor_write"), &sink)
+        .await
+        .unwrap();
+    assert_eq!(sink.rows.lock().unwrap()[0][0], CellValue::Int(200));
+}
+
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn parameters_and_money_go_through_the_cursor() {
+    let mut s = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    let sink = CollectSink::default();
+    let summary = s
+        .execute(
+            QueryRequest {
+                params: vec![ParamValue::Int(7), ParamValue::Text("x".into())],
+                ..limited(
+                    "SELECT g, $2::text || g, 1234.5::money FROM generate_series(1, 100) g \
+                     WHERE g > $1::int",
+                    5,
+                )
+            },
+            &sink,
+        )
+        .await
+        .unwrap();
+    assert_eq!((summary.rows_returned, summary.more_rows), (5, true));
+    let rows = sink.rows.lock().unwrap();
+    assert_eq!(rows.len(), 5);
+    assert_eq!(text_of(&rows[0][0]), "8");
+    assert_eq!(text_of(&rows[0][1]), "x8");
+    let money = text_of(&rows[0][2]);
+    assert!(
+        money.contains("1234.5") || money.contains("1,234.5"),
+        "money keeps its scale: {money:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn a_read_only_profile_reads_through_the_cursor_and_still_refuses_writes() {
+    let mut s = PostgresDriver
+        .connect_concrete(ConnectionConfig {
+            read_only: true,
+            ..test_config()
+        })
+        .await
+        .unwrap();
+    let summary = s
+        .execute(
+            limited("SELECT g FROM generate_series(1, 100) g", 10),
+            &NullSink,
+        )
+        .await
+        .unwrap();
+    assert_eq!((summary.rows_returned, summary.more_rows), (10, true));
+    let err = s
+        .execute(limited("CREATE TEMP TABLE nope (a int)", 10), &NullSink)
+        .await
+        .unwrap_err();
+    assert_eq!(err.category, ErrorCategory::Authorization, "{err:?}");
+}
+
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn cancel_stops_a_running_fetch() {
+    let mut s = PostgresDriver
+        .connect_concrete(test_config())
+        .await
+        .unwrap();
+    for in_txn in [false, true] {
+        if in_txn {
+            s.execute(req("BEGIN"), &NullSink).await.unwrap();
+        }
+        let handle = s.cancel_handle();
+        let canceller = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            handle.cancel().await
+        });
+        let started = Instant::now();
+        // The sleep runs while the FETCH produces its first row.
+        let err = s
+            .execute(
+                limited("SELECT pg_sleep(30), g FROM generate_series(1, 3) g", 2),
+                &NullSink,
+            )
+            .await
+            .expect_err("must be cancelled");
+        canceller.await.unwrap().unwrap();
+        assert_eq!(err.category, ErrorCategory::Cancelled, "{err:?}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // Outside a transaction ours was rolled back; inside, the user's is
+        // aborted (as a cancelled statement aborts it) and still theirs.
+        assert_eq!(s.server_in_transaction().await.unwrap(), in_txn);
+        if in_txn {
+            s.execute(req("ROLLBACK"), &NullSink).await.unwrap();
+        }
+        let summary = s.execute(limited("SELECT 1", 2), &NullSink).await.unwrap();
+        assert_eq!(summary.rows_returned, 1, "the session is usable after");
+    }
 }

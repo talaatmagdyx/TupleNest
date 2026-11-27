@@ -103,6 +103,29 @@ describe("App — exporting the result", () => {
     expect(await screen.findAllByText(/2 of 4,213,662 rows \(truncated\)/)).not.toHaveLength(0);
   });
 
+  it("gives no exact total when the backend stopped reading at the limit", async () => {
+    // Past the cap the rest of the rows are never read, so their number is
+    // not known: the banner, the footer and the export all say "N+".
+    be.on("pg_query", () => ({
+      columns: [
+        { name: "kind", dbType: "text" },
+        { name: "n", dbType: "int4" },
+      ],
+      totalRows: 2,
+      totalKnown: false,
+      storedRows: 2,
+      truncated: true,
+      rowsAffected: null,
+    }));
+    const user = await connected();
+    await run(user);
+    expect(await screen.findByText(/showing first 2 of 2\+ rows \(stopped at the limit\)/)).toBeInTheDocument();
+    const menu = await exportMenu(user);
+    await user.click(within(menu).getByRole("menuitem", { name: "CSV .csv" }));
+    expect(await screen.findAllByText(/2\+ rows \(stopped at the limit\)/)).not.toHaveLength(0);
+    expect(screen.queryByText(/\(truncated\)/)).toBeNull();
+  });
+
 
   it("does not cry truncation on a complete export", async () => {
     const user = await connected();

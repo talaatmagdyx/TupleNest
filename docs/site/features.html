@@ -83,7 +83,7 @@
       <div>
         <div class="fnum">RESULT GRID</div>
         <h3>Results that stay responsive</h3>
-        <p>Rows stream from a bounded store into a virtualized grid, so large or wide results don't freeze the window — and the footer counts the real total, not the cap.</p>
+        <p>Rows stream from a bounded store into a virtualized grid, so large or wide results don't freeze the window. A plain read stops at the 20,000-row cap on the server, and the footer says "20,000+ rows (stopped at the limit)" instead of passing the cap off as the total.</p>
         <ul>
           <li>Streaming result loading, virtualized rows</li>
           <li>Column sorting over every stored row (up to 20,000), done in the backend so the window never holds them all</li>

@@ -5,6 +5,7 @@ import {
   coerceParam,
   ENV_COLORS,
   rowCountNote,
+  totalRowsText,
   envMeta,
   formatSQL,
   hasWriteVerb,
@@ -652,6 +653,17 @@ describe("rowCountNote", () => {
     expect(rowCountNote(100_000, res({ totalRows: 4_213_662, truncated: true }))).toBe(
       "100,000 of 4,213,662 rows (truncated)",
     );
+  });
+
+  it("gives a lower bound, not a total, when the backend stopped at the limit", () => {
+    // Past the cap a plain read is not streamed to the end, so 20,000 is
+    // only "at least". An exact-looking number there would be invented.
+    const stopped = { totalRows: 20_000, totalKnown: false, truncated: true };
+    expect(rowCountNote(20_000, stopped)).toBe("20,000+ rows (stopped at the limit)");
+    expect(rowCountNote(500, stopped)).toBe("500 of 20,000+ rows (stopped at the limit)");
+    expect(totalRowsText(stopped)).toBe("20,000+");
+    expect(totalRowsText({ totalRows: 20_000, totalKnown: true })).toBe("20,000");
+    expect(totalRowsText({ totalRows: 7 })).toBe("7");
   });
 
   it("groups the digits, because 4213662 is unreadable", () => {

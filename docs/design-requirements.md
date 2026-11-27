@@ -198,8 +198,12 @@ loading state ("loading…") and an empty state ("empty").
   tinted; JSON shown inline as text [planned: JSON cell inspector popover].
 - Rows beyond the fetched window show a subtle "…" placeholder while a
   block loads (200-row blocks).
-- Truncation: when the server returned more than 20,000 rows, a persistent
-  notice: "showing first 20,000 of N".
+- Truncation: when a result holds more rows than the grid keeps, a
+  persistent notice: "showing first 20,000 of N". A plain read (SELECT,
+  VALUES, TABLE, WITH … SELECT) stops at the 20,000-row cap on the server,
+  so its total is not known: "showing first 20,000 of 20,000+ rows (stopped
+  at the limit)". Writes with RETURNING and other statements still run to
+  the end and keep an exact N.
 - Row hover + single row selection highlight. Cell selection/copy
   [planned].
 - Result meta line: `✓ 1,204 rows · 132 ms · streamed`.
@@ -285,8 +289,9 @@ These are the real IPC payloads — labels in designs should map to them.
 - TestStage: `name, passed, durationMs, detail?` (ordered list)
 - DbObject: `name, kind(table|view|matview|foreign), comment?`
 - DbColumn: `name, dbType, nullable, primaryKey, comment?`
-- QueryResult: `columns[{name,dbType}], totalRows, storedRows, truncated,
-  rowsAffected?, elapsedMs`
+- QueryResult: `columns[{name,dbType}], totalRows, totalKnown, storedRows,
+  truncated, rowsAffected?, elapsedMs` (`totalKnown: false` means the read
+  stopped at the cap and `totalRows` is a lower bound)
 - HistoryEntry: `sqlText?, status(success|error|cancelled), errorText?,
   rowsReturned, rowsAffected?, startedAt, durationMs, favorite`
 - Metadata responses carry `cached: boolean` — drives the CACHED chip.

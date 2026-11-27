@@ -33,7 +33,8 @@ pub trait BatchSink: Send + Sync {
 
     /// False once the sink will keep no more rows (a full result store). The
     /// driver then only counts what is left instead of decoding it, and the
-    /// true total arrives in `ExecutionSummary::rows_returned`.
+    /// true total arrives in `ExecutionSummary::rows_returned` (unless the
+    /// read stopped at `QueryRequest::row_limit`: see `more_rows`).
     fn wants_rows(&self) -> bool {
         true
     }

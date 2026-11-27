@@ -1267,7 +1267,7 @@ export default function App() {
     });
     setChart({
       title: chartTitle(result.columns, pick),
-      sub: chartSubtitle(out.rows, result.totalRows),
+      sub: chartSubtitle(out.rows, result.totalRows, result.totalKnown !== false),
       data: out.bars,
     });
   }, [result]);

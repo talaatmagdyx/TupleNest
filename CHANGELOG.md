@@ -226,6 +226,16 @@ trusting it.
 - Secrets in JSON shapes are redacted; logs keep 14 days.
 
 ### Performance and reliability
+- A query matching more rows than the grid keeps no longer reads them all.
+  A plain read (SELECT, VALUES, TABLE or WITH … SELECT, one statement, no
+  INTO, no write, no row locks) runs through a server-side cursor and stops
+  after 20,001 rows, inside the user's own transaction when one is open
+  and in a short one of its own otherwise. A million-row SELECT took 8–25 s
+  to stream only so its exact total could be shown; it now takes about
+  0.1 s, and the total reads "20,000+ rows (stopped at the limit)". Writes
+  with RETURNING and every other statement still run to the end. The
+  unused per-request `timeout_ms` was removed; the per-connection statement
+  timeout is unchanged.
 - The "rows could not be loaded" bar sits under the grid's column headers; it
   covered them. A dialog that cannot be loaded says so in words before the
   technical detail. Both found by forcing the failures in a built app.

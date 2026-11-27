@@ -1,5 +1,6 @@
 import type { QueryResult } from "../ipc/types";
 import { kbd } from "../lib/platform";
+import { rowCountNote, STOPPED_AT_LIMIT, totalRowsText } from "../lib/sql";
 import type { Catalog } from "../lib/complete";
 import type { CellEdit, EditTarget } from "../lib/dml";
 import Grid from "../results/Grid";
@@ -67,7 +68,9 @@ export default function QueryPanel(p: Props) {
     : r
       ? r.columns.length === 0
         ? `${r.rowsAffected ?? 0} rows affected · ${r.elapsedMs} ms`
-        : r.truncated
+        : r.totalKnown === false
+          ? `${rowCountNote(r.storedRows, r)} · ${r.elapsedMs} ms · streamed`
+          : r.truncated
           ? `${r.storedRows.toLocaleString()} of ${r.totalRows.toLocaleString()} rows · ${r.elapsedMs} ms · streamed`
           : `${r.totalRows.toLocaleString()} rows · ${r.elapsedMs} ms · streamed`
       : "—";
@@ -293,7 +296,8 @@ export default function QueryPanel(p: Props) {
               <>
                 {r.truncated && (
                   <div className="trunc-note">
-                    showing first {r.storedRows.toLocaleString()} of {r.totalRows.toLocaleString()} rows
+                    showing first {r.storedRows.toLocaleString()} of {totalRowsText(r)} rows
+                    {r.totalKnown === false && ` ${STOPPED_AT_LIMIT}`}
                   </div>
                 )}
                 <Grid
