@@ -2792,7 +2792,13 @@ pub fn assistant_schema(state: &PgState, sql_hint: &str, cap: usize) -> String {
         return String::new();
     };
     let objects = crate::assistant::context::read_schema(&cache, &key);
-    crate::assistant::context::schema_digest(&objects, sql_hint, cap)
+    let digest = crate::assistant::context::schema_digest(&objects, sql_hint, cap);
+    // The assistant is told it writes PostgreSQL; a SQLite session says
+    // otherwise, first thing in what it is shown of the database.
+    if key.starts_with("sqlite:") {
+        return format!("Engine: SQLite. Write SQLite SQL, not PostgreSQL.\n{digest}");
+    }
+    digest
 }
 
 #[cfg(test)]
@@ -2819,6 +2825,29 @@ mod assistant_schema_tests {
         assert_eq!(assistant_schema(&state, "", 1000), "");
         *state.live_key.lock().unwrap() = Some("k".into());
         assert_eq!(assistant_schema(&state, "", 1000), "table public.t\n");
+    }
+
+    #[test]
+    fn a_sqlite_session_tells_the_assistant_its_dialect() {
+        let mut cache = tuplenest_metadata_cache::MetadataCache::open_in_memory().unwrap();
+        let key = "sqlite:/data/app.db";
+        cache
+            .replace_list(key, "schema", "", &[("main".into(), "\"main\"".into())])
+            .unwrap();
+        cache
+            .replace_list(
+                key,
+                "object",
+                "main",
+                &[("t".into(), r#"{"name":"t","kind":"table"}"#.into())],
+            )
+            .unwrap();
+        let state = PgState::new(cache);
+        *state.live_key.lock().unwrap() = Some(key.into());
+        assert_eq!(
+            assistant_schema(&state, "", 1000),
+            "Engine: SQLite. Write SQLite SQL, not PostgreSQL.\ntable main.t\n"
+        );
     }
 }
 
