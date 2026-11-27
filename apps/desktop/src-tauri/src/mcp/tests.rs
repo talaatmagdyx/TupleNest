@@ -962,10 +962,74 @@ fn the_settings_rows_say_where_read_write_is_allowed() {
 fn the_data_directory_and_keychain_follow_the_bundle_identifier() {
     // The MCP process must open the app's own store and read the keychain
     // entries the app wrote; both are keyed by this identifier.
+    // The test binary is not in a bundle: the compiled identifier.
     assert_eq!(super::identifier(), "app.tuplenest.desktop");
     if let Some(dir) = super::app_data_dir() {
         assert!(dir.ends_with("app.tuplenest.desktop"));
     }
+}
+
+#[test]
+fn the_identifier_is_the_running_bundles_not_only_the_compiled_one() {
+    use super::{compiled_identifier_from, plist_identifier, resolve_identifier};
+    const PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>
+  <string>tuplenest-desktop</string>
+  <key>CFBundleIdentifier</key>
+  <string>app.tuplenest.desktop.verify</string>
+</dict>
+</plist>"#;
+    assert_eq!(
+        plist_identifier(PLIST).as_deref(),
+        Some("app.tuplenest.desktop.verify")
+    );
+    assert_eq!(plist_identifier("<dict></dict>"), None);
+    assert_eq!(
+        plist_identifier("<key>CFBundleIdentifier</key><string>../etc</string>"),
+        None,
+        "never a path"
+    );
+
+    // A bundle made with `--config '{"identifier":"…verify"}'`.
+    let tmp = tempfile::tempdir().unwrap();
+    let macos = tmp.path().join("TupleNest.app/Contents/MacOS");
+    std::fs::create_dir_all(&macos).unwrap();
+    std::fs::write(macos.parent().unwrap().join("Info.plist"), PLIST).unwrap();
+    let exe = macos.join("tuplenest-desktop");
+    assert_eq!(
+        resolve_identifier(Some(&exe), "app.tuplenest.desktop"),
+        "app.tuplenest.desktop.verify"
+    );
+    // Not in a bundle, or no readable plist: the compiled identifier.
+    let bare = tmp.path().join("bin/tuplenest-desktop");
+    assert_eq!(
+        resolve_identifier(Some(&bare), "app.tuplenest.desktop"),
+        "app.tuplenest.desktop"
+    );
+    assert_eq!(
+        resolve_identifier(None, "app.tuplenest.desktop"),
+        "app.tuplenest.desktop"
+    );
+
+    // The compile-time override wins over tauri.conf.json when it names one.
+    let conf = r#"{"identifier":"app.tuplenest.desktop"}"#;
+    assert_eq!(
+        compiled_identifier_from(
+            Some(r#"{"identifier":"app.tuplenest.desktop.verify"}"#),
+            conf
+        ),
+        "app.tuplenest.desktop.verify"
+    );
+    assert_eq!(
+        compiled_identifier_from(Some(r#"{"productName":"x"}"#), conf),
+        "app.tuplenest.desktop"
+    );
+    assert_eq!(
+        compiled_identifier_from(None, conf),
+        "app.tuplenest.desktop"
+    );
 }
 
 // ---- live --------------------------------------------------------------------
