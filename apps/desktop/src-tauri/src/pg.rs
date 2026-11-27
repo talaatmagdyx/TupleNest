@@ -83,7 +83,7 @@ impl SshParams {
         hop(a) == hop(b)
     }
 
-    fn tunnel_config(
+    pub(crate) fn tunnel_config(
         &self,
         target_host: &str,
         target_port: u16,
@@ -110,7 +110,7 @@ impl SshParams {
     }
 }
 
-fn parse_tls_mode(s: Option<&str>) -> Result<TlsMode, String> {
+pub(crate) fn parse_tls_mode(s: Option<&str>) -> Result<TlsMode, String> {
     match s.unwrap_or("verify-full") {
         "disabled" => Ok(TlsMode::Disabled),
         "prefer" => Ok(TlsMode::Prefer),
@@ -560,7 +560,7 @@ fn lost_or_error(state: &PgState, slot: &mut Option<PostgresSession>, e: &Driver
     format!("Connection lost: {msg} — the session was closed. Reconnect to continue; nothing was re-run.")
 }
 
-fn err_to_string(e: &DriverError) -> String {
+pub(crate) fn err_to_string(e: &DriverError) -> String {
     let mut out = e.title.clone();
     if let Some(code) = &e.native_code {
         out.push_str(&format!(" [SQLSTATE {code}]"));
@@ -594,7 +594,7 @@ fn err_to_string(e: &DriverError) -> String {
 /// hardcoded string from `normalize_error`), the SQLSTATE, and the category
 /// enum. DETAIL/HINT/CONTEXT are deliberately dropped. The full report still
 /// reaches the UI in memory via `err_to_string`; only the disk copy is reduced.
-fn persisted_error(e: &DriverError) -> String {
+pub(crate) fn persisted_error(e: &DriverError) -> String {
     let mut s = e.title.clone();
     if let Some(code) = &e.native_code {
         s.push_str(&format!(" [SQLSTATE {code}]"));
@@ -1212,7 +1212,7 @@ fn write_json<T: serde::Serialize + ?Sized>(out: &mut Vec<u8>, value: &T) {
 }
 
 /// Appends a row to `out` as a JSON array of its cells: `[1,"a",null]`.
-fn write_row(out: &mut Vec<u8>, row: &[CellValue]) {
+pub(crate) fn write_row(out: &mut Vec<u8>, row: &[CellValue]) {
     out.push(b'[');
     for (i, cell) in row.iter().enumerate() {
         if i > 0 {
@@ -1440,7 +1440,7 @@ pub struct ColumnOut {
 /// line comment anywhere in the SQL suppresses the history row (e.g. before a
 /// `ALTER ROLE … PASSWORD …`). It does NOT suppress the prod audit log — that
 /// is an accountability record and must not be silenceable by a comment.
-fn opts_out_of_history(sql: &str) -> bool {
+pub(crate) fn opts_out_of_history(sql: &str) -> bool {
     sql.to_ascii_lowercase().contains("tuplenest:no-history")
 }
 
@@ -1462,7 +1462,7 @@ fn opts_out_of_history(sql: &str) -> bool {
 /// bind parameter is the right one — is not seen here. On a production
 /// connection the statement is always written to the audit log, so this is
 /// the only thing standing between a typed password and that file.
-fn redact_sql(sql: &str) -> String {
+pub(crate) fn redact_sql(sql: &str) -> String {
     // After these words a literal is a secret.
     const MARKERS: [&str; 2] = ["password", "identified by"];
     // Inside a call to one of these, every literal is treated as one: the
@@ -1849,7 +1849,7 @@ mod redact_sql_tests {
 /// is "canceling statement due to statement timeout"), and so did a COMMIT
 /// refused because its transaction had failed, whose explanation mentions
 /// that a statement may have been cancelled. Both are errors.
-fn history_status(e: &tuplenest_driver_api::DriverError) -> &'static str {
+pub(crate) fn history_status(e: &tuplenest_driver_api::DriverError) -> &'static str {
     if e.category == tuplenest_driver_api::ErrorCategory::Cancelled {
         "cancelled"
     } else {
@@ -1948,6 +1948,7 @@ fn record_history(
             .unwrap_or(0),
         duration_ms,
         favorite: false,
+        actor: None,
     };
     let app = app.clone();
     // SQLite writes are blocking disk I/O (a sync per commit), and the store
