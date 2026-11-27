@@ -603,6 +603,11 @@ describe("Settings", () => {
     expect(screen.getByText(/No query text or data ever leaves the device/)).toBeInTheDocument();
   });
 
+  it("shows the MCP server section it is given", () => {
+    render(<Settings {...base} mcp={<div>MCP slot</div>} />);
+    expect(screen.getByText("MCP slot")).toBeInTheDocument();
+  });
+
   it("closes", async () => {
     const onClose = vi.fn();
     render(<Settings {...base} onClose={onClose} />);

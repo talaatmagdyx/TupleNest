@@ -7,6 +7,8 @@ type AuditEntry = {
   environment: string | null;
   sqlText: string;
   at: number;
+  /** Who sent it: null is this window, "MCP · <client>" an AI tool. */
+  actor?: string | null;
 };
 
 /** Prod audit trail (Phase 6): full SQL text of every statement run on a
@@ -59,6 +61,7 @@ export default function AuditModal(p: { onClose: () => void }) {
               </span>
               <span className="hmeta" style={{ flex: "none" }}>
                 {r.connectionKey}
+                {r.actor && ` · ${r.actor}`}
               </span>
             </div>
           ))}

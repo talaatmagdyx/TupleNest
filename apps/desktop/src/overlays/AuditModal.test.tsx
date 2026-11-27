@@ -67,6 +67,12 @@ describe("AuditModal", () => {
     expect(await screen.findByText(/No audited statements yet/)).toBeInTheDocument();
   });
 
+  it("says when an AI tool sent the statement", async () => {
+    invokeMock.mockResolvedValue([{ ...entry("select 1"), actor: "MCP · Claude Desktop" }]);
+    render(<AuditModal onClose={vi.fn()} />);
+    expect(await screen.findByText(/prod-db · MCP · Claude Desktop/)).toBeInTheDocument();
+  });
+
   it("lists several statements", async () => {
     invokeMock.mockResolvedValue([entry("select 1"), entry("select 2")]);
     render(<AuditModal onClose={vi.fn()} />);

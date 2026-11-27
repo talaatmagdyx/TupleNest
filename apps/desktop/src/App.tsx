@@ -74,6 +74,7 @@ import {
   SearchModal,
 } from "./overlays/lazy";
 import { UpdateToast } from "./overlays/Overlays";
+import { McpSection } from "./settings/McpSection";
 import { ParamPrompt } from "./overlays/Overlays";
 import {
   coerceParam,
@@ -2076,6 +2077,7 @@ export default function App() {
           onTheme={applyTheme}
           onTelemetry={applyTelemetry}
           onAbout={() => setOverlay("about")}
+          mcp={<McpSection />}
           onClose={() => setOverlay(null)}
         />
       )}
