@@ -282,7 +282,7 @@ jobs:
   # between a tunnelled production connection and a man in the middle — was
   # verified by reading the code and nothing else.
   #
-  # The dev sshd from docs/dev-sshd.md is userland and needs no privileges, so
+  # The dev sshd from docs/development/dev-sshd.md is userland and needs no privileges, so
   # the same recipe works on a runner.
   live-ssh:
     name: SSH tunnel contract tests

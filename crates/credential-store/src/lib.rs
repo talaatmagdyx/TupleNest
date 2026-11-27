@@ -1,6 +1,6 @@
 //! TupleNest credential store (Phase 0, E0.6).
 //!
-//! Invariants (see docs/phase-0-plan.md):
+//! Invariants (see docs/development/phase-0-plan.md):
 //! - Secrets live ONLY in the OS keychain. SQLite, logs, IPC payloads, and
 //!   frontend state hold opaque [`SecretRef`] keys, never values.
 //! - `get` is never exposed over IPC; only backend crates resolve references.

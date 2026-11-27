@@ -8,6 +8,8 @@
 <meta name="theme-color" content="#060a14" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#f5f7fc" media="(prefers-color-scheme: light)">
 <link rel="icon" href="mark.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="site.css">
 <script>document.documentElement.classList.add("js")</script>
 </head>
@@ -227,7 +229,7 @@
         <li><b>Query timeout / large result</b> — adjust the statement timeout or narrow the query; the grid keeps the first 20,000 rows (or 128 MB) and says when it has stopped; those limits are fixed. Copying rows to the clipboard takes at most 10,000 at a time; export to a file for more.</li>
         <li><b>Update failure</b> — betas update by manual download; the auto-updater targets stable releases.</li>
         <li><b>Logs</b> — rotating log files live in the app-data directory, under the bundle identifier rather than the product name: <code class="inline">~/Library/Application Support/app.tuplenest.desktop/logs</code> on macOS, <code class="inline">~/.local/share/app.tuplenest.desktop/logs</code> on Linux, <code class="inline">%APPDATA%\app.tuplenest.desktop\logs</code> on Windows. Owner-only on Unix.</li>
-        <li><b>Checking a Windows build by hand</b> — CI installs the <code class="inline">.msi</code> and confirms a window opens, but cannot drive the UI on Windows (a release build has no WebView2 debugging port). There is a <a href="https://github.com/talaatmagdyx/TupleNest/blob/main/docs/windows-manual-check.md">twelve-step manual check</a> for the rest.</li>
+        <li><b>Checking a Windows build by hand</b> — CI installs the <code class="inline">.msi</code> and confirms a window opens, but cannot drive the UI on Windows (a release build has no WebView2 debugging port). There is a <a href="https://github.com/talaatmagdyx/TupleNest/blob/main/docs/development/windows-manual-check.md">twelve-step manual check</a> for the rest.</li>
       </ul>
 
       <h2 id="faq">FAQ</h2>
@@ -243,7 +245,7 @@
 <footer class="site">
   <div class="wrap">
     <div class="cols">
-      <div class="fbrand"><a class="brand" href="index.html" aria-label="TupleNest home"><img src="icon.svg" alt="" width="32" height="32"><span class="wm">Tuple<span>Nest</span></span></a><p>A careful desktop IDE for PostgreSQL and SQLite. Local-first, open source, MIT.</p></div>
+      <div class="fbrand"><a class="brand" href="index.html" aria-label="TupleNest home"><img src="icon.svg" alt="" width="32" height="32"><span class="wm">Tuple<span>Nest</span></span></a><p>The safety-first database workspace for PostgreSQL and SQLite. Local-first, open source, MIT.</p></div>
       <div><h5>Product</h5><a href="features.html">Features</a><a href="security.html">Security</a><a href="download.html">Download</a><a href="roadmap.html">Roadmap</a><a href="changelog.html">Changelog</a></div>
       <div><h5>Resources</h5><a href="docs.html">Documentation</a><a href="docs.html#getting-started">Getting started</a><a href="docs.html#shortcuts">Keyboard shortcuts</a><a href="docs.html#troubleshooting">Troubleshooting</a><a href="blog.html">Blog</a></div>
       <div><h5>Community</h5><a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a><a href="https://github.com/talaatmagdyx/TupleNest/discussions">Discussions</a><a href="https://github.com/talaatmagdyx/TupleNest/issues">Issues</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a></div>

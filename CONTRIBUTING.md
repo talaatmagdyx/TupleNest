@@ -68,7 +68,7 @@ TUPLENEST_TEST_PG_HOST=localhost TUPLENEST_TEST_PG_USER=postgres \
 | `TUPLENEST_TEST_PG_SSL_CA` | the TLS tests: a server with `ssl=on` whose certificate (SAN `localhost`) this CA signed. Unset, they skip. `ci.yml` shows how CI makes one. |
 | `TUPLENEST_TEST_PG_PLAINTEXT`, `_PLAINTEXT_PORT` | the "refuses a plaintext server" tests, against an `ssl=off` server |
 
-| `TUPLENEST_TEST_SSHD_DIR` | the SSH tunnel tests: a real sshd, set up as in [`docs/dev-sshd.md`](docs/dev-sshd.md) (the `live-ssh` job in `ci.yml` is the reference) |
+| `TUPLENEST_TEST_SSHD_DIR` | the SSH tunnel tests: a real sshd, set up as in [`docs/development/dev-sshd.md`](docs/development/dev-sshd.md) (the `live-ssh` job in `ci.yml` is the reference) |
 
 One exception on Linux: `live_os_keychain_contract` (credential-store) talks
 to the real Secret Service, so without a running keyring daemon it fails

@@ -8,6 +8,8 @@
 <meta name="theme-color" content="#060a14" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#f5f7fc" media="(prefers-color-scheme: light)">
 <link rel="icon" href="mark.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="site.css">
 <script>document.documentElement.classList.add("js")</script>
 </head>
@@ -117,7 +119,7 @@ sha256sum &lt;filename&gt;</pre></div>
 minisign -Vm &lt;artifact&gt; -P &lt;public-key&gt;</pre></div>
       </div>
     </div>
-    <div class="callout" style="margin-top:22px">Each release also carries a <code class="inline">SHA256SUMS</code> file, a <code class="inline">.sig</code> beside every artifact except the <code class="inline">.dmg</code> files (base64-encoded minisign signatures: <code class="inline">base64 -d &lt; X.sig &gt; X.minisig</code> (the <code class="inline">&lt;</code> matters on macOS), then <code class="inline">minisign -Vm X -x X.minisig -P RWQbzK7INNRew+Mo6Yu5/m4pd5wSYwPq+hlbG4pPuKytbR1oZ8LkTgQi</code>; key ID C35ED434C8AECC1B, the same key the updater pins in <code class="inline">tauri.conf.json</code>), an SBOM (CycloneDX), and a GitHub build-provenance attestation you can check with <code class="inline">gh attestation verify</code>.</div>
+    <div class="callout" style="margin-top:22px">Each release also carries a <code class="inline">SHA256SUMS</code> file, a <code class="inline">.sig</code> beside every artifact except the <code class="inline">.dmg</code> files (base64-encoded minisign signatures: <code class="inline">base64 -d &lt; X.sig &gt; X.minisig</code> (the <code class="inline">&lt;</code> matters on macOS), then <code class="inline">minisign -Vm X -x X.minisig -P RWQbzK7INNRew+Mo6Yu5/m4pd5wSYwPq+hlbG4pPuKytbR1oZ8LkTgQi</code>; key ID C35ED434C8AECC1B, the same key the updater pins in <code class="inline">tauri.conf.json</code>), and an SBOM (CycloneDX). Releases after v0.1.0-beta.11 also carry a GitHub build-provenance attestation you can check with <code class="inline">gh attestation verify</code>.</div>
   </div>
 </section>
 
@@ -217,7 +219,7 @@ npm run build:app -- --bundles app</pre></div>
       <div class="qa"><button>Does Windows SmartScreen show a warning?<span class="plus">+</span></button><div class="a"><p>Yes, because the installer is unsigned. Click “More info” then “Run anyway”. A standard (OV) certificate wouldn't remove this — SmartScreen reputation is per-file and resets each release; only an EV certificate skips the wait.</p></div></div>
       <div class="qa"><button>Is the Linux build sandboxed?<span class="plus">+</span></button><div class="a"><p>The AppImage runs as a normal user process. It is not additionally sandboxed beyond what your desktop provides.</p></div></div>
       <div class="qa"><button>How do automatic updates work?<span class="plus">+</span></button><div class="a"><p>Stable releases are checked over HTTPS against signed artifacts with an embedded public key, and the app refuses a downgrade below its floor. Betas are installed manually.</p></div></div>
-      <div class="qa"><button>How can I verify the file?<span class="plus">+</span></button><div class="a"><p>Use the SHA-256 and minisign commands above, or verify build provenance with <code class="inline">gh attestation verify</code>.</p></div></div>
+      <div class="qa"><button>How can I verify the file?<span class="plus">+</span></button><div class="a"><p>Use the SHA-256 and minisign commands above, or, for releases after v0.1.0-beta.11, verify build provenance with <code class="inline">gh attestation verify</code>.</p></div></div>
       <div class="qa"><button>Can I install without admin permissions?<span class="plus">+</span></button><div class="a"><p>On macOS and Linux, yes — the .dmg/AppImage don't require admin. The Windows .msi may prompt for elevation depending on install scope.</p></div></div>
       <div class="qa"><button>How do I uninstall it?<span class="plus">+</span></button><div class="a"><p>macOS: drag to Trash. Windows: Apps &amp; features. Linux: delete the AppImage or <code class="inline">apt remove tuplenest</code>.</p></div></div>
     </div>
@@ -229,7 +231,7 @@ npm run build:app -- --bundles app</pre></div>
 <footer class="site">
   <div class="wrap">
     <div class="cols">
-      <div class="fbrand"><a class="brand" href="index.html" aria-label="TupleNest home"><img src="icon.svg" alt="" width="32" height="32"><span class="wm">Tuple<span>Nest</span></span></a><p>A careful desktop IDE for PostgreSQL and SQLite. Local-first, open source, MIT.</p></div>
+      <div class="fbrand"><a class="brand" href="index.html" aria-label="TupleNest home"><img src="icon.svg" alt="" width="32" height="32"><span class="wm">Tuple<span>Nest</span></span></a><p>The safety-first database workspace for PostgreSQL and SQLite. Local-first, open source, MIT.</p></div>
       <div><h5>Product</h5><a href="features.html">Features</a><a href="security.html">Security</a><a href="download.html">Download</a><a href="roadmap.html">Roadmap</a><a href="changelog.html">Changelog</a></div>
       <div><h5>Resources</h5><a href="docs.html">Documentation</a><a href="docs.html#getting-started">Getting started</a><a href="docs.html#shortcuts">Keyboard shortcuts</a><a href="docs.html#troubleshooting">Troubleshooting</a><a href="blog.html">Blog</a></div>
       <div><h5>Community</h5><a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a><a href="https://github.com/talaatmagdyx/TupleNest/discussions">Discussions</a><a href="https://github.com/talaatmagdyx/TupleNest/issues">Issues</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a></div>

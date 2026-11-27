@@ -3,17 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TupleNest — the PostgreSQL and SQLite IDE that asks before it writes</title>
+<title>TupleNest — the safety-first database workspace for PostgreSQL and SQLite</title>
 <meta name="description" content="TupleNest is an open-source desktop IDE for PostgreSQL and SQLite. Server-enforced read-only profiles, a destructive-statement guard on production, passwords in the OS keychain, an optional assistant that never sees your rows, and an MCP server that is off until you turn it on. MIT, no account, no telemetry.">
-<meta property="og:title" content="TupleNest — the PostgreSQL and SQLite IDE that asks before it writes">
-<meta property="og:description" content="Open-source desktop IDE for PostgreSQL and SQLite. Production-aware safety, local-first, MIT. No account, no telemetry.">
-<meta property="og:image" content="https://talaatmagdyx.github.io/TupleNest/shots/screen-query-3.jpg">
+<meta property="og:title" content="TupleNest — the safety-first database workspace for PostgreSQL and SQLite">
+<meta property="og:description" content="Local-first. Open source. Built for confidence. A desktop workspace for PostgreSQL and SQLite with production-aware safety. MIT, no account, no telemetry.">
+<meta property="og:image" content="https://talaatmagdyx.github.io/TupleNest/og.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://talaatmagdyx.github.io/TupleNest/">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" content="#060a14" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#f5f7fc" media="(prefers-color-scheme: light)">
 <link rel="icon" href="mark.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preload" href="fonts/SpaceGrotesk-latin-var.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="site.css">
 <script>document.documentElement.classList.add("js")</script>
@@ -54,8 +58,8 @@
   <div class="wrap">
     <img class="hero-mark" src="icon.svg" alt="" width="84" height="84">
     <span class="tagpill"><span class="dot" aria-hidden="true"></span> PostgreSQL · SQLite · Open source, MIT</span>
-    <h1>The database IDE that<br><em>asks before it writes.</em></h1>
-    <p class="sub">A careful desktop IDE for PostgreSQL and SQLite. Production is treated as production, passwords stay in your OS keychain, and nothing of ours sits between you and your data.</p>
+    <h1>The safety-first database workspace<br><em>for PostgreSQL and SQLite.</em></h1>
+    <p class="sub">Local-first. Open source. Built for confidence. Production is treated as production, passwords stay in your OS keychain, and there is no account or hosted service between you and your data.</p>
     <div class="cta">
       <a class="btn primary" href="https://github.com/talaatmagdyx/TupleNest/releases">Download from GitHub Releases</a>
       <a class="btn ghost" href="https://github.com/talaatmagdyx/TupleNest">View the source</a>
@@ -68,7 +72,7 @@
       <div class="bar" aria-hidden="true"><i class="r"></i><i class="y"></i><i class="g"></i><span>TupleNest</span></div>
       <img src="shots/hero.gif" width="1100" height="648" alt="TupleNest in use: the welcome screen, schema-aware autocomplete in the editor, running a query, the results grid with value bars, then the same result as a chart.">
     </div>
-    <p class="honest"><b>Beta software.</b> Releases are pre-releases and the installers are not code-signed yet, so your OS warns once on first launch. Every release carries SHA-256 checksums and GitHub build attestations you can check yourself — see <a href="download.html">Download</a>.</p>
+    <p class="honest"><b>Beta software.</b> Releases are pre-releases and the installers are not yet signed by Apple or Microsoft, so your OS warns once on first launch. Every release carries SHA-256 checksums and minisign signatures you can check yourself — see <a href="download.html">Download</a>.</p>
   </div>
 </section>
 
@@ -204,7 +208,7 @@
           <tr><td>Your databases</td><td class="how">The hosts you configure, directly or through your SSH tunnel</td><td class="how">When you connect and run</td></tr>
           <tr><td>Assistant</td><td class="how"><code class="inline">api.anthropic.com</code> with your key, or your Ollama URL (local by default). No result rows</td><td class="how">Only when you send, Explain, Fix or Test</td></tr>
           <tr><td>MCP server</td><td class="how">The AI tool that started it, over stdio — including the rows its queries return</td><td class="how">Only for connections you turned on</td></tr>
-          <tr><td>Update check</td><td class="how"><code class="inline">github.com</code>, an unauthenticated request with no identifier</td><td class="how">Once at startup</td></tr>
+          <tr><td>Update check</td><td class="how"><code class="inline">github.com</code>, an unauthenticated request with no identifier. GitHub sees your IP address</td><td class="how">Once at startup</td></tr>
           <tr><td>Telemetry</td><td class="how">Nowhere. The setting is off and no code sends anything</td><td class="how">Never</td></tr>
         </tbody>
       </table>
@@ -256,7 +260,7 @@
       <div class="qa"><button>Does the AI see my data?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>The assistant never sends result rows: only your question, the editor's SQL, error text with row-quoting lines removed, and schema names and types. The MCP server is different by design: an AI tool you connect gets what its queries return, which is why every connection starts Off and prod and staging are read-only at most.</p></div></div>
       <div class="qa"><button>Where are passwords stored?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>In the OS keychain — macOS Keychain, Windows Credential Manager or the Linux Secret Service. The app stores only an opaque reference, and the window never receives the password.</p></div></div>
       <div class="qa"><button>Can it stop me from damaging production?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>It makes it much harder: server-enforced read-only profiles, the statement guard, type-the-name confirmations and an audit log on prod. The hard boundary is still a database role without write privileges.</p></div></div>
-      <div class="qa"><button>Why does my OS warn on first launch?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>The builds are not code-signed yet. The <a href="download.html">Download page</a> has the click-path for each OS and how to check a file with <code class="inline">gh attestation verify</code>.</p></div></div>
+      <div class="qa"><button>Why does my OS warn on first launch?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>The installers are not yet signed with an Apple Developer ID or a Windows code-signing certificate. The <a href="download.html">Download page</a> has the click-path for each OS and how to check a file yourself.</p></div></div>
       <div class="qa"><button>Can I build it from source?<span class="plus" aria-hidden="true">+</span></button><div class="a"><p>Yes: Rust stable (via rustup), Node 22+, and the Tauri prerequisites for your OS. See the <a href="https://github.com/talaatmagdyx/TupleNest#build-from-source">README</a>.</p></div></div>
     </div>
   </div>
@@ -267,7 +271,7 @@
 <footer class="site">
   <div class="wrap">
     <div class="cols">
-      <div class="fbrand"><a class="brand" href="index.html" aria-label="TupleNest home"><img src="icon.svg" alt="" width="32" height="32"><span class="wm">Tuple<span>Nest</span></span></a><p>A careful desktop IDE for PostgreSQL and SQLite. Local-first, open source, MIT.</p></div>
+      <div class="fbrand"><a class="brand" href="index.html" aria-label="TupleNest home"><img src="icon.svg" alt="" width="32" height="32"><span class="wm">Tuple<span>Nest</span></span></a><p>The safety-first database workspace for PostgreSQL and SQLite. Local-first, open source, MIT.</p></div>
       <div><h5>Product</h5><a href="features.html">Features</a><a href="security.html">Security</a><a href="download.html">Download</a><a href="roadmap.html">Roadmap</a><a href="changelog.html">Changelog</a></div>
       <div><h5>Resources</h5><a href="docs.html">Documentation</a><a href="docs.html#getting-started">Getting started</a><a href="docs.html#shortcuts">Keyboard shortcuts</a><a href="docs.html#troubleshooting">Troubleshooting</a><a href="blog.html">Blog</a></div>
       <div><h5>Community</h5><a href="https://github.com/talaatmagdyx/TupleNest">GitHub</a><a href="https://github.com/talaatmagdyx/TupleNest/discussions">Discussions</a><a href="https://github.com/talaatmagdyx/TupleNest/issues">Issues</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/talaatmagdyx/TupleNest/blob/main/CODE_OF_CONDUCT.md">Code of Conduct</a></div>

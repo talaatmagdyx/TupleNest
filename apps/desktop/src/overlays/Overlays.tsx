@@ -659,7 +659,7 @@ export function Settings(p: {
                   <SettingRow title="History retention" help="Favorites always survive.">
                     <span className="set-value">newest 1,000</span>
                   </SettingRow>
-                  <SettingRow title="Anonymous telemetry" help="No query text or data ever leaves the device.">
+                  <SettingRow title="Anonymous telemetry" help="Collects nothing today. If it ever does, it will be opt-in and never include query text or data.">
                     {/* The knob is the whole button, so without these a screen
                         reader announces "button" — no name, and no way to tell
                         on from off. */}
