@@ -333,9 +333,16 @@ pub fn file_name_only(suggested: &str) -> String {
         .map(|n| n.to_string_lossy().trim_start_matches('.').to_string())
         .unwrap_or_default();
     if name.is_empty() {
-        "backup.dump".into()
-    } else {
-        name
+        return "backup.dump".into();
+    }
+    // The save panel only allows `.dump`/`.backup`; on macOS a suggested
+    // name without one of them leaves Save disabled.
+    let ext = Path::new(&name)
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase());
+    match ext.as_deref() {
+        Some("dump" | "backup") => name,
+        _ => format!("{name}.dump"),
     }
 }
 
@@ -998,6 +1005,22 @@ mod tests {
         assert_eq!(file_name_only("../../etc/orders.dump"), "orders.dump");
         assert_eq!(file_name_only(".hidden.dump"), "hidden.dump");
         assert_eq!(file_name_only(""), "backup.dump");
+    }
+
+    #[test]
+    fn a_suggested_name_always_has_an_extension_the_save_filter_allows() {
+        // As the live test sent it: the date's dashes, no extension.
+        assert_eq!(
+            file_name_only("tn_livetest-2026-11-27"),
+            "tn_livetest-2026-11-27.dump"
+        );
+        assert_eq!(
+            file_name_only("shop.v2-2026-11-27"),
+            "shop.v2-2026-11-27.dump"
+        );
+        assert_eq!(file_name_only("orders.DUMP"), "orders.DUMP");
+        assert_eq!(file_name_only("orders.backup"), "orders.backup");
+        assert_eq!(file_name_only("orders.sql"), "orders.sql.dump");
     }
 
     /// The real tools, when this machine has them and a local server: a
