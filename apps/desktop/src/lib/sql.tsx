@@ -66,13 +66,35 @@ export function tokenizeLines(sql: string): React.ReactNode[][] {
  * of 4,213,662 rows (truncated)" rather than a confident "20,000 rows" beside
  * a file that is missing more than 99% of the answer.
  */
-export function rowCountNote(written: number, result: { totalRows: number; truncated: boolean }): string {
+export function rowCountNote(
+  written: number,
+  result: { totalRows: number; totalKnown?: boolean; truncated: boolean },
+): string {
+  // The backend stopped reading at its cap: there is no total to compare
+  // with, only "at least this many".
+  if (result.totalKnown === false) {
+    const of = written < result.totalRows ? `${written.toLocaleString()} of ` : "";
+    return `${of}${totalRowsText(result)} rows ${STOPPED_AT_LIMIT}`;
+  }
   // The test is "did we write everything", not "did the store overflow". A
   // format cap (Markdown) or a clipboard cap loses rows without the store's
   // truncated flag ever being set, and a count that stayed quiet about that
   // would be the same lie the flag exists to prevent.
   if (result.totalRows <= written) return `${written.toLocaleString()} rows`;
   return `${written.toLocaleString()} of ${result.totalRows.toLocaleString()} rows (truncated)`;
+}
+
+/** Said beside a total the backend did not read to the end of. */
+export const STOPPED_AT_LIMIT = "(stopped at the limit)";
+
+/**
+ * A result's total row count as text: "4,213,662", or "20,000+" when the
+ * backend stopped reading at its row cap. Past the cap a plain read is not
+ * streamed to the end just to count it (that took seconds on a large table),
+ * so the only honest total is a lower bound.
+ */
+export function totalRowsText(result: { totalRows: number; totalKnown?: boolean }): string {
+  return `${result.totalRows.toLocaleString()}${result.totalKnown === false ? "+" : ""}`;
 }
 
 /** CSV export safety: neutralize spreadsheet formulas, or preserve raw bytes. */

@@ -651,6 +651,203 @@ impl PostgresSession {
             tls: self.tls.clone(),
         }
     }
+
+    /*
+     * A plain read, stopped at `row_limit` rows.
+     *
+     * Streaming a million-row SELECT to the end so that the app could keep
+     * 20,000 of them and show an exact total took 8–25 seconds. Through a
+     * cursor the server produces `row_limit + 1` rows and stops: the extra row
+     * says only that there are more, and is not handed over.
+     *
+     * A cursor without HOLD lives in a transaction block. Outside one, this
+     * opens its own and ends it (COMMIT, or ROLLBACK on any failure). Inside
+     * the user's own transaction it must not end it, so the cursor is declared
+     * there and closed; a failure there aborts the transaction exactly as the
+     * statement itself failing would have. `cursor_can_hold` decided, before
+     * anything was sent, that DECLARE takes this statement.
+     *
+     * The statement was already prepared, which is where its column types (for
+     * `money`) and parameter types come from: the DECLARE is prepared with the
+     * same parameter types and bound to the same values. The cancel token
+     * cancels whatever is running on the connection, the FETCH included.
+     */
+    async fn run_cursor(
+        &self,
+        request: &QueryRequest,
+        statement: &tokio_postgres::Statement,
+        params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)>,
+        money: wire::Money,
+        sink: &dyn BatchSink,
+    ) -> Result<Pumped, Box<DriverError>> {
+        let cap = request.row_limit;
+        // Unique per execution: two runs never share a name, even inside one
+        // long transaction where an earlier cursor could still be open.
+        let name = format!(
+            "tuplenest_cursor_{}",
+            request.execution_id.to_string().replace('-', "")
+        );
+        let own = !self.server_in_transaction().await?;
+        if own {
+            self.client
+                .batch_execute("BEGIN")
+                .await
+                .map_err(normalize_error)?;
+        }
+        let run = async {
+            let declare = self
+                .client
+                .prepare_typed(
+                    &format!("DECLARE {name} NO SCROLL CURSOR FOR {}", request.sql),
+                    statement.params(),
+                )
+                .await
+                .map_err(normalize_error)?;
+            self.client
+                .execute_raw(&declare, params)
+                .await
+                .map_err(normalize_error)?;
+            let fetch = self
+                .client
+                .prepare(&format!("FETCH {} FROM {name}", cap + 1))
+                .await
+                .map_err(normalize_error)?;
+            let none: [&(dyn tokio_postgres::types::ToSql + Sync); 0] = [];
+            let stream = self
+                .client
+                .query_raw(&fetch, none)
+                .await
+                .map_err(normalize_error)?;
+            pump(stream, request.execution_id, money, sink, cap).await
+        }
+        .await;
+        // Closed on every path. After a failure the cleanup's own error is
+        // not the one to report: in the user's transaction a CLOSE after a
+        // server error is refused (the transaction is aborted, and the cursor
+        // goes with it when it ends), which is expected.
+        let end = if own {
+            "COMMIT"
+        } else {
+            &format!("CLOSE {name}")
+        };
+        match run {
+            Ok(pumped) => {
+                self.client
+                    .batch_execute(end)
+                    .await
+                    .map_err(normalize_error)?;
+                // A FETCH's tag counts the extra row; the SELECT's would not.
+                Ok(Pumped {
+                    rows_affected: Some(pumped.rows_returned),
+                    ..pumped
+                })
+            }
+            Err(e) => {
+                let _ = self
+                    .client
+                    .batch_execute(if own { "ROLLBACK" } else { end })
+                    .await;
+                Err(e)
+            }
+        }
+    }
+}
+
+/// What streaming a statement's rows found.
+struct Pumped {
+    rows_returned: u64,
+    more_rows: bool,
+    rows_affected: Option<u64>,
+}
+
+/// Streams rows into the sink in bounded batches. With `cap > 0`, rows past
+/// the first `cap` are not handed over; any such row sets `more_rows`.
+async fn pump(
+    stream: tokio_postgres::RowStream,
+    execution_id: ExecutionId,
+    money: wire::Money,
+    sink: &dyn BatchSink,
+    cap: u64,
+) -> Result<Pumped, Box<DriverError>> {
+    use futures_util::StreamExt;
+    tokio::pin!(stream);
+
+    let mut columns: Vec<ColumnMeta> = Vec::new();
+    let mut buffer: Vec<Vec<CellValue>> = Vec::with_capacity(BATCH_SIZE);
+    let mut sequence = 0u64;
+    let mut rows_returned = 0u64;
+    let mut more_rows = false;
+    let mut batch_bytes = 0usize;
+    let mut counting_only = false;
+
+    while let Some(item) = stream.next().await {
+        let row = item.map_err(normalize_error)?;
+        if cap > 0 && rows_returned >= cap {
+            more_rows = true;
+            continue;
+        }
+        if columns.is_empty() {
+            columns = row
+                .columns()
+                .iter()
+                .map(|c| ColumnMeta {
+                    name: c.name().to_string(),
+                    db_type: c.type_().name().to_string(),
+                    nullable: None,
+                })
+                .collect();
+        }
+        rows_returned += 1;
+        // The sink is full: count the rest, decode none of it.
+        if counting_only {
+            continue;
+        }
+        batch_bytes += row_wire_bytes(&row);
+        buffer.push(convert_row(&row, money));
+        if buffer.len() >= BATCH_SIZE || batch_bytes >= BATCH_BYTES {
+            batch_bytes = 0;
+            sink.deliver(RowBatch {
+                execution_id,
+                sequence,
+                columns: columns.clone(),
+                rows: std::mem::take(&mut buffer),
+                is_last: false,
+            })
+            .await?;
+            sequence += 1;
+            buffer.reserve(BATCH_SIZE);
+            counting_only = !sink.wants_rows();
+        }
+    }
+
+    sink.deliver(RowBatch {
+        execution_id,
+        sequence,
+        columns,
+        rows: std::mem::take(&mut buffer),
+        is_last: true,
+    })
+    .await?;
+
+    /*
+     * How many rows the statement actually changed.
+     *
+     * This was hard-coded `None`, and the whole chain above it believed
+     * that meant "the server said nothing" rather than "we never asked":
+     * the row-edit path treats a null count as "no opinion" and skips its
+     * check, so the concurrency and zero-row guards were inert, and the
+     * editor's "N rows affected" was never shown for a write.
+     *
+     * `rows_affected` is only meaningful once the stream is exhausted —
+     * the count arrives in the CommandComplete message at the end — so it
+     * has to be read here and not before the loop.
+     */
+    let rows_affected = stream.rows_affected();
+    Ok(Pumped {
+        rows_returned,
+        more_rows,
+        rows_affected,
+    })
 }
 
 impl PostgresDriver {
@@ -774,7 +971,6 @@ impl DatabaseSession for PostgresSession {
         request: QueryRequest,
         sink: &dyn BatchSink,
     ) -> Result<ExecutionSummary, Box<DriverError>> {
-        use futures_util::StreamExt;
         let started = Instant::now();
 
         // The same trap for a COMMIT typed in the editor (see
@@ -857,85 +1053,28 @@ impl DatabaseSession for PostgresSession {
         } else {
             wire::Money::UNKNOWN
         };
-        let stream = self
-            .client
-            .query_raw(&statement, refs)
-            .await
-            .map_err(normalize_error)?;
-        tokio::pin!(stream);
 
-        let mut columns: Vec<ColumnMeta> = Vec::new();
-        let mut buffer: Vec<Vec<CellValue>> = Vec::with_capacity(BATCH_SIZE);
-        let mut sequence = 0u64;
-        let mut rows_returned = 0u64;
-        let mut batch_bytes = 0usize;
-        let mut counting_only = false;
-
-        while let Some(item) = stream.next().await {
-            let row = item.map_err(normalize_error)?;
-            if columns.is_empty() {
-                columns = row
-                    .columns()
-                    .iter()
-                    .map(|c| ColumnMeta {
-                        name: c.name().to_string(),
-                        db_type: c.type_().name().to_string(),
-                        nullable: None,
-                    })
-                    .collect();
-            }
-            rows_returned += 1;
-            // The sink is full: count the rest, decode none of it.
-            if counting_only {
-                continue;
-            }
-            batch_bytes += row_wire_bytes(&row);
-            buffer.push(convert_row(&row, money));
-            if buffer.len() >= BATCH_SIZE || batch_bytes >= BATCH_BYTES {
-                batch_bytes = 0;
-                sink.deliver(RowBatch {
-                    execution_id: request.execution_id,
-                    sequence,
-                    columns: columns.clone(),
-                    rows: std::mem::take(&mut buffer),
-                    is_last: false,
-                })
-                .await?;
-                sequence += 1;
-                buffer.reserve(BATCH_SIZE);
-                counting_only = !sink.wants_rows();
-            }
-        }
-
-        sink.deliver(RowBatch {
-            execution_id: request.execution_id,
-            sequence,
-            columns,
-            rows: std::mem::take(&mut buffer),
-            is_last: true,
-        })
-        .await?;
-
-        /*
-         * How many rows the statement actually changed.
-         *
-         * This was hard-coded `None`, and the whole chain above it believed
-         * that meant "the server said nothing" rather than "we never asked":
-         * the row-edit path treats a null count as "no opinion" and skips its
-         * check, so the concurrency and zero-row guards were inert, and the
-         * editor's "N rows affected" was never shown for a write.
-         *
-         * `rows_affected` is only meaningful once the stream is exhausted —
-         * the count arrives in the CommandComplete message at the end — so it
-         * has to be read here and not before the loop.
-         */
-        let rows_affected = stream.rows_affected();
+        // A plain read with a limit stops at it (see `run_cursor`). Anything
+        // else streams to the end, as it always has.
+        let cap = request.row_limit;
+        let pumped = if cap > 0 && cap < i32::MAX as u64 && cursor_can_hold(&request.sql) {
+            self.run_cursor(&request, &statement, refs, money, sink)
+                .await?
+        } else {
+            let stream = self
+                .client
+                .query_raw(&statement, refs)
+                .await
+                .map_err(normalize_error)?;
+            pump(stream, request.execution_id, money, sink, 0).await?
+        };
 
         Ok(ExecutionSummary {
             execution_id: request.execution_id,
             status: ExecutionStatus::Success,
-            rows_affected,
-            rows_returned,
+            rows_affected: pumped.rows_affected,
+            rows_returned: pumped.rows_returned,
+            more_rows: pumped.more_rows,
             duration_ms: started.elapsed().as_millis() as u64,
             messages: Vec::new(),
         })
@@ -2782,6 +2921,146 @@ fn reads_only(first_word: &str) -> bool {
     )
 }
 
+/// May this statement run through `DECLARE … CURSOR FOR` and be stopped at
+/// a row limit, with nothing else about it changing?
+///
+/// Decided from the text before anything is sent, because inside the user's
+/// transaction a DECLARE the server refuses would abort that transaction.
+/// When in doubt the answer is no, and the statement runs to the end as
+/// before. Judged on the SQL with comments, literals, quoted identifiers and
+/// dollar-quoted bodies blanked out (`mask_sql`), so a keyword inside one of
+/// those does not count. Yes only for:
+///
+/// - one statement: no `;` other than trailing ones;
+/// - whose first word is SELECT, VALUES, TABLE or WITH;
+/// - with no INSERT, UPDATE, DELETE or MERGE anywhere (a write in a WITH, or
+///   `FOR UPDATE`/`FOR NO KEY UPDATE`, which would lock only the rows read),
+///   and no `FOR SHARE`/`FOR KEY SHARE` for the same reason;
+/// - and no INTO (`SELECT … INTO` creates a table, and DECLARE refuses it).
+fn cursor_can_hold(sql: &str) -> bool {
+    let masked = mask_sql(sql);
+    if let Some(k) = masked.find(';') {
+        if !masked[k..]
+            .bytes()
+            .all(|c| c == b';' || c.is_ascii_whitespace())
+        {
+            return false;
+        }
+    }
+    let words: Vec<String> = masked
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+        .filter(|w| !w.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect();
+    if !matches!(
+        words.first().map(String::as_str),
+        Some("select" | "values" | "table" | "with")
+    ) {
+        return false;
+    }
+    if words.iter().any(|w| {
+        matches!(
+            w.as_str(),
+            "insert" | "update" | "delete" | "merge" | "into"
+        )
+    }) {
+        return false;
+    }
+    !words
+        .windows(2)
+        .any(|p| matches!(p[1].as_str(), "share") && matches!(p[0].as_str(), "for" | "key"))
+}
+
+/// The statement with every comment, string literal, quoted identifier and
+/// dollar-quoted body replaced by spaces, so that what is left is the SQL
+/// the server parses as keywords and punctuation.
+///
+/// Masking too much is the dangerous direction here (it would hide a `;` or
+/// an INTO), so `$` starts a dollar quote only where PostgreSQL's lexer would
+/// start one: not inside a word (`a$b$c` is an identifier) and not before a
+/// digit (`$1` is a parameter). Statements with an unterminated literal never
+/// get this far: they fail to prepare first.
+fn mask_sql(sql: &str) -> String {
+    let b = sql.as_bytes();
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80;
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let start = i;
+        let mut masked = true;
+        if b[i..].starts_with(b"--") {
+            i = b[i..]
+                .iter()
+                .position(|&c| c == b'\n')
+                .map_or(b.len(), |k| i + k);
+        } else if b[i..].starts_with(b"/*") {
+            let mut depth = 1;
+            i += 2;
+            while i < b.len() && depth > 0 {
+                if b[i..].starts_with(b"/*") {
+                    depth += 1;
+                    i += 2;
+                } else if b[i..].starts_with(b"*/") {
+                    depth -= 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+        } else if b[i] == b'\'' || b[i] == b'"' {
+            let quote = b[i];
+            // `E'…'` (not the end of a longer word) takes backslash escapes.
+            let escapes = quote == b'\''
+                && i > 0
+                && b[i - 1].eq_ignore_ascii_case(&b'e')
+                && (i < 2 || !ident(b[i - 2]));
+            i += 1;
+            while i < b.len() {
+                // A backslash escape, or a doubled quote: two bytes inside.
+                let escaped = escapes && b[i] == b'\\';
+                if escaped || (b[i] == quote && b.get(i + 1) == Some(&quote)) {
+                    i += 2;
+                } else if b[i] == quote {
+                    i += 1;
+                    break;
+                } else {
+                    i += 1;
+                }
+            }
+        } else if b[i] == b'$' && (i == 0 || !ident(b[i - 1])) {
+            // `$tag$`: the tag is an identifier that does not start with a
+            // digit, or empty.
+            let tag_len = b[i + 1..]
+                .iter()
+                .position(|&c| !(ident(c) && c != b'$'))
+                .unwrap_or(b.len() - i - 1);
+            let tag_ok = b.get(i + 1 + tag_len) == Some(&b'$')
+                && b.get(i + 1).is_none_or(|c| !c.is_ascii_digit());
+            if tag_ok {
+                let tag = &b[i..i + tag_len + 2];
+                let body = i + tag.len();
+                i = b[body..]
+                    .windows(tag.len())
+                    .position(|w| w == tag)
+                    .map_or(b.len(), |k| body + k + tag.len());
+            } else {
+                masked = false;
+                i += 1;
+            }
+        } else {
+            masked = false;
+            i += 1;
+        }
+        i = i.min(b.len());
+        if masked {
+            out.extend(std::iter::repeat_n(b' ', i - start));
+        } else {
+            out.extend_from_slice(&b[start..i]);
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// The first `n` words of a statement, lowercased, skipping leading comments
 /// the way the server would.
 fn leading_words(sql: &str, n: usize) -> Vec<String> {
@@ -3072,6 +3351,88 @@ mod begin_statement_tests {
         ] {
             assert!(!reads_only(&first(sql)), "{sql:?} should be refused");
         }
+    }
+
+    #[test]
+    fn a_cursor_holds_only_a_single_plain_read() {
+        for sql in [
+            "SELECT 1",
+            "select * from t where a = $1",
+            "  -- lead\n/* block /* nested */ */ SELECT 1",
+            "VALUES (1), (2)",
+            "TABLE t",
+            "WITH x AS (SELECT 1) SELECT * FROM x",
+            "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT n FROM r",
+            "(SELECT 1) UNION (SELECT 2)",
+            "SELECT 1;",
+            "SELECT 1 ;  \n ; ",
+            "SELECT 1; -- trailing comment",
+            "SELECT 1 /* ; DELETE */",
+            // Keywords inside literals, identifiers and dollar quotes.
+            "SELECT 'insert into x; delete' AS s",
+            "SELECT E'it\\'s; update' AS s",
+            "SELECT 'it''s; merge' AS s",
+            "SELECT \"into\", \"delete\" FROM t",
+            "SELECT $$; DELETE FROM t$$",
+            "SELECT $fn$ INSERT INTO t $fn$ AS body",
+            "SELECT $1::int, $2::text",
+            "SELECT update_time, deleted_at, inserted FROM t",
+        ] {
+            assert!(cursor_can_hold(sql), "{sql:?} should use a cursor");
+        }
+        for sql in [
+            // Not a plain read.
+            "",
+            "-- only a comment",
+            "EXPLAIN SELECT 1",
+            "SHOW work_mem",
+            "INSERT INTO t VALUES (1) RETURNING *",
+            "UPDATE t SET a = 1 RETURNING *",
+            "DELETE FROM t RETURNING *",
+            "MERGE INTO t USING s ON true WHEN MATCHED THEN DELETE",
+            "COPY t TO STDOUT",
+            "FETCH 10 FROM c",
+            // A write inside a WITH.
+            "WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d",
+            "WITH i AS (INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM i",
+            "with u as (update t set a = 1 returning *) select * from u",
+            // SELECT INTO creates a table.
+            "SELECT * INTO new_t FROM t",
+            "select 1 into temp x",
+            // Locks only what is fetched.
+            "SELECT * FROM t FOR UPDATE",
+            "SELECT * FROM t FOR NO KEY UPDATE",
+            "SELECT * FROM t FOR SHARE",
+            "SELECT * FROM t FOR KEY SHARE",
+            // More than one statement.
+            "SELECT 1; SELECT 2",
+            "SELECT 1; DELETE FROM t",
+            "SELECT 'a;b'; SELECT 2",
+            "SELECT 1 -- c\n; SELECT 2",
+            // A `$` inside a word is not a dollar quote that could hide the INTO.
+            "SELECT a$b$c INTO x FROM t",
+            // `$1$` is a parameter followed by `$`, not a quote tag.
+            "SELECT $1$ ; DELETE FROM t",
+        ] {
+            assert!(!cursor_can_hold(sql), "{sql:?} should not use a cursor");
+        }
+    }
+
+    #[test]
+    fn masking_blanks_only_comments_literals_and_quoted_names() {
+        // What is left, and that nothing moved.
+        let left = |sql: &str| {
+            let m = mask_sql(sql);
+            assert_eq!(m.len(), sql.len(), "{sql:?} masked to {m:?}");
+            m.split_whitespace().collect::<Vec<_>>().join(" ")
+        };
+        assert_eq!(left("SELECT 'a' -- c"), "SELECT");
+        assert_eq!(left("a /* x /* y */ z */ b"), "a b");
+        assert_eq!(left("x \"q\"\"q\" $t$ $ $t$ y"), "x y");
+        assert_eq!(left("x E'\\'' y"), "x E y");
+        assert_eq!(left("$1 a$b"), "$1 a$b");
+        // Non-ASCII text survives outside, and is blanked inside, a literal.
+        assert_eq!(left("SELECT 'é', ü"), "SELECT , ü");
     }
 
     #[test]

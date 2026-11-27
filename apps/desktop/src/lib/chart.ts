@@ -49,7 +49,12 @@ export function chartTitle(columns: ChartColumn[], pick: { label: number; value:
  * different from the whole — and nothing else on screen says so. When rows
  * were left out, the subtitle says how many.
  */
-export function chartSubtitle(rowCount: number, totalRows?: number): string {
+export function chartSubtitle(rowCount: number, totalRows?: number, totalKnown = true): string {
+  // A total the backend stopped counting at is a lower bound: the bars are a
+  // sample even when they used every row that was read.
+  if (!totalKnown && totalRows !== undefined) {
+    return `aggregated from ${rowCount.toLocaleString()} of ${totalRows.toLocaleString()}+ rows (stopped at the limit) · bar`;
+  }
   const of = totalRows !== undefined && totalRows > rowCount ? ` of ${totalRows.toLocaleString()}` : "";
   return `aggregated from ${rowCount.toLocaleString()}${of} rows · bar`;
 }

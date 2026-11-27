@@ -1308,8 +1308,10 @@ impl StoredResult {
     }
 }
 
-/// Hard cap on rows kept for scrolling. Beyond this the stream is still
-/// drained and counted, but rows are dropped and the result marked truncated.
+/// Hard cap on rows kept for scrolling. A plain read stops at it on the
+/// server (`QueryRequest::row_limit`) and the total is reported as unknown;
+/// anything else (a write's RETURNING, EXPLAIN, SHOW…) is still drained and
+/// counted, with the rows past the cap dropped and the result marked truncated.
 ///
 /// 20,000: more than anyone scrolls through, and what a sort or a chart
 /// walks every time it runs. It was 50,000; every row kept is decoded,
@@ -1413,6 +1415,9 @@ pub struct QueryResultOut {
     columns: Vec<ColumnOut>,
     /// Rows seen from the server (including any dropped past the cap).
     total_rows: u64,
+    /// False when the read stopped at the cap with more rows on the server:
+    /// `total_rows` is then the cap, a lower bound, not the total.
+    total_known: bool,
     /// Rows available for paging via `pg_rows`.
     stored_rows: usize,
     truncated: bool,
@@ -2032,8 +2037,9 @@ pub async fn pg_query(
         execution_id: ExecutionId::new(),
         sql: sql.clone(),
         params: bound,
-        row_limit: 0,
-        timeout_ms: 0,
+        // No more than the store keeps: a plain read past it stops at the
+        // cap instead of streaming every row only to count them.
+        row_limit: RESULT_STORE_CAP as u64,
     };
     let summary = match session.execute(request, &sink).await {
         Ok(summary) => summary,
@@ -2111,10 +2117,14 @@ pub async fn pg_query(
             })
             .collect(),
         // The driver stops handing rows over once the store is full, so the
-        // store has not seen them all; the driver has counted them.
+        // store has not seen them all; the driver has counted them — unless
+        // it stopped reading at the cap, and then no one knows the total.
         total_rows: summary.rows_returned.max(stored.store.total_seen()),
+        total_known: !summary.more_rows,
         stored_rows: stored.store.stored(),
-        truncated: stored.store.truncated() || summary.rows_returned > stored.store.stored() as u64,
+        truncated: summary.more_rows
+            || stored.store.truncated()
+            || summary.rows_returned > stored.store.stored() as u64,
         rows_affected: summary.rows_affected,
         elapsed_ms: summary.duration_ms,
         rows: None,
@@ -2817,7 +2827,6 @@ mod tests {
                         sql: "SELECT pg_backend_pid()::text".into(),
                         params: vec![],
                         row_limit: 0,
-                        timeout_ms: 0,
                     },
                     &sink,
                 )
@@ -2889,7 +2898,6 @@ mod tests {
                     sql: "SELECT pg_sleep(30)".into(),
                     params: vec![],
                     row_limit: 0,
-                    timeout_ms: 0,
                 };
                 struct NullSink;
                 #[async_trait]

@@ -45,6 +45,12 @@ describe("statusText", () => {
     );
   });
 
+  it("gives a lower bound when the backend stopped reading at the limit", () => {
+    expect(
+      statusText(res({ totalRows: 20_000, storedRows: 20_000, truncated: true, totalKnown: false })),
+    ).toBe("20,000+ row(s) in 12ms (stopped at the limit) (first 20,000 kept for scrolling)");
+  });
+
   it("reports rows affected for a write, which returns no columns", () => {
     expect(statusText(res({ columns: [], rowsAffected: 7 }))).toBe("7 row(s) affected in 12ms");
   });
@@ -345,6 +351,8 @@ describe("announceText", () => {
     expect(announceText({ result: res({ totalRows: 42 }) })).toBe("42 rows");
     expect(announceText({ result: res({ totalRows: 1 }) })).toBe("1 row");
     expect(announceText({ result: res({ totalRows: 12345 }) })).toBe("12,345 rows");
+    expect(announceText({ result: res({ totalRows: 20_000, totalKnown: false }) })).toBe("20,000+ rows");
+    expect(announceText({ result: res({ totalRows: 1, totalKnown: false }) })).toBe("1+ rows");
   });
 
   it("counts rows affected for a statement with no columns", () => {

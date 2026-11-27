@@ -205,9 +205,9 @@
         <ul>
           <li>Backend row and byte budgets, with clear truncation indicators</li>
           <li>Per-cell size limit so one giant value can't spike memory</li>
-          <li>Query cancellation, execution duration, and true row count</li>
+          <li>Query cancellation, execution duration, and an honest row count</li>
         </ul>
-        <div class="callout info">The grid caps rows <em>and</em> bytes — the footer counts the real total, not the cap. We don't publish throughput numbers we haven't benchmarked.</div>
+        <div class="callout info">The grid caps rows <em>and</em> bytes. A plain read stops at the 20,000-row cap on the server instead of streaming the rest only to count it, so the footer says <em>"20,000+ rows (stopped at the limit)"</em> rather than presenting the cap as the total. We don't publish throughput numbers we haven't benchmarked.</div>
       </div>
     </div>
   </div>

@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { QueryResult } from "../ipc/types";
-import { needsGuard, paramCount } from "../lib/sql";
+import { needsGuard, paramCount, STOPPED_AT_LIMIT, totalRowsText } from "../lib/sql";
 
 /** The backend prefixes a lost session with this; nothing else does. */
 export const LOST_PREFIX = "Connection lost:";
@@ -54,7 +54,8 @@ export function statusText(r: QueryResult): string {
   // Say when the grid is holding less than the query returned, or the row
   // count and the scrollable rows silently disagree.
   const kept = r.truncated ? ` (first ${r.storedRows.toLocaleString()} kept for scrolling)` : "";
-  return `${r.totalRows.toLocaleString()} row(s) in ${r.elapsedMs}ms${kept}`;
+  const stopped = r.totalKnown === false ? ` ${STOPPED_AT_LIMIT}` : "";
+  return `${totalRowsText(r)} row(s) in ${r.elapsedMs}ms${stopped}${kept}`;
 }
 
 /** The backend titles a cancelled statement this way (SQLSTATE 57014); a
@@ -77,7 +78,7 @@ export function announceText(outcome: { result: QueryResult } | { error: string 
     const n = r.rowsAffected ?? 0;
     return `${n.toLocaleString()} row${n === 1 ? "" : "s"} affected`;
   }
-  return `${r.totalRows.toLocaleString()} row${r.totalRows === 1 ? "" : "s"}`;
+  return `${totalRowsText(r)} row${r.totalRows === 1 && r.totalKnown !== false ? "" : "s"}`;
 }
 
 /** `n` changes on every run, so two runs that say the same thing ("42 rows")

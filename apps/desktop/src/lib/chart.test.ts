@@ -60,6 +60,13 @@ describe("chart labels", () => {
   it("says nothing extra when it charted everything", () => {
     expect(chartSubtitle(12, 12)).toBe("aggregated from 12 rows · bar");
   });
+
+  it("calls a total the backend stopped at a lower bound", () => {
+    // Every row read was charted, but the query matched more.
+    expect(chartSubtitle(20_000, 20_000, false)).toBe(
+      "aggregated from 20,000 of 20,000+ rows (stopped at the limit) · bar",
+    );
+  });
 });
 
 describe("isNumericType — whole type names only", () => {

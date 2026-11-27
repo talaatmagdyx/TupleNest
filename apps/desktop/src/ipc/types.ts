@@ -167,6 +167,10 @@ export type SnippetRecord = {
 export type QueryResult = {
   columns: { name: string; dbType: string }[];
   totalRows: number;
+  /** False when the backend stopped reading at its row cap and the server
+   *  had more: `totalRows` is then the cap, a lower bound ("20,000+").
+   *  Absent means true. */
+  totalKnown?: boolean;
   storedRows: number;
   truncated: boolean;
   rowsAffected: number | null;

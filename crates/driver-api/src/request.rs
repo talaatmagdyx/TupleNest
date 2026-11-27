@@ -24,10 +24,14 @@ pub struct QueryRequest {
     pub execution_id: ExecutionId,
     pub sql: String,
     pub params: Vec<ParamValue>,
-    /// Maximum rows to fetch before the frontend must page. 0 = unlimited/stream.
+    /// The most rows the caller will keep. 0 = no limit: every row is read.
+    ///
+    /// Above 0, a plain read is run through a server-side cursor and stops at
+    /// `row_limit` rows; [`ExecutionSummary::more_rows`] then says whether the
+    /// server had more. Other statements still run to the end, so a write is
+    /// never cut short. (A statement timeout is the connection's
+    /// `statement_timeout`; there is no per-request one.)
     pub row_limit: u64,
-    /// Statement timeout in milliseconds. 0 = connection default.
-    pub timeout_ms: u64,
 }
 
 /// A cell value received from the database, normalized for transport.
@@ -117,6 +121,11 @@ pub struct ExecutionSummary {
     pub status: ExecutionStatus,
     pub rows_affected: Option<u64>,
     pub rows_returned: u64,
+    /// The read stopped at `QueryRequest::row_limit` and the server had more
+    /// rows: `rows_returned` is then the limit, not the total, and the total
+    /// is not known.
+    #[serde(default)]
+    pub more_rows: bool,
     pub duration_ms: u64,
     /// Server notices/warnings emitted during execution.
     pub messages: Vec<String>,
