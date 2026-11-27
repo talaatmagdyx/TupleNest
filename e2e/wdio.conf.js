@@ -70,6 +70,20 @@ export const config = {
   waitforTimeout: 20000,
   logLevel: "warn",
 
+  // WebdriverIO 10 makes `$` strict: a selector that matches more than one
+  // element throws instead of using the first. These specs were written and
+  // proven against v9's first-match behaviour, and some selectors (`.hist-row`,
+  // `div.meta`, the SQL editor textarea) can legitimately match more than one
+  // node depending on app state. Keep v9 semantics until a Smoke run with this
+  // set to true shows which, if any, need narrowing.
+  strictSelectors: false,
+
+  // The workflow owns the display: it runs the suite under `xvfb-run` inside a
+  // D-Bus session with an unlocked keyring. v10's built-in display server would
+  // stand down anyway because DISPLAY is set, but if it ever did start, it
+  // would prefer Weston and put the app on Wayland outside that session.
+  displayServerEnabled: false,
+
   // Spawn the driver the specs talk to; the matching msedgedriver is already
   // first on PATH on Windows.
   beforeSession: () => {
