@@ -1353,14 +1353,11 @@ struct StoreSink<'a> {
 }
 
 impl<'a> StoreSink<'a> {
-    fn new(previous: Option<&'a StdMutex<Option<StoredResult>>>) -> Self {
+    fn new(previous: Option<&'a StdMutex<Option<StoredResult>>>, cap: usize) -> Self {
         Self {
             inner: StdMutex::new(StoredResult {
                 columns: Vec::new(),
-                store: tuplenest_result_stream::RowStore::with_budget(
-                    RESULT_STORE_CAP,
-                    RESULT_STORE_BYTES,
-                ),
+                store: tuplenest_result_stream::RowStore::with_budget(cap, RESULT_STORE_BYTES),
                 order: None,
             }),
             previous,
@@ -1994,6 +1991,9 @@ fn record_history(
 /// `detached`: the statement's rows are returned inline (first page) and the
 /// stored result the grid is paging is left alone. EXPLAIN runs this way, so
 /// looking at a plan does not wipe the result it was asked about.
+///
+/// `max_rows` (detached runs only) keeps fewer rows than the grid's cap: a
+/// notebook cell keeps 200, a dashboard chart 1,000.
 #[tauri::command]
 pub async fn pg_query(
     app: tauri::AppHandle,
@@ -2001,8 +2001,56 @@ pub async fn pg_query(
     sql: String,
     params: Option<Vec<serde_json::Value>>,
     detached: Option<bool>,
+    max_rows: Option<usize>,
 ) -> Result<QueryResultOut, String> {
-    let detached = detached.unwrap_or(false);
+    run_query(
+        &app,
+        &state,
+        sql,
+        params,
+        detached.unwrap_or(false),
+        max_rows,
+    )
+    .await
+}
+
+/// Rows a dashboard chart keeps from one run.
+pub const READ_ROW_CAP: usize = 1_000;
+
+/// Runs a statement that must only read — a dashboard chart's saved query —
+/// detached, with at most [`READ_ROW_CAP`] rows. Anything the read-only
+/// classification (`guard::write_reason`) calls a write is refused here, not
+/// only when it is pinned: the WebView sends the SQL every time.
+///
+/// Otherwise the normal path: the prod audit row first, then history.
+#[tauri::command]
+pub async fn pg_query_read(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, PgState>,
+    sql: String,
+    max_rows: Option<usize>,
+) -> Result<QueryResultOut, String> {
+    if let Some(why) = crate::guard::write_reason(&sql) {
+        return Err(format!(
+            "Not run: only a query that reads can be charted. {why}"
+        ));
+    }
+    let cap = max_rows.unwrap_or(READ_ROW_CAP).min(READ_ROW_CAP);
+    run_query(&app, &state, sql, None, true, Some(cap)).await
+}
+
+async fn run_query(
+    app: &tauri::AppHandle,
+    state: &PgState,
+    sql: String,
+    params: Option<Vec<serde_json::Value>>,
+    detached: bool,
+    max_rows: Option<usize>,
+) -> Result<QueryResultOut, String> {
+    let cap = match max_rows {
+        Some(n) if detached => n.clamp(1, RESULT_STORE_CAP),
+        _ => RESULT_STORE_CAP,
+    };
     // The previous result is kept until a new row set replaces it. Clearing
     // it up front freed memory a little sooner, but every statement — a row
     // edit's UPDATE, a SAVEPOINT, an import's INSERT, a failed EXPLAIN — then
@@ -2029,7 +2077,7 @@ pub async fn pg_query(
     // directive — an accountability record, not user history, and not
     // something a comment can switch off. SQL is redacted of secret literals
     // but otherwise kept in full.
-    let (connection_key, is_prod) = session_identity(&state);
+    let (connection_key, is_prod) = session_identity(state);
     if is_prod {
         let (app, sql) = (app.clone(), sql.clone());
         tauri::async_runtime::spawn_blocking(move || {
@@ -2040,7 +2088,7 @@ pub async fn pg_query(
         .map_err(|e| format!("Not run: the audit log write did not complete ({e})."))??;
     }
 
-    let sink = StoreSink::new(if detached { None } else { Some(&state.result) });
+    let sink = StoreSink::new(if detached { None } else { Some(&state.result) }, cap);
     // JSON param values from the WebView → typed ParamValue. Text is the
     // safe default; the server casts as needed for the placeholder's type.
     let bound: Vec<tuplenest_driver_api::ParamValue> = params
@@ -2054,7 +2102,7 @@ pub async fn pg_query(
         params: bound,
         // No more than the store keeps: a plain read past it stops at the
         // cap instead of streaming every row only to count them.
-        row_limit: RESULT_STORE_CAP as u64,
+        row_limit: cap as u64,
     };
     let summary = match session.execute(request, &sink).await {
         Ok(summary) => summary,
@@ -2074,8 +2122,8 @@ pub async fn pg_query(
             let msg = err_to_string(&e);
             let status = history_status(&e);
             record_history(
-                &app,
-                &state,
+                app,
+                state,
                 &sql,
                 status,
                 Some(persisted),
@@ -2107,8 +2155,8 @@ pub async fn pg_query(
     stored.store.shrink_to_fit();
     crate::trim::release_free_memory();
     record_history(
-        &app,
-        &state,
+        app,
+        state,
         &sql,
         "success",
         None,
@@ -3362,17 +3410,17 @@ mod tests {
         // one that returns no rows (UPDATE, SAVEPOINT, an INSERT) delivers
         // one empty batch: the grid's rows stay where they are.
         let slot = old_result();
-        let failed = StoreSink::new(Some(&slot));
+        let failed = StoreSink::new(Some(&slot), RESULT_STORE_CAP);
         drop(failed);
         assert_eq!(pageable(&slot).as_deref(), Some("[[1]]"));
-        let rowless = StoreSink::new(Some(&slot));
+        let rowless = StoreSink::new(Some(&slot), RESULT_STORE_CAP);
         rowless.deliver(batch(0, vec![], true)).await.unwrap();
         assert!(rowless.inner.into_inner().unwrap().columns.is_empty());
         assert_eq!(pageable(&slot).as_deref(), Some("[[1]]"));
 
         // A row set is going to replace it: gone with the first batch, while
         // the stream is still running, not once it has ended.
-        let query = StoreSink::new(Some(&slot));
+        let query = StoreSink::new(Some(&slot), RESULT_STORE_CAP);
         query
             .deliver(batch(0, vec![vec![CellValue::Int(7)]], false))
             .await
@@ -3530,7 +3578,7 @@ mod tests {
     async fn a_stored_row_counts_its_text() {
         // 200 NULL columns: 1,001 bytes of text, not 200 inline 32-byte
         // Values — and not what it compresses to.
-        let sink = StoreSink::new(None);
+        let sink = StoreSink::new(None, RESULT_STORE_CAP);
         sink.deliver(wide_batch(0, 1, 200, |_, _| CellValue::Null))
             .await
             .unwrap();
@@ -3564,7 +3612,7 @@ mod tests {
 
     #[tokio::test]
     async fn truncates_at_the_row_cap() {
-        let sink = StoreSink::new(None);
+        let sink = StoreSink::new(None, RESULT_STORE_CAP);
         for b in 0..6 {
             sink.deliver(wide_batch(b * 10_000, 10_000, 1, |r, _| {
                 CellValue::Int(r as i64)
@@ -3586,7 +3634,7 @@ mod tests {
     async fn truncates_at_the_byte_budget() {
         // 1 MB rows of text: 128 fit in the 128 MB budget, the 129th is
         // refused, and so is everything after it however small.
-        let sink = StoreSink::new(None);
+        let sink = StoreSink::new(None, RESULT_STORE_CAP);
         let mb = "z".repeat(1024 * 1024 - 4);
         for b in 0..13 {
             sink.deliver(wide_batch(b * 10, 10, 1, |_, _| {
@@ -3780,7 +3828,7 @@ mod wide_bench {
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
-        let sink = StoreSink::new(None);
+        let sink = StoreSink::new(None, RESULT_STORE_CAP);
         let columns: Vec<tuplenest_driver_api::ColumnMeta> = (0..200)
             .map(|i| tuplenest_driver_api::ColumnMeta {
                 name: format!("c{i}"),

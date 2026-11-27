@@ -12,6 +12,7 @@ use tuplenest_workspace_store::Store;
 
 mod assistant;
 mod connections;
+mod dashboards;
 mod export;
 mod guard;
 mod mcp;
@@ -672,6 +673,11 @@ fn main() {
             snippet_save,
             snippet_delete,
             audit_list,
+            dashboards::dashboard_list,
+            dashboards::dashboard_save,
+            dashboards::dashboard_delete,
+            dashboards::dashboard_chart_add,
+            dashboards::dashboard_chart_delete,
             mcp::commands::mcp_info,
             mcp::commands::mcp_access_list,
             mcp::commands::mcp_access_set,
@@ -683,6 +689,7 @@ fn main() {
             pg::pg_connect,
             pg::pg_disconnect,
             pg::pg_query,
+            pg::pg_query_read,
             pg::pg_rows,
             pg::pg_chart,
             pg::pg_metadata,

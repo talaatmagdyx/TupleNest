@@ -78,6 +78,7 @@ import {
 import { UpdateToast } from "./overlays/Overlays";
 import { McpSection } from "./settings/McpSection";
 import { ParamPrompt } from "./overlays/Overlays";
+import { PageHost, isPostgres, pageCommands, type Page, type PageContext } from "./pages/registry";
 import {
   coerceParam,
   EXPORT_CAPS,
@@ -189,6 +190,8 @@ export default function App() {
   if (welcome && (connected || !pristine)) setWelcome(false);
   const showWelcome = welcome && !connected && pristine;
   const [overlay, setOverlay] = useState<OverlayKind>(null);
+  /** A page shown in place of the editor (dashboards, notebooks, …). */
+  const [page, setPage] = useState<Page | null>(null);
   // The assistant: a right-hand island panel. Everything it produces lands in
   // the editor only on the user's click, and runs only on the user's Run.
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -1584,7 +1587,7 @@ export default function App() {
         exec: () => setActiveSql(h.sqlText),
       }));
 
-    return [...items, ...live, ...connections, ...catalogItems, ...snippetItems, ...recent];
+    return [...items, ...pageCommands(setPage), ...live, ...connections, ...catalogItems, ...snippetItems, ...recent];
   }, [doRun, doFormat, saveSnippet, newTab, applyTheme, theme, newProfile, runExplain, openIntel, connected, connectedEnv, inTx, doDisconnect, doBegin, doCommit, doRollback, saved, selectProfile, objects, insertSelect, describeObject, snippets, historyItems, setActiveSql, showToast, loadHealth]);
 
   /* ---------------- render ---------------- */
@@ -1600,6 +1603,18 @@ export default function App() {
   const livePort = connected && connectedTo ? connectedTo.port : port;
   const liveTls = connected && connectedTo ? connectedTo.tlsMode : tlsMode;
   const liveProfile = saved.find((c) => c.id === liveId) ?? null;
+  const pageCtx = useMemo<PageContext>(
+    () => ({
+      pg: connected && isPostgres(liveProfile),
+      env: connected ? connectedEnv : null,
+      liveProfile: connected ? liveProfile : null,
+      saved,
+      snippets,
+      currentSql,
+      toast: showToast,
+    }),
+    [connected, connectedEnv, liveProfile, saved, snippets, currentSql, showToast],
+  );
   // HUD design: two-state label — live when connected, cached otherwise.
   const explorerSource: "live" | "cached" | "—" =
     connected && !metaCached ? "live" : schemas !== null || metaCached ? "cached" : "—";
@@ -1763,7 +1778,8 @@ export default function App() {
             }}
           />
         )}
-        <main className="main-col">
+        {page && <PageHost page={page} ctx={pageCtx} onClose={() => setPage(null)} />}
+        <main className="main-col" hidden={page !== null}>
           <TabsBar
             tabs={tabs}
             active={activeTab}

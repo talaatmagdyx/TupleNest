@@ -119,6 +119,22 @@ export const DiagramRailIcon = ({ size }: { size?: number }) => (
  *  elbow survives the downscale and still says hierarchy, which is what a plan
  *  is. A bar chart also read well but sits directly under the monitor icon,
  *  which is already a chart. */
+/** Four tiles of unequal size: a page of charts. */
+export const DashboardRailIcon = ({ size }: { size?: number }) => (
+  <svg {...S({ size: size ?? 20 })}>
+    <rect x="3" y="3" width="10" height="8" rx="1.5" />
+    <rect x="15" y="3" width="6" height="8" rx="1.5" />
+    <rect x="3" y="13" width="6" height="8" rx="1.5" />
+    <rect x="11" y="13" width="10" height="8" rx="1.5" />
+  </svg>
+);
+/** A page with a bent corner and lines: a document of cells. */
+export const NotebookRailIcon = ({ size }: { size?: number }) => (
+  <svg {...S({ size: size ?? 20 })}>
+    <path d="M6 2.5h8.5L19 7v14.5H6z" />
+    <path d="M9 11h7M9 14.5h7M9 18h4" />
+  </svg>
+);
 export const PastePlanRailIcon = ({ size }: { size?: number }) => (
   <svg {...S({ size: size ?? 20 })}>
     <rect x="4" y="5" width="16" height="16" rx="2.5" />

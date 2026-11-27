@@ -185,6 +185,68 @@ pub fn guard_reason(sql: &str) -> Option<GuardReason> {
     reason_of(&sql.chars().collect::<Vec<_>>())
 }
 
+/// Statements a read-only feature (a dashboard chart) accepts as their first
+/// word. Anything else — SET, COPY, CALL, a DDL verb — is not a plain read.
+const READ_VERBS: [&str; 6] = ["select", "with", "values", "table", "show", "explain"];
+
+/// Why this statement is not a plain read, or None when it only reads.
+///
+/// Stricter than [`guard_reason`], which asks only about the destructive
+/// cases on prod: here any write at all is refused, on any environment —
+/// a bounded `UPDATE … WHERE id = 1` too, a `WITH … DELETE`, `SELECT … INTO`
+/// (which creates a table), and more than one statement. It cannot see a
+/// function with side effects (`SELECT purge()`); nothing short of the
+/// server can. Errs towards refusing, like `hasWriteVerb` in the WebView.
+pub fn write_reason(sql: &str) -> Option<String> {
+    let masked = lower(&mask_chars(&sql.chars().collect::<Vec<_>>()));
+    if let Some(i) = masked.iter().position(|c| *c == ';') {
+        if masked[i..]
+            .iter()
+            .any(|c| !matches!(c, ';' | ' ' | '\t' | '\r' | '\n'))
+        {
+            return Some("It holds more than one statement.".into());
+        }
+    }
+    let Some(verb) = first_keyword(&masked) else {
+        return Some("There is no statement in it.".into());
+    };
+    if !READ_VERBS.contains(&verb.as_str()) {
+        return Some(format!(
+            "{} is not a query that only reads.",
+            verb.to_ascii_uppercase()
+        ));
+    }
+    if let Some(r) = guard_reason(sql) {
+        return Some(r.why);
+    }
+    // Word by word, so `updated_at` is not `update`. `FOR UPDATE` and
+    // `FOR NO KEY UPDATE` lock rows; they do not change them.
+    let mut previous = String::new();
+    let mut i = 0;
+    while i < masked.len() {
+        if !is_word(masked[i]) {
+            i += 1;
+            continue;
+        }
+        let word: String = masked[i..].iter().take_while(|c| is_word(**c)).collect();
+        i += word.chars().count();
+        let locks = word == "update" && (previous == "for" || previous == "key");
+        if !locks
+            && matches!(
+                word.as_str(),
+                "insert" | "update" | "delete" | "merge" | "into"
+            )
+        {
+            return Some(format!(
+                "It contains {}, which writes.",
+                word.to_ascii_uppercase()
+            ));
+        }
+        previous = word;
+    }
+    None
+}
+
 fn reason_of(sql: &[char]) -> Option<GuardReason> {
     let masked = lower(&mask_chars(sql));
     let verb = first_keyword(&masked)?;
@@ -651,5 +713,50 @@ mod tests {
         }
         // Non-ASCII text keeps its character count too.
         assert_eq!(mask_literals("'héllo' é").chars().count(), 9);
+    }
+
+    #[test]
+    fn write_reason_accepts_plain_reads() {
+        for sql in [
+            "select status, count(*) from orders group by 1",
+            "  -- monthly\nSELECT 1;",
+            "with t as (select 1 as n) select n from t",
+            "select updated_at, deleted from orders",
+            "select * from orders for update",
+            "select * from orders for no key update",
+            "select 'insert into x' as s",
+            "select \"update\" from t",
+            "values (1), (2)",
+            "table orders",
+            "show work_mem",
+            "explain select 1",
+        ] {
+            assert_eq!(write_reason(sql), None, "{sql}");
+        }
+    }
+
+    #[test]
+    fn write_reason_refuses_any_write() {
+        for sql in [
+            "update orders set x = 1 where id = 1",
+            "delete from orders where id = 1",
+            "insert into t values (1)",
+            "with gone as (delete from users returning id) select count(*) from gone",
+            "select * into backup_t from t",
+            "explain analyze delete from t where id = 1",
+            "drop table t",
+            "set work_mem = '1GB'",
+            "copy t to stdout",
+            "call purge()",
+            "select 1; delete from t",
+            "",
+            "-- nothing",
+        ] {
+            assert!(write_reason(sql).is_some(), "{sql}");
+        }
+        assert_eq!(
+            write_reason("select 1; select 2").as_deref(),
+            Some("It holds more than one statement.")
+        );
     }
 }

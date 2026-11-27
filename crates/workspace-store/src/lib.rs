@@ -7,6 +7,9 @@ use std::path::Path;
 use rusqlite::{params, Connection, OptionalExtension};
 use thiserror::Error;
 
+mod dashboards;
+pub use dashboards::{DashboardChart, DashboardRecord, MAX_CHARTS, REFRESH_CHOICES};
+
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error("database error: {0}")]
@@ -20,7 +23,7 @@ pub enum StoreError {
     Refused(String),
 }
 
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 
 const MIGRATION_V1: &str = r#"
 CREATE TABLE meta        (key TEXT PRIMARY KEY, value TEXT);
@@ -307,6 +310,9 @@ impl Store {
                         .execute_batch(&format!("ALTER TABLE {table} ADD COLUMN actor TEXT"))?;
                 }
             }
+        }
+        if current < 9 {
+            self.conn.execute_batch(dashboards::MIGRATION_V9)?;
         }
         if current < SCHEMA_VERSION {
             self.conn.execute(

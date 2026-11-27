@@ -2320,3 +2320,47 @@ h1, h2, h3, .modal-head .t, .dialog .d-title, .onboard .big, .about-name,
   min-width: 0; color: var(--tn-ts); font-size: 12px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* ===== Pages (stage 6b) =====
+   Dashboards, notebooks, backup and roles take the main area in place of the
+   editor, which stays mounted behind them (`hidden`). Each is a column of
+   islands, as in the redesign's page screens. */
+.main-col[hidden] { display: none; }
+.page-host { gap: 8px; overflow: auto; }
+.page-back { display: flex; align-items: center; gap: 10px; padding: 2px 4px; }
+.page { display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1; }
+.page-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 52px; padding: 8px 16px;
+  border-radius: var(--tn-island-r); background: var(--tn-s1); border: 1px solid var(--tn-bh);
+}
+.page-head select, .page-strip input, .page select {
+  height: 28px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--tn-bc);
+  background: var(--tn-s2); color: var(--tn-tp); font: 12px var(--tn-sans);
+}
+.page-title { margin: 0; font: 600 22px var(--tn-display); letter-spacing: -.02em; color: var(--tn-tp); }
+.page-sub { color: var(--tn-ts); font-size: 12px; }
+.page-strip, .page-note, .page-empty {
+  display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+  border-radius: var(--tn-island-r); background: var(--tn-s1); border: 1px solid var(--tn-bh);
+}
+.page-strip label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--tn-ts); }
+.page-note { color: var(--tn-warning); background: var(--tn-warn-tint); }
+.page-empty { flex-direction: column; align-items: flex-start; color: var(--tn-ts); }
+.page-empty .big { font: 600 17px var(--tn-display); color: var(--tn-tp); }
+.dash-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.dash-card {
+  display: flex; flex-direction: column; gap: 10px; padding: 16px; min-height: 180px;
+  border-radius: var(--tn-island-r); background: var(--tn-s1); border: 1px solid var(--tn-bh);
+}
+.dash-card.wide { grid-column: span 2; }
+.dash-card header { display: flex; align-items: baseline; gap: 10px; }
+.dash-card-title { font-weight: 600; color: var(--tn-tp); }
+.dash-error {
+  padding: 10px 12px; border-radius: 10px; font: 12px/1.5 var(--tn-mono);
+  color: var(--tn-danger); background: var(--tn-danger-tint); white-space: pre-wrap;
+}
+.chart-bars, .chart-line, .chart-number { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.chart-line svg { width: 100%; height: 140px; }
+.chart-line path { fill: none; stroke: var(--tn-accent); stroke-width: 3; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.chart-big { font: 700 44px var(--tn-display); letter-spacing: -.03em; color: var(--tn-tp); }
+.chart-empty { padding: 20px; }
