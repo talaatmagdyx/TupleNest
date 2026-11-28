@@ -797,6 +797,77 @@ async fn results_stop_at_the_row_cap_and_say_so() {
     assert_eq!(out["truncated"], true);
 }
 
+/// Phase 2 safety verification, guarantee 5: at most 1 MB per result, as
+/// well as at most 500 rows. Rows of 64 KiB each: the byte cap is reached
+/// at the 16th, long before the row cap.
+#[tokio::test]
+async fn results_stop_at_the_byte_cap_and_say_so() {
+    struct WideDb;
+    struct WideSession;
+    #[async_trait]
+    impl Session for WideSession {
+        async fn execute(
+            &mut self,
+            request: QueryRequest,
+            sink: &dyn BatchSink,
+        ) -> Result<ExecutionSummary, Box<DriverError>> {
+            let mut delivered = 0u64;
+            for _ in 0..100 {
+                if !sink.wants_rows() {
+                    break;
+                }
+                delivered += 1;
+                sink.deliver(RowBatch {
+                    execution_id: request.execution_id,
+                    sequence: 0,
+                    columns: vec![ColumnMeta {
+                        name: "doc".into(),
+                        db_type: "text".into(),
+                        nullable: None,
+                    }],
+                    rows: vec![vec![CellValue::Text("x".repeat(64 * 1024))]],
+                    is_last: false,
+                })
+                .await?;
+            }
+            Ok(ExecutionSummary {
+                execution_id: ExecutionId::new(),
+                status: ExecutionStatus::Success,
+                rows_affected: None,
+                rows_returned: delivered,
+                more_rows: false,
+                duration_ms: 1,
+                messages: vec![],
+            })
+        }
+    }
+    #[async_trait]
+    impl Connector for WideDb {
+        async fn open(&self, _: OpenTarget) -> Result<Box<dyn Session>, String> {
+            Ok(Box::new(WideSession))
+        }
+    }
+
+    let f = Fixture::new();
+    f.profile("d", "dev", McpAccess::ReadOnly);
+    let mut s = McpServer::new(f.store.clone(), f.keychain.clone(), Arc::new(WideDb));
+    let (out, err) = call(
+        &mut s,
+        "run_query",
+        json!({"connection": "d", "sql": "select doc from big"}),
+    )
+    .await;
+    assert!(!err, "{out}");
+    let rows = out["rows"].as_array().unwrap();
+    assert!(!rows.is_empty() && rows.len() < 16, "{} rows", rows.len());
+    assert_eq!(out["truncated"], true);
+    let bytes: usize = rows.iter().map(|r| r.to_string().len()).sum();
+    assert!(
+        bytes <= super::server::BYTE_CAP,
+        "{bytes} bytes of rows returned"
+    );
+}
+
 #[tokio::test]
 async fn explain_never_runs_the_statement() {
     let f = Fixture::new();

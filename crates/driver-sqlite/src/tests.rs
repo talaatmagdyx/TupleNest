@@ -375,6 +375,46 @@ async fn read_only_refuses_writes() {
     run_sql(&mut s, "SELECT * FROM t").await.unwrap();
 }
 
+/// Phase 2 safety verification, guarantee 2: on SQLite the engine judges
+/// each statement, so a write behind a comment or a CTE, or inside a
+/// transaction, is refused like any other, and the file is unchanged.
+#[tokio::test]
+async fn read_only_refuses_writes_behind_comments_ctes_and_transactions() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = read_only_on(&dir).await;
+    let pragma = Collect::default();
+    s.execute(req("PRAGMA query_only"), &pragma).await.unwrap();
+    assert_eq!(pragma.rows(), vec![vec![CellValue::Int(1)]]);
+    for sql in [
+        "/* note */ INSERT INTO t VALUES (2)",
+        "-- note\nDELETE FROM t",
+        "/* a */ /* b */ UPDATE t SET x = 9",
+        "WITH c AS (SELECT 1) DELETE FROM t",
+        "WITH c AS (SELECT 9 AS v) UPDATE t SET x = (SELECT v FROM c)",
+        "WITH c AS (SELECT 3) INSERT INTO t SELECT * FROM c",
+        "REPLACE INTO t VALUES (4)",
+        "PRAGMA user_version = 7",
+    ] {
+        let e = run_sql(&mut s, sql).await.unwrap_err();
+        assert_eq!(e.category, ErrorCategory::ReadOnlyViolation, "{sql}: {e:?}");
+    }
+    // A transaction does not make the session writable.
+    let _ = run_sql(&mut s, "BEGIN IMMEDIATE").await;
+    let e = run_sql(&mut s, "INSERT INTO t VALUES (5)")
+        .await
+        .unwrap_err();
+    assert_eq!(e.category, ErrorCategory::ReadOnlyViolation, "{e:?}");
+    let _ = run_sql(&mut s, "ROLLBACK").await;
+    let sink = Collect::default();
+    s.execute(req("SELECT count(*), min(x) FROM t"), &sink)
+        .await
+        .unwrap();
+    assert_eq!(
+        sink.rows(),
+        vec![vec![CellValue::Int(1), CellValue::Int(1)]]
+    );
+}
+
 #[tokio::test]
 async fn read_only_holds_after_query_only_is_switched_off() {
     let dir = tempfile::tempdir().unwrap();

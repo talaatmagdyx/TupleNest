@@ -3398,3 +3398,122 @@ async fn roles_and_their_table_privileges() {
         session.execute(req(stmt), &NullSink).await.unwrap();
     }
 }
+
+/// Phase 2 safety verification, guarantee 2: a read-only profile is enforced
+/// by the server, and a write cannot be hidden from it. Each statement here
+/// is a write in disguise: behind a comment (nested ones included), inside a
+/// CTE, or after a statement that tries to make the session or the
+/// transaction read-write. None may change the table.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn read_only_refuses_writes_hidden_in_comments_ctes_and_mode_changes() {
+    let mut rw = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    for sql in [
+        "DROP TABLE IF EXISTS tn_p2_ro_hidden",
+        "CREATE TABLE tn_p2_ro_hidden (x int)",
+        "INSERT INTO tn_p2_ro_hidden VALUES (1)",
+    ] {
+        rw.execute(req(sql), &NullSink).await.unwrap();
+    }
+
+    let read_only = || async {
+        let mut cfg = test_config();
+        cfg.read_only = true;
+        PostgresDriver
+            .connect_concrete_with_password(cfg, None)
+            .await
+            .expect("connect")
+    };
+
+    // The session's default is the server's, not the app's idea of it.
+    let mut ro = read_only().await;
+    let shown = CollectSink::default();
+    ro.execute(req("SHOW default_transaction_read_only"), &shown)
+        .await
+        .unwrap();
+    assert_eq!(text_of(&shown.rows.lock().unwrap()[0][0]), "on");
+
+    for sql in [
+        "/* note */ INSERT INTO tn_p2_ro_hidden VALUES (2)",
+        "-- note\nDELETE FROM tn_p2_ro_hidden",
+        "/* a /* b */ c */ UPDATE tn_p2_ro_hidden SET x = 9",
+        "WITH gone AS (DELETE FROM tn_p2_ro_hidden RETURNING x) SELECT * FROM gone",
+        "/* x */ WITH w AS (UPDATE tn_p2_ro_hidden SET x = 9 RETURNING x) SELECT * FROM w",
+        "-- x\nWITH w AS (INSERT INTO tn_p2_ro_hidden VALUES (3) RETURNING x) SELECT * FROM w",
+        "WITH a AS (SELECT 1), b AS (DELETE FROM tn_p2_ro_hidden RETURNING x) SELECT * FROM b",
+        "EXPLAIN ANALYZE WITH gone AS (DELETE FROM tn_p2_ro_hidden RETURNING x) SELECT * FROM gone",
+        "DO $$ BEGIN DELETE FROM tn_p2_ro_hidden; END $$",
+        "-- c\nDO $$ BEGIN DELETE FROM tn_p2_ro_hidden; END $$",
+        "CALL tn_p2_no_such_procedure()",
+    ] {
+        assert!(
+            ro.execute(req(sql), &NullSink).await.is_err(),
+            "`{sql}` ran on a read-only session"
+        );
+    }
+    drop(ro);
+
+    // A change of mode, then a write the allowlist lets through (it starts
+    // with WITH): the server must still refuse it. Each on a fresh session,
+    // so one flip cannot mask another.
+    for flip in [
+        "RESET default_transaction_read_only",
+        "SET SESSION default_transaction_read_only TO off",
+        "SET default_transaction_read_only TO DEFAULT",
+        "SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL READ COMMITTED, READ WRITE",
+        "/* c */ BEGIN READ WRITE",
+        "BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE, READ WRITE",
+        "START TRANSACTION READ WRITE",
+    ] {
+        let mut ro = read_only().await;
+        let _ = ro.execute(req(flip), &NullSink).await;
+        let write = ro
+            .execute(
+                req("WITH w AS (INSERT INTO tn_p2_ro_hidden VALUES (4) RETURNING x) SELECT * FROM w"),
+                &NullSink,
+            )
+            .await;
+        assert!(write.is_err(), "a write ran after `{flip}`");
+        ro.execute(req("ROLLBACK"), &NullSink)
+            .await
+            .unwrap_or_else(|e| panic!("ROLLBACK refused after `{flip}`: {e:?}"));
+    }
+
+    // SET TRANSACTION is let through unchecked as the first statement of a
+    // transaction; the statement after it is checked, and refused.
+    let mut ro = read_only().await;
+    ro.execute(req("BEGIN"), &NullSink).await.unwrap();
+    let _ = ro
+        .execute(req("SET TRANSACTION READ WRITE"), &NullSink)
+        .await;
+    assert!(
+        ro.execute(
+            req("WITH gone AS (DELETE FROM tn_p2_ro_hidden RETURNING x) SELECT * FROM gone"),
+            &NullSink
+        )
+        .await
+        .is_err(),
+        "a write ran inside a transaction switched to READ WRITE"
+    );
+    ro.execute(req("ROLLBACK"), &NullSink).await.unwrap();
+    drop(ro);
+
+    let left = CollectSink::default();
+    rw.execute(
+        req("SELECT count(*)::text, min(x)::text FROM tn_p2_ro_hidden"),
+        &left,
+    )
+    .await
+    .unwrap();
+    let row = left.rows.lock().unwrap()[0].clone();
+    assert_eq!(
+        (text_of(&row[0]), text_of(&row[1])),
+        ("1".into(), "1".into())
+    );
+    rw.execute(req("DROP TABLE tn_p2_ro_hidden"), &NullSink)
+        .await
+        .unwrap();
+}
