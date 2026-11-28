@@ -1617,9 +1617,32 @@ pub(crate) fn opts_out_of_history(sql: &str) -> bool {
 /// bind parameter is the right one — is not seen here. On a production
 /// connection the statement is always written to the audit log, so this is
 /// the only thing standing between a typed password and that file.
+///
+/// Audit TN-037: SQL can also sit inside a literal — a `DO $$ … $$` or
+/// function body, or the string given to `EXECUTE` — where a password is
+/// written `PASSWORD ''x''`. A literal that is not itself a secret is read
+/// again as SQL (its quoting undone), and `format('… PASSWORD %L', 'x')`,
+/// whose secret is a later argument, has every argument after the format
+/// string scrubbed. Crypto-function calls are only recognised at the top
+/// level: inside a string, `crypt('x')` is as likely to be prose.
 pub(crate) fn redact_sql(sql: &str) -> String {
-    // After these words a literal is a secret.
-    const MARKERS: [&str; 2] = ["password", "identified by"];
+    tuplenest_telemetry::redact_text(&scrub_sql(sql, 0))
+}
+
+/// How deep literals inside literals are read again as SQL. Past this, a
+/// literal is hidden whole: more is hidden, not less.
+const MAX_LITERAL_DEPTH: usize = 16;
+
+/// After these words a literal is a secret.
+const SECRET_MARKERS: [&str; 2] = ["password", "identified by"];
+
+fn is_word_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_'
+}
+
+/// `redact_sql` without the telemetry pass; `depth` is how many literals
+/// `sql` is nested in.
+fn scrub_sql(sql: &str, depth: usize) -> String {
     // Inside a call to one of these, every literal is treated as one: the
     // password or key is an argument, and which argument varies.
     const FUNCTIONS: [&str; 11] = [
@@ -1637,13 +1660,12 @@ pub(crate) fn redact_sql(sql: &str) -> String {
     ];
     let bytes = sql.as_bytes();
     let lower = sql.to_ascii_lowercase();
-    let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
     let mut out = String::with_capacity(sql.len());
     let mut i = 0;
     'scan: while i < sql.len() {
-        let starts_word = i == 0 || !word(bytes[i - 1]);
+        let starts_word = i == 0 || !is_word_byte(bytes[i - 1]);
         if starts_word {
-            for m in MARKERS {
+            for m in SECRET_MARKERS {
                 if !lower[i..].starts_with(m) {
                     continue;
                 }
@@ -1655,8 +1677,23 @@ pub(crate) fn redact_sql(sql: &str) -> String {
                     continue 'scan;
                 }
             }
+            // `format('… PASSWORD %L', 'x')`: the secret is a later argument.
+            if lower[i..].starts_with("format") {
+                let paren = skip_trivia(sql, i + "format".len());
+                if bytes.get(paren) == Some(&b'(') {
+                    let first = skip_trivia(sql, paren + 1);
+                    if let Some((_, end)) = literal_at(sql, first) {
+                        if formats_a_secret(&sql[first..end]) {
+                            out.push_str(&sql[i..first]);
+                            push_literal(&mut out, &sql[first..end], depth);
+                            i = push_args_redacted(sql, end, &mut out);
+                            continue 'scan;
+                        }
+                    }
+                }
+            }
             for f in FUNCTIONS {
-                if !lower[i..].starts_with(f) {
+                if depth > 0 || !lower[i..].starts_with(f) {
                     continue;
                 }
                 let paren = skip_trivia(sql, i + f.len());
@@ -1664,45 +1701,160 @@ pub(crate) fn redact_sql(sql: &str) -> String {
                     continue;
                 }
                 out.push_str(&sql[i..=paren]);
-                i = paren + 1;
-                let mut depth = 1;
-                while i < sql.len() && depth > 0 {
-                    let after_trivia = skip_trivia(sql, i);
-                    if after_trivia > i {
-                        out.push_str(&sql[i..after_trivia]);
-                        i = after_trivia;
-                    } else if let Some((open, end)) = literal_at(sql, i) {
-                        out.push_str(&sql[i..open]);
-                        push_redacted(&mut out, &sql[open..end]);
-                        i = end;
-                    } else {
-                        match bytes[i] {
-                            b'(' => depth += 1,
-                            b')' => depth -= 1,
-                            _ => {}
-                        }
-                        let ch = sql[i..].chars().next().unwrap_or(' ');
-                        out.push(ch);
-                        i += ch.len_utf8();
-                    }
-                }
+                i = push_args_redacted(sql, paren + 1, &mut out);
                 continue 'scan;
             }
         }
-        // Anything else is copied as it is — including a whole literal or
-        // comment, so a marker word inside one is not mistaken for SQL.
+        // Anything else is copied as it is, comments included. A literal is
+        // copied with any secret set by the SQL inside it scrubbed.
         let after_trivia = skip_trivia(sql, i);
-        let end = if after_trivia > i {
-            after_trivia
+        if after_trivia > i {
+            out.push_str(&sql[i..after_trivia]);
+            i = after_trivia;
         } else if let Some((_, end)) = literal_at(sql, i) {
-            end
+            push_literal(&mut out, &sql[i..end], depth);
+            i = end;
         } else {
-            i + sql[i..].chars().next().map_or(1, char::len_utf8)
-        };
-        out.push_str(&sql[i..end]);
-        i = end;
+            let ch = sql[i..].chars().next().unwrap_or(' ');
+            out.push(ch);
+            i += ch.len_utf8();
+        }
     }
-    tuplenest_telemetry::redact_text(&out)
+    out
+}
+
+/// Copies the arguments of a call that starts at `i` (just past its `(`),
+/// every literal among them redacted. Returns the index past its `)`.
+fn push_args_redacted(sql: &str, mut i: usize, out: &mut String) -> usize {
+    let bytes = sql.as_bytes();
+    let mut depth = 1;
+    while i < sql.len() && depth > 0 {
+        let after_trivia = skip_trivia(sql, i);
+        if after_trivia > i {
+            out.push_str(&sql[i..after_trivia]);
+            i = after_trivia;
+        } else if let Some((open, end)) = literal_at(sql, i) {
+            out.push_str(&sql[i..open]);
+            push_redacted(out, &sql[open..end]);
+            i = end;
+        } else {
+            match bytes[i] {
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                _ => {}
+            }
+            let ch = sql[i..].chars().next().unwrap_or(' ');
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    i
+}
+
+/// A string literal's text, as PostgreSQL reads it.
+struct Unquoted<'a> {
+    /// `'`, `E'`, `U&'` or `$tag$`.
+    open: &'a str,
+    /// The closing quote or tag; empty when the literal is not closed.
+    close: &'a str,
+    text: String,
+    dollar: bool,
+}
+
+/// Undoes the quoting of a literal `literal_at` found: `''` (and `\'` in an
+/// `E'…'` string) become `'`; other backslash escapes are kept as they are.
+/// `None` for a `"…"` identifier.
+fn unquote(literal: &str) -> Option<Unquoted<'_>> {
+    if let Some(rest) = literal.strip_prefix('$') {
+        let tag = &literal[..rest.find('$')? + 2];
+        let closed = literal.len() >= 2 * tag.len() && literal.ends_with(tag);
+        let body_end = if closed {
+            literal.len() - tag.len()
+        } else {
+            literal.len()
+        };
+        return Some(Unquoted {
+            open: tag,
+            close: if closed { tag } else { "" },
+            text: literal[tag.len()..body_end].to_owned(),
+            dollar: true,
+        });
+    }
+    let q = literal.find('\'')?;
+    if literal[..q].contains('"') {
+        return None;
+    }
+    let escapes = matches!(literal.as_bytes().first(), Some(b'e' | b'E'));
+    let mut text = String::new();
+    let mut closed = false;
+    let mut chars = literal[q + 1..].chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if escapes => match chars.next() {
+                Some('\'') => text.push('\''),
+                Some(n) => {
+                    text.push('\\');
+                    text.push(n);
+                }
+                None => text.push('\\'),
+            },
+            '\'' if chars.peek() == Some(&'\'') => {
+                chars.next();
+                text.push('\'');
+            }
+            '\'' => {
+                closed = true;
+                break;
+            }
+            _ => text.push(c),
+        }
+    }
+    Some(Unquoted {
+        open: &literal[..=q],
+        close: if closed { "'" } else { "" },
+        text,
+        dollar: false,
+    })
+}
+
+/// A literal that is not itself a secret, copied with any secret set by the
+/// SQL inside it scrubbed. Copied byte for byte when there is none.
+fn push_literal(out: &mut String, literal: &str, depth: usize) {
+    let Some(u) = unquote(literal) else {
+        out.push_str(literal);
+        return;
+    };
+    let inner = if depth >= MAX_LITERAL_DEPTH {
+        "[REDACTED]".to_owned()
+    } else {
+        scrub_sql(&u.text, depth + 1)
+    };
+    if inner == u.text {
+        out.push_str(literal);
+        return;
+    }
+    out.push_str(u.open);
+    if u.dollar {
+        out.push_str(&inner);
+    } else {
+        out.push_str(&inner.replace('\'', "''"));
+    }
+    out.push_str(u.close);
+}
+
+/// Is this `format(…)` string one that puts a secret where an argument
+/// goes — `PASSWORD` (or `IDENTIFIED BY`) followed by a `%` placeholder?
+fn formats_a_secret(literal: &str) -> bool {
+    let Some(u) = unquote(literal) else {
+        return false;
+    };
+    let lower = u.text.to_ascii_lowercase();
+    SECRET_MARKERS.iter().any(|m| {
+        lower.match_indices(m).any(|(k, _)| {
+            let starts_word = k == 0 || !is_word_byte(lower.as_bytes()[k - 1]);
+            starts_word && lower.as_bytes().get(skip_trivia(&lower, k + m.len())) == Some(&b'%')
+        })
+    })
 }
 
 /// The index after any whitespace and comments at `i`. Block comments nest,
@@ -1947,12 +2099,165 @@ mod redact_sql_tests {
             "SELECT 1 -- change the password 'later'",
             "SELECT 'call crypt(''x'') some time' AS note",
             "SELECT decrypted, encrypt_count, mycrypt('visible') FROM t",
-            "SELECT $$ password 'inside a body' $$",
+            "SELECT $$ the word password, in a body $$",
             "COMMENT ON COLUMN users.password IS 'bcrypt hash'",
+            // TN-037: literals are read again as SQL, and left byte for byte
+            // when there is nothing in them to scrub.
+            "DO $$ BEGIN RAISE NOTICE 'hello, it''s %', now(); END $$",
+            "DO $$ BEGIN PERFORM password FROM users WHERE id = 1; END $$",
+            "CREATE FUNCTION f() RETURNS int LANGUAGE sql AS $fn$ SELECT 1 $fn$",
+            "SELECT format('%s has %L', name, 'it''s') FROM t",
+            "SELECT format('password reset for %s', name) FROM t",
+            "SELECT E'it\\'s a \\n line', U&'d\\0061t\\+000061'",
+            "DO $$ BEGIN EXECUTE 'SELECT ''password'' AS word'; END $$",
             "",
         ] {
             assert_eq!(redact_sql(sql), sql, "{sql:?}");
         }
+    }
+
+    // Audit TN-037: SQL inside a literal — a DO or function body, or the
+    // string given to EXECUTE — is SQL too.
+    #[test]
+    fn scrubs_a_password_set_from_inside_a_do_block() {
+        for (sql, planted) in [
+            (
+                "DO $$ BEGIN EXECUTE 'ALTER ROLE app PASSWORD ''do-secret'''; END $$",
+                "do-secret",
+            ),
+            (
+                "DO $body$ BEGIN ALTER ROLE app PASSWORD 'static-secret'; END $body$",
+                "static-secret",
+            ),
+        ] {
+            let out = redact_sql(sql);
+            assert!(
+                !out.contains(planted),
+                "{sql:?} left {planted:?} in {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn scrubs_passwords_nested_in_literals() {
+        for (sql, planted) in [
+            ("SELECT $$ password 'inside-a-body' $$", "inside-a-body"),
+            // Two levels of EXECUTE: the quotes double at each.
+            (
+                "DO $$ BEGIN EXECUTE 'EXECUTE ''ALTER ROLE a PASSWORD ''''deep-secret'''''''; END $$",
+                "deep-secret",
+            ),
+            // A doubled quote inside the secret itself.
+            (
+                "DO $$ BEGIN EXECUTE 'ALTER ROLE a PASSWORD ''it''''s-tail'''; END $$",
+                "s-tail",
+            ),
+            // E'' strings, outside and inside.
+            (
+                "DO $$ BEGIN EXECUTE E'ALTER ROLE a PASSWORD \\'e-secret\\''; END $$",
+                "e-secret",
+            ),
+            (
+                "DO $$ BEGIN EXECUTE E'ALTER ROLE a PASSWORD ''e-doubled-secret'''; END $$",
+                "e-doubled-secret",
+            ),
+            (
+                "DO $$ BEGIN EXECUTE 'ALTER ROLE a PASSWORD E''inner-e-secret'''; END $$",
+                "inner-e-secret",
+            ),
+            // Not a DO block: a plain string holding the statement.
+            (
+                "SELECT 'ALTER ROLE a PASSWORD ''string-secret'''",
+                "string-secret",
+            ),
+            // $fn$ tags, and one dollar body inside another.
+            (
+                "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $fn$ BEGIN ALTER ROLE a PASSWORD 'fn-secret'; END $fn$",
+                "fn-secret",
+            ),
+            (
+                "DO $outer$ BEGIN EXECUTE $q$ALTER ROLE a PASSWORD 'q-secret'$q$; END $outer$",
+                "q-secret",
+            ),
+            (
+                "DO $$ BEGIN EXECUTE 'ALTER ROLE a PASSWORD $p$tagged-inner$p$'; END $$",
+                "tagged-inner",
+            ),
+            // The secret is a later argument to format().
+            (
+                "DO $$ BEGIN EXECUTE format('ALTER ROLE %I PASSWORD %L', 'app', 'fmt-secret'); END $$",
+                "fmt-secret",
+            ),
+            (
+                "SELECT format('ALTER ROLE app WITH PASSWORD %L', 'fmt-top-secret')",
+                "fmt-top-secret",
+            ),
+            (
+                "DO $$ BEGIN EXECUTE FORMAT ( E'ALTER ROLE app PASSWORD %s' , quote_literal('fmt-q-secret')); END $$",
+                "fmt-q-secret",
+            ),
+            (
+                "DO $$ BEGIN EXECUTE format($f$ALTER ROLE app PASSWORD %1$L$f$, 'fmt-dollar-secret'); END $$",
+                "fmt-dollar-secret",
+            ),
+            // A PASSWORD word in a comment or a column name does not stop
+            // the rest of the body from being read.
+            (
+                "DO $$ BEGIN -- rotate the password\n EXECUTE 'ALTER ROLE a PASSWORD ''after-comment-secret'''; END $$",
+                "after-comment-secret",
+            ),
+            (
+                "DO $$ BEGIN /* password */ EXECUTE 'ALTER ROLE a PASSWORD ''after-block-secret'''; END $$",
+                "after-block-secret",
+            ),
+            (
+                "DO $$ BEGIN PERFORM password FROM t; EXECUTE 'ALTER ROLE a PASSWORD ''after-column-secret'''; END $$",
+                "after-column-secret",
+            ),
+            (
+                "DO $$ BEGIN EXECUTE 'ALTER ROLE a PASSWORD ''unclosed-inner-secret; END $$",
+                "unclosed-inner-secret",
+            ),
+        ] {
+            let out = redact_sql(sql);
+            assert!(
+                !out.contains(planted),
+                "{sql:?} left {planted:?} in {out:?}"
+            );
+            assert!(out.contains("[REDACTED]"), "{sql:?} -> {out:?}");
+        }
+    }
+
+    #[test]
+    fn keeps_a_do_block_readable_around_the_secret() {
+        assert_eq!(
+            redact_sql("DO $$ BEGIN EXECUTE 'ALTER ROLE app PASSWORD ''x'''; END $$"),
+            "DO $$ BEGIN EXECUTE 'ALTER ROLE app PASSWORD ''[REDACTED]'''; END $$"
+        );
+        assert_eq!(
+            redact_sql(
+                "DO $$ BEGIN PERFORM password FROM t; -- password\n ALTER ROLE a PASSWORD 'x'; RAISE NOTICE 'done'; END $$"
+            ),
+            "DO $$ BEGIN PERFORM password FROM t; -- password\n ALTER ROLE a PASSWORD '[REDACTED]'; RAISE NOTICE 'done'; END $$"
+        );
+        // Every argument after the format string goes, the role name too:
+        // which one holds the secret is not worked out.
+        assert_eq!(
+            redact_sql("SELECT format('ALTER ROLE %I PASSWORD %L', 'app', 'x'), 'kept'"),
+            "SELECT format('ALTER ROLE %I PASSWORD %L', '[REDACTED]', '[REDACTED]'), 'kept'"
+        );
+    }
+
+    #[test]
+    fn deeply_nested_bodies_are_hidden_not_followed() {
+        let tags: Vec<String> = (0..500).map(|n| format!("$t{n}$")).collect();
+        let sql = format!(
+            "{}ALTER ROLE a PASSWORD 'deepest-secret'{}",
+            tags.concat(),
+            tags.iter().rev().cloned().collect::<String>()
+        );
+        let out = redact_sql(&sql);
+        assert!(!out.contains("deepest-secret"), "{out}");
     }
 
     #[test]
@@ -1971,6 +2276,15 @@ mod redact_sql_tests {
             "pässwörd 'x' password 'ÿ",
             "password\u{0}'x'",
             "$$$$ password $$ 'x'",
+            "DO $$ '",
+            "'password ''",
+            "E'\\",
+            "E'password \\",
+            "format(",
+            "format('password %",
+            "format('password %', ",
+            "$a$ $b$ password $c$",
+            "'é''password ''ü",
         ] {
             let _ = redact_sql(sql);
         }
