@@ -451,4 +451,64 @@ describe("App — one session, many tabs: the transaction has an owner", () => {
     await user.click(screen.getByRole("button", { name: "Commit" }));
     await waitFor(() => expect(be.sent("pg_commit")).toHaveLength(1));
   });
+
+  // Phase 2 safety verification, guarantee 3. The Commit button checks the
+  // owner; a COMMIT typed into another tab's editor goes to `pg_query` and
+  // ends the owning tab's transaction just the same.
+  it("TN-035: refuses a COMMIT typed in a tab that did not open the transaction", async () => {
+    const user = await connected();
+    await openTxInFirstTab(user);
+    await user.keyboard("{Meta>}t{/Meta}");
+    const editor = screen.getByRole("textbox", { name: /sql editor/i });
+    await user.click(editor);
+    await user.clear(editor);
+    await user.type(editor, "COMMIT");
+    await user.click(screen.getByRole("button", { name: /^Run/ }));
+    // Let the run settle: today it reaches `pg_query` within a tick.
+    await new Promise((r) => setTimeout(r, 100));
+    expect(be.sent("pg_query").some((q) => /^\s*commit\b/i.test(String(q.sql)))).toBe(false);
+    expect(be.sent("pg_commit")).toHaveLength(0);
+  });
+
+  const typeAndRun = async (user: ReturnType<typeof userEvent.setup>, sql: string) => {
+    const editor = screen.getByRole("textbox", { name: /sql editor/i });
+    await user.click(editor);
+    await user.clear(editor);
+    await user.type(editor, sql);
+    await user.click(screen.getByRole("button", { name: /^Run/ }));
+  };
+
+  it.each(["commit;", "/* c */ END", "ROLLBACK", "abort"])(
+    "TN-035: refuses a typed %s from another tab and names the owner",
+    async (sql) => {
+      const user = await connected();
+      await openTxInFirstTab(user);
+      await user.keyboard("{Meta>}t{/Meta}");
+      await typeAndRun(user, sql);
+
+      expect(await screen.findByText(/belongs to untitled-1\.sql/)).toBeInTheDocument();
+      expect(be.sent("pg_query")).toHaveLength(0);
+      expect(be.sent("pg_commit")).toHaveLength(0);
+      expect(be.sent("pg_rollback")).toHaveLength(0);
+    },
+  );
+
+  it("TN-035: still runs a COMMIT typed in the tab that owns the transaction", async () => {
+    const user = await connected();
+    await openTxInFirstTab(user);
+    await typeAndRun(user, "COMMIT");
+    await waitFor(() =>
+      expect(be.sent("pg_query").some((q) => /^\s*commit\b/i.test(String(q.sql)))).toBe(true),
+    );
+  });
+
+  it("TN-035: still runs other statements typed in a tab that does not own the transaction", async () => {
+    // The session is shared on purpose; only ending the transaction is the
+    // owner's call.
+    const user = await connected();
+    await openTxInFirstTab(user);
+    await user.keyboard("{Meta>}t{/Meta}");
+    await typeAndRun(user, "SELECT 1");
+    await waitFor(() => expect(be.sent("pg_query")).toHaveLength(1));
+  });
 });

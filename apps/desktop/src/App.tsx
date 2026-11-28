@@ -92,6 +92,7 @@ import {
 } from "./pages/registry";
 import {
   coerceParam,
+  endsTransaction,
   EXPORT_CAPS,
   formatSQL,
   rowCountNote,
@@ -949,6 +950,21 @@ export default function App() {
      than on the next statement. */
   useConnectionLost(session.isLive, noticeLost);
 
+  /**
+   * Refuse to end a transaction from a tab that did not start it.
+   *
+   * One session serves every tab, so a COMMIT here would commit whatever the
+   * owning tab has pending — work that is not on screen. Naming the owner is
+   * the point: "you are about to commit something you cannot see" is only
+   * useful if it says where to look. The buttons and a typed COMMIT, END,
+   * ROLLBACK or ABORT (TN-035) are held to it alike.
+   */
+  const notOwner = useCallback((): string | null => {
+    const cur = tabs[activeTab];
+    if (!tx.owner || !cur || tx.owner.tabId === cur.id) return null;
+    return `The open transaction belongs to ${tx.owner.tabName}. Switch to that tab to commit or roll it back.`;
+  }, [tx.owner, tabs, activeTab]);
+
   const doRun = useCallback(
     async (force = false, boundParams?: unknown[], sqlOverride?: string) => {
       if (exportingRef.current) {
@@ -964,6 +980,8 @@ export default function App() {
       const editorSql = tabs[activeTab]?.sql ?? "";
       const sql = sqlOverride ?? editorSql;
       if (!connected) return;
+      const wrong = endsTransaction(sql) ? notOwner() : null;
+      if (wrong) return showToast(wrong.slice(0, 90));
       // The hook decides what is needed and reports back; App owns the
       // overlays, so nothing here has to re-derive that from state.
       const out = await query.run(sql, { env: connectedEnv, force, params: boundParams });
@@ -994,7 +1012,7 @@ export default function App() {
       }
       void refreshHistory();
     },
-    [tabs, activeTab, connected, connectedEnv, query, setTabs, refreshHistory, showToast, noticeLost]
+    [tabs, activeTab, connected, connectedEnv, query, setTabs, refreshHistory, showToast, noticeLost, notOwner]
   );
 
   /* ---------------- safe row editing ---------------- */
@@ -1056,20 +1074,6 @@ export default function App() {
       showToast(`Cancel error: ${String(e).slice(0, 60)}`);
     }
   }, [showToast]);
-
-  /**
-   * Refuse to end a transaction from a tab that did not start it.
-   *
-   * One session serves every tab, so a COMMIT here would commit whatever the
-   * owning tab has pending — work that is not on screen. Naming the owner is
-   * the point: "you are about to commit something you cannot see" is only
-   * useful if it says where to look.
-   */
-  const notOwner = useCallback((): string | null => {
-    const cur = tabs[activeTab];
-    if (!tx.owner || !cur || tx.owner.tabId === cur.id) return null;
-    return `The open transaction belongs to ${tx.owner.tabName}. Switch to that tab to commit or roll it back.`;
-  }, [tx.owner, tabs, activeTab]);
 
   const doBegin = useCallback(async () => {
     const cur = tabs[activeTab];

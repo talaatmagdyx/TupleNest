@@ -14,6 +14,7 @@ import {
   dmlWithoutWhere,
   guardReason,
   guardTarget,
+  endsTransaction,
   firstKeyword,
   paramCount,
   tokenizeLines,
@@ -427,6 +428,20 @@ describe("firstKeyword", () => {
 
   it("is null for a statement with no keyword", () => {
     expect(firstKeyword("   -- just a comment")).toBeNull();
+  });
+});
+
+describe("endsTransaction", () => {
+  it("knows every way to end a transaction, past comments and in any case", () => {
+    for (const sql of ["COMMIT", "commit;", "/* c */ END", "-- x\nrollback", "ABORT", "commit and chain"]) {
+      expect(endsTransaction(sql)).toBe(true);
+    }
+  });
+
+  it("leaves other statements alone", () => {
+    for (const sql of ["BEGIN", "SELECT 'commit'", "-- commit\nselect 1", "committed", ""]) {
+      expect(endsTransaction(sql)).toBe(false);
+    }
   });
 });
 
