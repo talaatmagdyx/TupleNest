@@ -862,3 +862,36 @@ describe("guardTarget — what has to be typed back on prod", () => {
     expect(guardTarget(sql, env)).toBeNull();
   });
 });
+
+// Phase 2 safety verification, guarantee 1: destructive or unbounded
+// statements ask for confirmation, and on prod and staging the name is also
+// typed back. What holds today is pinned here; what does not is skipped with
+// the finding it belongs to.
+describe("guard — phase 2 safety verification", () => {
+  const destructive = [
+    ["DELETE FROM orders", "orders"],
+    ["UPDATE orders SET paid = true", "orders"],
+    ["DELETE FROM orders WHERE 1=1", "orders"],
+    ["UPDATE orders SET paid = true WHERE true", "orders"],
+    ["DROP TABLE orders", "orders"],
+    ["TRUNCATE orders", "orders"],
+    ["EXPLAIN ANALYZE DELETE FROM orders", "orders"],
+    ["EXPLAIN (ANALYZE, BUFFERS) UPDATE orders SET paid = true", "orders"],
+  ] as const;
+
+  it.each(destructive)("asks on prod and staging, and wants the name typed on prod: %s", (sql, name) => {
+    expect(guardReason(sql, "prod"), sql).not.toBeNull();
+    expect(guardReason(sql, "staging"), sql).not.toBeNull();
+    expect(guardTarget(sql, "prod")).toMatchObject({ name });
+  });
+
+  it.skip("TN-034: wants the name typed on staging as well as prod", () => {
+    for (const [sql, name] of destructive) expect(guardTarget(sql, "staging"), sql).toMatchObject({ name });
+  });
+
+  it.skip("TN-034: asks for confirmation on every connection, not only prod and staging", () => {
+    for (const [sql] of destructive) {
+      for (const env of ["dev", "test", null]) expect(guardReason(sql, env), `${sql} on ${env}`).not.toBeNull();
+    }
+  });
+});

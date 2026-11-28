@@ -441,6 +441,15 @@ mod open_timeout_tests {
     fn the_limit_is_longer_than_the_postgres_connect_timeout() {
         assert!(OPEN_TIMEOUT >= Duration::from_secs(15));
     }
+
+    /// Phase 2 safety verification, TN-016: `open_tunnel`, the entry point
+    /// the app and the MCP server call, gives up on a silent server within a
+    /// bounded time. The test above shows the limit is applied; this one
+    /// that the limit the app uses is one a person would wait for.
+    #[test]
+    fn the_limit_the_app_uses_is_bounded() {
+        assert!(OPEN_TIMEOUT <= Duration::from_secs(30), "{OPEN_TIMEOUT:?}");
+    }
 }
 
 /// Passphrase-protected keys. Every key here is generated in the test from a

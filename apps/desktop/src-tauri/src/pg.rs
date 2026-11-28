@@ -3549,6 +3549,113 @@ mod tests {
         );
     }
 
+    /// Phase 2 safety verification, guarantee 2. Found while verifying: a
+    /// COMMIT typed into a transaction that has already failed is sent to the
+    /// server as it was typed (`batch_execute`, the simple-query protocol),
+    /// before the read-only checks run. The simple-query protocol runs every
+    /// statement in the text, so `COMMIT; BEGIN READ WRITE; DELETE …; COMMIT`
+    /// opens a read-write transaction and writes on a read-only profile.
+    ///
+    /// Here, not in `live_pg.rs`: CI runs that file with `--include-ignored`,
+    /// and this test fails until the driver is fixed.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "requires live PostgreSQL"]
+    async fn a_read_only_session_cannot_write_through_the_commit_of_a_failed_transaction() {
+        #[derive(Default)]
+        struct Rows(StdMutex<Vec<Vec<CellValue>>>);
+        #[async_trait]
+        impl BatchSink for Rows {
+            async fn deliver(&self, batch: RowBatch) -> Result<(), Box<DriverError>> {
+                self.0.lock().unwrap().extend(batch.rows);
+                Ok(())
+            }
+        }
+        let req = |sql: &str| QueryRequest {
+            execution_id: ExecutionId::new(),
+            sql: sql.into(),
+            params: vec![],
+            row_limit: 0,
+        };
+        let pw = std::env::var("TUPLENEST_TEST_PG_PASSWORD").ok();
+        let connect = |read_only: bool| {
+            let pw = pw.clone();
+            async move {
+                let mut config = live_config();
+                config.read_only = read_only;
+                tuplenest_driver_postgres::PostgresDriver
+                    .connect_concrete_with_password(config, pw.as_deref())
+                    .await
+                    .unwrap()
+            }
+        };
+        let mut rw = connect(false).await;
+        for sql in [
+            "DROP TABLE IF EXISTS tn_p2_commit_chain",
+            "CREATE TABLE tn_p2_commit_chain (x int)",
+            "INSERT INTO tn_p2_commit_chain VALUES (1)",
+        ] {
+            rw.execute(req(sql), &Rows::default()).await.unwrap();
+        }
+
+        let mut ro = connect(true).await;
+        ro.execute(req("BEGIN"), &Rows::default()).await.unwrap();
+        assert!(ro
+            .execute(req("SELECT 1/0"), &Rows::default())
+            .await
+            .is_err());
+        // Refused or reported as rolled back: either way nothing may change.
+        let _ = ro
+            .execute(
+                req("COMMIT; BEGIN READ WRITE; DELETE FROM tn_p2_commit_chain; COMMIT"),
+                &Rows::default(),
+            )
+            .await;
+
+        let left = Rows::default();
+        rw.execute(req("SELECT count(*)::text FROM tn_p2_commit_chain"), &left)
+            .await
+            .unwrap();
+        let count = match &left.0.lock().unwrap()[0][0] {
+            CellValue::Text(t) => t.clone(),
+            other => format!("{other:?}"),
+        };
+        rw.execute(req("DROP TABLE tn_p2_commit_chain"), &Rows::default())
+            .await
+            .unwrap();
+        assert_eq!(count, "1", "the read-only session deleted the row");
+    }
+
+    fn state_tagged(env: Option<&str>) -> PgState {
+        let state = empty_state();
+        *state.cache_key.lock().unwrap() = Some("ops@db.internal:5432/app".into());
+        *state.connected_env.lock().unwrap() = env.map(String::from);
+        state
+    }
+
+    /// Phase 2 safety verification, guarantees 4 and 6. `run_query` writes
+    /// the audit row first, and `record_history` drops the SQL text, when
+    /// this says the session is production. Neither can run here without a
+    /// Tauri runtime, so this pins the input both decisions read.
+    #[test]
+    fn a_prod_session_is_audited_and_keeps_no_sql_in_history() {
+        let (key, is_prod) = session_identity(&state_tagged(Some("prod")));
+        assert_eq!(key, "ops@db.internal:5432/app");
+        assert!(is_prod);
+        for env in [Some("dev"), Some("test"), None] {
+            assert!(!session_identity(&state_tagged(env)).1, "{env:?}");
+        }
+    }
+
+    /// Guarantee 4 as stated covers staging too. The MCP server audits
+    /// staging (`mcp::tests::prod_and_staging_statements_are_audited_before_they_run`);
+    /// the window's `run_query` audits only a session `session_identity`
+    /// calls production, and a staging session is not one.
+    #[test]
+    #[ignore = "TN-033: statements run from the window on a staging session are not written to the audit log (prod only)"]
+    fn a_staging_session_is_audited_before_it_runs() {
+        assert!(session_identity(&state_tagged(Some("staging"))).1);
+    }
+
     fn app_with_profile() -> crate::AppState {
         let store = tuplenest_workspace_store::Store::open_in_memory().unwrap();
         store
