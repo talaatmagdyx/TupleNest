@@ -3,6 +3,7 @@ import { cellText, errText } from "../lib/text";
 import { isNumericType } from "../lib/chart";
 import { invoke } from "@tauri-apps/api/core";
 import { coerceValue, rowKey, type CellEdit, type EditTarget } from "../lib/dml";
+import { markGridRows } from "../lib/perf";
 
 /**
  * HUD result grid.
@@ -389,6 +390,18 @@ export default function Grid(p: Props) {
     }
     // `retry` is here to run this again; nothing in the body reads it.
   }, [first, last, blocks, p.storedRows, sortCol, sortDir, retry]);
+
+  // Timing marks only (lib/perf.ts): what the viewport holds after this commit.
+  useEffect(() => {
+    if (p.storedRows === 0 || last <= first) return;
+    let any = false;
+    let all = true;
+    for (let b = Math.floor(first / BLOCK); b <= Math.floor((last - 1) / BLOCK); b++) {
+      if (b in blocks) any = true;
+      else all = false;
+    }
+    markGridRows(any, all);
+  }, [first, last, blocks, p.storedRows]);
 
   const rowAt = (i: number): unknown[] | null => blocks[Math.floor(i / BLOCK)]?.[i % BLOCK] ?? null;
 
