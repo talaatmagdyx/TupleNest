@@ -4,7 +4,9 @@ import {
   buildCreateTable,
   CsvStreamParser,
   buildInsert,
+  checkRow,
   coerceCell,
+  type InferredType,
   QUOTED_EMPTY,
   inferType,
   inferTypes,
@@ -403,6 +405,73 @@ describe("CSV import integrity (TN-023)", () => {
       const p = new CsvStreamParser();
       p.push('a\n"x""');
       expect(() => p.end()).toThrow(/line 2 is never closed/);
+    });
+  });
+
+  // TN-036. The import dialog infers types from the first 500 rows and casts
+  // every later row to them with `$n::text::<type>`. PostgreSQL accepts some
+  // values that do not fit and changes them: `'007'::int8` is 7,
+  // `'2024-03-01 10:30'::date` drops the time.
+  describe("beyond the rows the types are inferred from", () => {
+    const file = (filler: string, late: string) =>
+      parseCsv(["v", ...Array.from({ length: 500 }, () => filler), late].join("\n"));
+
+    it("TN-036: a padded code after row 500 keeps the column text", () => {
+      expect(inferTypes(file("7", "007"))).toEqual(["text"]);
+    });
+
+    it("TN-036: a timestamp after row 500 does not leave the column a date", () => {
+      expect(inferTypes(file("2024-03-01", "2024-03-01 10:30"))).not.toEqual(["date"]);
+    });
+
+    // The dialog only ever holds a 500-row sample, so inference alone cannot
+    // see a late row. Every row is checked against the chosen type as it is
+    // imported, and one that would be changed by the cast stops the import.
+    const cols = (type: InferredType) => [{ name: "v", type }];
+    it.each([
+      ["leading zeros in an int8 column", "int8", "007"],
+      ["a decimal in an int8 column", "int8", "1.5"],
+      ["leading zeros in a numeric column", "numeric", "007.5"],
+      ["a timestamp in a date column", "date", "2024-03-01 10:30"],
+      ["a bare date in a timestamptz column", "timestamptz", "2024-03-01"],
+      ["a boolean in an int8 column", "int8", "true"],
+      ["a number in a boolean column", "boolean", "2"],
+    ] as const)("refuses %s, naming the row and column", (_, type, value) => {
+      expect(() => checkRow([value], cols(type), 501)).toThrow(/row 501.*"v"/s);
+    });
+
+    it.each([
+      ["int8", "7"],
+      ["int8", " 7 "],
+      ["numeric", "1.50"],
+      ["numeric", "7"],
+      ["boolean", "yes"],
+      ["boolean", "1"],
+      ["date", "2024-03-01"],
+      ["timestamptz", "2024-03-01 10:30"],
+      ["text", "007"],
+    ] as const)("accepts %s %j", (type, value) => {
+      expect(() => checkRow([value], cols(type), 501)).not.toThrow();
+    });
+
+    it("accepts an empty cell in any column: it is NULL, not a changed value", () => {
+      for (const type of ["int8", "numeric", "boolean", "date", "timestamptz", "text"] as const) {
+        expect(() => checkRow([""], cols(type), 501)).not.toThrow();
+        expect(() => checkRow([QUOTED_EMPTY], cols(type), 501)).not.toThrow();
+        expect(() => checkRow([], cols(type), 501)).not.toThrow();
+      }
+    });
+
+    it("mixed int and float infers numeric over the whole table", () => {
+      expect(inferTypes(file("7", "7.5"))).toEqual(["numeric"]);
+    });
+
+    it("a boolean after ints infers text over the whole table", () => {
+      expect(inferTypes(file("7", "true"))).toEqual(["text"]);
+    });
+
+    it("an empty cell after ints keeps the column int8", () => {
+      expect(inferTypes(file("7", '""'))).toEqual(["int8"]);
     });
   });
 });
