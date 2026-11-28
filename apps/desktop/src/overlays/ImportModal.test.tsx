@@ -428,4 +428,25 @@ describe("ImportModal — a file that cannot be imported faithfully", () => {
     expect(sent.find((s) => /create table/i.test(s?.sql ?? ""))!.sql).toMatch(/"zip" text/);
     expect(sent.find((s) => /insert into/i.test(s?.sql ?? ""))!.params).toEqual(["02134", "1", "00501", "2"]);
   });
+
+  // TN-036: types come from the first 500 rows; a later row that the cast
+  // would change must stop the import, not be stored as something else.
+  it.each([
+    ["a padded code after 500 ints", "7", "007"],
+    ["a timestamp after 500 dates", "2024-03-01", "2024-03-01 10:30"],
+  ])("refuses %s, says which row, and writes nothing", async (_, filler, late) => {
+    const onDone = vi.fn();
+    const text = "v\n" + Array.from({ length: 500 }, () => filler).join("\n") + `\n${late}\n`;
+    const { container } = render(<ImportModal {...base} onDone={onDone} />);
+    await choose(container, csv(text, "late.csv"));
+    await userEvent.click(await screen.findByRole("button", { name: /Import all rows/ }));
+    expect(await screen.findByText(/row 501/)).toBeInTheDocument();
+    expect(onDone).not.toHaveBeenCalled();
+    const names = invokeMock.mock.calls.map((c) => c[0]);
+    expect(names).toContain("pg_rollback");
+    expect(names).not.toContain("pg_commit");
+    // The refused row never reached an INSERT.
+    const params = invokeMock.mock.calls.flatMap((c) => ((c[1] as { params?: unknown[] })?.params ?? []) as unknown[]);
+    expect(params).not.toContain(late);
+  });
 });

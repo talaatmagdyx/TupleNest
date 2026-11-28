@@ -7,6 +7,7 @@ import {
   batchRows,
   buildCreateTable,
   buildInsert,
+  checkRow,
   CsvStreamParser,
   displayCell,
   inferTypes,
@@ -86,8 +87,8 @@ const BATCH = 500;
 const SAVEPOINT = "tuplenest_import";
 const PREVIEW_ROWS = 8;
 /** Rows read up front, to show a preview and infer types. Deliberately small:
- *  the point of streaming is never to hold the file, and `inferTypes` samples
- *  500 anyway. */
+ *  the point of streaming is never to hold the file. Rows past the sample are
+ *  checked against the chosen types by `checkRow` as they are imported. */
 const SAMPLE_ROWS = 500;
 
 /** CSV → table. Parses locally, lets you fix names/types, then inserts in
@@ -195,6 +196,7 @@ export default function ImportModal(p: Props) {
       const batchSize = batchRows(columns.length, BATCH);
       let pending: string[][] = [];
       let isHeader = true;
+      let rowNumber = 0;
       const flush = async () => {
         if (!pending.length) return;
         const ins = buildInsert(schema, target, columns, pending);
@@ -210,6 +212,9 @@ export default function ImportModal(p: Props) {
             isHeader = false; // the header was already mapped in the preview
             continue;
           }
+          // Types came from the first SAMPLE_ROWS (or the user); every row is
+          // checked so a later one the cast would change stops the import.
+          checkRow(r, columns, ++rowNumber);
           pending.push(r);
           if (pending.length >= batchSize) await flush();
         }

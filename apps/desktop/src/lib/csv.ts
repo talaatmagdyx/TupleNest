@@ -215,8 +215,37 @@ export function inferType(values: string[]): InferredType {
   return "text";
 }
 
-export function inferTypes(t: CsvTable, sample = 500): InferredType[] {
-  return t.header.map((_, ci) => inferType(t.rows.slice(0, sample).map((r) => r[ci] ?? "")));
+/** Infer from every row given. It used to slice to the first 500 here as
+ *  well, so a later row that did not fit was never looked at. The dialog only
+ *  holds a bounded sample anyway; `checkRow` covers the rows beyond it. */
+export function inferTypes(t: CsvTable): InferredType[] {
+  return t.header.map((_, ci) => inferType(t.rows.map((r) => r[ci] ?? "")));
+}
+
+/** The literal forms each type is inferred from. A value outside them is
+ *  either refused by PostgreSQL's cast or, worse, accepted and changed:
+ *  `'007'::int8` is 7 and `'2024-03-01 10:30'::date` drops the time. */
+const FITS: Record<Exclude<InferredType, "text">, RegExp> = {
+  int8: INT_RE,
+  numeric: NUM_RE,
+  boolean: BOOL_RE,
+  date: DATE_RE,
+  timestamptz: TS_RE,
+};
+
+/** Refuse a row the chosen types cannot store as written (TN-036).
+ *  Types are inferred from a sample, and the user can override them, so the
+ *  rows the import streams past the sample are checked one by one against the
+ *  same rules inference used. `rowNumber` counts data rows from 1. */
+export function checkRow(row: string[], columns: { name: string; type: InferredType }[], rowNumber: number): void {
+  columns.forEach((c, ci) => {
+    if (c.type === "text") return;
+    const v = coerceCell(row[ci] ?? "", c.type);
+    if (v === null || FITS[c.type].test(v)) return;
+    throw new Error(
+      `Data row ${rowNumber} (not counting the header), column "${c.name}": ${JSON.stringify(v)} is not a plain ${c.type} value, and importing it as ${c.type} would store something different. Nothing was imported. Set that column to text, or fix the value, and try again.`,
+    );
+  });
 }
 
 /** Turn an arbitrary CSV header into a safe, unique snake_case column name. */
