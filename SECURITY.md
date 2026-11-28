@@ -109,7 +109,7 @@ Reporting these is not useful; they are documented decisions.
   catches a corrupted download, not a compromised release host — anyone who
   could replace an installer could replace the sums file next to it. The
   control that actually binds a file to its build is the provenance
-  attestation (`gh attestation verify`, see docs/getting-started; releases after v0.1.0-beta.11), which is signed by
+  attestation (`gh attestation verify`, see docs/getting-started; every release), which is signed by
   GitHub's OIDC identity and not by anything in the release. Reporting "the
   checksums file could be swapped" is reporting its design.
 - **The updater trusts one minisign public key, compiled into each binary.**
