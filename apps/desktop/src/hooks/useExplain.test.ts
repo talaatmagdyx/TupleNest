@@ -171,7 +171,7 @@ describe("useExplain — ANALYZE is not chosen on the user's behalf", () => {
 
   it("still obeys an explicit ANALYZE on a DELETE — it was asked for", async () => {
     const { result } = renderHook(() => useExplain());
-    await run(result, { sql: "delete from users", override: opts({ analyze: true }) });
+    await run(result, { sql: "delete from users where id = 1", override: opts({ analyze: true }) });
     expect(invokeMock).toHaveBeenCalledWith("pg_query", { detached: true, sql: expect.stringContaining("ANALYZE") });
   });
 

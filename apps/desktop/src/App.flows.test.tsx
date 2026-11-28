@@ -42,8 +42,8 @@ const run = async (user: ReturnType<typeof userEvent.setup>, sql: string) => {
   await waitFor(() => expect(be.sent("pg_query").length).toBeGreaterThan(0));
 };
 
-/** Connect to the production profile. The write guard is a production rule —
- *  on dev it never fires. */
+/** Connect to the production profile, where the guard asks about the most and
+ *  wants the name typed for the worst cases. */
 const connectedProd = async () => {
   const user = await mount();
   await palette(user, "Connect to prod db");
@@ -90,12 +90,23 @@ describe("App — the write guard", () => {
     expect(be.sent("pg_query")[0]).toMatchObject({ sql: "delete from users where id = 1" });
   });
 
-  it("does not second-guess the same statement on dev", async () => {
-    // The guard is deliberately scoped to production. Prompting on every dev
-    // DELETE trains people to click through it, which is how it stops working
-    // on the one connection where it matters.
+  it("asks about a DELETE with no WHERE on dev too (TN-034)", async () => {
+    // Off prod and staging only the worst cases ask, and one click answers:
+    // a day of loaded dev data has no undo either.
     const user = await connected();
-    await run(user, "delete from users");
+    await type(user, "delete from users");
+    await user.click(screen.getByRole("button", { name: /^Run/ }));
+    expect(await screen.findByText(/Confirm this DELETE on dev/)).toBeInTheDocument();
+    expect(be.sent("pg_query")).toHaveLength(0);
+    // One click answers off prod and staging: no name to type.
+    expect(screen.queryByRole("textbox", { name: /to confirm/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Run anyway$/ }));
+    await waitFor(() => expect(be.sent("pg_query")).toHaveLength(1));
+  });
+
+  it("does not ask about a bounded write on dev", async () => {
+    const user = await connected();
+    await run(user, "delete from users where id = 1");
     expect(be.sent("pg_query")).toHaveLength(1);
   });
 });

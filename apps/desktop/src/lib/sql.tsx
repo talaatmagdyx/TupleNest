@@ -151,10 +151,13 @@ export function endsTransaction(sql: string): boolean {
 }
 
 /**
- * Statements worth stopping for on a guarded connection.
+ * Statements worth stopping for.
  *
- * Guarded environments are prod *and* staging: staging is where people rehearse
- * the destructive thing, and it is usually a restore of prod.
+ * On prod *and* staging (staging is where people rehearse the destructive
+ * thing, and it is usually a restore of prod) the whole list below asks. On
+ * every other connection — dev, test, untagged — only the worst cases do, the
+ * ones `guardTarget` names: no undo short of a restore is just as true of a
+ * dev database someone has spent a day loading (TN-034).
  */
 /**
  * Blank the inside of SQLite's other identifier quotes, `[name]` and
@@ -171,7 +174,7 @@ export function maskBracketQuotes(masked: string): string {
 }
 
 export function guardReason(sql: string, env: string | null): GuardReason | null {
-  if (env !== "prod" && env !== "staging") return null;
+  if (env !== "prod" && env !== "staging") return guardTarget(sql, "prod") ? guardReason(sql, "prod") : null;
 
   const masked = maskBracketQuotes(maskLiterals(sql));
   const verb = firstKeyword(sql);
@@ -313,17 +316,18 @@ function namesAt(sql: string, from: number): string | null {
 }
 
 /**
- * The object a prod statement destroys outright, which the guard asks to be
- * typed back before it will run it — or null when the statement is not one of
- * the worst cases, or the connection is not production.
+ * The object a prod or staging statement destroys outright, which the guard
+ * asks to be typed back before it will run it — or null when the statement is
+ * not one of the worst cases, or the connection is neither.
  *
  * The worst cases are the ones with no undo short of a restore: DELETE or
  * UPDATE with no WHERE (or an always-true one), DROP, and TRUNCATE. The other
  * guarded statements (ALTER, DO, COPY …) still ask, but one click answers.
- * Staging asks without the typing: a rehearsal should not be a chore.
+ * Staging wants the typing too (TN-034): it is usually a copy of prod, and the
+ * same reflex click does the same damage there. Elsewhere one click answers.
  */
 export function guardTarget(sql: string, env: string | null): { verb: string; name: string } | null {
-  if (env !== "prod") return null;
+  if (env !== "prod" && env !== "staging") return null;
   const masked = maskLiterals(sql);
   const verb = firstKeyword(sql);
   if (!verb) return null;
@@ -352,7 +356,7 @@ export function guardTarget(sql: string, env: string | null): { verb: string; na
   return name ? { verb: u.verb.toUpperCase(), name } : null;
 }
 
-/** Destructive-statement guard for prod/staging. See `guardReason`. */
+/** Destructive-statement guard. See `guardReason`. */
 export function needsGuard(sql: string, env: string | null): boolean {
   return guardReason(sql, env) !== null;
 }

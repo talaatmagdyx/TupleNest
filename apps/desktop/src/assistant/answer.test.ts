@@ -62,7 +62,8 @@ describe("classify", () => {
   it("says a guarded write still asks on PROD", () => {
     const c = classify("delete from users", "prod");
     expect(c.note).toMatch(/On PROD it still asks before it runs/);
-    expect(classify("delete from users", "dev").note).toBe("This is a write. Nothing runs until you press Run.");
+    expect(classify("delete from users", "dev").note).toMatch(/On this connection it still asks/);
+    expect(classify("delete from users where id = 1", "dev").note).toBe("This is a write. Nothing runs until you press Run.");
     expect(classify("drop table x", "staging").note).toMatch(/STAGING/);
   });
 });

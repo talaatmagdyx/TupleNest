@@ -116,6 +116,8 @@ describe("NotebooksPage", () => {
     await user.click(screen.getByRole("button", { name: "Don't run it" }));
     expect(calls("pg_query")).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: "Run" }));
+    // Staging wants the name typed back for a write to every row (TN-034).
+    await user.type(await screen.findByRole("textbox", { name: /Type t to confirm/i }), "t");
     await user.click(await screen.findByRole("button", { name: "Run anyway" }));
     await waitFor(() => expect(calls("pg_query")).toHaveLength(1));
   });
