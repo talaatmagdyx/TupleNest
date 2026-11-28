@@ -56,8 +56,8 @@ getting in the way when you're working on dev.
 - **Edits are reviewed, and transactions have one owner.** Grid edits become
   `UPDATE` statements you read before they are sent. A transaction belongs to
   the tab that opened it.
-- **Every prod statement is on record.** It is written to the audit log
-  *before* it runs. If the write fails, the statement isn't sent.
+- **Every prod and staging statement is on record.** It is written to the
+  audit log *before* it runs. If the write fails, the statement isn't sent.
 
 ### Privacy by default
 
@@ -162,7 +162,7 @@ Other checks in the app:
 
 - **Type the name on prod.** For the worst cases you must type the target's
   name.
-- **Audit log on prod.** Each statement is written to the audit log before it
+- **Audit log on prod and staging.** Each statement is written to the audit log before it
   runs, and it isn't sent if that write fails.
 - **One owner per transaction.** A transaction belongs to the tab that opened
   it, and another tab can't commit it.
@@ -227,7 +227,7 @@ Setup for each client: [MCP guide](docs/user-guide/mcp.md).
 | Connection profiles, settings, dashboards, notebooks | A local SQLite file in your OS app-data folder |
 | Passwords, passphrases, API keys | The OS keychain (Keychain, Credential Manager, Secret Service) |
 | Query history | Local. On `prod` connections the SQL text is **not** stored, only timing, row count and status. Elsewhere, common secret values are removed (best-effort). `-- tuplenest:no-history` keeps a statement out of history |
-| Production audit log | Local. It **does** keep prod SQL (with secret values removed, best-effort), as a record of what was run. `-- tuplenest:no-history` does **not** skip it, so a prod tag doesn't keep SQL off the disk |
+| Audit log | Local. It **does** keep prod and staging SQL (with secret values removed, best-effort), as a record of what was run. `-- tuplenest:no-history` does **not** skip it, so a prod or staging tag doesn't keep SQL off the disk |
 | Notebook results, large results | Local and unencrypted: a notebook keeps each SQL cell's last 200 rows, and a result over 16 MB compressed spills to an unnamed temporary file while it is open |
 | Assistant with a cloud provider | `api.anthropic.com`, or an Ollama cloud model if you allow those: your message, SQL, error text and schema names and types. Not result rows, but any value written in the SQL or message goes too |
 | Assistant with a local model | Your Ollama server. `localhost` by default, so nothing leaves the computer unless you point it at another machine |

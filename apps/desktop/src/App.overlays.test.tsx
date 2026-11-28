@@ -172,12 +172,12 @@ describe("App — overlays that need a session", () => {
     expect(await screen.findByPlaceholderText(/sequence, index or column/i)).toBeInTheDocument();
   });
 
-  it("opens the prod audit log only on production", async () => {
+  it("offers the audit log only on prod and staging", async () => {
     // The audit log is the record of what was run against prod. On dev there
     // is nothing to audit, so the command is not offered.
     const user = await connected();
     await user.keyboard("{Meta>}k{/Meta}");
-    await user.type(await screen.findByPlaceholderText(/type a command/i), "Prod audit");
-    expect(screen.queryByText("Prod audit log")).not.toBeInTheDocument();
+    await user.type(await screen.findByPlaceholderText(/type a command/i), "Audit log");
+    expect(screen.queryByText("Audit log")).not.toBeInTheDocument();
   });
 });

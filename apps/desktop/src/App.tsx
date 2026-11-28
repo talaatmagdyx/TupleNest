@@ -1596,9 +1596,9 @@ export default function App() {
           ...(lacks("health") ? [] : [{ icon: "⏱", label: "Top queries…", type: "Action", exec: () => loadHealth("queries") } as PaletteItem]),
           ...(lacks("monitor") ? [] : [{ icon: "📊", label: "Server monitor (sessions & locks)", type: "Action", exec: () => setOverlay("monitor") } as PaletteItem]),
           { icon: "◫", label: "ER diagram (relationships)", type: "Action", exec: () => setOverlay("diagram") },
-          // The log only records statements run against prod.
-          ...(connectedEnv === "prod"
-            ? [{ icon: "🛡", label: "Prod audit log", type: "Action", exec: () => setOverlay("audit") } as PaletteItem]
+          // The log only records statements run against prod and staging.
+          ...(connectedEnv === "prod" || connectedEnv === "staging"
+            ? [{ icon: "🛡", label: "Audit log", type: "Action", exec: () => setOverlay("audit") } as PaletteItem]
             : []),
           { icon: "⏻", label: "Disconnect current session", type: "Action", exec: doDisconnect },
           ...(inTx

@@ -36,7 +36,7 @@ Windows, `~/.local/share/app.tuplenest.desktop` on Linux.
 | **Passwords and SSH key passphrases** | OS keychain | Keychain / Credential Manager / Secret Service. Never in the files below — the SQLite table has no password or passphrase column, only opaque references. |
 | **Connection profiles** | `<data>` SQLite | Host, port, database, username, TLS mode, SSH settings (including the key file's path, not the key). Not the password or the key's passphrase. |
 | **Query history** | `<data>` SQLite | Newest 1,000. **On prod-tagged connections the SQL text is not recorded** — only timing, row counts, and status. On other environments the SQL is stored with a best-effort scrub of secret literals (`PASSWORD '…'`, `IDENTIFIED BY '…'`, `key=…`, connection-string URLs → `[REDACTED]`). Add a `-- tuplenest:no-history` comment to a statement to skip its history row entirely. When a query fails, only a reduced error is stored (title, SQLSTATE, category); the server's DETAIL/HINT — which can quote row values like `Key (email)=(…)` — is shown on screen but **not** written to disk. |
-| **Production audit log** | `<data>` SQLite | Separate from history and deliberately the opposite trade: on prod-tagged connections the SQL is **retained in full** (secret literals still scrubbed) so there is a record of what was run against production. This is an accountability record: `-- tuplenest:no-history` does **not** suppress it. If you do not want it, do not tag the connection prod. Each row is written before its statement is sent, so it records what was submitted, including statements that then failed or were cut off; if the row cannot be written, the statement is not sent. |
+| **Audit log** | `<data>` SQLite | Separate from history and deliberately the opposite trade: on prod- and staging-tagged connections the SQL is **retained in full** (secret literals still scrubbed) so there is a record of what was run against them. This is an accountability record: `-- tuplenest:no-history` does **not** suppress it. If you do not want it, do not tag the connection prod or staging. Each row is written before its statement is sent, so it records what was submitted, including statements that then failed or were cut off; if the row cannot be written, the statement is not sent. |
 | **Cached schema** | `<data>` SQLite | The shape of the database, so the explorer works offline: schema, table, column, constraint, type and routine names, with what describes them (column types and defaults, comments, enum labels, partition bounds). Not row data, and not query text: health figures, server activity, index usage, object sizes and search terms are live-only and are never stored. |
 | **Snippets, layout, settings** | `<data>` SQLite | Includes each connection's MCP access (off, read only, read and write). |
 | **Dashboards** | `<data>` SQLite | Names, the connection, the refresh interval, and each chart's title, kind and SQL. **Not their results**: a chart re-runs its query each time. |
@@ -74,8 +74,8 @@ apart:
 - **Keeping a statement out of history:** start it with
   `-- tuplenest:no-history`, or run it on a prod-tagged connection, where
   history stores no SQL.
-- **Keeping it out of the audit log:** not possible on a prod-tagged
-  connection. The audit log records every statement there, and
+- **Keeping it out of the audit log:** not possible on a prod- or
+  staging-tagged connection. The audit log records every statement there, and
   `-- tuplenest:no-history` does not skip it.
 - **Keeping it off the disk entirely:** run it on a connection that is not
   tagged prod, with `-- tuplenest:no-history`. Don't put it in anything you

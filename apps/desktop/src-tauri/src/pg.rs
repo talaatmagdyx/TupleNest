@@ -2326,23 +2326,23 @@ pub(crate) fn history_status(e: &tuplenest_driver_api::DriverError) -> &'static 
     }
 }
 
-/// Who the live session is, for the records: its key, and whether it is
-/// tagged production.
-fn session_identity(state: &PgState) -> (String, bool) {
+/// Who the live session is, for the records: its key and its environment tag.
+fn session_identity(state: &PgState) -> (String, Option<String>) {
     let connection_key = state
         .cache_key
         .lock()
         .ok()
         .and_then(|k| k.clone())
         .unwrap_or_else(|| "<unknown>".into());
-    let is_prod = state
-        .connected_env
-        .lock()
-        .ok()
-        .and_then(|e| e.clone())
-        .as_deref()
-        == Some("prod");
-    (connection_key, is_prod)
+    let env = state.connected_env.lock().ok().and_then(|e| e.clone());
+    (connection_key, env)
+}
+
+/// Statements on these are written to the audit log before they run, from
+/// the window as from MCP (`mcp::server::is_audited`). History drops the SQL
+/// text only on prod.
+fn is_audited(env: Option<&str>) -> bool {
+    matches!(env, Some("prod" | "staging"))
 }
 
 /// Writes the production audit row for a statement that is about to run.
@@ -2362,10 +2362,10 @@ fn session_identity(state: &PgState) -> (String, bool) {
 fn audit_before_run(
     store: &StdMutex<tuplenest_workspace_store::Store>,
     connection_key: &str,
+    env: &str,
     sql: &str,
 ) -> Result<(), String> {
-    const NOT_RUN: &str =
-        "Not run: this production statement could not be recorded in the audit log";
+    const NOT_RUN: &str = "Not run: this statement could not be recorded in the audit log";
     let store = store.lock().map_err(|_| {
         tracing::error!(
             component = "audit",
@@ -2374,7 +2374,7 @@ fn audit_before_run(
         format!("{NOT_RUN} (the local store is unavailable). Restart TupleNest and try again.")
     })?;
     store
-        .audit_add(connection_key, Some("prod"), &redact_sql(sql))
+        .audit_add(connection_key, Some(env), &redact_sql(sql))
         .map_err(|e| {
             tracing::error!(component = "audit", error = %e, "audit write failed; statement refused");
             format!("{NOT_RUN} ({e}). Nothing was sent to the database.")
@@ -2394,7 +2394,8 @@ fn record_history(
     rows_affected: Option<u64>,
     duration_ms: u64,
 ) {
-    let (connection_key, is_prod) = session_identity(state);
+    let (connection_key, env) = session_identity(state);
+    let is_prod = env.as_deref() == Some("prod");
     let no_history = opts_out_of_history(sql);
     // Store SQL redacted of secret literals; prod history still omits it
     // entirely. The `-- tuplenest:no-history` directive drops the history row.
@@ -2531,16 +2532,21 @@ async fn run_query(
     let mut guard = state.session.lock().await;
     let session = guard.as_mut().ok_or("not connected")?;
 
-    // Production: the audit row first. It is kept even under the no-history
+    // Production and staging (TN-033): the audit row first. It is kept even under the no-history
     // directive — an accountability record, not user history, and not
     // something a comment can switch off. SQL is redacted of secret literals
     // but otherwise kept in full.
-    let (connection_key, is_prod) = session_identity(state);
-    if is_prod {
+    let (connection_key, env) = session_identity(state);
+    if let Some(env) = env.filter(|e| is_audited(Some(e))) {
         let (app, sql) = (app.clone(), sql.clone());
         tauri::async_runtime::spawn_blocking(move || {
             use tauri::Manager;
-            audit_before_run(&app.state::<crate::AppState>().store, &connection_key, &sql)
+            audit_before_run(
+                &app.state::<crate::AppState>().store,
+                &connection_key,
+                &env,
+                &sql,
+            )
         })
         .await
         .map_err(|e| format!("Not run: the audit log write did not complete ({e})."))??;
@@ -3638,22 +3644,28 @@ mod tests {
     /// Tauri runtime, so this pins the input both decisions read.
     #[test]
     fn a_prod_session_is_audited_and_keeps_no_sql_in_history() {
-        let (key, is_prod) = session_identity(&state_tagged(Some("prod")));
+        let (key, env) = session_identity(&state_tagged(Some("prod")));
         assert_eq!(key, "ops@db.internal:5432/app");
-        assert!(is_prod);
+        assert!(is_audited(env.as_deref()));
         for env in [Some("dev"), Some("test"), None] {
-            assert!(!session_identity(&state_tagged(env)).1, "{env:?}");
+            assert!(
+                !is_audited(session_identity(&state_tagged(env)).1.as_deref()),
+                "{env:?}"
+            );
         }
     }
 
-    /// Guarantee 4 as stated covers staging too. The MCP server audits
-    /// staging (`mcp::tests::prod_and_staging_statements_are_audited_before_they_run`);
-    /// the window's `run_query` audits only a session `session_identity`
-    /// calls production, and a staging session is not one.
+    /// TN-033. Staging is audited from the window as it is from MCP
+    /// (`mcp::tests::prod_and_staging_statements_are_audited_before_they_run`),
+    /// and the row says staging.
     #[test]
-    #[ignore = "TN-033: statements run from the window on a staging session are not written to the audit log (prod only)"]
     fn a_staging_session_is_audited_before_it_runs() {
-        assert!(session_identity(&state_tagged(Some("staging"))).1);
+        let env = session_identity(&state_tagged(Some("staging"))).1;
+        assert!(is_audited(env.as_deref()));
+        let store = StdMutex::new(tuplenest_workspace_store::Store::open_in_memory().unwrap());
+        audit_before_run(&store, "k", env.as_deref().unwrap(), "SELECT 1").unwrap();
+        let rows = store.lock().unwrap().audit_list(10).unwrap();
+        assert_eq!(rows[0].environment.as_deref(), Some("staging"));
     }
 
     fn app_with_profile() -> crate::AppState {
@@ -4720,7 +4732,7 @@ mod audit_before_run_tests {
         // Written synchronously, so it exists before the statement is sent
         // and whatever happens to the statement — or the app — afterwards.
         let store = StdMutex::new(Store::open_in_memory().unwrap());
-        audit_before_run(&store, KEY, "DELETE FROM orders WHERE id = 7").unwrap();
+        audit_before_run(&store, KEY, "prod", "DELETE FROM orders WHERE id = 7").unwrap();
         let rows = store.lock().unwrap().audit_list(10).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].connection_key, KEY);
@@ -4733,7 +4745,7 @@ mod audit_before_run_tests {
         let store = StdMutex::new(Store::open_in_memory().unwrap());
         let sql = "-- tuplenest:no-history\nALTER ROLE app PASSWORD 'hunter2-planted'";
         assert!(opts_out_of_history(sql));
-        audit_before_run(&store, KEY, sql).unwrap();
+        audit_before_run(&store, KEY, "prod", sql).unwrap();
         let rows = store.lock().unwrap().audit_list(10).unwrap();
         assert_eq!(rows.len(), 1);
         assert!(rows[0].sql_text.contains("ALTER ROLE app PASSWORD"));
@@ -4750,7 +4762,7 @@ mod audit_before_run_tests {
             panic!("poison");
         })
         .join();
-        let err = audit_before_run(&store, KEY, "DROP TABLE users").unwrap_err();
+        let err = audit_before_run(&store, KEY, "prod", "DROP TABLE users").unwrap_err();
         assert!(err.starts_with("Not run:"), "{err}");
         assert!(err.contains("audit log"), "{err}");
     }
@@ -4759,7 +4771,7 @@ mod audit_before_run_tests {
     fn every_statement_gets_its_own_row_in_order() {
         let store = StdMutex::new(Store::open_in_memory().unwrap());
         for n in 0..3 {
-            audit_before_run(&store, KEY, &format!("SELECT {n}")).unwrap();
+            audit_before_run(&store, KEY, "prod", &format!("SELECT {n}")).unwrap();
         }
         assert_eq!(store.lock().unwrap().audit_list(10).unwrap().len(), 3);
     }

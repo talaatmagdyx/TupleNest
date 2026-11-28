@@ -275,7 +275,7 @@ export default function ConnectionForm(p: Props) {
               </div>
               <div className="hint">
                 A file on this machine: no server, password, TLS or SSH tunnel. The environment tag,
-                read-only flag, confirmation before risky writes and the production audit log apply
+                read-only flag, confirmation before risky writes and the audit log apply
                 as for any connection.
               </div>
             </>
