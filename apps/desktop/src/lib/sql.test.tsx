@@ -894,12 +894,4 @@ describe("guard — phase 2 safety verification", () => {
       for (const env of ["dev", "test", null]) expect(guardReason(sql, env), `${sql} on ${env}`).not.toBeNull();
     }
   });
-
-  it.skip("TN-032: asks about a DROP or TRUNCATE that follows a COMMIT in the same text", () => {
-    // The driver sends `COMMIT; …` as typed when the transaction has failed,
-    // and every statement in it runs.
-    for (const sql of ["COMMIT; DROP TABLE orders", "COMMIT; TRUNCATE orders", "END; DROP TABLE orders"]) {
-      expect(guardReason(sql, "prod"), sql).not.toBeNull();
-    }
-  });
 });

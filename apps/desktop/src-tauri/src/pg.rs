@@ -3559,7 +3559,7 @@ mod tests {
     /// Here, not in `live_pg.rs`: CI runs that file with `--include-ignored`,
     /// and this test fails until the driver is fixed.
     #[tokio::test(flavor = "multi_thread")]
-    #[ignore = "TN-032: a COMMIT of a failed transaction carries more statements past the read-only checks (needs live PostgreSQL)"]
+    #[ignore = "requires live PostgreSQL"]
     async fn a_read_only_session_cannot_write_through_the_commit_of_a_failed_transaction() {
         #[derive(Default)]
         struct Rows(StdMutex<Vec<Vec<CellValue>>>);

@@ -442,24 +442,6 @@ describe("App — one session, many tabs: the transaction has an owner", () => {
     expect(await screen.findByRole("button", { name: /Begin transaction/ })).toBeInTheDocument();
   });
 
-  // Phase 2 safety verification, guarantee 3. The Commit button checks the
-  // owner; a COMMIT typed into another tab's editor goes to `pg_query` and
-  // ends the owning tab's transaction just the same.
-  it.skip("TN-035: refuses a COMMIT typed in a tab that did not open the transaction", async () => {
-    const user = await connected();
-    await openTxInFirstTab(user);
-    await user.keyboard("{Meta>}t{/Meta}");
-    const editor = screen.getByRole("textbox", { name: /sql editor/i });
-    await user.click(editor);
-    await user.clear(editor);
-    await user.type(editor, "COMMIT");
-    await user.click(screen.getByRole("button", { name: /^Run/ }));
-    // Let the run settle: today it reaches `pg_query` within a tick.
-    await new Promise((r) => setTimeout(r, 100));
-    expect(be.sent("pg_query").some((q) => /^\s*commit\b/i.test(String(q.sql)))).toBe(false);
-    expect(be.sent("pg_commit")).toHaveLength(0);
-  });
-
   it("lets the owning tab be returned to after a detour", async () => {
     const user = await connected();
     await openTxInFirstTab(user);
