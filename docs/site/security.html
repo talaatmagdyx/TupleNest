@@ -139,7 +139,7 @@
       <div class="card"><ul>
         <li>Connections are labelled development, test, staging, or production</li>
         <li>Read-only mode issues a PostgreSQL read-only session characteristic, and sends only statements that read (no <code class="inline">VACUUM</code>, <code class="inline">COPY</code>, <code class="inline">DO</code> or <code class="inline">CALL</code>). On SQLite the file is opened read-only, <code class="inline">PRAGMA query_only</code> is set before every statement, and a statement SQLite says would write is refused</li>
-        <li>On prod and staging, destructive statements are detected and require confirmation; on prod, every statement is written to the audit log before it runs</li>
+        <li>Destructive statements are detected and require confirmation on every connection, with the table name typed on prod and staging; on prod, every statement is written to the audit log before it runs</li>
         <li>The open transaction is owned by a tab; another tab can't commit it</li>
       </ul></div>
       <div class="callout warn" style="margin:0"><b>TupleNest protects against accidental writes.</b> For strict enforcement, connect with a database role that has no write privileges. Database permissions remain the final authority — the app is a guardrail, not a replacement for least privilege.</div>

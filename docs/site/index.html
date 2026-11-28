@@ -85,7 +85,7 @@
     <div class="grid4">
       <div class="card reveal">
         <div class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
-        <h3>Production-aware</h3><p>Tag a connection prod or staging and risky statements stop and ask. On prod, the worst ones make you type the table name.</p></div>
+        <h3>Production-aware</h3><p>The worst statements stop and ask on any connection. Tag it prod or staging and more of them ask, and the worst ones make you type the table name.</p></div>
       <div class="card reveal">
         <div class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></div>
         <h3>Enforced, not hoped</h3><p>Read-only profiles are set on the PostgreSQL session and re-checked before every statement; SQLite opens the file read-only.</p></div>
@@ -134,7 +134,7 @@
         <ul>
           <li><b>Read-only</b> set on the PostgreSQL session and re-checked before every statement; SQLite files opened read-only</li>
           <li><b>Statement guard</b> on prod and staging: no-<code class="inline">WHERE</code> writes, <code class="inline">DROP</code>, <code class="inline">TRUNCATE</code>, <code class="inline">ALTER</code> and more ask first</li>
-          <li><b>Type the name</b> for an unbounded write, a <code class="inline">DROP</code> or a <code class="inline">TRUNCATE</code> on prod</li>
+          <li><b>Type the name</b> for an unbounded write, a <code class="inline">DROP</code> or a <code class="inline">TRUNCATE</code> on prod and staging</li>
           <li><b>Audit before run</b> on prod and staging: if the audit row can't be written, the statement isn't sent</li>
           <li><b>No prod SQL in history</b>, and a 20,000-row stop at the limit</li>
           <li><b>TLS <code class="inline">verify-full</code></b> by default; SSH host keys verified, passphrase keys supported</li>

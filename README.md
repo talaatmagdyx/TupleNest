@@ -152,7 +152,9 @@ the same as a role without write privileges. For example, an extension that
 opens its own connection, such as `dblink`, is not bound by it.
 
 **Checks in the app.** On `prod` and `staging` connections the app stops
-before:
+before the statements below. On every other connection it stops before the
+worst of them (an `UPDATE` or `DELETE` without a real `WHERE`, a `DROP` or a
+`TRUNCATE`), and one click answers:
 
 - `UPDATE` or `DELETE` without a real `WHERE`
 - `DROP`, `TRUNCATE`, `ALTER` or `GRANT`
@@ -160,8 +162,8 @@ before:
 
 Other checks in the app:
 
-- **Type the name on prod.** For the worst cases you must type the target's
-  name.
+- **Type the name on prod and staging.** For the worst cases you must type
+  the target's name.
 - **Audit log on prod and staging.** Each statement is written to the audit log before it
   runs, and it isn't sent if that write fails.
 - **One owner per transaction.** A transaction belongs to the tab that opened
