@@ -522,10 +522,31 @@ when started by hand (`workflow_dispatch`), never on push or pull request.
 The runners have no copy of `analytics.sqlite`, so the workflow generates one
 with `scripts/bench/make-events-sqlite.py`: the same schema, row count (50,000)
 and value shapes, not the same bytes. Results go to the job summary and an
-artifact. **It has not been run yet**, so there are no Linux or Windows
-numbers in this file; shared CI runners are also noisy, so read their
-medians and compare runners with each other rather than with this machine.
-PostgreSQL is not part of it.
+artifact. PostgreSQL is not part of it. Shared CI runners are noisy, so read
+the medians and compare runners with each other rather than with this machine.
+
+Run [46092912751](https://github.com/talaatmagdyx/TupleNest/actions/runs/46092912751)
+on 2026-11-28, from `main` after phase 3 merged. Median, n=100 (the full walks
+n=5):
+
+| | ubuntu-latest | windows-latest | macos-latest |
+| --- | --- | --- | --- |
+| Open (read-only) | 0.05 ms | 0.16 ms | 0.10 ms |
+| 20,000 rows, decode only | 5.5 ms | 8.1 ms | 6.2 ms |
+| 20,000 rows, until the cap, stored | 9.1 ms | 14.6 ms | 12.0 ms |
+| 50,000 rows, no cap | 13.6 ms | 21.4 ms | 16.0 ms |
+| Cancel | 0.02 ms | 0.10 ms | 0.07 ms |
+| 1,000 tables: `ListObjects` | 0.93 ms | 2.0 ms | 1.2 ms |
+| 1,000 tables: `Relationships` | 9.6 ms | 33.0 ms | 13.1 ms |
+| 1,000 tables: full walk | 0.34 s | 0.68 s | 0.48 s |
+| 10,000 tables: `ListObjects` | 9.9 ms | 21.8 ms | 17.2 ms |
+| 10,000 tables: `DescribeObject` | 2.9 ms | 6.0 ms | 6.2 ms |
+| 10,000 tables: `Relationships` | 110 ms | 353 ms | 140 ms |
+| 10,000 tables: full walk | 30.5 s | 55.7 s | 54.5 s |
+
+The superlinear SQLite walk from section 6 shows on every platform:
+`DescribeObject` is about 7 times slower at 10,000 tables than at 1,000, and
+`Relationships` about 11 times.
 
 ### Not measured yet
 
@@ -540,8 +561,7 @@ PostgreSQL is not part of it.
   metadata cache was not measured.
 - **SSH tunnels**, and PostgreSQL over a real network rather than an added
   delay (packet loss, bandwidth, a server under its own load).
-- **Linux and Windows numbers**: the workflow exists (section 10) but has
-  not been run.
+- **PostgreSQL on Linux and Windows.** Section 10 covers SQLite only.
 - **The PostgreSQL walk of 10,000 tables over added latency** (estimated
   above, not run).
 
