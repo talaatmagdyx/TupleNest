@@ -89,7 +89,7 @@ getting in the way when you're working on dev.
 - **Measured, not claimed.** On an M4 Pro:
   - the window appears in about 0.3 s
   - the app idles at about 120–130 MB
-  - the PostgreSQL driver reads 20,000 rows in about 22 ms
+  - the PostgreSQL driver reads 20,000 rows in about 25 ms
 
   Details and the commands to rerun them are in
   [docs/benchmarks](docs/benchmarks/README.md).
