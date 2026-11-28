@@ -41,7 +41,8 @@ the client does.
 |---|---|
 | Signed update artifacts | Yes. Updates are signed, and the app checks the signature before installing |
 | Checksums | Yes. `SHA256SUMS` with each release |
-| Build provenance | In the release workflow since after v0.1.0-beta.11: a GitHub artifact attestation per file (`gh attestation verify`). v0.1.0-beta.11 and earlier have none |
+| Build provenance | Yes. A GitHub artifact attestation per file (`gh attestation verify`), for every release from v0.1.0-beta.1 |
+| Checked after publishing | The Smoke workflow downloads each release on Linux, Windows and macOS and, before installing, checks each file against `SHA256SUMS`, its updater signature against the app's pubkey, and its attestation. It also checks that every entry in `latest.json` resolves and verifies. It does not test a real update from an older install |
 | macOS signing | The release workflow signs with a project certificate. It isn't an Apple Developer ID, so Gatekeeper still warns |
 | macOS notarization | No. Needs a paid Apple Developer account. The workflow notarizes as soon as one is configured |
 | Windows code signing | No. Needs a code-signing certificate |

@@ -40,13 +40,15 @@ checks. To check a file against the published checksum:
 shasum -a 256 -c SHA256SUMS --ignore-missing
 ```
 
-Releases after v0.1.0-beta.11 also carry a GitHub build-provenance
-attestation. It proves the file was built by this repository's release
-workflow:
+Every release also carries a GitHub build-provenance attestation. It proves
+the file was built by this repository's release workflow:
 
 ```sh
 gh attestation verify <downloaded-file> --repo talaatmagdyx/TupleNest
 ```
+
+CI runs these same checks, plus the updater signature, on each published
+release before installing it.
 
 ## Updates
 

@@ -23,6 +23,16 @@
 #             release). Driving a debug build would test a binary nobody
 #             ships; enabling devtools in release to satisfy a test would be
 #             worse. The step where this is done explains it in full.
+#   macOS   — mounts the Apple Silicon .dmg, copies the app out, starts it
+#             under an empty HOME and asserts it stays up with a window.
+#
+# Before anything is installed, every leg checks the bytes it downloaded
+# (scripts/verify-download.sh): against SHA256SUMS, against the updater
+# signature and the pubkey in tauri.conf.json, and against the release's
+# build-provenance attestation. A separate job (scripts/check-update-manifest.sh)
+# checks that the published latest.json would deliver this release to an
+# installed copy. It does not install an old version and watch it update
+# itself; that script says why.
 
 name: Smoke
 
@@ -48,6 +58,8 @@ permissions:
   # To download a Release run's `smoke-inputs` artifact (the `run_id` input).
   # Read-only: a draft release itself would need write access to be seen.
   actions: read
+  # For `gh attestation verify`: reads the release's provenance attestations.
+  attestations: read
 
 concurrency:
   group: smoke-${{ github.event.inputs.tag || github.event.release.tag_name }}
@@ -126,9 +138,21 @@ jobs:
             # only the former. Both read the same checksum file.
             (cd artifacts && grep -E '_amd64\.deb$|_x64_en-US\.msi$' SHA256SUMS | sha256sum -c -)
           else
-            gh release download "$TAG" -D artifacts -p 'TupleNest_*_amd64.deb' -p 'TupleNest_*_x64_en-US.msi'
+            gh release download "$TAG" -D artifacts -p 'TupleNest_*_amd64.deb*' -p 'TupleNest_*_x64_en-US.msi*' -p SHA256SUMS
           fi
           ls -la artifacts
+        shell: bash
+
+      # Checksum, updater signature and provenance, before installing.
+      - name: Verify the download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        working-directory: artifacts
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = Windows ]; then pick='_x64_en-US\.msi$'; else pick='_amd64\.deb$'; fi
+          bash ../scripts/verify-download.sh $(ls | grep -E "$pick")
         shell: bash
 
       - name: Install the .deb (Linux)
@@ -372,4 +396,115 @@ jobs:
           path: native-*.png
           retention-days: 3
           if-no-files-found: ignore
+
+  # The .dmg a Mac user downloads, on Apple Silicon (macos-latest). Like the
+  # Intel leg above, nothing can drive WKWebView, so this checks from outside:
+  # the image mounts, the app copies out of it, it starts, stays up and opens a
+  # window.
+  #
+  # Only for a published release: a dev build stages no .dmg.
+  macos:
+    name: macOS (Apple Silicon) — .dmg installs, starts and opens a window
+    if: github.event.inputs.run_id == ''
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the .dmg
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # The .app.tar.gz too: it is what the updater installs on a Mac, and
+          # the only macOS file with an updater signature.
+          gh release download "$TAG" -D artifacts -p 'TupleNest_*_aarch64.dmg' -p 'TupleNest_*_aarch64.app.tar.gz*' -p SHA256SUMS
+          ls -la artifacts
+
+      - name: Verify the download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        working-directory: artifacts
+        run: bash ../scripts/verify-download.sh $(ls | grep -E '_aarch64\.(dmg|app\.tar\.gz)$')
+
+      - name: Mount the .dmg and copy the app out
+        run: |
+          set -euo pipefail
+          mnt="$RUNNER_TEMP/dmg"
+          hdiutil attach artifacts/TupleNest_*_aarch64.dmg -nobrowse -readonly -mountpoint "$mnt"
+          mkdir -p "$RUNNER_TEMP/Applications"
+          cp -R "$mnt/TupleNest.app" "$RUNNER_TEMP/Applications/"
+          hdiutil detach "$mnt"
+          app="$RUNNER_TEMP/Applications/TupleNest.app"
+          archs=$(lipo -archs "$app/Contents/MacOS/tuplenest-desktop")
+          echo "binary: $archs"
+          case "$archs" in *arm64*) ;; *) echo "::error::the Apple Silicon .dmg holds a $archs binary"; exit 1 ;; esac
+          # A browser download carries com.apple.quarantine, and on an app
+          # that is not notarized Gatekeeper then refuses the first launch
+          # until the user approves it (docs/getting-started explains how).
+          # `gh` sets no quarantine, so this is usually a no-op here; it is
+          # done explicitly so the result does not depend on how the file
+          # arrived. It does mean Gatekeeper's first-launch prompt is not
+          # what this tests: that prompt is the expected outcome for an app
+          # without notarization, and no headless runner can click through it.
+          echo "quarantine on the download: $(xattr -p com.apple.quarantine artifacts/TupleNest_*_aarch64.dmg 2>/dev/null || echo none)"
+          xattr -dr com.apple.quarantine "$app"
+          echo "APP=$app" >> "$GITHUB_ENV"
+
+      - name: The app starts under an empty HOME, stays up and opens a window
+        run: |
+          set -euo pipefail
+          # An empty HOME, so nothing a previous run or the runner image left
+          # behind (settings, a workspace, a keychain item) is what it starts
+          # from. The app finds its data directory through $HOME.
+          home=$(mktemp -d)
+          HOME="$home" "$APP/Contents/MacOS/tuplenest-desktop" > app-stdout.txt 2>&1 &
+          pid=$!
+          sleep 20
+          if ! kill -0 "$pid" 2>/dev/null; then
+            echo "::error::TupleNest exited instead of staying up"
+            tail -50 app-stdout.txt || true
+            exit 1
+          fi
+          log_dir="$home/Library/Application Support/app.tuplenest.desktop/logs"
+          grep -h "TupleNest starting" "$log_dir"/* | tail -1 ||
+            { echo "::error::no startup line under the isolated HOME"; kill "$pid"; exit 1; }
+          windows=$(osascript -e 'tell application "System Events" to count windows of (first process whose unix id is '"$pid"')' 2>/dev/null || echo "unknown")
+          echo "windows reported by System Events: $windows"
+          if [ "$windows" = "0" ]; then
+            echo "::error::the process is alive but has no window"
+            kill "$pid" || true
+            exit 1
+          fi
+          # Quit, and make sure it does.
+          kill -TERM "$pid"
+          for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+          if kill -0 "$pid" 2>/dev/null; then echo "::warning::still running 10s after SIGTERM"; kill -9 "$pid"; fi
+          echo "quit"
+
+  # Would an installed copy be offered this release, and would it accept it?
+  # Fetches latest.json from the release and from the updater endpoint, and
+  # checks every platform's URL and signature the way the updater does. The
+  # script explains what it does not do (a real old-to-new self-update).
+  update-path:
+    name: Update manifest resolves and verifies
+    if: github.event.inputs.run_id == ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The reference implementation, to cross-check scripts/verify-updater-sig.py.
+      - name: minisign
+        run: sudo apt-get update && sudo apt-get install -y minisign
+
+      - name: latest.json names this version, and every entry resolves and verifies
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash scripts/check-update-manifest.sh
 
