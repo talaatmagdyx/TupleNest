@@ -219,7 +219,7 @@ describe("App — the rail's tools", () => {
     const user = await mount();
     const rail = document.querySelector(".activity-rail") as HTMLElement;
     await user.click(within(rail).getByTitle("Settings"));
-    expect(await screen.findByText(/Telemetry/i)).toBeInTheDocument();
+    expect(await screen.findByText("Telemetry")).toBeInTheDocument();
   });
 
   it("offers the tools only with a session", async () => {

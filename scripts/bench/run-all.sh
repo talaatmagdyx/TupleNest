@@ -25,7 +25,7 @@ echo "== environment"
 echo "cpu:      $(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) cores"
 echo "memory:   $(($(sysctl -n hw.memsize) / 1024 / 1024 / 1024)) GB"
 echo "macOS:    $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
-echo "commit:   $(git -C "$repo" rev-parse --short HEAD)"
+echo "commit:   $(git -C "$repo" rev-parse --short HEAD) (source); the app build shows its own in the status bar"
 echo "load:     $(uptime | sed 's/.*load averages*: //')"
 echo
 

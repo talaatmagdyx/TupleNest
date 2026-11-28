@@ -1,6 +1,6 @@
 # Benchmarks
 
-Measurements of TupleNest 0.1.1 on one Mac, taken on 2026-11-27. They show
+Measurements of TupleNest 0.1.1 on one Mac, taken on 2026-11-28. They show
 what this build does on this hardware with this data. They are not a
 guarantee for other machines, and they are not compared with any other
 product.
@@ -15,19 +15,23 @@ can be reproduced with the commands under [Reproducing](#reproducing).
 | Machine | Apple M4 Pro, 12 cores, 24 GB RAM (`sysctl -n machdep.cpu.brand_string`, `hw.ncpu`, `hw.memsize` = 25769803776) |
 | OS | macOS 26.6.2 (build 25G83) |
 | PostgreSQL | 18.0 (Homebrew build, aarch64), same machine, TCP to `localhost:5432`, no TLS, `shared_buffers` = 128MB |
-| SQLite | 3.54.1, the copy bundled into the app by `rusqlite` (the `sqlite3` CLI on the machine is 3.51.0; it was only used to inspect the file) |
+| SQLite | 3.54.1, the copy bundled into the app by `rusqlite` |
 | App version | 0.1.1 (`apps/desktop/src-tauri/tauri.conf.json`) |
-| Source commit | `2029aab8ee66` (driver benchmarks were built from this commit) |
-| App binary | a local release build (`target/release/bundle/macos/TupleNest.app`), bundle identifier `app.tuplenest.verify`, 22 MB executable. It was built from the main checkout before these measurements; the binary does not record its commit, so it is assumed, not verified, to match `2029aab`. |
+| Commit | `40fc8e1`, for both the app and the driver benchmarks. Both were built from a fresh worktree of that commit with no local changes (`git status --porcelain` empty). The app embeds its commit at build time and shows it in the status bar; the built bundle records `40fc8e1` with no `+`, so it is verified, not assumed. |
+| App binary | a local release build, bundle identifier `app.tuplenest.verify`, 22 MB executable |
 | Rust profile | `release` from the workspace `Cargo.toml` (thin LTO, one codegen unit), the same profile the app is built with |
 
-The machine was not idle. Other work (builds, a VM, test suites) was running
-during the session; the 1-minute load average was 5.6 to 13.6 during the
-recorded runs, on 12 cores. Earlier attempts at a load average of 45 to 70
-gave driver timings 3 to 12 times slower with much wider ranges, and were
-discarded. The recorded runs were started only once the load average dropped
-below 6, and the load is printed before and after each section of the run.
-Treat the maxima below as partly noise from that background load.
+**The machine was not idle.** Other work was running throughout: a virtual
+machine, Spotlight indexing and an unrelated Go build. The 1-minute load
+average, printed before and after each section, was 11.9 at the start, 13.3
+after start-up, 14.5 after PostgreSQL and 46.5 at the end of SQLite, on 12
+cores. A wait of almost three hours for the load to drop below 6 did not
+succeed, so these runs were taken under that load. Medians are fairly stable
+under load; the p95, p99 and maximum figures are inflated by it and should be
+read as an upper bound, not as what the app does on a quiet machine.
+
+Percentiles are nearest-rank. Every driver measurement ran 100 times after
+one warm-up; start-up ran 20 launches.
 
 ## Datasets
 
@@ -56,27 +60,26 @@ one table, `events(id integer primary key, ts text, kind text, page text, ms int
 
 ### Summary
 
-| What | Result | Notes |
-| --- | --- | --- |
-| Startup: launch to window on screen | median 305 ms (252 to 430), n=7 | second run: 317 ms (306 to 432) |
-| Startup: launch to start-up work finished | median 1.34 s (1.08 to 1.79), n=7 | second run: 1.14 s (1.08 to 1.55); proxy, see below |
-| Idle memory after 30 s, resident (sum of 4 processes) | 140 to 163 MB | includes shared system pages |
-| Idle memory after 30 s, physical footprint (sum) | 119 to 129 MB | the figure Activity Monitor shows as "Memory" |
-| PostgreSQL: 20,000 rows (`LIMIT 20000`), all read | median 12.5 ms (11.9 to 13.4), n=20 | first batch after 1.0 ms |
-| PostgreSQL: `SELECT * FROM orders` until the 20,000-row cap | median 21.8 ms (20.3 to 40.8), n=20 | rows written to the app's result store |
-| PostgreSQL: all 250,000 rows, no cap | median 151 ms (147 to 194), n=20 | reference only; the app caps at 20,000 |
-| SQLite: 20,000 rows (`LIMIT 20000`), all read | median 4.1 ms (3.8 to 4.3), n=20 | first batch after 0.19 ms |
-| SQLite: `SELECT * FROM events` until the 20,000-row cap | median 8.8 ms (7.9 to 19.9), n=20 | rows written to the app's result store |
-| SQLite: all 50,000 rows, no cap | median 12.2 ms (10.5 to 17.4), n=20 | reference only |
-| Schema discovery, `shop` (1 schema, 8 objects) | median 9.8 ms (6.2 to 10.8), n=20 | full walk, see below |
-| Schema discovery, `analytics.sqlite` (1 table) | median 0.24 ms (0.16 to 0.42), n=20 | |
-| PostgreSQL cancel of `pg_sleep(30)` | median 2.6 ms (1.6 to 114), n=20 | from `cancel()` call to the query returning |
-| SQLite cancel of an endless query | median 0.03 ms (0.02 to 0.13), n=20 | |
-| Large-result rendering in the UI | Not measured yet | see below |
-| Long-running stability | Not measured yet | see below |
+| What | Median | p95 | p99 | n |
+| --- | --- | --- | --- | --- |
+| Startup: launch to window on screen | 309 ms | 416 ms | | 20 |
+| Startup: launch to start-up work finished | 1.13 s | 3.38 s | | 20 |
+| Idle memory after 30 s, physical footprint (sum of 4 processes) | 127 MB | | | 1 |
+| Idle memory after 30 s, resident (sum) | 136 MB | | | 1 |
+| PostgreSQL: 20,000 rows (`LIMIT 20000`), all read | 12.6 ms | 26.9 ms | 31.9 ms | 100 |
+| PostgreSQL: `SELECT * FROM orders` until the 20,000-row cap, stored | 25.3 ms | 81.1 ms | 150 ms | 100 |
+| PostgreSQL: all 250,000 rows, no cap | 152 ms | 334 ms | 625 ms | 100 |
+| SQLite: 20,000 rows (`LIMIT 20000`), all read | 4.0 ms | 4.2 ms | 5.1 ms | 100 |
+| SQLite: `SELECT * FROM events` until the 20,000-row cap, stored | 11.2 ms | 19.9 ms | 24.0 ms | 100 |
+| SQLite: all 50,000 rows, no cap | 11.4 ms | 22.7 ms | 30.5 ms | 100 |
+| Schema discovery, `shop` (1 schema, 8 objects) | 6.5 ms | 16.8 ms | 53.9 ms | 100 |
+| Schema discovery, `analytics.sqlite` (1 table) | 0.10 ms | 0.15 ms | 0.19 ms | 100 |
+| PostgreSQL cancel of `pg_sleep(30)` | 2.7 ms | 5.5 ms | 20.4 ms | 100 |
+| SQLite cancel of an endless query | 0.04 ms | 0.70 ms | 2.4 ms | 100 |
+| Large-result rendering in the UI | Not measured yet | | | |
+| Long-running stability | Not measured yet | | | |
 
-Numbers are from the second of two complete runs, taken a few minutes apart.
-Where the first run differs in a way worth knowing, both are given.
+With 20 launches, p99 would be the maximum, so it is not given for start-up.
 
 ### 1. Application startup
 
@@ -104,23 +107,18 @@ Method (`scripts/bench/startup.swift`): each launch gets a new, empty `HOME`
 no history, as on first run. The probe snapshots the WebKit processes
 already running (other apps own some), launches the binary, polls every
 50 ms, then sends SIGTERM and waits for the app's WebKit processes to exit
-before the next launch. 7 launches per run.
+before the next launch. 20 launches.
 
-Second run (the one in the summary):
+| | Median | p95 | Min | Max |
+| --- | --- | --- | --- | --- |
+| Window on screen | 309 ms | 416 ms | 291 ms | 1988 ms |
+| Start-up work finished | 1.13 s | 3.38 s | 1.03 s | 4.43 s |
+| Resident at that point | 209 MB | | 188 MB | 224 MB |
 
-| Run | Window on screen (ms) | Start-up work finished (ms) | Resident at that point (MB) |
-| --- | --- | --- | --- |
-| 1 | 383 | 1785 | 211 |
-| 2 | 270 | 1106 | 221 |
-| 3 | 252 | 1343 | 205 |
-| 4 | 288 | 1576 | 204 |
-| 5 | 311 | 1083 | 213 |
-| 6 | 430 | 1609 | 207 |
-| 7 | 305 | 1121 | 210 |
-
-The first launch of the whole session, with nothing in the file cache, took
-1028 ms to the window. That single cold number is not repeatable without a
-reboot and is not part of the medians.
+The 1988 ms maximum is the first launch, with the new binary not yet in the
+file cache; launches 2 to 20 took 291 to 416 ms to the window. Three launches
+(1, 17 and 18) took 2.7 to 4.4 s to finish start-up work; the load average
+was above 11 for the whole run, and these were not investigated further.
 
 On first launch the frontend calls the updater; the release endpoint did not
 answer successfully from this build (its log has `update endpoint did not
@@ -129,17 +127,17 @@ respond with a successful status code`). That request is part of the
 
 ### 2. Idle memory
 
-Measured on the last launch of each run, 30 s after start-up work finished,
-with the first-run screen showing and no connection open. Per process, via
+Measured on the last launch, 30 s after start-up work finished, with the
+first-run screen showing and no connection open. Per process, via
 `proc_pid_rusage` (`ri_resident_size`, `ri_phys_footprint`):
 
-| Process | Resident (MB) run 1 / run 2 | Footprint (MB) run 1 / run 2 |
+| Process | Resident (MB) | Footprint (MB) |
 | --- | --- | --- |
-| `tuplenest-desktop` (Rust + Tauri) | 82.2 / 84.1 | 28.9 / 29.0 |
-| `com.apple.WebKit.WebContent` | 31.8 / 45.8 | 73.2 / 71.8 |
-| `com.apple.WebKit.GPU` | 18.7 / 25.3 | 20.4 / 11.7 |
-| `com.apple.WebKit.Networking` | 7.5 / 8.0 | 6.5 / 6.4 |
-| **Total** | **140.2 / 163.2** | **129.1 / 118.9** |
+| `tuplenest-desktop` (Rust + Tauri) | 78.6 | 28.2 |
+| `com.apple.WebKit.WebContent` | 31.4 | 72.5 |
+| `com.apple.WebKit.GPU` | 18.7 | 20.1 |
+| `com.apple.WebKit.Networking` | 7.4 | 6.6 |
+| **Total** | **136.1** | **127.4** |
 
 Resident size counts shared framework pages in every process, so the sum
 overstates what the app costs the system. Physical footprint is the private
@@ -147,10 +145,10 @@ memory macOS charges to each process (including compressed and GPU memory,
 which is why it can exceed resident size for the WebKit processes). The
 WebKit processes are identified as WebKit XPC processes that appeared after
 the app launched; another app starting a WebView in the same window would be
-counted wrongly. In both recorded runs the idle report lists exactly one
-GPU, one Networking and one WebContent process.
+counted wrongly. The idle report lists exactly one GPU, one Networking and
+one WebContent process.
 
-Memory is higher during start-up (about 205 to 221 MB resident in total at
+Memory is higher during start-up (about 188 to 224 MB resident in total at
 the end of start-up work) and drops over the next seconds.
 
 ### 3. Query result streaming
@@ -166,7 +164,7 @@ result (`RESULT_STORE_CAP` and `RESULT_STORE_BYTES` in
 `QueryRequest::row_limit`, and the driver stops at that many rows on the
 server side.
 
-Three cases per engine, each repeated 20 times after one warm-up:
+Three cases per engine, each repeated 100 times after one warm-up:
 
 1. `SELECT * FROM <table> LIMIT 20000`, no row limit, rows decoded and
    counted but not kept. "First batch" is the time until the first batch of
@@ -176,21 +174,21 @@ Three cases per engine, each repeated 20 times after one warm-up:
    `tuplenest_result_stream::RowStore` built with the app's caps. Measured
    until `execute` returns with `more_rows = true`. The row writer is a copy
    of the app's for the column types in these tables, not the app's own
-   function (that lives in the app crate). The store held 1.2 MB of row text
+   function (that lives in the app crate). The store held 1.1 MB of row text
    (0.4 MB compressed) for `orders` and 0.9 MB (0.2 MB compressed) for
    `events`.
 3. The whole table with no row limit, decoded and counted. Not something the
    app does with a plain read; it is here to show the per-row cost at scale.
 
-| Case | PostgreSQL `orders` | SQLite `events` |
+| Case | PostgreSQL `orders`: median / p95 / p99 | SQLite `events`: median / p95 / p99 |
 | --- | --- | --- |
-| Connect / open | 2.4 ms (2.2 to 3.8) | 0.10 ms (0.10 to 0.13) |
-| 1. 20,000 rows, decode only: total | 12.5 ms (11.9 to 13.4) | 4.1 ms (3.8 to 4.3) |
-| 1. 20,000 rows, decode only: first batch | 1.0 ms (0.8 to 1.5) | 0.19 ms (0.18 to 0.22) |
-| 2. Until the 20,000-row cap, stored | 21.8 ms (20.3 to 40.8) | 8.8 ms (7.9 to 19.9) |
-| 3. Whole table, no cap, decode only | 151 ms (147 to 194), 250,000 rows | 12.2 ms (10.5 to 17.4), 50,000 rows |
+| Connect / open | 2.5 / 4.5 / 5.6 ms | 0.09 / 0.13 / 0.19 ms |
+| 1. 20,000 rows, decode only: total | 12.6 / 26.9 / 31.9 ms | 4.0 / 4.2 / 5.1 ms |
+| 1. 20,000 rows, decode only: first batch | 1.0 / 2.1 / 7.2 ms | 0.18 / 0.21 / 0.27 ms |
+| 2. Until the 20,000-row cap, stored | 25.3 / 81.1 / 150 ms | 11.2 / 19.9 / 24.0 ms |
+| 3. Whole table, no cap, decode only | 152 / 334 / 625 ms, 250,000 rows | 11.4 / 22.7 / 30.5 ms, 50,000 rows |
 
-Median (min to max), n=20. What these numbers leave out, all of which a user
+n=100 each. What these numbers leave out, all of which a user
 waits for in the app: the IPC hop to the WebView, the first page of rows
 being serialized and sent to it, and the grid rendering. See "Large-result
 rendering" below.
@@ -204,12 +202,12 @@ open session:
 cost of loading the whole tree; how much of it the explorer requests before
 showing its first screen was not checked.
 
-| | Median | Range | n |
-| --- | --- | --- | --- |
-| `shop`: full walk (1 schema, 8 objects, 12 requests) | 9.8 ms | 6.2 to 10.8 | 20 |
-| `shop`: `ListObjects` on `public` | 0.27 ms | 0.23 to 0.36 | 20 |
-| `shop`: `DescribeObject` on `public.orders` | 0.92 ms | 0.75 to 3.28 | 20 |
-| `analytics.sqlite`: full walk (1 schema, 1 table) | 0.24 ms | 0.16 to 0.42 | 20 |
+| | Median | p95 | p99 | n |
+| --- | --- | --- | --- | --- |
+| `shop`: full walk (1 schema, 8 objects, 12 requests) | 6.5 ms | 16.8 ms | 53.9 ms | 100 |
+| `shop`: `ListObjects` on `public` | 0.24 ms | 0.30 ms | 0.35 ms | 100 |
+| `shop`: `DescribeObject` on `public.orders` | 0.67 ms | 0.83 ms | 0.99 ms | 100 |
+| `analytics.sqlite`: full walk (1 schema, 1 table) | 0.10 ms | 0.15 ms | 0.19 ms | 100 |
 
 `shop` is a small schema. These numbers say nothing about a database with
 thousands of tables or partitions; that has not been measured.
@@ -220,16 +218,15 @@ Time from calling the session's cancel handle to `execute` returning a
 `Cancelled` error. The statement is started, the cancel is sent 500 ms
 later, so the statement is running on the server when it arrives.
 
-| | Median | Range | n |
-| --- | --- | --- | --- |
-| PostgreSQL, `SELECT pg_sleep(30)` | 2.6 ms | 1.6 to 114 | 20 |
-| SQLite, endless recursive CTE (`WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) FROM c`) | 0.03 ms | 0.02 to 0.13 | 20 |
+| | Median | p95 | p99 | Max | n |
+| --- | --- | --- | --- | --- | --- |
+| PostgreSQL, `SELECT pg_sleep(30)` | 2.7 ms | 5.5 ms | 20.4 ms | 35.8 ms | 100 |
+| SQLite, endless recursive CTE (`WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) FROM c`) | 0.04 ms | 0.70 ms | 2.4 ms | 2.5 ms | 100 |
 
 For PostgreSQL, the cancel opens a separate connection and sends a cancel
 request; the server then interrupts the backend. Over TCP to localhost this
-is a few milliseconds. One run in each of the two complete runs took more
-than 10 ms (114 ms and 11.7 ms); this was not investigated further, and the
-background load is a likely cause. Over a real network, add at least one
+is a few milliseconds. The slowest 1% took 20 to 36 ms; this was not
+investigated further, and the background load is a likely cause. Over a real network, add at least one
 connection setup to the server.
 
 For SQLite, cancel calls `sqlite3_interrupt`, which the running statement
@@ -266,7 +263,7 @@ PostgreSQL server holding the `shop` database:
 TUPLENEST_TEST_PG_USER=<pg user> \
 TUPLENEST_TEST_PG_DB=shop \
 TUPLENEST_BENCH_SQLITE=<path>/analytics.sqlite \
-TUPLENEST_BENCH_RUNS=20 \
+TUPLENEST_BENCH_RUNS=100 STARTUP_RUNS=20 \
   scripts/bench/run-all.sh <repo>/target/release/bundle/macos/TupleNest.app/Contents/MacOS/tuplenest-desktop
 ```
 
@@ -276,15 +273,15 @@ Or each part on its own:
 # Startup and idle memory: <runs> launches, idle <seconds> on the last one.
 swiftc -O scripts/bench/startup.swift -o /tmp/startup-probe
 mkdir -p /tmp/tn-bench-home
-/tmp/startup-probe <path to tuplenest-desktop> /tmp/tn-bench-home 7 30
+/tmp/startup-probe <path to tuplenest-desktop> /tmp/tn-bench-home 20 30
 
 # PostgreSQL driver: connect, streaming, schema discovery, cancel.
-TUPLENEST_BENCH_PG=1 TUPLENEST_TEST_PG_USER=<pg user> TUPLENEST_TEST_PG_DB=shop TUPLENEST_BENCH_RUNS=20 \
+TUPLENEST_BENCH_PG=1 TUPLENEST_TEST_PG_USER=<pg user> TUPLENEST_TEST_PG_DB=shop TUPLENEST_BENCH_RUNS=100 \
   cargo test --release -p tuplenest-driver-postgres --test bench_pg \
   -- --ignored --nocapture --test-threads=1
 
 # SQLite driver: open, streaming, schema discovery, cancel.
-TUPLENEST_BENCH_SQLITE=<path>/analytics.sqlite TUPLENEST_BENCH_RUNS=20 \
+TUPLENEST_BENCH_SQLITE=<path>/analytics.sqlite TUPLENEST_BENCH_RUNS=100 \
   cargo test --release -p tuplenest-driver-sqlite --test bench_sqlite \
   -- --ignored --nocapture --test-threads=1
 ```
@@ -294,10 +291,14 @@ The PostgreSQL connection uses the same `TUPLENEST_TEST_PG_HOST`, `_PORT`,
 `crates/driver-postgres/tests/live_pg.rs`, with no password (local trust
 authentication) and TLS off. The benchmarks connect read-only and do not
 write to either database. They are `#[ignore]`d, so a plain `cargo test`
-does not run them.
+does not run them, and they also need an opt-in variable: the PostgreSQL ones
+run only with `TUPLENEST_BENCH_PG` set and the SQLite ones only with
+`TUPLENEST_BENCH_SQLITE`, so CI's `--include-ignored` live-test job skips
+them. `run-all.sh` sets `TUPLENEST_BENCH_PG` itself.
 
 Check the load average (`uptime`) before running; on a busy machine the
-driver numbers in particular move a lot.
+p95 and p99 figures in particular move a lot. Build from a clean checkout so
+the status bar shows the commit without a `+`.
 
 The files:
 

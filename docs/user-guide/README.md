@@ -11,7 +11,7 @@ Screenshots are from the app, taken on the demo data described in
   and multiple tabs.
 - **Parameters:** `$1…$n` are bound as real parameters, never pasted into
   the text.
-- **Run and cancel:** <kbd>⌘↵</kbd> runs. Cancel stops the statement on the
+- **Run and cancel:** <kbd>⌘↵</kbd> (<kbd>Ctrl</kbd>+<kbd>Enter</kbd> on Windows and Linux) runs. Cancel stops the statement on the
   server, not just in the window. Each connection can have a statement
   timeout, enforced by the server.
 - **Transactions:** *Begin transaction* opens one owned by that tab. Another

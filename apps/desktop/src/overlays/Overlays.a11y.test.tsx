@@ -24,7 +24,7 @@ import {
  */
 describe("dialog names", () => {
   it("names a ModalHead dialog by its title, through aria-labelledby", () => {
-    render(<Settings theme="dark" telemetry={false} onTheme={vi.fn()} onTelemetry={vi.fn()} onClose={vi.fn()} />);
+    render(<Settings theme="dark" onTheme={vi.fn()} onClose={vi.fn()} />);
     const dlg = screen.getByRole("dialog", { name: "Settings" });
     expect(dlg).toHaveAttribute("aria-modal", "true");
     const title = document.getElementById(dlg.getAttribute("aria-labelledby")!);
@@ -154,7 +154,7 @@ describe("Palette as a combobox", () => {
 
 describe("Settings theme switch", () => {
   it("says which theme is on", () => {
-    render(<Settings theme="light" telemetry={false} onTheme={vi.fn()} onTelemetry={vi.fn()} onClose={vi.fn()} />);
+    render(<Settings theme="light" onTheme={vi.fn()} onClose={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Light" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Dark" })).toHaveAttribute("aria-pressed", "false");
   });

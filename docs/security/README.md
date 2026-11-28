@@ -3,7 +3,11 @@
 TupleNest has two layers of protection, with different strengths.
 
 - **Enforced by the database:** read-only sessions, and the privileges of the
-  role you connect as. A statement can't talk its way past these.
+  role you connect as. A read-only profile pairs a database-enforced read-only
+  session with the app's statement checks. That is much stronger than a
+  disabled button, but only role privileges hold against everything. For
+  example, an extension that opens its own connection, such as `dblink`, is not
+  bound by the session's read-only mode.
 - **Checks in the app:** the statement guard, type-the-name confirmations, the
   audit log, and transaction ownership. They are careful, tested, and
   best-effort. They make mistakes much less likely, but they aren't a security
@@ -17,7 +21,7 @@ the client does.
 
 | Protection | Layer | How it works | Limits |
 |---|---|---|---|
-| **Read-only profile (PostgreSQL)** | Database | The session is set read-only on the server (`SET SESSION CHARACTERISTICS … READ ONLY`) and its mode is re-checked before every statement. The app also sends only statements that read | PostgreSQL's read-only mode alone still allows `VACUUM`, `CHECKPOINT` or `COPY … TO PROGRAM`; the read-only allowlist is there for those |
+| **Read-only profile (PostgreSQL)** | Database | The session is set read-only on the server (`SET SESSION CHARACTERISTICS … READ ONLY`) and its mode is re-checked before every statement. The app also sends only statements that read | PostgreSQL's read-only mode alone still allows `VACUUM`, `CHECKPOINT` or `COPY … TO PROGRAM`, and the read-only allowlist covers those. Neither stops a write made over a separate connection, such as through `dblink`; a role without write privileges does |
 | **Read-only profile (SQLite)** | Database | The file is opened read-only, `PRAGMA query_only` is set before every statement, and a statement SQLite reports as writing is refused before it runs | |
 | **Destructive-statement guard** | App | On `prod` and `staging`, the guard asks first for any of these. Comments and strings are masked before matching. <ul><li>`UPDATE`/`DELETE` without a real `WHERE` (`WHERE 1=1` counts as none)</li><li>`DROP`, `TRUNCATE`, `ALTER`, `CREATE`</li><li>`GRANT`, `REVOKE`, `MERGE`, `DO`, `CALL`</li><li>`COPY … FROM`</li><li>`EXPLAIN ANALYZE` of any of the above</li></ul> | A function with side effects called from a `SELECT` is invisible to any client-side check |
 | **Type the name** | App | On `prod`, an unbounded `UPDATE`/`DELETE`, a `DROP` or a `TRUNCATE` keeps *Run anyway* disabled until you type the target's name | |

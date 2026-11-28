@@ -145,7 +145,6 @@ const COPY_ROW_CAP = 10_000;
 export default function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [telemetry, setTelemetry] = useState(false);
 
   // The connection form and profile identity move as one unit, so they live
   // in one hook. Destructured to keep every read site unchanged; writes go
@@ -340,9 +339,6 @@ export default function App() {
     invoke<"dark" | "light" | null>("settings_get", { key: "theme" })
       .then((t) => t && setTheme(t))
       .catch(() => {});
-    invoke<boolean | null>("settings_get", { key: "telemetry" })
-      .then((v) => setTelemetry(!!v))
-      .catch(() => {});
     // Loading on mount is what an effect is for: both await their IPC call
     // before setting anything.
     void refreshSaved();
@@ -376,11 +372,6 @@ export default function App() {
   const applyTheme = useCallback(async (t: "dark" | "light") => {
     setTheme(t);
     await invoke("settings_set", { key: "theme", value: t }).catch(() => {});
-  }, []);
-
-  const applyTelemetry = useCallback(async (v: boolean) => {
-    setTelemetry(v);
-    await invoke("settings_set", { key: "telemetry", value: v }).catch(() => {});
   }, []);
 
   /* ---------------- params & connection ---------------- */
@@ -2299,9 +2290,7 @@ export default function App() {
       {overlay === "settings" && (
         <Settings
           theme={theme}
-          telemetry={telemetry}
           onTheme={applyTheme}
-          onTelemetry={applyTelemetry}
           section={settingsAssistant ? "assistant" : "general"}
           version={info?.version ?? ""}
           os={info?.os ?? ""}

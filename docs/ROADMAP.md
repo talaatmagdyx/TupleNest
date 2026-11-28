@@ -5,9 +5,9 @@ The roadmap lives on the website, in one place:
 [`docs/site/roadmap.html`](site/roadmap.html)).
 
 It covers what has shipped, what is planned, and what TupleNest will not
-become. In short: the engines are PostgreSQL and SQLite, and no other engine
-(MySQL, MariaDB, SQL Server, MongoDB, Redis) is planned; there is no hosted
-or cloud service. The assistant sends your question, the query and schema
+become. In short: TupleNest is currently focused on PostgreSQL and SQLite, and any
+engine added later gets the same safety model; there is no hosted or cloud
+service. The assistant sends your question, the query and schema
 names, but never row data. An AI tool you connect over MCP does receive rows,
 but only from the connections you turn on for it.
 

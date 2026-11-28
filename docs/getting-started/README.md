@@ -66,8 +66,10 @@ updates. While TupleNest is in beta, install a new version by downloading it.
 3. Set the environment: `dev`, `test`, `staging` or `prod`. `staging` and
    `prod` turn on the confirmations, and `prod` also turns on the audit log
    and keeps SQL out of history.
-4. Tick **Read-only** if you only need to read. The database enforces it.
+4. Turn on **Read-only connection** if you only need to read. The database
+   session enforces it. For data that must not change, also connect as a role
+   without write privileges.
 5. Connect, open a table from the sidebar or write a query, and press
-   <kbd>⌘↵</kbd>.
+   <kbd>⌘↵</kbd> (<kbd>Ctrl</kbd>+<kbd>Enter</kbd> on Windows and Linux).
 
 Next: the [user guide](../user-guide/README.md).

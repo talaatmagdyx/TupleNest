@@ -72,8 +72,9 @@ getting in the way when you're working on dev.
 
 ### AI on your terms
 
-- **The assistant never sees your rows.** It gets the question, the SQL and
-  schema names. It uses your own Anthropic key or a local Ollama model.
+- **The assistant isn't sent result rows.** It gets the question, the SQL,
+  error text and schema names. It uses your own Anthropic key or a local
+  Ollama model.
 - **It never runs anything by itself.** Suggestions go into the editor, and
   you press Run.
 - **The MCP server starts Off for every connection.** When you turn it on for
@@ -88,15 +89,15 @@ getting in the way when you're working on dev.
 - **Measured, not claimed.** On an M4 Pro:
   - the window appears in about 0.3 s
   - the app idles at about 120–130 MB
-  - the PostgreSQL driver reads 20,000 rows in about 22 ms
+  - the PostgreSQL driver reads 20,000 rows in about 25 ms
 
   Details and the commands to rerun them are in
   [docs/benchmarks](docs/benchmarks/README.md).
 
 ### Focused
 
-- **Two engines, PostgreSQL 13+ and SQLite 3, with one safety model.** No other
-  engines are planned.
+- **Two engines, PostgreSQL 13+ and SQLite 3, with one safety model.** Currently focused on these
+  two; any engine added later gets the same safety model.
 - **It runs on macOS, Windows and Linux,** built from one codebase in CI.
 
 ## Features
@@ -139,10 +140,16 @@ The full tour, with screenshots and keyboard shortcuts, is in the
 
 TupleNest has two kinds of protection, and they are not equally strong.
 
-**Enforced by the database.** On a read-only PostgreSQL profile the session
-is set read-only on the server and re-checked before every statement. A
-read-only SQLite file is opened read-only with `PRAGMA query_only` set. A
-statement can't get past these by being cleverly written.
+**Enforced by the database.** A read-only profile combines a database-enforced
+read-only session with the app's statement checks:
+
+- **PostgreSQL:** the session is set read-only on the server and re-checked
+  before every statement.
+- **SQLite:** the file is opened read-only with `PRAGMA query_only` set.
+
+These are much stronger than a disabled button, but a read-only session is not
+the same as a role without write privileges. For example, an extension that
+opens its own connection, such as `dblink`, is not bound by it.
 
 **Checks in the app.** On `prod` and `staging` connections the app stops
 before:
@@ -187,12 +194,13 @@ The full table of protections and their limits is in the
 
 <br/>
 
-**The assistant** (<kbd>⌘J</kbd>) explains a query, writes SQL from a plain
+**The assistant** (<kbd>⌘J</kbd> or <kbd>Ctrl</kbd>+<kbd>J</kbd>) explains a query, writes SQL from a plain
 request, or fixes a failed statement. It uses either your own Anthropic API
 key or an [Ollama](https://ollama.com) model.
 
-- It receives your message, the editor's SQL, error text and schema names and
-  types. It never receives result rows.
+- It receives your message, the editor's SQL, error text, and schema names
+  and types. It is never sent result rows. Values you type into the SQL or the
+  message, or that appear in an error's main line, do go with them.
 - It never runs anything. A suggestion reaches the editor only when you insert
   it, and runs only when you press Run, through the same checks as anything
   you type.
@@ -218,13 +226,14 @@ Setup for each client: [MCP guide](docs/user-guide/mcp.md).
 |---|---|
 | Connection profiles, settings, dashboards, notebooks | A local SQLite file in your OS app-data folder |
 | Passwords, passphrases, API keys | The OS keychain (Keychain, Credential Manager, Secret Service) |
-| Query history | Local. On `prod` connections the SQL text is **not** stored, only timing, row count and status. Elsewhere, common secret values are removed |
-| Production audit log | Local. It **does** keep prod SQL (with secret values removed), as a record of what was run. `-- tuplenest:no-history` does not skip it |
-| Assistant with a cloud provider | `api.anthropic.com`, or an Ollama cloud model if you allow those: your message, SQL, error text and schema names and types. Not rows |
+| Query history | Local. On `prod` connections the SQL text is **not** stored, only timing, row count and status. Elsewhere, common secret values are removed (best-effort). `-- tuplenest:no-history` keeps a statement out of history |
+| Production audit log | Local. It **does** keep prod SQL (with secret values removed, best-effort), as a record of what was run. `-- tuplenest:no-history` does **not** skip it, so a prod tag doesn't keep SQL off the disk |
+| Notebook results, large results | Local and unencrypted: a notebook keeps each SQL cell's last 200 rows, and a result over 16 MB compressed spills to an unnamed temporary file while it is open |
+| Assistant with a cloud provider | `api.anthropic.com`, or an Ollama cloud model if you allow those: your message, SQL, error text and schema names and types. Not result rows, but any value written in the SQL or message goes too |
 | Assistant with a local model | Your Ollama server. `localhost` by default, so nothing leaves the computer unless you point it at another machine |
 | MCP clients | The AI tool that started the server gets what its queries return, rows included, and may send it wherever it sends data |
-| Update check | `github.com`, once at each start-up. GitHub sees your IP address and a standard request; no ID is sent |
-| Telemetry | None. The setting exists, is off, and no code sends anything |
+| Update check | `github.com`, once at each start-up, and it can't be turned off yet. GitHub sees your IP address and a standard request; no ID is sent |
+| Telemetry | None. There is no telemetry code |
 
 [PRIVACY.md](PRIVACY.md) has the full policy, including where each file lives
 and how to delete it.
@@ -240,7 +249,7 @@ and how to delete it.
 4. **Set its environment and access.** Tag it `prod`, `staging` or `dev`, and
    choose read-only if you only need to read.
 5. **Explore.** Open a table from the sidebar, or write a query and press
-   <kbd>⌘↵</kbd>.
+   <kbd>⌘↵</kbd> (<kbd>Ctrl</kbd>+<kbd>Enter</kbd> on Windows and Linux).
 
 To build it yourself, see [docs/development](docs/development/README.md).
 

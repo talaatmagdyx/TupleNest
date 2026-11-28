@@ -595,9 +595,7 @@ describe("ConnLost", () => {
 describe("Settings", () => {
   const base = {
     theme: "dark" as const,
-    telemetry: false,
     onTheme: vi.fn(),
-    onTelemetry: vi.fn(),
     onClose: vi.fn(),
   };
 
@@ -619,24 +617,10 @@ describe("Settings", () => {
     expect(screen.getByRole("button", { name: "Light" })).toHaveClass("on");
   });
 
-  it("toggles telemetry both ways", async () => {
-    const onTelemetry = vi.fn();
-    const { container, rerender } = render(<Settings {...base} onTelemetry={onTelemetry} />);
-    await userEvent.click(container.querySelector(".toggle")!);
-    expect(onTelemetry).toHaveBeenCalledWith(true);
-    rerender(<Settings {...base} telemetry onTelemetry={onTelemetry} />);
-    await userEvent.click(container.querySelector(".toggle")!);
-    expect(onTelemetry).toHaveBeenLastCalledWith(false);
-  });
-
-  it("shows telemetry as on when it is", () => {
-    const { container } = render(<Settings {...base} telemetry />);
-    expect(container.querySelector(".toggle")).toHaveClass("on");
-  });
-
-  it("promises no query text leaves the device", () => {
-    render(<Settings {...base} />);
-    expect(screen.getByText(/Collects nothing today/)).toBeInTheDocument();
+  it("states there is no telemetry instead of offering a switch", () => {
+    const { container } = render(<Settings {...base} />);
+    expect(screen.getByText(/has no telemetry and collects no usage data/)).toBeInTheDocument();
+    expect(container.querySelector(".toggle")).toBeNull();
   });
 
   it("shows the MCP server section it is given, under its own heading in the nav", async () => {
