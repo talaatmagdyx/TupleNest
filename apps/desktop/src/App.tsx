@@ -52,6 +52,7 @@ import AssistantSettings from "./settings/AssistantSettings";
 import { isConnectionLost, useQuery } from "./hooks/useQuery";
 import { defaultSearchPath } from "./lib/nodes";
 import { useTransaction } from "./hooks/useTransaction";
+import { serverInTransaction } from "./lib/tx";
 import { lostDetail, useConnectionLost } from "./hooks/useConnectionLost";
 import { useExplain } from "./hooks/useExplain";
 import { useRowEdits } from "./hooks/useRowEdits";
@@ -997,6 +998,10 @@ export default function App() {
         return;
       }
       if (out.kind === "blocked") return;
+      // A COMMIT or ROLLBACK typed in the owning tab ends the transaction
+      // without the hook hearing of it; left alone, the stale owner would
+      // keep refusing the other tabs (TN-035). The server says which.
+      if (endsTransaction(sql) && tx.inTx && !(await serverInTransaction())) tx.forget();
 
       setChart(null);
       if (out.kind === "ok") {
@@ -1012,7 +1017,7 @@ export default function App() {
       }
       void refreshHistory();
     },
-    [tabs, activeTab, connected, connectedEnv, query, setTabs, refreshHistory, showToast, noticeLost, notOwner]
+    [tabs, activeTab, connected, connectedEnv, query, setTabs, refreshHistory, showToast, noticeLost, notOwner, tx]
   );
 
   /* ---------------- safe row editing ---------------- */

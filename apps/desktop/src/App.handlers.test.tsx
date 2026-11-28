@@ -502,6 +502,15 @@ describe("App — one session, many tabs: the transaction has an owner", () => {
     );
   });
 
+  it("TN-035: a COMMIT typed in the owning tab ends the transaction in the UI too", async () => {
+    const user = await connected();
+    await openTxInFirstTab(user);
+    be.on("pg_in_transaction", () => false);
+    await typeAndRun(user, "COMMIT");
+    // Begin is back only with no transaction open, so another tab is free again.
+    expect(await screen.findByRole("button", { name: /Begin transaction/ })).toBeInTheDocument();
+  });
+
   it("TN-035: still runs other statements typed in a tab that does not own the transaction", async () => {
     // The session is shared on purpose; only ending the transaction is the
     // owner's call.
