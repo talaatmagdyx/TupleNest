@@ -66,8 +66,8 @@ updates. While TupleNest is in beta, install a new version by downloading it.
 2. Pick **PostgreSQL** (host, port, database, user; TLS `verify-full` by
    default) or **SQLite** (a file path).
 3. Set the environment: `dev`, `test`, `staging` or `prod`. `staging` and
-   `prod` turn on the confirmations, and `prod` also turns on the audit log
-   and keeps SQL out of history.
+   `prod` turn on the confirmations, both turn on the audit log, and `prod`
+   also keeps SQL out of history.
 4. Turn on **Read-only connection** if you only need to read. The database
    session enforces it. For data that must not change, also connect as a role
    without write privileges.

@@ -91,7 +91,7 @@ describe("App — every overlay closes", () => {
 
   it("closes the audit log", async () => {
     const user = await connected(PROD.name);
-    await palette(user, "Prod audit log");
+    await palette(user, "Audit log");
     await close(user);
   });
 

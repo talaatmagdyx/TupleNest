@@ -131,7 +131,7 @@ export const TOUR_STEPS: { title: string; heading: string; points: string[] }[] 
     points: [
       "Read-only connections are enforced by the database, not just the app.",
       "On prod and staging, risky writes stop and ask, and you type the table name for the worst ones.",
-      "Every statement on production is written to the audit log before it runs.",
+      "Every statement on production and staging is written to the audit log before it runs.",
     ],
   },
   {

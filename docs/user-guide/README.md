@@ -66,7 +66,7 @@ Screenshots are from the app, taken on the demo data described in
 | **Backup and restore** (PostgreSQL) | Runs your own `pg_dump` (custom format) and `pg_restore` without a shell. The password goes in a private temporary pgpass file. Restoring into `prod` or `staging` asks you to type the database name |
 | **Users and roles** (PostgreSQL) | Each role's table privileges, with a warning when a role that looks read-only can write. The matching `GRANT`/`REVOKE` is text to copy; nothing is changed |
 | **Server monitor** (PostgreSQL) | Backends, cache hit ratio, blocked locks, and sessions you can cancel or terminate. Terminate asks first, and on `prod` you type the process ID |
-| **Audit log** | On `prod`, each statement's SQL (with secret values removed), written before it runs |
+| **Audit log** | On `prod` and `staging`, each statement's SQL (with secret values removed), written before it runs |
 
 ![Dashboard](../site/shots/screen-dashboard.jpg)
 

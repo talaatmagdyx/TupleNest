@@ -67,7 +67,7 @@ export default function AuditModal(p: { onClose: () => void }) {
           {err && <div className="error-box">{err}</div>}
           {rows && rows.length === 0 && (
             <div className="center-note" style={{ padding: 40 }}>
-              No audited statements yet. Every statement sent on a prod connection is recorded here in full, before
+              No audited statements yet. Every statement sent on a prod or staging connection is recorded here in full, before
               it runs.
             </div>
           )}

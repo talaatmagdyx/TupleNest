@@ -159,20 +159,29 @@ describe("App — top queries", () => {
   });
 });
 
-describe("App — the prod audit log", () => {
+describe("App — the audit log", () => {
   it("is offered only for a production session", async () => {
     // The log only records statements run against prod. On a dev session the
     // item would open an empty panel.
     const user = await connected();
     await user.keyboard("{Meta>}k{/Meta}");
     await user.type(await screen.findByPlaceholderText(/type a command/i), "audit");
-    expect(screen.queryByText(/Prod audit log/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Audit log/)).not.toBeInTheDocument();
   });
 
   it("opens for a production session", async () => {
     be.on("audit_list", () => []);
     const user = await connected(PROD.name);
-    await palette(user, "Prod audit log");
+    await palette(user, "Audit log");
+    await waitFor(() => expect(be.sent("audit_list").length).toBeGreaterThan(0));
+  });
+
+  it("opens for a staging session (TN-033)", async () => {
+    const STAGING = { ...PROD, id: "c3", name: "stage db", environment: "staging" };
+    be.on("connection_list", () => [CONNECTION, PROD, STAGING]);
+    be.on("audit_list", () => []);
+    const user = await connected(STAGING.name);
+    await palette(user, "Audit log");
     await waitFor(() => expect(be.sent("audit_list").length).toBeGreaterThan(0));
   });
 });
