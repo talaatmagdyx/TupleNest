@@ -1,0 +1,71 @@
+name: Benchmarks (SQLite driver)
+
+# Numbers for the platforms the benchmark machine is not: the SQLite driver
+# benchmarks (tests/bench_sqlite.rs) on Linux and Windows, plus macOS for a
+# same-runner comparison. Started by hand only (Actions > this workflow > Run
+# workflow); it never runs on push or pull request. Shared runners are noisy
+# neighbours, so read medians, not tails. See docs/benchmarks/README.md.
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Repetitions per measurement (TUPLENEST_BENCH_RUNS)"
+        default: "100"
+      large_sizes:
+        description: "Table counts for the large-schema benchmark"
+        default: "1000,10000"
+
+jobs:
+  sqlite:
+    strategy:
+      fail-fast: false
+      matrix: { os: [ubuntu-latest, windows-latest, macos-latest] }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run: { shell: bash }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch @ 2025-07
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+
+      - name: Benchmark dataset
+        run: python scripts/bench/make-events-sqlite.py "$RUNNER_TEMP/analytics.sqlite"
+
+      - name: Environment
+        run: |
+          {
+            echo "### ${{ matrix.os }}"
+            echo
+            echo '```'
+            echo "runner: $RUNNER_OS $RUNNER_ARCH, $(nproc 2>/dev/null || echo "$NUMBER_OF_PROCESSORS") cores"
+            uptime 2>/dev/null || true
+            rustc --version
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The crate alone, not the workspace: no Tauri, so no webkit2gtk.
+      - name: SQLite driver benchmarks
+        env:
+          TUPLENEST_BENCH_SQLITE: ${{ runner.temp }}/analytics.sqlite
+          TUPLENEST_BENCH_SQLITE_LARGE: "1"
+          TUPLENEST_BENCH_SQLITE_LARGE_SIZES: ${{ inputs.large_sizes }}
+          TUPLENEST_BENCH_RUNS: ${{ inputs.runs }}
+        run: |
+          cargo test --release -p tuplenest-driver-sqlite --test bench_sqlite \
+            -- --ignored --nocapture --test-threads=1 2>&1 | tee bench.log
+          {
+            echo '```'
+            grep -E '^(BENCH|INFO)' bench.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bench-sqlite-${{ matrix.os }}
+          path: bench.log

@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { QueryResult } from "../ipc/types";
 import { needsGuard, paramCount, STOPPED_AT_LIMIT, totalRowsText } from "../lib/sql";
+import { markResult, markRunAbandoned, markRunStart } from "../lib/perf";
 
 /** The backend prefixes a lost session with this; nothing else does. */
 export const LOST_PREFIX = "Connection lost:";
@@ -186,8 +187,10 @@ export function useQuery(): Query {
     setRunning(true);
     setStatus(null);
     try {
+      markRunStart();
       const r = await invoke<QueryResult>("pg_query", { sql, params: opts.params ?? null });
       if (mine !== token.current) return { kind: "blocked", reason: "stale" };
+      markResult(r.columns.length > 0 && r.storedRows > 0);
       setResult(r);
       setRanSql(sql);
       setRanParams(opts.params);
@@ -198,6 +201,7 @@ export function useQuery(): Query {
       return { kind: "ok", result: r };
     } catch (e) {
       if (mine !== token.current) return { kind: "blocked", reason: "stale" };
+      markRunAbandoned();
       const message = String(e);
       // A failed run must not leave the previous result on screen next to an
       // error — that reads as "this is what your query returned".

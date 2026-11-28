@@ -389,3 +389,180 @@ async fn bench_sqlite_cancel_latency() {
         latency,
     );
 }
+
+// ---------------------------------------------------------------------------
+// Large schemas. Needs TUPLENEST_BENCH_SQLITE (any value; the file it names is
+// not used here) and TUPLENEST_BENCH_SQLITE_LARGE. For each size it builds a
+// new database in a temporary directory, opens it read-only through the
+// driver, measures, and deletes it.
+// ---------------------------------------------------------------------------
+
+/// Table counts to build, `TUPLENEST_BENCH_SQLITE_LARGE_SIZES` (default 1000,10000).
+fn large_sizes() -> Option<Vec<usize>> {
+    std::env::var_os("TUPLENEST_BENCH_SQLITE")?;
+    std::env::var_os("TUPLENEST_BENCH_SQLITE_LARGE")?;
+    Some(
+        std::env::var("TUPLENEST_BENCH_SQLITE_LARGE_SIZES")
+            .unwrap_or_else(|_| "1000,10000".into())
+            .split(',')
+            .map(|s| {
+                s.trim()
+                    .parse()
+                    .expect("TUPLENEST_BENCH_SQLITE_LARGE_SIZES")
+            })
+            .collect(),
+    )
+}
+
+/// Repetitions of the full walk, which takes seconds at 10,000 tables.
+fn walk_runs() -> usize {
+    std::env::var("TUPLENEST_BENCH_WALK_RUNS")
+        .ok()
+        .and_then(|r| r.parse().ok())
+        .unwrap_or(5)
+}
+
+/// The same table shapes as the PostgreSQL large-schema benchmark: `n` tables
+/// t00001.., `id integer primary key`, `parent_id`, `name`, `amount`,
+/// `created_at`; every even-numbered table has a foreign key from `parent_id`
+/// to the table before it and an index on `parent_id`. One transaction.
+fn build_tables(path: &std::path::Path, n: usize) {
+    let mut conn = rusqlite::Connection::open(path).unwrap();
+    let tx = conn.transaction().unwrap();
+    for i in 1..=n {
+        let fk = if i % 2 == 0 {
+            format!(" REFERENCES t{:05}(id)", i - 1)
+        } else {
+            String::new()
+        };
+        tx.execute_batch(&format!(
+            "CREATE TABLE t{i:05} (id integer PRIMARY KEY, parent_id integer{fk}, \
+             name text NOT NULL, amount numeric, created_at text NOT NULL);"
+        ))
+        .unwrap();
+        if i % 2 == 0 {
+            tx.execute_batch(&format!(
+                "CREATE INDEX t{i:05}_parent ON t{i:05} (parent_id);"
+            ))
+            .unwrap();
+        }
+    }
+    tx.commit().unwrap();
+}
+
+#[tokio::test]
+#[ignore = "benchmark: requires TUPLENEST_BENCH_SQLITE and TUPLENEST_BENCH_SQLITE_LARGE"]
+async fn bench_sqlite_large_schema() {
+    let Some(sizes) = large_sizes() else { return };
+    for n in sizes {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(format!("{n}-tables.sqlite"));
+        let started = Instant::now();
+        build_tables(&path, n);
+        println!(
+            "INFO\tbuilt {n} tables ({} foreign keys, {} extra indexes) in {:.1} s, {:.1} MB file",
+            n / 2,
+            n / 2,
+            started.elapsed().as_secs_f64(),
+            std::fs::metadata(&path).unwrap().len() as f64 / 1_048_576.0
+        );
+
+        let cfg = ConnectionConfig {
+            database: path.to_string_lossy().into_owned(),
+            ..config().unwrap_or_else(|| unreachable!())
+        };
+        let s = SqliteDriver.connect_concrete(cfg).await.unwrap();
+        let mid = format!("t{:05}", n / 2);
+        let requests = [
+            ("ListSchemas".to_string(), MetadataRequest::ListSchemas),
+            (
+                "ListObjects main".to_string(),
+                MetadataRequest::ListObjects {
+                    schema: "main".into(),
+                },
+            ),
+            (
+                format!("DescribeObject main.{mid}"),
+                MetadataRequest::DescribeObject {
+                    schema: "main".into(),
+                    name: mid.clone(),
+                },
+            ),
+            (
+                "Relationships main".to_string(),
+                MetadataRequest::Relationships {
+                    schema: "main".into(),
+                },
+            ),
+        ];
+        for (name, request) in requests {
+            let mut t = vec![];
+            let mut bytes = 0;
+            for i in 0..=runs() {
+                let started = Instant::now();
+                let r = s.metadata(request.clone()).await.unwrap();
+                if i > 0 {
+                    t.push(ms(started.elapsed()));
+                }
+                bytes = r.payload.to_string().len();
+            }
+            report(&format!("sqlite {n} tables: {name}"), t);
+            println!(
+                "INFO\tsqlite {n} tables: {name} payload {:.2} MB JSON",
+                bytes as f64 / 1_048_576.0
+            );
+        }
+
+        let mut t = vec![];
+        let mut counts = (0, 0);
+        for i in 0..=walk_runs() {
+            let started = Instant::now();
+            s.metadata(MetadataRequest::ServerInfo).await.unwrap();
+            let schemas: Vec<String> = serde_json::from_value(
+                s.metadata(MetadataRequest::ListSchemas)
+                    .await
+                    .unwrap()
+                    .payload,
+            )
+            .unwrap();
+            let mut objects = 0;
+            for schema in &schemas {
+                let list = s
+                    .metadata(MetadataRequest::ListObjects {
+                        schema: schema.clone(),
+                    })
+                    .await
+                    .unwrap()
+                    .payload;
+                for o in list.as_array().unwrap() {
+                    objects += 1;
+                    s.metadata(MetadataRequest::DescribeObject {
+                        schema: schema.clone(),
+                        name: o["name"].as_str().unwrap().to_string(),
+                    })
+                    .await
+                    .unwrap();
+                }
+                s.metadata(MetadataRequest::Relationships {
+                    schema: schema.clone(),
+                })
+                .await
+                .unwrap();
+            }
+            counts = (schemas.len(), objects);
+            if i > 0 {
+                t.push(ms(started.elapsed()));
+            }
+        }
+        report(
+            &format!(
+                "sqlite {n} tables: full walk ({} schemas, {} objects, {} requests)",
+                counts.0,
+                counts.1,
+                2 + 2 * counts.0 + counts.1
+            ),
+            t,
+        );
+        drop(s);
+    }
+}

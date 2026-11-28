@@ -29,7 +29,9 @@ tuplenest-driver-api = { path = "../driver-api" }
 # Only for tests/bench_*.rs: stores rows the way the desktop app does.
 tuplenest-result-stream = { path = "../result-stream" }
 hex = "0.4"
-tokio = { workspace = true }
+# net and io-util are already compiled in through tokio-postgres; the latency
+# benchmark's delay proxy (tests/bench_pg.rs) uses them directly.
+tokio = { workspace = true, features = ["net", "io-util"] }
 # Synthesises a CA and leaf certificates in-process so the VerifyCa verifier
 # can be tested for what it actually does. The live server's cert names both
 # `localhost` and `127.0.0.1`, so no address that reaches it is a name
