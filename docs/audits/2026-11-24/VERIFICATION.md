@@ -46,7 +46,7 @@ PostgreSQL server (`TUPLENEST_TEST_PG_*`) and is `#[ignore]`d like the others.
 
 ## Findings: guarantees that do not hold
 
-Numbers continue from TN-031. TN-032, TN-035, TN-036 and TN-037 are fixed on `main`, each in its own pull request with its regression test; the tests listed here now run. TN-033 is fixed: staging is audited from the window as from MCP. TN-034 waits on its own change.
+Numbers continue from TN-031. All six are dealt with on `main`, each in its own pull request with its tests: TN-032, TN-035, TN-036 and TN-037 were fixed, TN-033 and TN-034 changed by decision (#123 and the guard pull request). The tests listed here run.
 
 - **TN-032 (P1), fixed in #115. A read-only profile writes through the COMMIT of a failed
   transaction.** `PostgresSession::execute` sends a statement starting with
@@ -61,7 +61,7 @@ Numbers continue from TN-031. TN-032, TN-035, TN-036 and TN-037 are fixed on `ma
   statement, so `COMMIT; DROP TABLE t` can no longer run on any profile and
   the guard does not need to look past the first statement. MCP was not
   affected.
-- **TN-033 (P2), fixed: staging is now audited from the window too. The window did not audit staging.** The audit log is written
+- **TN-033 (P2), changed in #123: staging is now audited from the window too. The window did not audit staging.** The audit log is written
   before the statement only for a session tagged prod. MCP audits staging; the
   window does not. README and PRIVACY.md describe it as prod-only, so this is
   the stated guarantee against the documented one. Reproduce: connect to a
