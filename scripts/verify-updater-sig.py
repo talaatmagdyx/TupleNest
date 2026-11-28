@@ -113,7 +113,8 @@ def main(path, sig_arg, pubkey_arg):
         sys.exit("signature has no trusted comment")
     if not ed25519_verify(pk[10:], sig[10:] + trusted[len("trusted comment: "):].encode(), global_sig):
         sys.exit(f"BAD trusted-comment signature for {path}")
-    print(f"OK {path} — {trusted}")
+    # ASCII only: the Windows runner's console is not UTF-8.
+    print(f"OK {path} - {trusted}")
 
 
 if __name__ == "__main__":
