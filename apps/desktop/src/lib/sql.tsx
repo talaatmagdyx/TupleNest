@@ -142,6 +142,14 @@ export function firstKeyword(sql: string): string | null {
   return m ? m[0].toLowerCase() : null;
 }
 
+/** Does this statement end the current transaction (`COMMIT`, `ROLLBACK`,
+ *  `END`, `ABORT`)? `ends_transaction` in driver-postgres; change both. One
+ *  word is enough: `pg_query` prepares the text, so it is one statement. */
+export function endsTransaction(sql: string): boolean {
+  const verb = firstKeyword(sql);
+  return verb === "commit" || verb === "rollback" || verb === "end" || verb === "abort";
+}
+
 /**
  * Statements worth stopping for on a guarded connection.
  *
