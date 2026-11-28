@@ -517,6 +517,13 @@ describe("Guard", () => {
     expect(onRun).toHaveBeenCalled();
   });
 
+  it("asks for the name on staging too (TN-034)", async () => {
+    render(<Guard {...base} sql="DELETE FROM orders" env="staging" />);
+    expect(screen.getByRole("button", { name: "Run anyway" })).toBeDisabled();
+    await userEvent.type(screen.getByRole("textbox"), "orders");
+    expect(screen.getByRole("button", { name: "Run anyway" })).toBeEnabled();
+  });
+
   it("does not enable on a near miss in case", async () => {
     render(<Guard {...base} sql="DELETE FROM Orders" />);
     await userEvent.type(screen.getByRole("textbox"), "orders");
@@ -526,7 +533,7 @@ describe("Guard", () => {
   it.each([
     ["a guarded statement that is not a worst case", "ALTER TABLE t ADD COLUMN c int", undefined],
     ["a bounded write", "update t set a=1 where id=1", undefined],
-    ["staging, even for the worst case", "DELETE FROM orders", "staging"],
+    ["dev, even for the worst case", "DELETE FROM orders", "dev"],
   ])("asks for no typing on %s", (_label, sql, env) => {
     render(<Guard {...base} sql={sql} env={env} />);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();

@@ -114,11 +114,13 @@ describe("useQuery — refusing to run", () => {
     expect(out).toMatchObject({ kind: "ok" });
   });
 
-  it("does not guard the same statement off prod", async () => {
+  it("guards a write with no WHERE off prod too, and only that (TN-034)", async () => {
     invokeMock.mockResolvedValue(res());
     const { result } = renderHook(() => useQuery());
     let out;
     await act(async () => void (out = await result.current.run("update t set a=1", dev)));
+    expect(out).toMatchObject({ kind: "needs-guard" });
+    await act(async () => void (out = await result.current.run("alter table t add column c int", dev)));
     expect(out).toMatchObject({ kind: "ok" });
   });
 

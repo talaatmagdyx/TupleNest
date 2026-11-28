@@ -15,8 +15,8 @@ PostgreSQL server (`TUPLENEST_TEST_PG_*`) and is `#[ignore]`d like the others.
 
 | Guarantee | Test(s) | How to reproduce | Status |
 |---|---|---|---|
-| **1. Guard asks before destructive or unbounded statements** (no WHERE, always-true WHERE, DROP, TRUNCATE, EXPLAIN ANALYZE of a write) | `apps/desktop/src/lib/sql.test.tsx › guard — phase 2 safety verification › asks on prod and staging…` *(new)*; `sql.test.tsx › needsGuard — bypasses the audit found`; `› guardReason — an always-true WHERE is not a WHERE`; `› guardReason — EXPLAIN ANALYZE runs the statement`; `apps/desktop/src/App.flows.test.tsx › App — the write guard › stops an unqualified DELETE against production`, `› sends nothing when the user backs out`; `hooks/useQuery.test.ts › useQuery — refusing to run › asks for confirmation before a prod UPDATE with no WHERE`; `hooks/useExplain.test.ts › refuses an explicit ANALYZE the guard would stop on a guarded connection`; Rust port: `apps/desktop/src-tauri/src/guard.rs::tests::*` | `cd apps/desktop && npx vitest run src/lib/sql.test.tsx -t "phase 2"` | **Holds on prod and staging.** Does not hold as stated elsewhere: dev, test and untagged connections are never asked (TN-034, deliberate in the code: `App.flows.test.tsx › does not second-guess the same statement on dev`); a DROP/TRUNCATE after `COMMIT;` in the same text can no longer run at all, since TN-032's fix (#115) |
-| **1. …and on prod/staging the name is typed back** | `overlays/Overlays.test.tsx › Guard › asks for the name to be typed before %s runs`, `› does not enable on a near miss in case`; `sql.test.tsx › guardTarget — what has to be typed back on prod`; `App.flows.test.tsx › App — the write guard › runs it once the user confirms` | `npx vitest run src/overlays/Overlays.test.tsx -t Guard` | **Holds on prod. Does not hold on staging**: staging asks with one click, no typing (TN-034; `Overlays.test.tsx › asks for no typing on staging, even for the worst case` pins today's behaviour). Skipped: `sql.test.tsx › guard — phase 2… › TN-034: wants the name typed on staging as well as prod` |
+| **1. Guard asks before destructive or unbounded statements** (no WHERE, always-true WHERE, DROP, TRUNCATE, EXPLAIN ANALYZE of a write) | `apps/desktop/src/lib/sql.test.tsx › guard — phase 2 safety verification › asks on prod and staging…` *(new)*; `sql.test.tsx › needsGuard — bypasses the audit found`; `› guardReason — an always-true WHERE is not a WHERE`; `› guardReason — EXPLAIN ANALYZE runs the statement`; `apps/desktop/src/App.flows.test.tsx › App — the write guard › stops an unqualified DELETE against production`, `› sends nothing when the user backs out`; `hooks/useQuery.test.ts › useQuery — refusing to run › asks for confirmation before a prod UPDATE with no WHERE`; `hooks/useExplain.test.ts › refuses an explicit ANALYZE the guard would stop on a guarded connection`; Rust port: `apps/desktop/src-tauri/src/guard.rs::tests::*` | `cd apps/desktop && npx vitest run src/lib/sql.test.tsx -t "phase 2"` | **Holds on every connection** for the worst cases, and on prod and staging for the full list (since TN-034: `sql.test.tsx › TN-034: asks for confirmation on every connection…`, `App.flows.test.tsx › asks about a DELETE with no WHERE on dev too`); a DROP/TRUNCATE after `COMMIT;` in the same text can no longer run at all, since TN-032's fix (#115) |
+| **1. …and on prod/staging the name is typed back** | `overlays/Overlays.test.tsx › Guard › asks for the name to be typed before %s runs`, `› does not enable on a near miss in case`; `sql.test.tsx › guardTarget — what has to be typed back on prod`; `App.flows.test.tsx › App — the write guard › runs it once the user confirms` | `npx vitest run src/overlays/Overlays.test.tsx -t Guard` | **Holds on prod and staging** (staging since TN-034). Tests: `sql.test.tsx › TN-034: wants the name typed on staging as well as prod`, `Overlays.test.tsx › asks for the name on staging too` |
 | **2. Read-only is enforced by the database** (PostgreSQL) | `crates/driver-postgres/tests/live_pg.rs::read_only_refuses_writes_hidden_in_comments_ctes_and_mode_changes` *(new, live: checks `SHOW default_transaction_read_only` = on)*; `live_pg.rs::read_only_session_refuses_writes_at_the_server` | `cargo test -p tuplenest-driver-postgres --test live_pg -- --ignored read_only` | Holds |
 | **2. Writes behind comments, CTEs, `DO`/`CALL`, `SET`/`RESET` of the setting, `BEGIN READ WRITE` are refused** (PostgreSQL) | `live_pg.rs::read_only_refuses_writes_hidden_in_comments_ctes_and_mode_changes` *(new: `/* */`, `--`, nested comments, writing CTEs, `EXPLAIN ANALYZE` of a writing CTE, `DO`, `CALL`, `RESET`, `SET … TO off/DEFAULT`, `SET SESSION CHARACTERISTICS … READ WRITE`, `BEGIN/START … READ WRITE`, `BEGIN; SET TRANSACTION READ WRITE`)*; `live_pg.rs::read_only_session_cannot_be_switched_back_to_read_write`; `::read_only_session_refuses_do_and_call`; `::read_only_session_sends_only_statements_that_read`; `crates/driver-postgres/src/lib.rs::tests::leading_words_skip_nested_and_unterminated_comments` | as above | **Holds since #115.** Before it, after a failed statement in a transaction, `COMMIT; BEGIN READ WRITE; DELETE …; COMMIT` wrote on a read-only profile (TN-032). Tests: `pg.rs::tests::a_read_only_session_cannot_write_through_the_commit_of_a_failed_transaction` (live), `live_pg.rs::read_only_session_cannot_write_behind_the_commit_of_a_failed_transaction` |
 | **2. Read-only is enforced by the database** (SQLite: `SQLITE_OPEN_READ_ONLY` + `PRAGMA query_only`) | `crates/driver-sqlite/src/tests.rs::read_only_refuses_writes_behind_comments_ctes_and_transactions` *(new: checks `PRAGMA query_only` = 1; comments, CTE writes, `REPLACE`, `PRAGMA user_version = …`, a write after `BEGIN IMMEDIATE`)*; `::read_only_refuses_writes`; `::read_only_holds_after_query_only_is_switched_off`; `::read_only_refuses_writes_through_attach_and_vacuum_into`; `::several_statements_are_refused_not_half_run` | `cargo test -p tuplenest-driver-sqlite --lib read_only` | Holds |
@@ -46,7 +46,7 @@ PostgreSQL server (`TUPLENEST_TEST_PG_*`) and is `#[ignore]`d like the others.
 
 ## Findings: guarantees that do not hold
 
-Numbers continue from TN-031. TN-032, TN-035, TN-036 and TN-037 are fixed on `main`, each in its own pull request with its regression test; the tests listed here now run. TN-033 is fixed: staging is audited from the window as from MCP. TN-034 waits on its own change.
+Numbers continue from TN-031. All six are dealt with on `main`, each in its own pull request with its tests: TN-032, TN-035, TN-036 and TN-037 were fixed, TN-033 and TN-034 changed by decision (#123 and the guard pull request). The tests listed here run.
 
 - **TN-032 (P1), fixed in #115. A read-only profile writes through the COMMIT of a failed
   transaction.** `PostgresSession::execute` sends a statement starting with
@@ -61,13 +61,13 @@ Numbers continue from TN-031. TN-032, TN-035, TN-036 and TN-037 are fixed on `ma
   statement, so `COMMIT; DROP TABLE t` can no longer run on any profile and
   the guard does not need to look past the first statement. MCP was not
   affected.
-- **TN-033 (P2), fixed: staging is now audited from the window too. The window did not audit staging.** The audit log is written
+- **TN-033 (P2), changed in #123: staging is now audited from the window too. The window did not audit staging.** The audit log is written
   before the statement only for a session tagged prod. MCP audits staging; the
   window does not. README and PRIVACY.md describe it as prod-only, so this is
   the stated guarantee against the documented one. Reproduce: connect to a
   staging profile, run `SELECT 1`, open the audit log: no row. Test:
   `pg.rs::tests::a_staging_session_is_audited_before_it_runs`.
-- **TN-034 (P2, design). The guard is narrower than stated.** It asks only
+- **TN-034 (P2, design), changed: the guard now asks about the worst cases everywhere and wants the name on staging. It was narrower than stated.** It asks only
   on prod and staging, and asks for the name only on prod. Both are
   deliberate in the code and its tests (`does not second-guess the same
   statement on dev`, `asks for no typing on staging`). Reproduce: on a dev
@@ -89,14 +89,11 @@ Numbers continue from TN-031. TN-032, TN-035, TN-036 and TN-037 are fixed on `ma
   history row holds `x`. Test:
   `pg.rs::redact_sql_tests::scrubs_a_password_set_from_inside_a_do_block`.
 
-## Tests still skipped
+## Running the live tests
 
-Only the TN-033 and TN-034 tests: `pg.rs::tests::a_staging_session_is_audited_before_it_runs`
-(ignored) and the two `sql.test.tsx › TN-034: …` tests. Run the app crate's
-live tests, which CI does not run, with:
+No test is skipped for a known failure any more. The app crate's live tests,
+which CI does not run, need a local PostgreSQL:
 
 ```sh
 cargo test -p tuplenest-desktop --bin tuplenest-desktop -- --ignored
 ```
-
-Expect only the TN-033 test to fail.

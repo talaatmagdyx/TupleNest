@@ -329,8 +329,8 @@ describe("guardReason — EXPLAIN ANALYZE runs the statement", () => {
     expect(reason(sql)).toBeNull();
   });
 
-  it("only on a guarded connection", () => {
-    expect(guardReason("EXPLAIN ANALYZE DELETE FROM users", "dev")).toBeNull();
+  it("on every connection, since it is a worst case (TN-034)", () => {
+    expect(guardReason("EXPLAIN ANALYZE DELETE FROM users", "dev")).not.toBeNull();
     expect(guardReason("EXPLAIN ANALYZE DELETE FROM users", "staging")).not.toBeNull();
   });
 });
@@ -349,9 +349,11 @@ describe("needsGuard", () => {
     expect(needsGuard("delete from t", "staging")).toBe(true);
   });
 
-  it("stays quiet where nothing is at stake", () => {
+  it("off prod and staging, asks only about the worst cases (TN-034)", () => {
     for (const env of ["dev", "test", null]) {
-      expect(needsGuard("delete from t", env)).toBe(false);
+      expect(needsGuard("delete from t", env)).toBe(true);
+      expect(needsGuard("delete from t where id = 1", env)).toBe(false);
+      expect(needsGuard("alter table t add column c int", env)).toBe(false);
     }
   });
 
@@ -851,7 +853,6 @@ describe("guardTarget — what has to be typed back on prod", () => {
   });
 
   it.each([
-    ["staging", "DELETE FROM orders", "staging"],
     ["dev", "DELETE FROM orders", "dev"],
     ["a bounded delete", "DELETE FROM orders WHERE id = 1", "prod"],
     ["ALTER, which asks but is not a worst case", "ALTER TABLE t DROP COLUMN c", "prod"],
@@ -885,11 +886,11 @@ describe("guard — phase 2 safety verification", () => {
     expect(guardTarget(sql, "prod")).toMatchObject({ name });
   });
 
-  it.skip("TN-034: wants the name typed on staging as well as prod", () => {
+  it("TN-034: wants the name typed on staging as well as prod", () => {
     for (const [sql, name] of destructive) expect(guardTarget(sql, "staging"), sql).toMatchObject({ name });
   });
 
-  it.skip("TN-034: asks for confirmation on every connection, not only prod and staging", () => {
+  it("TN-034: asks for confirmation on every connection, not only prod and staging", () => {
     for (const [sql] of destructive) {
       for (const env of ["dev", "test", null]) expect(guardReason(sql, env), `${sql} on ${env}`).not.toBeNull();
     }

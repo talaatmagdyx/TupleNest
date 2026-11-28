@@ -479,16 +479,17 @@ export function Guard(p: { sql: string; env?: string | null; onCancel: () => voi
   // It used to say "Statement has no WHERE clause … this UPDATE will affect
   // every row" for whatever it was asked about: a DROP TABLE, a DO block, a
   // DELETE inside EXPLAIN ANALYZE.
-  const staging = p.env === "staging";
-  const where = staging ? "staging" : "production";
-  const reason = guardReason(p.sql, staging ? "staging" : "prod") ?? {
+  // No env given means production, as it always has for this dialog.
+  const env = p.env === undefined ? "prod" : p.env;
+  const where = env === "prod" ? "production" : env ? env : "this";
+  const reason = guardReason(p.sql, env) ?? {
     verb: "statement",
     why: "It was flagged as one to confirm.",
   };
-  // The worst cases on production — every row, or the object itself — want
-  // the name typed back before the button wakes up. A click is a reflex;
-  // typing `orders` is a decision about `orders`.
-  const target = guardTarget(p.sql, staging ? "staging" : "prod");
+  // The worst cases on production and staging — every row, or the object
+  // itself — want the name typed back before the button wakes up. A click is
+  // a reflex; typing `orders` is a decision about `orders`.
+  const target = guardTarget(p.sql, env);
   const [typed, setTyped] = useState("");
   const confirmed = !target || typed.trim() === target.name;
   return (
@@ -500,11 +501,11 @@ export function Guard(p: { sql: string; env?: string | null; onCancel: () => voi
             <WarnIcon size={20} />
           </span>
           <DialogTitle>
-            Confirm this {reason.verb} on {where}
+            Confirm this {reason.verb} on {where === "this" ? "this connection" : where}
           </DialogTitle>
         </div>
         <p>
-          <b className="d-why">{reason.why}</b> On a {where} connection this cannot be undone.
+          <b className="d-why">{reason.why}</b> On {where === "this" ? "this" : `a ${where}`} connection this cannot be undone.
         </p>
         <pre className="d-code">{p.sql.trim().slice(0, 400)}</pre>
         {target && (
