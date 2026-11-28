@@ -1062,9 +1062,12 @@ impl DatabaseSession for PostgresSession {
         // The same trap for a COMMIT typed in the editor (see
         // `transaction_failed`). The user's own statement is still what runs,
         // so `COMMIT AND CHAIN` keeps its meaning; only the answer changes.
+        // TN-032: sent through the extended protocol, which takes exactly one
+        // statement. `batch_execute` would run everything after the COMMIT
+        // too, before any read-only check: `COMMIT; BEGIN READ WRITE; DELETE …`.
         if commits(&request.sql) && self.transaction_failed().await {
             self.client
-                .batch_execute(&request.sql)
+                .execute(request.sql.as_str(), &[])
                 .await
                 .map_err(normalize_error)?;
             return Err(commit_rolled_back().into());

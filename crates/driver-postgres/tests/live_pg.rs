@@ -1273,6 +1273,50 @@ async fn read_only_session_refuses_writes_at_the_server() {
     );
 }
 
+/// TN-032. A COMMIT of a failed transaction is sent before the read-only
+/// checks, so it must carry nothing else: it used to go out through the
+/// simple protocol, which ran `BEGIN READ WRITE; DELETE …` after it.
+#[tokio::test]
+#[ignore = "requires live PostgreSQL"]
+async fn read_only_session_cannot_write_behind_the_commit_of_a_failed_transaction() {
+    let mut rw = PostgresDriver
+        .connect_concrete_with_password(test_config(), None)
+        .await
+        .expect("connect");
+    for sql in [
+        "DROP TABLE IF EXISTS tn032",
+        "CREATE TABLE tn032 (id int)",
+        "INSERT INTO tn032 VALUES (1)",
+    ] {
+        rw.execute(req(sql), &NullSink).await.unwrap();
+    }
+    let mut cfg = test_config();
+    cfg.read_only = true;
+    let mut s = PostgresDriver
+        .connect_concrete_with_password(cfg, None)
+        .await
+        .expect("connect");
+    for smuggled in [
+        "COMMIT; BEGIN READ WRITE; DELETE FROM tn032; COMMIT",
+        "END; DELETE FROM tn032",
+    ] {
+        s.execute(req("BEGIN"), &NullSink).await.unwrap();
+        s.execute(req("SELECT 1/0"), &NullSink).await.unwrap_err();
+        s.execute(req(smuggled), &NullSink)
+            .await
+            .expect_err("more than one statement behind a failed COMMIT");
+        s.execute(req("ROLLBACK"), &NullSink).await.ok();
+        let sink = CollectSink::default();
+        rw.execute(req("SELECT count(*) FROM tn032"), &sink)
+            .await
+            .unwrap();
+        assert_eq!(text_of(&sink.rows.lock().unwrap()[0][0]), "1", "{smuggled}");
+    }
+    rw.execute(req("DROP TABLE tn032"), &NullSink)
+        .await
+        .unwrap();
+}
+
 /// The connect-time `READ ONLY` is only a session default, and one statement
 /// can change it. Each of these used to turn a read-only profile writable;
 /// the write after it must still be refused.
